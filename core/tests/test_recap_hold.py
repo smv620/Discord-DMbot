@@ -254,7 +254,6 @@ def fake_bot(
         _group_started={},
         decision_lines=DecisionLines(),
         user=SimpleNamespace(id=1),
-        _import_queued={},
         settings=SimpleNamespace(site_url="", recaps_on=True, story_extractor_on=extractor),
         extractor_ai=object() if extractor else None,
         transcripts=SimpleNamespace(
@@ -319,6 +318,64 @@ class WhenTheSessionEnds(IsolatedAsyncioTestCase):
         await bot._hold_or_queue(mine, "s1", AT, 66, DM)
         self.assertEqual(bot.post.await_args.args[0], 66)
         self.assertEqual(bot.recap_holds.hold.await_args.kwargs["channel_id"], 66)
+
+    async def test_with_the_worker_on_the_question_is_an_outbox_row_not_a_post(self) -> None:
+        bot = fake_bot(proposed=3)  # (#4904 3b-3: a worker needs no Discord)
+        bot.outbox = SimpleNamespace(add_now=AsyncMock())
+        result = await bot._hold_or_queue(campaign(), "s1", AT, 66, DM, group_id=GROUP,
+                                          defer_question=True)  # fmt: skip
+        self.assertEqual(result, "held")
+        bot.post.assert_not_awaited()
+        bot.recap_holds.hold.assert_awaited_once()
+        args, kwargs = bot.outbox.add_now.await_args
+        self.assertEqual(args[2], "import_recap_hold")
+        self.assertEqual(args[3], {"session_at": AT, "group": GROUP, "open": 3})  # ids, counts
+        self.assertTrue(kwargs["unique"])
+
+    async def test_a_quiet_hold_adds_no_row(self) -> None:
+        bot = fake_bot(proposed=3)
+        bot.outbox = SimpleNamespace(add_now=AsyncMock())
+        await bot._hold_or_queue(campaign(), "s1", AT, 66, DM, quiet=True, defer_question=True)
+        bot.outbox.add_now.assert_not_awaited()
+        bot.post.assert_not_awaited()
+
+    async def test_the_outbox_row_posts_the_same_question_later(self) -> None:
+        bot = fake_bot()
+        bot.deliver_import_recap_hold = DMBot.deliver_import_recap_hold.__get__(bot)
+        mine = campaign()
+        mine.dm_bot_channel_id = 88
+        bot.campaigns.get = AsyncMock(return_value=mine)
+        bot.recap_holds.get = AsyncMock(return_value=object())
+        payload = {"session_at": AT, "group": "-", "open": 4}
+        await bot.deliver_import_recap_hold(GUILD, "c" * 32, payload)
+        self.assertEqual(bot.post.await_args.args[1], hold.question_text(4))
+        ids = [c.custom_id for c in bot.post.await_args.kwargs["view"].children]
+        self.assertEqual(ids, [f"dmbot:names:review:{'c' * 32}", f"dmbot:rhold:go:{'c' * 32}:{AT}"])
+
+    async def test_the_outbox_row_does_nothing_when_the_hold_is_gone_or_post_refused(self) -> None:
+        bot = fake_bot()
+        bot.deliver_import_recap_hold = DMBot.deliver_import_recap_hold.__get__(bot)
+        mine = campaign()
+        mine.dm_bot_channel_id = 88
+        bot.campaigns.get = AsyncMock(return_value=mine)
+        payload = {"session_at": AT, "group": "-", "open": 2}
+        bot.recap_holds.get = AsyncMock(return_value=None)  # answered or expired
+        await bot.deliver_import_recap_hold(GUILD, "c" * 32, payload)
+        bot.post.assert_not_awaited()
+        bot.recap_holds.get = AsyncMock(return_value=object())
+        bot.post = AsyncMock(return_value=False)
+        with self.assertRaises(RuntimeError):
+            await bot.deliver_import_recap_hold(GUILD, "c" * 32, payload)
+
+    async def test_the_outbox_row_with_no_channel_releases_the_hold(self) -> None:
+        bot = fake_bot()
+        bot.deliver_import_recap_hold = DMBot.deliver_import_recap_hold.__get__(bot)
+        bot.campaigns.get = AsyncMock(return_value=campaign())  # no channel at all
+        bot.recap_holds.get = AsyncMock(return_value=object())
+        payload = {"session_at": AT, "group": "-", "open": 2}
+        await bot.deliver_import_recap_hold(GUILD, "c" * 32, payload)
+        bot.post.assert_not_awaited()
+        bot.recap_holds.release.assert_awaited_once_with(GUILD, "c" * 32, AT)
 
     async def test_names_from_before_the_session_are_not_counted(self) -> None:
         bot = fake_bot(proposed=0)  # one proposed name, but from before the session

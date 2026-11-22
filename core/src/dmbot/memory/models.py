@@ -582,6 +582,11 @@ class Relation:
     length_unit: str | None = None
     length_approx: bool = False
     length_from: str | None = None
+    # A kept hand-over (#4170): how the item came to this holder (one of END_REASONS, "" for any
+    # other connection) and from whom (an entry id, ""): a tie of theirs kept after it is kept
+    # already ended (`backstory_keep.handed_away`). Only on an `owns` or `carries`.
+    hand_over: str = ""
+    hand_over_from: str = ""
 
 
 @dataclass(frozen=True, slots=True)

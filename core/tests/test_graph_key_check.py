@@ -761,6 +761,34 @@ class Languages(unittest.TestCase):
             self.assertFalse([p for p in key["pairs"] if "language" in p["relation"]])
 
 
+class Feelings(unittest.TestCase):
+    """A place's, group's or people's feeling toward a lineage or a named culture (#4229 slice 4):
+    found at any step, missed, and extra; the sample lore states none."""
+
+    def row(self, holder: str, **toward: Any) -> dict[str, Any]:
+        row: dict[str, Any] = {"table": "attitude", "id": holder + str(len(toward)),
+                               "holder_id": holder, "toward_id": None, "toward_lineage": None,
+                               "toward_culture_id": None, "closed_at": None}  # fmt: skip
+        return {**row, **toward}
+
+    def test_found_missed_and_extra(self) -> None:
+        key = {
+            "nodes": [{"name": "Mithral Keep", "kind": "place", "aliases": [], "note": ""}],
+            "pairs": [],
+            "attitudes": [
+                {"holder": "Mithral Keep", "toward": "elf"},
+                {"holder": "Mithral Keep", "toward": "Varnish"},
+            ],
+        }
+        rows = [self.row("k", toward_lineage="elf"), self.row("k", toward_lineage="orc")]
+        report = gkc.check(backup([("k", "Mithral Keep", "place")], rows), key)
+        self.assertEqual(report.attitudes, Counter(found=1, missed=1, extra=1))
+        self.assertIn("Feelings: found 1, missed 1, extra 1", gkc.render(report))
+
+    def test_the_sample_lore_states_none(self) -> None:
+        self.assertEqual(load("lore_key.json")["attitudes"], [])
+
+
 class Roads(unittest.TestCase):
     """A road between two places, read either way round, and how far it is: a property of the road
     scored like languages (#4255; Supervisor's ruling): found, missed and extra."""

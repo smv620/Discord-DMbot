@@ -34,7 +34,9 @@ WHY = "DMbot never changes a character without asking you."
 YES, NO, UNDO = "✅ Yes, change it", "❌ No, leave it", "↩️ Undo"
 # a language is only added: nothing is changed (the ux-critic, #4271)
 YES_ADD = "✅ Yes, add it"
-GONE_NOW = "Already answered. Showing what is left."
+# (#4908: a question can also be gone because its speaker stopped being recorded or its session's
+# transcript was deleted, not only answered: one sentence true of both, in Supervisor's words)
+GONE_NOW = "This question isn't waiting any more. Showing what is left."
 NOTHING_LEFT = (
     "✅ Nothing left to answer. If a lore upload finds more, it shows in ❓ Questions for you."
 )

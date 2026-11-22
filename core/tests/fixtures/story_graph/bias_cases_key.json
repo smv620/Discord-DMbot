@@ -1,0 +1,113 @@
+{
+  "about": "Invented lore for the feelings-toward-peoples reader (#4229 slice 4; plan on #3545). Holders are the lore's places, groups and peoples; `toward` is a lineage key or a named culture's name. `must_not` lines are sentences that must give no feeling at all.",
+  "holders": [
+    "Mithral Keep",
+    "the Silver League",
+    "Redhollow",
+    "Brightwater",
+    "the Lantern Guild",
+    "the Copper Moot",
+    "Thornwick",
+    "Greyfen",
+    "Brin",
+    "Stonebridge",
+    "the Iron Brotherhood",
+    "Willowmere",
+    "Ashford",
+    "the Gilded Hand"
+  ],
+  "people_holders": [
+    "Greyfen"
+  ],
+  "person_holders": [
+    "Brin"
+  ],
+  "cultures": [
+    "Varnish",
+    "Ashborn"
+  ],
+  "attitudes": [
+    {
+      "holder": "Mithral Keep",
+      "toward": "elf",
+      "step": "unfriendly"
+    },
+    {
+      "holder": "the Silver League",
+      "toward": "halfling",
+      "step": "friendly"
+    },
+    {
+      "holder": "the Silver League",
+      "toward": "gnome",
+      "step": "friendly"
+    },
+    {
+      "holder": "Redhollow",
+      "toward": "orc",
+      "step": "wary"
+    },
+    {
+      "holder": "Brightwater",
+      "toward": "Varnish",
+      "step": "devoted"
+    },
+    {
+      "holder": "the Lantern Guild",
+      "toward": "dwarf",
+      "step": "unfriendly"
+    },
+    {
+      "holder": "the Copper Moot",
+      "toward": "tiefling",
+      "step": "wary"
+    },
+    {
+      "holder": "Thornwick",
+      "toward": "Ashborn",
+      "step": "hostile"
+    },
+    {
+      "holder": "Greyfen",
+      "toward": "human",
+      "step": "devoted"
+    },
+    {
+      "holder": "Stonebridge",
+      "toward": "gnome",
+      "step": "unfriendly"
+    },
+    {
+      "holder": "the Iron Brotherhood",
+      "toward": "elf",
+      "step": "hostile"
+    },
+    {
+      "holder": "Willowmere",
+      "toward": "halfling",
+      "step": "friendly"
+    },
+    {
+      "holder": "Ashford",
+      "toward": "dwarf",
+      "step": "friendly"
+    },
+    {
+      "holder": "the Gilded Hand",
+      "toward": "Varnish",
+      "step": "unfriendly"
+    }
+  ],
+  "must_not": [
+    "Travelers to Redhollow fear the marsh at night.",
+    "Brin distrusts elves, but Brin is only one guard and speaks for no one else.",
+    "Mithral Keep likes dwarven ale more than any other.",
+    "Does the Silver League trust orcs?",
+    "If Thornwick welcomes elves, the feud will end.",
+    "Nobody believes the Lantern Guild hates gnomes.",
+    "Mithral Keep trusts human traders who pay the toll.",
+    "The Copper Moot distrusts Captain Vell.",
+    "Redhollow does not trust dragonborn.",
+    "Ashford sells elven bows at the autumn fair."
+  ]
+}

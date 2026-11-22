@@ -26,6 +26,8 @@ import re
 from collections.abc import Collection, Sequence
 from typing import NamedTuple
 
+from dmbot.memory import hedges
+
 HOURS, DAYS, MILES = "hours", "days", "miles"
 UNITS = (HOURS, DAYS, MILES)
 WORDS_MAX = 60  # the column's limit (as a route's means words)
@@ -149,17 +151,51 @@ def _ends(places: Collection[str]) -> str:
     return "|".join(re.escape(n) for n in names)
 
 
-def _lengths(text: str, ends: str) -> list[tuple[str, bool]]:
+def _lengths(text: str, ends: str) -> list[tuple[str, bool, tuple[int, int]]]:
     """Every length phrase in `text`, each with whether it is tied to an end by name ("five hours
-    to Easthaven"). The name-tied form adds only what the set phrases don't already cover."""
-    found = [(m.span(), m["words"] or m["bare"]) for m in _PHRASE.finditer(text)]
-    out = [(words, False) for _, words in found]
+    to Easthaven") and where it is (so its own sentence is the one judged, never an earlier one
+    with the same words). The name-tied form adds only what the set phrases don't already cover."""
+    found = [(m.span("words") if m["words"] else m.span("bare"), m["words"] or m["bare"])
+             for m in _PHRASE.finditer(text)]  # fmt: skip
+    out = [(words, False, span) for span, words in found]
     if ends:
         to_end = re.compile(rf"\b(?P<to>{_AMOUNT})\s+to\s+(?:{ends}){_NAME_END}", re.I)
         for m in to_end.finditer(text):
             if not any(m.start() < e and s < m.end() for (s, e), _ in found):  # (no overlap)
-                out.append((m["to"], True))
-    return [(words.strip(), tied) for words, tied in out]
+                out.append((m["to"], True, m.span("to")))
+    return [(words.strip(), tied, span) for words, tied, span in out]
+
+
+# Not so, or not yet: a negation, a plan or a "maybe" in the sentence before the length ("is not two
+# days' march", "we will ride two days"), or a time still to come after it ("… tomorrow"). A length
+# said that way is no route's length (#4991; only ever says less)
+_NOT_SO = re.compile(
+    r"\b(?:not|never|no\s+longer|(?:is|are|was|were)n['’]t|plans?\s+to|planning\s+to|going\s+to"
+    r"|hopes?\s+to)\b",
+    re.I,
+)
+# A person's plan: "we will ride", "they'll go". A bare "will" or "would" is how lore gives a
+# length ("the journey would take three days", "it will be two days by cart"), so it stays (#4992).
+# Not "you": a guidebook speaks to its reader, and the DM to the table, the same way ("You will
+# need two days by cart to Targos", #4997)
+_PERSON = r"(?:we|i|they|he|she)"
+_NOT_YET = re.compile(
+    rf"\b{_PERSON}\s+(?:will|would|shall|might|may|could)\b|\b{_PERSON}['’]ll\b", re.I
+)
+_LATER = re.compile(r"\b(?:tomorrow|next\s+(?:week|month|day|year)|later)\b", re.I)
+
+
+def _stated(text: str, span: tuple[int, int]) -> bool:
+    """Whether the sentence that holds the length at `span` states it: not asked, supposed,
+    someone else's view, denied or planned (`hedges`, `_NOT_SO`, `_NOT_YET`, `_LATER`)."""
+    start, end = span
+    before, after, _mark = hedges.sentence_at(text, start, end)
+    return not (
+        hedges.hedged(text, start, end)
+        or _NOT_SO.search(before)
+        or _NOT_YET.search(before)
+        or _LATER.search(after)
+    )
 
 
 def find(quote: str, places: Collection[str] = ()) -> str:
@@ -168,8 +204,9 @@ def find(quote: str, places: Collection[str] = ()) -> str:
     guess this never makes. `places`: the route's own ends by name. A bare amount leading to one
     of them ("five hours to Easthaven") is a length too: "to" and a name the route ends at, never
     "to reach" (a deadline) or a place this route doesn't go to."""
-    found = _lengths(" ".join(quote.split()), _ends(places))
-    return found[0][0] if len(found) == 1 else ""
+    text = " ".join(quote.split())
+    found = _lengths(text, _ends(places))
+    return found[0][0] if len(found) == 1 and _stated(text, found[0][2]) else ""
 
 
 def find_on_way(lines: Sequence[str], places: Collection[str]) -> str:
@@ -186,7 +223,11 @@ def find_on_way(lines: Sequence[str], places: Collection[str]) -> str:
     for line in lines:
         text = " ".join(line.split())
         named = names_end.search(text) is not None
-        got += [words for words, tied in _lengths(text, ends) if tied or named]
+        got += [
+            words
+            for words, tied, span in _lengths(text, ends)
+            if (tied or named) and _stated(text, span)
+        ]
     return got[0] if len(got) == 1 else ""
 
 

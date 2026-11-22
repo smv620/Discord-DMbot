@@ -35,7 +35,6 @@ SWITCH = "the DM's 'shown to the table now' switch, on a path whose output only 
 
 # path (under src/dmbot) → (kind, owner, why). One line each, in alphabetical order.
 FILES: dict[str, tuple[str, str, str]] = {
-    "bot.py": (READS, "CloudDev-lead", "the clue reveal reads `unseen_by_players` from the lookup"),
     "devtools/sample_run/counts.py": (
         COUNTS,
         "GraphEngineer",
@@ -95,15 +94,14 @@ FILES: dict[str, tuple[str, str, str]] = {
         "the writers: add_entity, set_hidden_from_players; and `_shown_when_said`, which "
         "reads them for what `reveal_said` shows and `ask_world_reveals` asks (#4590)",
     ),
-    "recaps/name_answers.py": (
-        READS,
-        "CloudDev-lead",
-        "the website's join_group refuses a group hidden from the players, as Discord's hints do",
-    ),
     "schema.py": (DEFINES, "GraphEngineer", "the lookup's SQL view over the aliases"),
     "ui/clue_audience.py": (WRITES, "CloudDev-lead", "the DM's audience menu for a clue"),
-    "ui/name_card.py": (READS, "CloudDev-lead", "the card's hidden line, audience line, toggle"),
-    "ui/name_lists.py": (READS, "CloudDev-lead", "a list's secret-name rule"),
+    "ui/name_card.py": (
+        WRITES,
+        "CloudDev-lead",
+        "the DM's switch: the card's 'hidden from the players' line and toggle, DM only; what a "
+        "player or the table holds is the gate's (#4804)",
+    ),
     "ui/name_unnamed.py": (DEFINES, "CloudDev-lead", "a docstring naming `unseen_by_players`"),
     "ui/names.py": (
         WRITES,
@@ -151,4 +149,4 @@ class TheFlagReaders(unittest.TestCase):
     def test_the_readers_still_to_convert_are_counted_for_the_record(self) -> None:
         # (a number to watch go down, not a limit: the slice is done when it reaches zero)
         reading = sorted(path for path, (kind, _, _) in FILES.items() if kind == READS)
-        self.assertEqual(len(reading), 5, reading)
+        self.assertEqual(len(reading), 1, reading)

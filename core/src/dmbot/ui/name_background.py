@@ -32,6 +32,7 @@ from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import (
+    bias_read,
     descriptions,
     kin,
     lore_context,
@@ -71,7 +72,7 @@ from dmbot.memory.backstory_links import (
 )
 from dmbot.memory.end_match import bare, usable_alias
 from dmbot.memory.link_words import link_words
-from dmbot.memory.lookup import CampaignLookup
+from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
 from dmbot.memory.models import (
     BACKGROUND_SOURCE,
@@ -93,7 +94,7 @@ from dmbot.memory.models import (
     Trait,
     name_key,
 )
-from dmbot.memory.ontology import ACTIVE, DISGUISED_AS, FALLBACK_PREDICATE, check_named
+from dmbot.memory.ontology import ACTIVE, DISGUISED_AS, FALLBACK_PREDICATE, Ontology, check_named
 from dmbot.memory.pronouns import is_pronoun
 from dmbot.memory.store import MemoryStore, refusal_for_log
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
@@ -1376,6 +1377,7 @@ async def _read_background(
         done.trait_questions += asked
         done.questions_left += asked
     await store_place_facts(memory, campaign, upload.text)  # land, climate, ruler (#4256)
+    await store_biases(memory, campaign, upload.text)  # "Mithral Hall distrusts orcs" (#4229)
     # the story threads it holds (#4453, quests slice 1): suggestions for the DM, never added
     done.thread_suggestions, done.threads_short = await store_thread_suggestions(
         bot, campaign, upload.text, label, read_ai, progress, until=started + THREADS_UNTIL_S
@@ -2087,6 +2089,47 @@ async def store_place_facts(
         dict(sorted(written.value.items())),
     )  # fmt: skip
     return written.value["written"]
+
+
+async def store_biases(memory: MemoryStore, campaign: Campaign, text: str) -> int:
+    """A place's, group's or people's feeling toward a lineage or a named culture, from set phrases
+    in the lore (`bias_read`, #4229 slice 4), written as DMbot's read for the DM to check in World
+    notes. Lore only (Supervisor's ruling: sessions come after the sample scores). A name two
+    entries share is skipped (DMbot can't tell which). Never raises; the log gets counts only."""
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+        cultures = {
+            name: culture_id
+            for culture_id, name, _status in await memory.map_cultures(
+                campaign.guild_id, campaign.id
+            )
+        }
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Biases couldn't be read (%s)", type(exc).__name__)
+        return 0
+    holders: dict[str, set[str]] = {}
+    for entry in lookup.names:
+        who = lookup.entities.get(entry.entity_id)
+        if who is None or who.status == REJECTED or entry.secret:
+            continue
+        # (a place, a group or a people: a person's own dislike is no bias, the owner's rule)
+        if any(onto.is_a(who.type, kind) for kind in ("place", "faction", "people")):
+            holders.setdefault(entry.text, set()).add(who.id)
+    unique = {name: next(iter(ids)) for name, ids in holders.items() if len(ids) == 1}
+    # (off the event loop: a long upload with many names takes a moment, and voice must not wait)
+    found = await asyncio.to_thread(bias_read.read, text, unique, cultures)
+    if not found:
+        return 0
+    try:
+        written = await memory.add_read_biases(
+            campaign.guild_id, campaign.id, found, source=BACKGROUND_SOURCE
+        )
+    except Exception as exc:  # the type only
+        log.warning("Biases couldn't be kept (%s)", type(exc).__name__)
+        return 0
+    log.info("Biases read: %d found, %d new", len(found), written.value)
+    return written.value
 
 
 async def _road_conditions(
@@ -2910,6 +2953,7 @@ async def _secret_names_known_by(
                 source=DM,
                 dm_chose_secret=False,
                 backstory_of=known_by,  # (from that character's backstory, #4795)
+                adding=True,  # (everyone the DM told already keeps knowing it, #4977)
             )
         except MemoryRuleError:
             log.info("A secret name's first knowers were refused")
@@ -3241,6 +3285,29 @@ def upload_label(label: str, now: float) -> str:
     return logic.shorten(label, UPLOAD_MAX - len(when)) + when  # (the date is never cut off)
 
 
+def _kept_thing(lookup: CampaignLookup, onto: Ontology, e: NameEntry) -> bool:
+    """A kept item's or place's own main name in small letters ("wolf figurine") is an end too
+    (#4923; Supervisor's ruling): only its main name, never another spelling; only an item or a
+    place (people and groups keep #3431's rule: "the guard"); the only entry with that name key
+    (any spelling of any entry, secret or waiting too), so two are never a guess; and never one
+    starting "the", "a" or "an". The caller checks it is confirmed, not secret and no person at the
+    table, and matches it only whole (`background.keep_connections`'s `whole_only`). `by_key` holds
+    story names only (the table's people are `people_by_key`), so a person never counts here."""
+    entity = lookup.entities[e.entity_id]
+    return (
+        e.text == entity.name
+        and (onto.is_a(entity.type, "item") or onto.is_a(entity.type, "place"))
+        and descriptions.kept_thing_alone(e.text)
+        and len({x.entity_id for x in lookup.by_key.get(e.key, ())}) == 1
+    )
+
+
+def _pronoun_ends(ends: Mapping[str, str], whole_only: Collection[str]) -> list[str]:
+    """The names an open pronoun may be settled to: the ends, without the small-letter things
+    #4923 let in, which reach only connections that name them whole."""
+    return [n for n in ends.values() if n not in whole_only]
+
+
 async def queue_links(
     bot: Any,
     memory: MemoryStore,
@@ -3300,19 +3367,20 @@ async def queue_links(
     if store is None or not (any(answers) or unsettled or unnamed or text):
         return 0
     lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    onto = await memory.ontology(campaign.guild_id, campaign.id)
     ends: dict[str, str] = {}
+    whole_only: set[str] = set()  # (the names `_kept_thing` let in: matched whole only, #4923)
     for key, entries in lookup.by_key.items():
         for e in entries:
             # (a description such as "the woman" is no end of a connection: #3431; the lookup does
             # not carry who typed a name, so only a name with a capital counts here, and the
             # Cleaner, which only fixes spelling, still reads every spelling)
-            if (
-                e.confirmed
-                and not e.secret
-                and not e.person
-                and descriptions.matches_alone(e.text, e.kind, "")
-            ):
-                ends.setdefault(key, lookup.entities[e.entity_id].name)
+            if e.confirmed and not e.secret and not e.person:
+                if descriptions.matches_alone(e.text, e.kind, ""):
+                    ends.setdefault(key, lookup.entities[e.entity_id].name)
+                elif _kept_thing(lookup, onto, e):
+                    ends.setdefault(key, lookup.entities[e.entity_id].name)
+                    whole_only.add(lookup.entities[e.entity_id].name)
     owners: dict[str, set[str]] = {}
     for main, spellings in (known_spellings or {}).items():
         for sp in spellings:
@@ -3402,14 +3470,14 @@ async def queue_links(
     settled = who_resolve.Settled()
     if unsettled:
         if who_ai is not None:
-            names = [*dict.fromkeys([*ends.values(), *(f.name for f in found)])]
+            names = [*dict.fromkeys([*_pronoun_ends(ends, whole_only), *(f.name for f in found)])]
             settled = await who_resolve.settle(
                 unsettled, who_ai, names, until=until, progress=on_who, players=players
             )
         else:
             # (the check was switched off: left out and counted, as before it existed, except an
             # open pronoun that names a player character, which waits for the DM: #3238)
-            names = [*dict.fromkeys([*ends.values(), *(f.name for f in found)])]
+            names = [*dict.fromkeys([*_pronoun_ends(ends, whole_only), *(f.name for f in found)])]
             settled = who_resolve.pc_picks(unsettled, names, players)
         if dropped is not None:
             dropped["not_in_text"] += settled.unresolved
@@ -3426,7 +3494,7 @@ async def queue_links(
     kept = bg.keep_connections(
         answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped,
         questions=questions, speaker=speaker, picks=picks,
-        secret_keys={*secret_spellings, *campaign_secrets},
+        secret_keys={*secret_spellings, *campaign_secrets}, whole_only=whole_only,
     )  # fmt: skip
     # A pronoun-resolved question or unnamed person is secret as a connection would be: when its
     # named end is a secret spelling, of this reading or of the campaign (`keep_connections` does
@@ -4563,15 +4631,25 @@ class ConnectionOffer(_Menu):
             held: list[str] = []
             try:
                 shown = await keep.shown_entry_ids(memory, campaign.guild_id, campaign.id)
-                await keep.end_replaced(
-                    memory, campaign.guild_id, campaign.id, old, start, ended, held=held, link=c,
-                    hidden=secret or c.secret or knowers is not None
+                hidden = (
+                    secret or c.secret or knowers is not None
                     or ((
                         view.unrevealed
                         if view.unrevealed is not None
                         else keep.kept_unrevealed(c, secret or c.secret, shown)
                     )
-                    and not view.reveal),
+                    and not view.reveal)
+                )  # fmt: skip
+                # (the same upload's sale kept first took the item already, #4170)
+                late_at, late_why, late_ask = keep.late_end(
+                    c,
+                    await memory.relations(campaign.guild_id, campaign.id, include_secret=True),
+                    hidden=hidden,
+                    start=start if old else None,
+                )
+                await keep.end_replaced(
+                    memory, campaign.guild_id, campaign.id, old, start, ended, held=held, link=c,
+                    hidden=hidden,
                     # (only the DM's own Players toggle on this card is their choice to hide, #4524:
                     # a secret name in the text or the card's default is DMbot's, and asks)
                     dm_chose_secret=self.choice is True or knowers is not None,
@@ -4596,6 +4674,8 @@ class ConnectionOffer(_Menu):
                     # (from the uploader's character's own backstory, never a 👥 pick, #4795)
                     backstory_of=c.known_by if knowers is None and c.known_by else None,
                     from_session_at=start if old else None,  # (starts as the old one ends)
+                    to_session_at=late_at if late_why else None, end_reason=late_why,
+                    hand_over=c.hand_over, hand_over_from=c.hand_over_from,
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
                     keep_flags=not secret and not view.reveal and knowers is None,
@@ -4627,6 +4707,11 @@ class ConnectionOffer(_Menu):
                 memory, campaign.guild_id, campaign.id, held, by=made.id, start=start,
                 label=c.upload or "", batch=kept.batch,
             )  # fmt: skip
+            if late_ask is not None and late_at is not None:
+                await keep.ask_held(
+                    memory, campaign.guild_id, campaign.id, [made.id], by=late_ask.id,
+                    start=late_at, label=c.upload or "", batch=kept.batch,
+                )  # fmt: skip
             # Where it came from, for the DM's "Why?" (#2946, and #2959 item 5's "DMbot inferred
             # this"): only a connection made just now, and never a reason to lose it.
             if c.upload and made.created_at >= now:

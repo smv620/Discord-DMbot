@@ -115,6 +115,11 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "import_state": "what an import's scans leave for its one end-of-import report (#4904): "
+    "counts, ids, the names they added and the name-pass reports (spellings as heard, short bits "
+    "of lines), taken when the report is made. A restored campaign has no import under way",
+    "outbox": "what a worker wants the bot to say in Discord (#3843): ids and counts, delivered "
+    "within seconds and swept after a few days. A restored campaign has nothing waiting to say",
     "sheet_waits": "a D&D Beyond sheet link the DM gave in the wizard for a character with no "
     "player yet, waiting for the player (#4205): the address and a time, no sheet and no person. "
     "A request still waiting, like the wizard's own draft; the link is read when the character "
@@ -189,6 +194,11 @@ NOT_IN_BACKUP: dict[str, str] = {
     "lore_pdf_staged": "a lore PDF sent from the website while it waits to be counted and "
     "read (ids and numbers only, no file name or word; one for each campaign): a file in transit, "
     "gone within a day, never in a backup (#4762)",
+    "web_join_choices": 'what DMbot worked out for a DM\'s "Let me choose" page (ids, counts and '
+    "story thread names), gone within an hour and worked out again from the graph (#4799)",
+    "web_reveals": 'what DMbot worked out for a DM\'s "Things the characters learned" page (names '
+    "and the statements in words), gone within an hour and worked out again from the graph "
+    "(#3863)",
     "web_rule_takes": "a day-long undo handle for a website pick of a followed set's changes; "
     "a restored campaign has nothing to undo (#4841)",
     "upload_notices": _RUNTIME,  # each lore upload's notice and the changes it made (#3878)

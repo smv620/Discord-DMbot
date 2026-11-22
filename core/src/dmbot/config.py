@@ -140,6 +140,10 @@ class Settings:
     # #4229 1d: the session reader also asks which languages a character was heard speaking, each
     # a question for the DM (DMBOT_SESSION_LANGUAGES, off until dev1's language_cases counts)
     session_languages_on: bool = False
+    # #4537 slice 6b: the session reader also hears a player character saying goodbye to the
+    # party, each an after-session question for the DM, never a closed stretch
+    # (DMBOT_PARTY_LEAVES, off until the sample's counts show no false goodbye questions)
+    party_leaves_on: bool = False
     # a character who joins a party with members is asked about ("What does Mira know about what
     # came before?") instead of copied what the party knows (DMBOT_PARTY_JOIN, #4537 slice 2b; off
     # until dev1's check on the test server)
@@ -195,6 +199,10 @@ class Settings:
     # every "him" and "it" resolved in brackets. Off until dev1's measured run; with it off nothing
     # is asked of the AI and the session is exactly as it was.
     theatre_on: bool = False
+    # The worker (#2128): with it on, work that can be done away from Discord leaves the bot, and
+    # what it wants said goes through the outbox (#3843: the recap-ready line first). Off, the bot
+    # does it all itself as before, so flipping it back is the rollback.
+    worker_on: bool = False
     # The relationship reader beside the old one (#3244), on the test server only.
     rel_read_on: bool = False
     # The start-up wizard's link, offered first by the New campaign buttons (#3955): off until dev1
@@ -356,13 +364,24 @@ class Settings:
     link_token_secret: bytes = field(default=b"", repr=False)
 
 
-def load_settings(env: Mapping[str, str] | None = None) -> Settings:
+def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False) -> Settings:
+    """The settings from the environment. The worker (#3844) has no Discord connection, so it needs
+    no token."""
     env = os.environ if env is None else env
 
     def get(name: str) -> str:
         return env.get(name, "").strip()
 
-    missing = [n for n in ("DISCORD_TOKEN", "EARS_SHARED_SECRET", "DATABASE_URL") if not get(n)]
+    needed = (
+        ("EARS_SHARED_SECRET", "DATABASE_URL")
+        if worker
+        else (
+            "DISCORD_TOKEN",
+            "EARS_SHARED_SECRET",
+            "DATABASE_URL",
+        )
+    )
+    missing = [n for n in needed if not get(n)]
     if missing:
         raise ConfigError(
             f"Missing required settings: {', '.join(missing)}. "
@@ -507,6 +526,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     theatre_raw = (get("DMBOT_THEATRE_ON") or "0").lower()
     if theatre_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_THEATRE_ON must be 1 (on) or 0 (off), got "' + theatre_raw + '".')
+    worker_raw = (get("DMBOT_WORKER") or "0").lower()
+    if worker_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_WORKER must be 1 (on) or 0 (off), got "' + worker_raw + '".')
     wizard_raw = (get("DMBOT_WIZARD_LINK") or "0").lower()
     if wizard_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_WIZARD_LINK must be 1 (on) or 0 (off), got "' + wizard_raw + '".')
@@ -572,6 +594,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_SESSION_LANGUAGES must be 1 (on) or 0 (off), got "' + languages_raw + '".'
         )
+    leaves_raw = (get("DMBOT_PARTY_LEAVES") or "0").lower()
+    if leaves_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_PARTY_LEAVES must be 1 (on) or 0 (off), got "' + leaves_raw + '".')
     weather_raw = (get("DMBOT_WEATHER_NOTES") or "0").lower()
     if weather_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -828,6 +853,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
         session_languages_on=languages_raw in ("1", "true", "on"),
+        party_leaves_on=leaves_raw in ("1", "true", "on"),
         party_join_on=party_join_raw in ("1", "true", "on"),
         weather_notes_on=weather_raw in ("1", "true", "on"),
         private_scenes_on=private_raw in ("1", "true", "on"),
@@ -844,6 +870,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         recap_reveals_on=recap_reveals_raw in ("1", "true", "on"),
         story_family_only=family_raw in ("1", "true", "on"),
         theatre_on=theatre_raw in ("1", "true", "on"),
+        worker_on=worker_raw in ("1", "true", "on"),
         rel_read_on=rel_read_raw in ("1", "true", "on"),
         wizard_link_on=wizard_raw in ("1", "true", "on"),
         role_match=role_match_raw in ("1", "true", "on"),

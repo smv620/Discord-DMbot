@@ -64,8 +64,10 @@ from dmbot.web import (
     house_file,
     import_clock,
     imports,
+    join_choices,
     join_questions,
     languages,
+    leave_questions,
     line_fixes,
     lore,
     lore_pdf,
@@ -74,6 +76,7 @@ from dmbot.web import (
     met_list,
     my_lines,
     names_smart,
+    node_traits,
     npc_pages,
     offers,
     optional_rules,
@@ -85,11 +88,15 @@ from dmbot.web import (
     pc_icons,
     pictures,
     place_world,
+    plot_threads,
     private_scenes,
     recap_style,
     relationships,
     report,
     restores,
+    reveals,
+    road_conditions,
+    route_lengths,
     rule_sharing,
     rule_updates,
     script_make,
@@ -2281,6 +2288,106 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/nodes/{node}/traits")
+    async def me_campaign_web_node_traits(ref: str, node: str, signed: Signed) -> dict[str, Any]:
+        """A character's lineage and class, for a DM of the campaign only (#3925)."""
+        session, _token = signed
+        try:
+            return await node_traits.read(db, session, ref, node)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/route-length", status_code=202)
+    async def me_campaign_route_length(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """🛣️ Length on a route: `{"on", "id", "words"}` (#4392); polled at the answers route."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await route_lengths.queue_set(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/route-length/keep", status_code=202)
+    async def me_campaign_route_length_keep(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """✅ Length is right: `{"on", "id"}` (#4392)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await route_lengths.queue_keep(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/route-length/{batch}/undo", status_code=202)
+    async def me_campaign_route_length_undo(ref: str, batch: str, signed: Signed) -> dict[str, str]:
+        """↩ Undo of a length change made from the page (#4392)."""
+        session, _token = signed
+        try:
+            return {"answer": await route_lengths.queue_undo(db, session, ref, batch)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/road-condition", status_code=202)
+    async def me_campaign_road_condition(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """🚧 Condition on a road or route place: `{"on", "id", "value", "words"}` (#4451)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await road_conditions.queue_set(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/road-condition/keep", status_code=202)
+    async def me_campaign_road_condition_keep(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """✅ Condition is right: `{"id"}` of a road (#4451)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await road_conditions.queue_keep(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/road-condition/show", status_code=202)
+    async def me_campaign_road_condition_show(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """👁️ / 🙈 a road's condition: `{"id", "shown"}` (#4451)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await road_conditions.queue_show(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     relationship_refusals = {
         "not_found": (404, "not_found"),
         "bad_hops": (400, "bad_hops"),
@@ -2817,6 +2924,20 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/world-notes/bias", status_code=202)
+    async def me_campaign_world_bias(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """✏️ Change on a feeling DMbot read (#4932): `{"id": "bias:…", "step": …}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await world_notes.queue_bias(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/campaigns/{ref}/world-notes/{batch}/undo", status_code=202)
     async def me_campaign_world_undo(ref: str, batch: str, signed: Signed) -> dict[str, str]:
         """↩ Undo of a ✅ or 🚫 by the change number its answer carried."""
@@ -3072,6 +3193,244 @@ def create_app(
             body = None
         try:
             return {"answer": await heard_waiting.queue_type(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/join-questions/{group}/choices")
+    async def me_campaign_join_choices(ref: str, group: str, signed: Signed) -> dict[str, Any]:
+        """The sessions and story threads that have something to give the characters of one join
+        question, as the bot last worked them out for this DM (#4799): DM only."""
+        session, _token = signed
+        try:
+            return await join_choices.read(db, session, ref, group)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/join-questions/choices", status_code=202)
+    async def me_campaign_join_choices_ask(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"group"}`: have the bot work the choices out; polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await join_choices.queue_read(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/join-questions/choose", status_code=202)
+    async def me_campaign_join_choose(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """`{"group", "session"}` or `{"group", "thread"}`: one pick (#4799); polled at
+        `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await join_choices.queue_pick(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/reveals")
+    async def me_campaign_reveals(ref: str, signed: Signed) -> list[dict[str, Any]]:
+        """What the characters learned, waiting to be kept, as the bot last worked it out for this
+        DM (#3863): DM only."""
+        session, _token = signed
+        try:
+            return await reveals.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/reveals/ask", status_code=202)
+    async def me_campaign_reveals_ask(ref: str, signed: Signed) -> dict[str, str]:
+        """Have the bot work the list out (it reads only, no AI call); polled at
+        `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            return {"answer": await reveals.queue_ask(db, session, ref)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/reveals/answer", status_code=202)
+    async def me_campaign_reveals_answer(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"id", "answer": "keep" | "not"}`; polled at `.../web/answers/{answer}`; the Undo of a
+        keep is `join-undo`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await reveals.queue_answer(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/leave-questions")
+    async def me_campaign_leave_questions(ref: str, signed: Signed) -> dict[str, Any]:
+        """The "Still in the party?" questions waiting for the DM (#4895), by character names:
+        DM only."""
+        session, _token = signed
+        try:
+            return await leave_questions.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/leave-questions/answer", status_code=202)
+    async def me_campaign_leave_answer(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"character", "answer"}`: "Left the party" or "Still in the party" for one character;
+        polled at `.../web/answers/{answer}` (a "left" answer carries its change number)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await leave_questions.queue_answer(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/plot-threads")
+    async def me_campaign_plot_threads(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's story threads, as Discord's threads card shows them (#3696): DM only."""
+        session, _token = signed
+        try:
+            return await plot_threads.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/plot-threads/state", status_code=202)
+    async def me_campaign_plot_thread_state(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"thread", "state"}`: a thread's new state (a state word) or "check" (Checked, still
+        going); polled at `.../web/answers/{answer}` (#3696 slice 2a). DM only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await plot_threads.queue_state(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/plot-threads/involve", status_code=202)
+    async def me_campaign_plot_thread_involve(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"thread", "who", "role"}`: someone or something has a part in a thread (#3696 slice
+        2b); polled at `.../web/answers/{answer}`. DM only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await plot_threads.queue_involve(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/plot-threads/new", status_code=202)
+    async def me_campaign_plot_thread_new(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"kind", "state", "name"}`: start a thread or a promise (#3696 slice 2c); polled at
+        `.../web/answers/{answer}`, which carries the new thread's id. DM only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await plot_threads.queue_new(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/plot-threads/due", status_code=202)
+    async def me_campaign_plot_thread_due(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"promise", "due"}`: a promise's due note, empty clears it (#3696 slice 2c); polled at
+        `.../web/answers/{answer}`. DM only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await plot_threads.queue_due(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/plot-threads/party", status_code=202)
+    async def me_campaign_plot_thread_party(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"promise", "side", "who"}`: who made a promise, or who it was made to (#3696 slice
+        2c); polled at `.../web/answers/{answer}`. DM only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await plot_threads.queue_party(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/plot-threads/link", status_code=202)
+    async def me_campaign_plot_thread_link(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"thread", "how", "event" | "newEvent"}`: an event moved a thread along or ended it
+        (#3696 slice 2d); polled at `.../web/answers/{answer}`. DM only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await plot_threads.queue_link(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/plot-threads/led-to", status_code=202)
+    async def me_campaign_plot_thread_led_to(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"from", "to"}`: what one thing led to
+        (#3696 slice 2d); polled at `.../web/answers/{answer}`. DM only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await plot_threads.queue_led_to(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

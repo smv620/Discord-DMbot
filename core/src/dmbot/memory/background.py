@@ -26,6 +26,7 @@ from dmbot.memory import kin, next_words, place_words, quote_kind, route_words, 
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
+from dmbot.memory.hand_over import SALES
 from dmbot.memory.list_names import split_list
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
@@ -147,8 +148,8 @@ INFERRED_CHARS = 80  # why DMbot inferred a connection (#2959 item 5): one short
 
 # How an item changed hands (#4115; Supervisor's ruling, 2026-11-10): the `change` a connection
 # may carry, with `from` the one who had it before. A sale, a gift or a trade moves the owning
-# (and the holding); a theft or a loss moves only the holding, so its owner still owns it.
-SALES = ("sold", "gave", "traded")
+# (and the holding); a theft or a loss moves only the holding, so its owner still owns it. The
+# sales are `hand_over.SALES` (one list, #4170).
 TAKEN = ("stolen", "lost")
 HAND_OVERS = (*SALES, *TAKEN)
 
@@ -1310,6 +1311,7 @@ def keep_connections(
     speaker: str | None = None,
     picks: list[Pick] | None = None,
     secret_keys: Collection[str] = (),
+    whole_only: Collection[str] = (),
 ) -> list[Connection]:
     """The pieces' connections as one list, each once, whose two ends are names DMbot will have:
     one of this reading's names (or its other spelling, public or secret) or `known` (a name key
@@ -1327,7 +1329,8 @@ def keep_connections(
 
     `speaker`: the character whose backstory this is, as the DM said (#2650). "I", "my" and "me"
     are that character, and so are a bare "his" or "her"; with no speaker, a connection that
-    needs "I" is left out as `whose` (counted, never guessed)."""
+    needs "I" is left out as `whose` (counted, never guessed). `whole_only` (#4923): names of
+    `known` matched only whole, in the end and in the quote."""
     lost = dropped if dropped is not None else Counter()
     names = list(names)
     ends: dict[str, str] = dict(known)
@@ -1351,7 +1354,12 @@ def keep_connections(
     spellings = {
         sp: f.name for f in names for sp in f.also if len(claimed.get(name_key(sp), ())) == 1
     }
-    reader = Ends(ends, {*ends.values()}, spellings)
+    # `whole_only` (#4923): a kept item's or place's name in small letters ("wolf figurine") is an
+    # end only by its whole name, never by one of its words ("wolf", "the mill"): a lower-case word
+    # is not a name as a capitalised one is (#3431), so it stays out of the by-its-words matching
+    # and its quote must hold it whole (below)
+    whole = {name_key(n) for n in whole_only}
+    reader = Ends(ends, {n for n in ends.values() if name_key(n) not in whole}, spellings)
     seen: set[tuple[str, str, str, tuple[str, bool] | None]] = set()
     # kin_of, by unordered pair: (its place in `out` or None, its role or "", the order it was said)
     kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
@@ -1377,7 +1385,8 @@ def keep_connections(
             if no_a or no_b:
                 lost["whose"] += 1
                 continue
-            first, second = reader.match(end_a), reader.match(end_b)
+            first = reader.match(end_a, small_whole_only=True)
+            second = reader.match(end_b, small_whole_only=True)
             if (c.variant_a or c.variant_b) and (first.ambiguous or second.ambiguous):
                 lost["spelling_clash"] += 1  # (a spelling is never a question: it is a guess)
                 continue
@@ -1450,6 +1459,11 @@ def keep_connections(
             if a is None or b is None or name_key(a) == name_key(b):
                 lost["name_not_found"] += 1
                 continue
+            if whole and any(
+                name_key(n) in whole and not _has(_squash(c.quote), n) for n in (a, b)
+            ):
+                lost["name_not_found"] += 1  # (a word of it in the quote is not the name, #4923)
+                continue
             # A spelling the text used for an end the AI wrote another way must not be another
             # name of the campaign (#2757): then it was that name, and the link is not this one's.
             if _clashes(reader, c.variant_a, a) or _clashes(reader, c.variant_b, b):
@@ -1481,7 +1495,7 @@ def keep_connections(
             )
             if c.change:  # (who it came from is a name DMbot has, and no end, or no hand-over)
                 prev_end, no_prev = speaker_end(c.from_holder, speaker)
-                prev = reader.match(prev_end)
+                prev = reader.match(prev_end, small_whole_only=True)
                 # (checked again here, whichever way the line came: one a pronoun check settled
                 # never went through `_handed`, so the kind and the quote are held to it now)
                 said_how, _, said_change = hand_over_of(c.how, c.from_holder, c.change)

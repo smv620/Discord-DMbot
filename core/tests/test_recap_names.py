@@ -238,7 +238,8 @@ def bot_with(**kw: Any) -> Any:
         recaps=recaps,
         lookup=None,
         tables={},
-        settings=SimpleNamespace(site_url=""),
+        settings=SimpleNamespace(site_url="", worker_on=False),
+        outbox=None,
         post=AsyncMock(return_value=True),
         recap_secret_names=AsyncMock(return_value=[]),
         # (#3874 E2: the reminder looks the campaign up for its DM Bot channel; none here)
@@ -249,6 +250,8 @@ def bot_with(**kw: Any) -> Any:
     )
     bot._private_names_note = DMBot._private_names_note.__get__(bot)
     bot._upkeep_channel = DMBot._upkeep_channel.__get__(bot)
+    bot._queued = DMBot._queued.__get__(bot)
+    bot._say_names = DMBot._say_names.__get__(bot)
     bot._link_recap_names = AsyncMock()  # the website's check list has its own tests
     return bot
 

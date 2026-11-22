@@ -33,6 +33,8 @@ ELSEWHERE: Rules = {
         "campaign_maps",  # (0480: its own forget function, dmbot_forget_maps, #3274, #4344)
         "installs", "move_code_asks",  # (move_code_asks: ON DELETE CASCADE from web_users, 0069)
         "web_rule_takes",  # (a day-long undo handle for a website pick, swept within a day, #4841)
+        "web_join_choices",  # (the choices worked out for a DM's page, swept within an hour, #4799)
+        "web_reveals",  # (what they learned, for a DM's page, swept within an hour, #3863)
     )
 }  # fmt: skip
 BY_DESIGN: Rules = {  # kept on purpose: protects the person, or stops a second free trial (#4145)
@@ -58,6 +60,7 @@ TRANSCRIPTS: Rules = {
         "thread_suggestions",  # (a session's story threads: `thread_suggestions.forget`, #4522)
         "thread_progress",  # (a session's progress on threads: `thread_progress.forget`, #4522)
         "memory_trait_offers",  # (who said a heard language: `trait_offers.forget_speaker`, #4745)
+        "memory_join_questions",  # (who said a goodbye: `join_questions.forget_speaker`, 0574)
     )
 }  # fmt: skip
 TRANSCRIPTS.update(
@@ -118,6 +121,7 @@ NAME_NOT_A_PERSON: Rules = {  # a name of something else, with the reason
     "rule_sets": ("name",),
     "session_imports": ("file_name",),  # an imported file's name
     "trait_answers": ("name_key",),  # the key of a trait name
+    "web_reveals": ("who",),  # the name of a character in the story, never a person (#3863)
     "secret_questions": ("label",),  # an upload's or a session's label, never a person's name
     "thread_suggestions": ("name", "name_key"),  # a story thread's name, built from its parts
     "memory_trait_offers": ("name", "name_key"),  # the trait's name (a language, lineage or class)

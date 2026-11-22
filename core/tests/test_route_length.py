@@ -122,5 +122,41 @@ class OnTheWay(unittest.TestCase):
         self.assertEqual(rl.find_on_way(["two days by cart to Targos."], ()), "")
 
 
+class NotStated(unittest.TestCase):
+    """A length in a sentence that denies, plans or puts it off is no route's length (#4991); the
+    sentence judged is the length's own, and a name like "May" is no "maybe"."""
+
+    ENDS = ("Easthaven",)
+
+    def test_denied_planned_or_later_gives_none(self) -> None:
+        for quote in (
+            "Mosswick is not two days' march from the coast.",
+            "Duskwater isn’t 20 miles from Embervale.",
+            "We’ll ride two days by cart from Brindle.",
+            "We will ride two days by cart from Brindle.",
+            "It is two days by cart to Brindle tomorrow.",
+        ):
+            with self.subTest(quote):
+                self.assertEqual(rl.find(quote), "")
+
+    def test_a_bare_will_or_would_is_how_lore_gives_a_length(self) -> None:
+        for quote, words in (
+            ("The journey would take three days' ride from Bryn Shander.", "three days' ride"),
+            ("It will be two days by cart from Targos.", "two days by cart"),
+            ("You will need two days by cart to Targos.", "two days by cart"),  # (#4997)
+        ):
+            with self.subTest(quote):
+                self.assertEqual(rl.find(quote), words)  # (#4992: only a person's plan is dropped)
+
+    def test_a_capitalised_may_is_a_name(self) -> None:
+        self.assertEqual(rl.find("In May, Duskwater is 20 miles from Embervale."), "20 miles")
+
+    def test_the_lengths_own_sentence_is_judged(self) -> None:
+        lines = ["We could rest five hours. It is five hours to Easthaven."]
+        self.assertEqual(rl.find_on_way(lines, self.ENDS), "five hours")
+        lines = ["We could ride five hours to Easthaven."]
+        self.assertEqual(rl.find_on_way(lines, self.ENDS), "")
+
+
 if __name__ == "__main__":
     unittest.main()

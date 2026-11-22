@@ -20,6 +20,19 @@ class Culture(unittest.TestCase):
             with self.subTest(text):
                 self.assertEqual(pp.read("Karnstead", text), [Found(CULTURE, "dwarf", "strong")])
 
+    def test_is_a_gives_the_same_shapes_and_was_a_gives_once(self) -> None:  # (ruling A, #4982)
+        self.assertEqual(pp.read("Karnstead", "Karnstead is a dwarven hold."),
+                         [Found(CULTURE, "dwarf", "strong")])  # fmt: skip
+        self.assertEqual(pp.read("Karnstead", "Karnstead was an elven town."),
+                         [Found(CULTURE, "elf", "once")])  # fmt: skip
+        for text in (
+            "Karnstead is a dwarven smith's home.",  # (a person's lineage, never the place's)
+            "Karnstead is the dwarven quarter.",  # (a part, said this way, is not read)
+            "Karnstead is a busy town.",
+        ):
+            with self.subTest(text):
+                self.assertEqual([f for f in pp.read("Karnstead", text) if f.layer == CULTURE], [])
+
     def test_ruins_and_old_places_are_once(self) -> None:
         self.assertEqual(
             pp.read("Velmoor", "Beyond lie the old elven ruins of Velmoor."),

@@ -1937,8 +1937,22 @@ export type WebLinkKind = "family" | "ally" | "group" | "work" | "other";
 
 /** Where a connection came from (#2946, API #3540). The API cuts it for a player: a session number or unknown, never a label. */
 export type WebLinkSource = { type: "session"; n: number } | { type: "upload"; label: string; line?: number } | { type: "dm" } | { type: "unknown" };
+/** A road's condition as the bot keeps it (#4451): its value, the DM's words for "other", the session it began, and the value before. */
+export interface RoadCondition {
+  value: "open" | "hard" | "closed" | "gone" | "other";
+  words: string;
+  since: number | null;
+  before: { value: "open" | "hard" | "closed" | "gone" | "other"; words: string } | null;
+  /** DMbot read this, for the DM's view: "Condition is right" keeps it (#4451). */
+  read?: boolean;
+  /** The DM has shown it to the players (a connection, #4451). */
+  shown?: boolean;
+}
 export interface WebLink {
   id: string;
+  /** A road (#4451): the DM may set its condition. Absent for anything else. */
+  road?: boolean;
+  condition?: RoadCondition;
   words: string;
   /** The table's own words as said, without the curly quotes `words` shows them in (#3574): only for a connection with no kind
    * of its own. The edit form starts from these. Missing for every other connection and from an older API. */
@@ -2062,6 +2076,10 @@ export interface WebViewer {
   id: string;
   name: string;
   kind: "pc" | "npc";
+  /** Where the name sits in the list, which the API orders (#4887): the party, then those who left, then the rest. */
+  group: "party" | "left" | "other";
+  /** Why a name is shown, such as "Retired" for one who left (#4887); left out when there is nothing to say. */
+  note?: string;
 }
 export interface WebViewers {
   viewers: WebViewer[];
@@ -2073,6 +2091,13 @@ export interface WebViewers {
 export type WebView = "players" | "full";
 
 /** A picked name's summary (#3243): `needsPeek` holds the text back from a player until they ask for it. */
+/** One trait of a character (#3925): a lineage ("species") or a class; `known` is false for a word the rules do not have. */
+export interface NodeTrait {
+  kind: "species" | "class";
+  name: string;
+  known: boolean;
+  edition: "2014" | "2024" | "";
+}
 export interface NodeSummary {
   text: string;
   /** How many neighbours the caps left out (the text says "and N more"); 0 while the spoiler gate holds the text (#3236). */
@@ -2141,11 +2166,21 @@ export interface WorldRoadNote {
   note: string;
   fromSession: number | null;
 }
+/** A guess of how a people feels toward another (#4932, #4959): its keep id is `bias:<32 hex>`, the same as its id. */
+export interface WorldFeelingNote {
+  id: string;
+  entityId: string;
+  name: string;
+  target: string;
+  step: "Hostile" | "Unfriendly" | "Wary" | "Friendly" | "Devoted";
+}
 export interface WorldNotes {
   places: WorldPlaceNote[];
   languages: WorldLanguageNote[];
   /** The Roads group (#4784, behind ROADS_LIVE); an empty list when there is none, absent from an older API. */
   roads?: WorldRoadNote[];
+  /** The Feelings group (#4932): missing from an API older than core's door, then the group shows nothing. */
+  feelings?: WorldFeelingNote[];
 }
 /** A character's stretch in the party (#4778 a2): `from` and `to` are unix seconds (`to` null while open); `ended` is why it ended
  * ("left", "retired", "died", "away") and `session` the session it began at, each null when unknown. */
@@ -2185,6 +2220,25 @@ export interface HeardQuestions {
   total: number;
   questions: HeardQuestion[];
 }
+/** The "Let me choose" choices of a join question (#4891): what each session and story thread would give. `choices` is null until they are worked out. */
+export interface JoinChoices {
+  madeAt: number | null;
+  choices: null | {
+    members: { id: string; name: string }[];
+    sessions: { at: number; number: number; counts: Record<string, number> }[];
+    threads: { id: string; name: string; counts: Record<string, number> }[];
+    sessionsInAll: number;
+    threadsInAll: number;
+    nobody: boolean;
+  };
+}
+/** What a pick gave (#4891): the first eight characters of each member's id and how many; `first` when it answered the question. */
+export interface JoinChoose {
+  chose: { id: string; count: number }[];
+  choseMore: number;
+  first: boolean;
+  batch: number | null;
+}
 export interface JoinGroup {
   group: string;
   answer: "waiting" | "everyone";
@@ -2192,8 +2246,27 @@ export interface JoinGroup {
   /** "join" (a new character) or "back" (a character coming back to the party, #4791); a missing kind reads as "join". */
   kind?: "join" | "back";
 }
+/** The "Still in the party?" questions waiting for the DM (#4895, core #4898): a character marked dead, or a goodbye heard at the table. DM only. */
+export interface LeaveGroup {
+  group: string;
+  kind: "died" | "leave";
+  characters: { id: string; name: string }[];
+}
+/** One thing the characters learned, waiting to be kept (#3863 step 2): who, what, how, and whether a player or a guess is in it. */
+export interface RevealProposal {
+  id: string;
+  who: string;
+  what: string;
+  how: string;
+  player: boolean;
+  guessing: boolean;
+}
 /** One press on World notes: ✅ Keep the shown lines (at most 25), 🚫 Not right on one, or ↩ Undo by its change number. */
-export type WorldNotesChange = { action: "keep"; ids: string[] } | { action: "not"; id: string } | { action: "undo"; batch: number };
+export type WorldNotesChange =
+  | { action: "keep"; ids: string[] }
+  | { action: "not"; id: string }
+  | { action: "bias"; id: string; step: WorldFeelingNote["step"] }
+  | { action: "undo"; batch: number };
 /** What a press gave back: how many a Keep kept, and the change it made (for Undo; none when nothing changed). */
 export interface WorldNotesResult {
   kept: number | null;
@@ -2262,6 +2335,41 @@ export interface StoryThreadSuggestion {
   session: boolean;
   /** Up to three of the lines it was heard in, as spoken (#4526); "" lines never. Only for a session suggestion. */
   heard: string[];
+}
+/** A thread's state as core names it (memory/threads.py): "active" is "Happening now". */
+export type PlotThreadState = "hinted" | "open" | "active" | "resolved" | "abandoned";
+/** The campaign's open plot threads, read for the Names page (#3696, slice 1): DM only. Every word is core's; the page only labels it. */
+export interface PlotThreads {
+  /** The campaign's "stalled after N sessions" setting (DMBOT_THREAD_STALLED_SESSIONS). */
+  after: number;
+  /** In play first (happening now, open, hinted; the quietest first, then by name), then resolved and dropped by name. At most 100. */
+  threads: PlotThread[];
+  /** How many threads are stalled, for the line that says so. */
+  stalledCount: number;
+  /** The stalled line ready-made, when the answer sends it; the page builds it from stalledCount and after until then. */
+  stalledLine?: string;
+  /** Every thread the campaign has, so the page can say when the list is cut at 100. */
+  total: number;
+}
+export interface PlotThread {
+  id: string;
+  name: string;
+  kind: "thread" | "quest" | "mystery" | "hook" | "goal" | "promise";
+  state: PlotThreadState | null;
+  /** STATE_WORDS, or PROMISE_WORDS for a promise; "" when there is no state yet. */
+  stateWords: string;
+  /** The history lines, as core words them, oldest first. */
+  history: string[];
+  involved: { id: string; name: string; role: string }[];
+  /** Who moved the thread; endsIt is true for the one that ended it. */
+  movers: { id: string; name: string; endsIt: boolean; session: number | null }[];
+  cameFrom: { id: string; name: string }[];
+  ledTo: { id: string; name: string }[];
+  promise: { by: string[]; to: string[]; due: string } | null;
+  /** Known sessions since the thread was last touched (from the shared count, #4909). */
+  quiet: number;
+  /** Worked out from state and quiet, never stored (threads.is_stalled). */
+  stalled: boolean;
 }
 /** One press on the story threads card: keep one (the people and lines ticked, a new name if renamed), turn one down, or Undo. */
 /** One thread with lines waiting for the DM (#4616): `more` lines wait behind the ones shown, `sessions` is how many sessions said them. */
@@ -2622,12 +2730,18 @@ export const READING_POLLS = 150;
 export interface WebAnswer {
   state: "waiting" | "working" | "done" | "failed";
   error?: string | null;
+  /** A "Let me choose" pick (#4891): what it gave, how much more, and whether it answered the question. */
+  chose?: { id: string; count: number }[] | null;
+  choseMore?: number | null;
+  first?: boolean | null;
   /** A refused typed name (#4865): the reason, for a `typed-problem`. */
   reason?: string | null;
   /** A saved "Did they mean…?" answer (#4857): `kept`, `fixed`, `fixed-new` or `line-kept`. */
   code?: string | null;
   /** The version an Undo of an update DMbot took went back to (#4867). */
   back?: number | null;
+  /** A pack pick (#4873): the changes that were already the campaign's own, so they stayed as they were. */
+  skipped?: number | null;
   /** A pick of house rules (#4855): how many changes were left out, and the id for Undo. */
   left?: number | null;
   take?: number | null;
@@ -3354,12 +3468,26 @@ export interface AccountApi {
   heardKeep?(ref: string, question: string): Promise<{ code: string | null }>;
   /** A name typed for a waiting question ("Type it…", #4865); resolves with the code the bot saved (`fixed-new`). */
   heardType?(ref: string, question: string, name: string): Promise<{ code: string | null }>;
+  /** The "Let me choose" choices of a join question (#4891). */
+  joinChoices?(ref: string, group: string): Promise<JoinChoices>;
+  /** Asks the bot to work the choices out; resolves when they are kept. */
+  askJoinChoices?(ref: string, group: string): Promise<void>;
+  /** One pick: a session (by its time) or a story thread (by its id); resolves with what it gave and its Undo batch (#4891). */
+  joinChoose?(ref: string, group: string, pick: { session: number } | { thread: string }): Promise<JoinChoose>;
   /** "Only what everyone knows" or "What the party knows" for one message, or Undo of the latter by its change number. `given` is how
    * many things the party gave (null when nothing was copied). */
   answerJoin?(
     ref: string,
     change: { action: "everyone" | "party"; group: string } | { action: "undo"; batch: number },
   ): Promise<{ batch: number | null; given: number | null }>;
+  /** The "Still in the party?" questions waiting for the DM (#4895): DM only; the door answers anyone else with nothing. */
+  leaveQuestions?(ref: string): Promise<LeaveGroup[]>;
+  /** What the characters learned, waiting to be kept (#3863 step 2): DM only; the page asks the bot first, then reads the list. */
+  revealQuestions?(ref: string): Promise<RevealProposal[]>;
+  /** Keep one proposal, or Not this one (#3863 step 2). `batch` is the change for Undo through answerJoin's undo; null when it changed nothing. */
+  answerReveal?(ref: string, change: { id: string; answer: "keep" | "not" }): Promise<{ batch: number | null }>;
+  /** "Left the party" or "Still in the party" for one character (#4895): `batch` is the change for Undo (use `answerJoin`'s undo). */
+  answerLeave?(ref: string, change: { character: string; answer: "left" | "stays" }): Promise<{ batch: number | null }>;
   /** The clean-up page's read (#3740): the groups not linked to a player character. A DM or game master only. */
   graphCleanup?(ref: string): Promise<CleanupView>;
   /** "Where was it said?" for one clean-up entry (#3767; core GET `.../web/cleanup/{id}/places`): the same places `NamePlaces` draws. A DM or game master only. */
@@ -3473,6 +3601,19 @@ export interface AccountApi {
   webFind?(ref: string, query: { q: string; view?: WebView }): Promise<{ id: string; name: string; kind: string }[]>;
   /** The short summary of a picked name (#3243). `peek` answers a spoiler gate for a player. Missing from an older API. */
   webNodeSummary?(ref: string, id: string, peek?: boolean): Promise<NodeSummary>;
+  /** A road's or route place's condition (#4451): queued for the bot and waited for. `on` is "connection" or "place"; `words` only with "other". */
+  roadCondition?(
+    ref: string,
+    change: { on: "connection" | "place"; id: string; value: "open" | "hard" | "closed" | "gone" | "none" | "other"; words?: string },
+  ): Promise<{ batch: number | null }>;
+  /** Marks a connection's condition as the DM has checked it (#4451). */
+  keepRoadCondition?(ref: string, id: string): Promise<void>;
+  /** Shows or hides a connection's condition from the players (#4451). */
+  showRoadCondition?(ref: string, id: string, shown: boolean): Promise<void>;
+  /** Takes back a route-length or condition change by its batch number (#4451): the route-length undo. */
+  undoRouteLength?(ref: string, batch: number): Promise<void>;
+  /** A character's lineage and class as the rules name them (#3925): DM only; a refused read draws nothing. */
+  nodeTraits?(ref: string, node: string): Promise<NodeTrait[]>;
   /** The names a DM may look at the web as, player characters first; `q` narrows them (#2999). */
   webViewers?(ref: string, q: string): Promise<WebViewers>;
   /** "Add all" under a finished upload (#3222): queue the kinds ("all" or the kind keys); the answer is polled. */
@@ -3523,6 +3664,25 @@ export interface AccountApi {
   /** The story threads DMbot found in an upload (#4482): DM only; the list is read again after every press. */
   storyThreads?(ref: string): Promise<StoryThreads>;
   changeStoryThreads?(ref: string, change: StoryThreadsChange): Promise<StoryThreadsResult>;
+  /** The open plot threads, read for the Names page (#3696, slice 1). DM only. */
+  plotThreads?(ref: string): Promise<PlotThreads>;
+  /** Changes one thread's state, or "check" (still going) for a live thread (#3696, slice 2a). Waits for the bot; no Undo. */
+  changePlotThreadState?(ref: string, change: { thread: string; state: PlotThreadState | "check" }): Promise<void>;
+  /** Adds a name to a thread with its part (#3696, slice 2b). Waits for the bot; no Undo. */
+  addPlotThreadInvolved?(ref: string, change: { thread: string; who: string; role: string }): Promise<void>;
+  /** Starts a thread, or a promise (kind "promise", state "open") (#3696, slice 2c). Waits for the bot; resolves with the new thread's id. */
+  addPlotThread?(ref: string, change: { kind: PlotThread["kind"]; state: PlotThreadState; name: string }): Promise<{ id: string }>;
+  /** Sets a promise's due note; an empty note clears it (#3696, slice 2c). */
+  setPlotThreadDue?(ref: string, change: { promise: string; due: string }): Promise<void>;
+  /** Names who made a promise ("by") or who it was made to ("to") (#3696, slice 2c). */
+  addPlotThreadParty?(ref: string, change: { promise: string; side: "by" | "to"; who: string }): Promise<void>;
+  /** Links an event to a thread: it moved the thread along, or ended it. An event is picked (`event`) or made on the spot (`newEvent`) (#3696, slice 2d). */
+  linkPlotThreadEvent?(
+    ref: string,
+    change: { thread: string; how: "moved" | "ended" } & ({ event: string } | { newEvent: string }),
+  ): Promise<void>;
+  /** Says that one thread led to another thread or event (#3696, slice 2d). */
+  plotThreadLedTo?(ref: string, change: { from: string; to: string }): Promise<void>;
   /** The 🧵 Progress to check lines a session's talk changed on the story threads (#4616): DM only; nothing for anyone else. */
   threadProgress?(ref: string): Promise<ThreadProgressThread[]>;
   /** Keep the ticked lines and turn the rest down, none happened, or take either back (#4616; core thread_progress.py). */
@@ -3645,6 +3805,10 @@ export interface AccountApi {
   packUpdates?(campaignRef: string): Promise<PackUpdates>;
   /** Undo the update DMbot took for one pack, back to the version before it (#4872); resolves with the version it went back to. */
   packUpdateUndoLast?(campaignRef: string, setId: string, version: number): Promise<{ back: number | null }>;
+  /** Keep only the changes at these indexes of a pack's newer version (0-based, #4873); the rest leave the follow and become the campaign's own homebrew. */
+  packUpdatePick?(campaignRef: string, setId: string, version: number, kept: number[]): Promise<{ kept: number; left: number; skipped: number; take: number | null }>;
+  /** Undo a pick of a pack made within a day (#4873). */
+  packUpdateUndo?(campaignRef: string, take: number): Promise<void>;
   /** Undo the update DMbot took, back to the version before it (#4867); resolves with the version it went back to. */
   ruleUpdateUndoLast?(campaignRef: string, version: number): Promise<{ back: number | null }>;
   /** The pairs of house rules the DM has decided between (#3697). A game master only. */
@@ -4011,7 +4175,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

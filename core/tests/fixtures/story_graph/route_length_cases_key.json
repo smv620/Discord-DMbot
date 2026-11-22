@@ -1,0 +1,34 @@
+{
+  "about": "Invented quotes for the route length reader (#4255, memory/route_length.py `find`; #4991). Each case: a route's quote, the route's own ends by name, and the length's words the reader should keep ('' for none). `must_not` quotes must give ''.",
+  "cases": [
+    {"quote": "Kragmoor lies three days' ride from Thistledown.", "ends": ["Kragmoor", "Thistledown"], "words": "three days' ride"},
+    {"quote": "It is a day by cart to Oakhollow.", "ends": ["Oakhollow"], "words": "a day by cart"},
+    {"quote": "Duskwater is 20 miles from Embervale.", "ends": ["Duskwater", "Embervale"], "words": "20 miles"},
+    {"quote": "Mosswick is about two days' march from the coast.", "ends": ["Mosswick"], "words": "about two days' march"},
+    {"quote": "The ferry is half a day on foot from Bramblegate.", "ends": ["Bramblegate"], "words": "half a day on foot"},
+    {"quote": "Greywatch sits two or three days by horse from Port Vennick.", "ends": ["Greywatch", "Port Vennick"], "words": "two or three days by horse"},
+    {"quote": "Silverleaf is five hours to Harrowmere.", "ends": ["Silverleaf", "Harrowmere"], "words": "five hours"},
+    {"quote": "Stonereach is a week's sail to the south isles.", "ends": ["Stonereach"], "words": "a week's sail"},
+    {"quote": "From Wellby it is two leagues of road to Fenwick.", "ends": ["Wellby", "Fenwick"], "words": "two leagues of road"},
+    {"quote": "Rookhill lies a league from Lakeby.", "ends": ["Rookhill", "Lakeby"], "words": "a league"},
+    {"quote": "The journey would take three days' ride from Bryn Shander.", "ends": ["Bryn Shander"], "words": "three days' ride"},
+    {"quote": "It will take two days by cart to reach Easthaven.", "ends": ["Easthaven"], "words": "two days by cart"},
+    {"quote": "From Bryn Shander it may take a week by sled to Targos.", "ends": ["Bryn Shander", "Targos"], "words": "a week by sled"},
+    {"quote": "The pass is a day's ride from Hollowdeep, and will be for years.", "ends": ["Hollowdeep"], "words": "a day's ride"},
+    {"quote": "You will need two days by cart to Targos.", "ends": ["Targos"], "words": "two days by cart"}
+  ],
+  "must_not": [
+    {"quote": "Travelers say Kragmoor lies three days' ride from Thistledown.", "ends": ["Kragmoor", "Thistledown"]},
+    {"quote": "Is it a day by cart to Oakhollow?", "ends": ["Oakhollow"]},
+    {"quote": "If Duskwater were 20 miles from Embervale, we would walk.", "ends": ["Duskwater", "Embervale"]},
+    {"quote": "Mosswick is not two days' march from the coast.", "ends": ["Mosswick"]},
+    {"quote": "You have three days to reach Harlow.", "ends": ["Harlow"]},
+    {"quote": "We will ride two days from Brindle tomorrow.", "ends": ["Brindle"]},
+    {"quote": "You camp two days by the river at Pebbleford.", "ends": ["Pebbleford"]},
+    {"quote": "Crowmarsh is a few days from Cindermoor.", "ends": ["Crowmarsh", "Cindermoor"]},
+    {"quote": "The walk felt like a thousand miles to Wellby.", "ends": ["Wellby"]},
+    {"quote": "Kragmoor is a day by cart from Thistledown and two days by cart from Mosswick.", "ends": ["Kragmoor", "Thistledown", "Mosswick"]},
+    {"quote": "We will ride two days by cart to Targos.", "ends": ["Targos"]},
+    {"quote": "They'll need a day by boat to cross to Targos.", "ends": ["Targos"]}
+  ]
+}

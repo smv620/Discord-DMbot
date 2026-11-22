@@ -1,0 +1,29 @@
+{
+  "about": "Invented lore for the place culture and population reader (#4257, memory/place_peoples.py; #4982). Each case: a place, the layer (culture or population), the lineage key or a named culture's name, and the share ('' when none is said). `must_not` names a place and its sentence; that place must give nothing.",
+  "cases": [
+    {"place": "Kragmoor", "layer": "culture", "value": "dwarf", "how": "strong"},
+    {"place": "Thistledown", "layer": "culture", "value": "halfling", "how": "strong"},
+    {"place": "Silverleaf", "layer": "culture", "value": "elf", "how": "once"},
+    {"place": "Port Vennick", "layer": "culture", "value": "dwarf", "how": "strong"},
+    {"place": "Harrowmere", "layer": "culture", "value": "Illuskan", "how": "strong"},
+    {"place": "Bramblegate", "layer": "population", "value": "halfling", "how": "many"},
+    {"place": "Oakhollow", "layer": "population", "value": "human", "how": "most"},
+    {"place": "Duskwater", "layer": "population", "value": "gnome", "how": "most"},
+    {"place": "Stonereach", "layer": "population", "value": "dwarf", "how": ""},
+    {"place": "Embervale", "layer": "culture", "value": "tiefling", "how": "strong"},
+    {"place": "Greywatch", "layer": "culture", "value": "orc", "how": "strong"},
+    {"place": "Mosswick", "layer": "culture", "value": "gnome", "how": "once"}
+  ],
+  "must_not": [
+    {"place": "Kragford", "line": "A dwarven smith of Kragford works the forge by the gate."},
+    {"place": "Wellby", "line": "The Northern town of Wellby is quiet in winter."},
+    {"place": "Fenwick", "line": "Is Fenwick a halfling village?"},
+    {"place": "Rookhill", "line": "If Rookhill were an elven town, the elves would return."},
+    {"place": "Lakeby", "line": "Lakeby is not mostly humans."},
+    {"place": "Cindermoor", "line": "Cindermoor was mostly dwarves until the flood."},
+    {"place": "Brindle", "line": "Dwarven ale is sold in Brindle."},
+    {"place": "Harlow", "line": "After the battle at Harlow, many dwarves fled north."},
+    {"place": "Pebbleford", "line": "Old Mother Gwen, a halfling, lives in Pebbleford."},
+    {"place": "Crowmarsh", "line": "Merchants say Crowmarsh is mostly orcs."}
+  ]
+}

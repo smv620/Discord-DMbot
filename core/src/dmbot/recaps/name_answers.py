@@ -338,14 +338,15 @@ async def _split_or_group(
             note = f"Split into {len(split.value.parts)} names."
         elif answer.action == JOIN_GROUP:
             # Refuse exactly what the hints never offer (and what the door's check lets through
-            # only by a hand-made request): a group that is not a confirmed faction, or is hidden
-            # from the players. A group with a secret spelling is joined as in Discord (#3404).
+            # only by a hand-made request): a group that is not a confirmed faction, or a group the
+            # table doesn't hold (the gate: hidden by the DM, or not yet told to a newcomer, #4811).
+            # A group with a secret spelling is joined as in Discord (#3404).
             group = await memory.entity(guild_id, campaign_id, answer.target_id)
             if (
                 group is None
                 or group.status != CONFIRMED
                 or group.type != "faction"
-                or group.hidden_from_players
+                or group.id not in await memory.entries_held(guild_id, campaign_id)
             ):
                 return NOT_FOUND_WORD
             joined = await memory.join_group(

@@ -27,8 +27,10 @@ import psycopg
 from dmbot.memory import (
     descriptions,
     evidence,
+    first_feeling,
     forget_readings,
     graph_review,
+    join_questions,
     kin,
     knowers,
     knows_how,
@@ -41,7 +43,16 @@ from dmbot.memory import (
     who_answers,
 )
 from dmbot.memory import unnamed as unnamed_mod
-from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, STATES, Changes
+from dmbot.memory._changes import (
+    ALIASES,
+    ATTITUDES,
+    CLAIMS,
+    ENTITIES,
+    RELATIONS,
+    RULE_LINKS,
+    STATES,
+    Changes,
+)
 from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
 from dmbot.memory.list_names import split_list
 from dmbot.memory.models import (
@@ -59,6 +70,7 @@ from dmbot.memory.models import (
     NAME_MAX,
     PLAYER_CHARACTER,
     PROPOSED,
+    SPECIES,
     Flag,
     MemoryRuleError,
     clean_text,
@@ -452,6 +464,14 @@ def resolve_relationship(onto: Ontology, text: str) -> tuple[PredicateTerm, bool
 # friend, ally and enemy relationships are read as `knows` with the word they always meant.
 _FILLER = frozenset({"is", "are", "was", "were", "a", "an", "the"})
 _OLD_FEELING = {"ally_of": reputation_words.FRIENDLY, "enemy_of": reputation_words.HOSTILE}
+
+
+def is_condition(claim: Claim) -> bool:
+    """Whether a stored claim is a state ("is dead") rather than a connection between two."""
+    wording = Extracted(
+        claim.subject, claim.relationship, claim.object, claim.details, claim.lines, claim.how
+    )
+    return condition_of(wording) is not None
 
 
 def feeling_of(
@@ -1032,8 +1052,9 @@ async def _narrow_to(w: Changes, relation_id: str, characters: Sequence[str]) ->
     """The DM's 👥 pick on a connection the players already see (#4534, #4524): it is held back
     now and exactly these characters know it, in the claim's own change, so one Undo gives it back
     to everyone. The pick is the DM's own choice, so the guard lets it through (the write is made
-    with `dm_chose_secret`). Returns how many know it now."""
-    return len(await knowers.set_connection_knowers(w, relation_id, characters))
+    with `dm_chose_secret`). Returns how many know it now. The picker offers the party's
+    characters only, so an NPC who knows it keeps knowing (`players_only`, #3197, #4977)."""
+    return len(await knowers.set_connection_knowers(w, relation_id, characters, players_only=True))
 
 
 async def _learn_in_scene(w: Changes, relation_id: str, characters: Sequence[str]) -> int:
@@ -1048,6 +1069,74 @@ async def _learn_in_scene(w: Changes, relation_id: str, characters: Sequence[str
         except MemoryRuleError:
             continue
     return learned
+
+
+def feeling_pairs(
+    onto: Ontology,
+    claims: Sequence[Claim],
+    entities: Sequence[Mapping[str, Any]],
+    aliases: Sequence[Mapping[str, Any]],
+) -> dict[str, tuple[str, str]]:
+    """The two entries of each question that says how two characters feel (#4229 slice 4b), by
+    claim id. Pure. A question whose names no longer mean one entry each, whose two ends are the
+    same entry, or that is not a feeling between two characters, is left out."""
+    names = names_of(entities, aliases)
+    pairs: dict[str, tuple[str, str]] = {}
+    for claim in claims:
+        if is_condition(claim):
+            continue
+        a = _entry_of(names, claim.subject, claim.subject_picked)
+        b = _entry_of(names, claim.object, claim.object_picked)
+        if isinstance(a, str) or isinstance(b, str) or a[0] == b[0]:
+            continue
+        if feeling_of(onto, claim.relationship, claim.details, (a[1], b[1])) is None:
+            continue
+        pairs[claim.id] = (a[0], b[0])
+    return pairs
+
+
+def feeling_lines(
+    pairs: Mapping[str, tuple[str, str]],
+    entities: Sequence[Mapping[str, Any]],
+    relations: Sequence[Mapping[str, Any]],
+    homes: Sequence[Mapping[str, Any]],
+    species: Sequence[Mapping[str, Any]],
+) -> dict[str, str]:
+    """The reminder line for each pair that has never met (`first_feeling.line`), by claim id.
+    Pure: `relations` are the confirmed connections touching the pairs' entries (ended ones too:
+    two once connected have met; only live ones are homes), `homes` the DM's open, confirmed
+    feelings held by an entry (`toward_id` or `toward_lineage`), `species` the entries' lineage
+    links, oldest first."""
+    out: dict[str, str] = {}
+    ties: dict[str, list[first_feeling.Tie]] = {}
+    met: set[frozenset[str]] = set()
+    for r in relations:
+        s_id, o_id = str(r["subject_id"]), str(r["object_id"])
+        met.add(frozenset((s_id, o_id)))
+        if r["to_session_at"] is not None:
+            continue
+        ties.setdefault(s_id, []).append(
+            first_feeling.Tie(str(r["predicate"]), o_id, str(r["detail"] or ""))
+        )
+    lineages: dict[str, str] = {}
+    for r in species:
+        lineages.setdefault(str(r["entity_id"]), first_feeling.lineage_key(str(r["name"])))
+    kept = [
+        first_feeling.Kept(
+            str(r["holder_id"]), str(r["toward_id"] or ""), str(r["toward_lineage"] or ""),
+            float(r["score"]),
+        )
+        for r in homes
+        if r["toward_id"] is not None or r["toward_lineage"] is not None
+    ]  # fmt: skip
+    shown = {str(e["id"]): str(e["name"]) for e in entities if e["status"] == CONFIRMED}
+    for claim_id, (a, b) in pairs.items():
+        if frozenset((a, b)) in met:  # (not a first meeting: they're already connected)
+            continue
+        said = first_feeling.line(a, b, ties, lineages, kept, shown)
+        if said:
+            out[claim_id] = said
+    return out
 
 
 class ClaimStore:
@@ -1760,6 +1849,45 @@ class ClaimStore:
         found.sort(key=lambda c: name_key(c.subject))  # stable: oldest first within a name
         return found
 
+    async def starting_feelings(
+        self, guild_id: int, campaign_id: str, claims: Sequence[Claim]
+    ) -> dict[str, str]:
+        """The "Starting feeling?" line for each question that would be the first `knows`
+        between two characters (#4229 slice 4b): worked out now, never stored, from the DM's
+        kept feelings only (`first_feeling`). A question whose names no longer mean one entry
+        each, or whose two already have a connection, gets none. The two pure steps
+        (`feeling_pairs`, `feeling_lines`) are the website's too (#4942)."""
+        if not claims:
+            return {}
+        async with self._store._read(guild_id, campaign_id) as scope:
+            onto = await _load_ontology(scope)
+            entities = await scope.select(
+                ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
+            )
+            aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
+            pairs = feeling_pairs(onto, claims, entities, aliases)
+            if not pairs:
+                return {}
+            ids = sorted({i for pair in pairs.values() for i in pair})
+            # (every confirmed connection, ended ones too: two once connected have met; only the
+            # live ones are homes)
+            rows = await scope.select(
+                RELATIONS,
+                " AND status = %s AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+                [CONFIRMED, ids, ids],
+            )
+            holders = sorted({str(r["object_id"]) for r in rows if r["to_session_at"] is None})
+            homes = await scope.select(
+                ATTITUDES,
+                " AND status = 'confirmed' AND closed_at IS NULL AND holder_id = ANY(%s)",
+                [holders],
+            )
+            species = await scope.select(
+                RULE_LINKS, " AND entity_id = ANY(%s) AND kind = %s ORDER BY created_at, id",
+                [ids, SPECIES],
+            )  # fmt: skip
+        return feeling_lines(pairs, entities, rows, homes, species)
+
     @staticmethod
     def _split(
         rows: Sequence[Mapping[str, Any]],
@@ -2000,6 +2128,8 @@ class ClaimStore:
             readings += await met_store.forget_speaker(conn, guild_id, user_id)  # (#3172 slice 5)
             # (the language questions heard in their lines, #4745)
             readings += await trait_offers.forget_speaker(conn, guild_id, user_id)
+            # (the goodbye questions heard in their lines, #4537 slice 6b, 0574)
+            readings += await join_questions.forget_speaker(conn, guild_id, user_id)
             # (the private scenes they spoke in, #2996 rule 5)
             readings += await private_scene_store.forget_speaker(conn, guild_id, user_id)
             readings += await scenes.forget(conn, guild_id, user_id)

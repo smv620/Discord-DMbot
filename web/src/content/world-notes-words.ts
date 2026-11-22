@@ -2,6 +2,10 @@
 // stay level. DM only. A line's own words (the land, climate and ruler) come from the place screen's words (place-world-words.ts).
 import { placeWorldWords as place } from "./place-world-words";
 
+/** The words for each step, as Discord's card has them: "Mithral Keep is unfriendly toward elves". */
+const STEP_WORDS: Record<string, string> = { Hostile: "hostile to", Unfriendly: "unfriendly toward", Wary: "wary of", Friendly: "friendly toward", Devoted: "devoted to" };
+const CONDITION_WORDS: Record<string, string> = { open: "Open", hard: "Hard going", closed: "Closed", gone: "Gone" }; // a road's condition (#5003): the labels of Discord's 🚧 menu
+
 export const SHOWN_AT_MOST = 25; // Discord's menu limit; Keep all keeps only the lines the DM was shown
 
 export const worldNotesWords = {
@@ -14,6 +18,13 @@ export const worldNotesWords = {
   places: "Places",
   languages: "Languages",
   roads: "Roads",
+  feelings: "Feelings toward peoples",
+  changeFeeling: "✏️ Change",
+  feelingBack: "↩ Back",
+  steps: ["Hostile", "Unfriendly", "Wary", "Friendly", "Devoted"] as const,
+  feelingLine: (name: string, step: string, target: string): string => `${name} is ${STEP_WORDS[step] ?? step} ${target}`,
+  feelingQuestion: (name: string, target: string): string => `How does ${name} feel toward ${target}? One tap saves it.`,
+  keepAllFeelings: (n: number): string => (n === 1 ? "✅ Keep the 1 feeling" : `✅ Keep all ${n} feelings`),
   keep: "✅ Keep",
   notRight: "🚫 Not right",
   undo: "↩ Undo",
@@ -24,7 +35,7 @@ export const worldNotesWords = {
   keepAllRoads: (n: number): string => (n === 1 ? "✅ Keep the 1 road" : `✅ Keep all ${n} roads`),
   showing: (shown: number, total: number): string => `Showing ${shown} of ${total}. Check some and the rest come up.`,
   /** What a line is and where it came from. */
-  kindHint: { terrain: "Land", climate: "Climate", control: "Ruler", language: "Language" } as Record<string, string>,
+  kindHint: { terrain: "Land", climate: "Climate", control: "Ruler", condition: "Road condition", language: "Language" } as Record<string, string>,
   fromLore: "from your lore",
   fromSession: "from a session",
   kept: (line: string): string => `✅ Kept: ${line}`,
@@ -49,6 +60,11 @@ export const worldNotesWords = {
     if (n.layer === "climate") {
       const warmth = n.value === "other" ? n.words : (place.climate.warmth[n.value] ?? n.value);
       return `${n.name}: ${n.how === "dry" || n.how === "wet" ? `${warmth} and ${n.how}` : warmth}`;
+    }
+    if (n.layer === "condition") {
+      // a road's condition (#5003): the labels of Discord's 🚧 menu, the words Discord's list uses: "the road between A and B: Closed"
+      const how = n.value === "other" ? n.words : (CONDITION_WORDS[n.value] ?? n.value);
+      return `${n.name}: ${how}`;
     }
     return `${n.name}: ${place.ruler.lines[n.how ?? ""] ?? "Held by"} ${n.ruler ?? "a group"}`;
   },

@@ -4,7 +4,7 @@
 // its changes show with an Undo for a day. Its own file, loaded only from the House rules page while RULE_UPDATES_LIVE. Nothing is
 // drawn when no update waits or was taken for this set. The result of a pick or an Undo stays on screen after the follow has
 // changed (the reads then come back empty), so it is kept above those checks.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import { ruleUpdateWords as w } from "../content/rule-updates-words";
 import { ApiError, type AccountApi, type RuleUpdate as Update } from "./api";
@@ -31,6 +31,9 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
   const [open, setOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const [round, setRound] = useState(0);
+  // Focus: the Pick button returns focus when the picker closes; the saved line takes it after a pick (#4884).
+  const pickButton = useRef<HTMLButtonElement | null>(null);
+  const doneLine = useRef<HTMLParagraphElement | null>(null);
   const [result, setResult] = useState<Result | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
   const [undoing, setUndoing] = useState(false);
@@ -78,6 +81,11 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
       live = false;
     };
   }, [api, campaignRef, name, loaded, update, round]);
+
+  // After a pick the saved line takes focus (#4884).
+  useEffect(() => {
+    if (result?.kind === "done") doneLine.current?.focus();
+  }, [result]);
 
   function picked(got: { kept: number; left: number; take: number | null }) {
     setPicking(false);
@@ -144,7 +152,9 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
         {alertLine}
         {result.kind === "done" ? (
           <>
-            <p class="small">{w.done(result.name, result.kept, result.left)}</p>
+            <p class="small" role="status" ref={doneLine} tabIndex={-1}>
+              {w.done(result.name, result.kept, result.left)}
+            </p>
             <div class="row">
               <button type="button" class="button secondary" disabled={undoing || result.take === null} onClick={() => result.take !== null && void undo(result.take)}>
                 {w.undo}
@@ -211,6 +221,8 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
   }
 
   const id = `rule-update-${encodeURIComponent(`${campaignRef}-${name}`)}`;
+  // The picker's id names the campaign and the set, since two sets can be followed at once (#4884).
+  const pickId = `rule-pick-${encodeURIComponent(`${campaignRef}-${name}`)}`;
   return (
     <div class="stack">
       {alertLine}
@@ -221,7 +233,15 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
           {open ? w.hideChanges : w.seeChanges}
         </button>
         {update.more === 0 && (
-          <button type="button" class="button secondary" aria-expanded={picking} disabled={!api.ruleUpdatePick} onClick={() => setPicking((was) => !was)}>
+          <button
+            ref={pickButton}
+            type="button"
+            class="button secondary"
+            aria-expanded={picking}
+            aria-controls={picking ? pickId : undefined}
+            disabled={!api.ruleUpdatePick}
+            onClick={() => setPicking((was) => !was)}
+          >
             {w.pick}
           </button>
         )}
@@ -242,7 +262,18 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
         <LazyPanel
           load={loadRulePick}
           what="the changes you can keep"
-          props={{ api, campaignRef, update, onPicked: picked, onCancel: () => setPicking(false), onError: pickFailed }}
+          props={{
+            api,
+            campaignRef,
+            update,
+            id: pickId,
+            onPicked: picked,
+            onCancel: () => {
+              setPicking(false);
+              pickButton.current?.focus();
+            },
+            onError: pickFailed,
+          }}
         />
       )}
     </div>

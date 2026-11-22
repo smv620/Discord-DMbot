@@ -407,17 +407,24 @@ class RecapStore:
         """(campaign, session) of the unfinished jobs in a server that may run now: not leased,
         past their wait, and not already decided by the DM. At most one for each campaign, the
         oldest, so a campaign's recaps never run side by side."""
+        return [(c, at) for c, at, _ in await self.due_aged(guild_id, limit=limit)]
+
+    async def due_aged(self, guild_id: int, *, limit: int = 20) -> list[tuple[str, int, int]]:
+        """`due` with the time each job has been ready to run (`next_at`), longest wait first, so a
+        round that can only take a few takes the ones that have waited longest, whichever server or
+        campaign they are in (#3845)."""
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT DISTINCT ON (campaign_id) campaign_id, session_at FROM recap_jobs"
+                "SELECT campaign_id, session_at, next_at FROM ("
+                "SELECT DISTINCT ON (campaign_id) campaign_id, session_at, next_at FROM recap_jobs"
                 " WHERE guild_id = %s AND state NOT IN ('ready', 'failed') AND status = 'draft'"
                 " AND next_at <= %s AND leased_to <= %s"
                 " AND NOT EXISTS (SELECT 1 FROM recap_jobs r2"
                 "   WHERE r2.guild_id = recap_jobs.guild_id"
                 "   AND r2.campaign_id = recap_jobs.campaign_id AND r2.leased_to > %s)"
                 f" AND (NOT %s OR NOT {_SCRIPT_PENDING})"
-                " ORDER BY campaign_id, session_at LIMIT %s",
+                " ORDER BY campaign_id, session_at) due ORDER BY next_at, campaign_id LIMIT %s",
                 (
                     guild_id,
                     now,
@@ -430,7 +437,10 @@ class RecapStore:
                     limit,
                 ),
             )
-            return [(r["campaign_id"], int(r["session_at"])) for r in await cur.fetchall()]
+            return [
+                (r["campaign_id"], int(r["session_at"]), int(r["next_at"]))
+                for r in await cur.fetchall()
+            ]
 
     async def lease(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
         """Take the job for a while. False if another worker has it, or it is done or waiting."""
@@ -996,6 +1006,30 @@ class RecapStore:
             )
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
+
+    async def queue_depth(self, guild_id: int, *, audio: bool) -> tuple[int, int]:
+        """How many recap jobs in a server wait to run (the text jobs, or the narration of ready
+        recaps) and how long the oldest has waited, in seconds (0 when none): counts only, for the
+        worker's round log (#3845 4b, #4914). Waiting means due now, as `due_aged` and `audio_due`
+        count it; a job that is leased is still waiting."""
+        now = int(self._now())
+        if audio:
+            where = f"{AUDIO_DUE_WHERE}"
+            args: tuple[Any, ...] = (guild_id, AUDIO_MAX_TRIES, now)
+            oldest = "audio_next_at"
+        else:
+            where = "state NOT IN ('ready', 'failed') AND status = 'draft' AND next_at <= %s"
+            args = (guild_id, now)
+            oldest = "next_at"
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT count(*) AS n, COALESCE(%s - min({oldest}), 0) AS wait FROM recap_jobs"
+                f" WHERE guild_id = %s AND {where}",
+                (now, *args),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return int(row["n"]), max(0, int(row["wait"]))
 
     async def used_in_month(self, guild_id: int, campaign_id: str, now: float) -> Usage:
         """The campaign's recaps and narrated recaps this calendar month, UTC (#1428). A written

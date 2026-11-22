@@ -1,0 +1,92 @@
+"""The story read's counts-only notes go through the outbox with no Discord (#4904 3b-4a).
+Invented fixtures only."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+from typing import Any
+from unittest import IsolatedAsyncioTestCase
+from unittest.mock import AsyncMock, MagicMock
+
+from dmbot.bot import DMBot, _story_note
+from dmbot.outbox import (
+    STORY_MET_LIST,
+    STORY_RECAP_LINES,
+    STORY_SECRET_COUNT,
+    NotAnId,
+    clean_payload,
+)
+from dmbot.ui import met_list as met_list_ui
+from dmbot.ui import recap_lines as recap_lines_ui
+
+GUILD = 7001
+CID = "c" * 32
+
+
+def bot(*, headless: bool, channel: int | None = 55, posted: bool = True) -> Any:
+    out: Any = SimpleNamespace(
+        headless=headless,
+        outbox=SimpleNamespace(add_now=AsyncMock()),
+        campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id=CID))),
+        _upkeep_channel=MagicMock(return_value=(channel, None)),
+        post=AsyncMock(return_value=posted),
+    )
+    out._say_story_note = DMBot._say_story_note.__get__(out)
+    return out
+
+
+class TheQueue(IsolatedAsyncioTestCase):
+    async def test_headless_a_note_is_an_outbox_row_with_a_dedupe_key(self) -> None:
+        b = bot(headless=True)
+        queued = await _story_note(b, GUILD, CID, STORY_MET_LIST, {"n": 3})
+        self.assertTrue(queued)
+        args, kwargs = b.outbox.add_now.await_args
+        self.assertEqual(args, (GUILD, CID, STORY_MET_LIST, {"n": 3}))
+        self.assertTrue(kwargs["unique"])
+
+    async def test_the_bot_posts_it_itself(self) -> None:
+        b = bot(headless=False)
+        self.assertFalse(await _story_note(b, GUILD, CID, STORY_MET_LIST, {"n": 3}))
+        b.outbox.add_now.assert_not_awaited()
+
+    async def test_with_no_outbox_the_read_posts_it_itself(self) -> None:
+        b = bot(headless=True)
+        b.outbox = None
+        self.assertFalse(await _story_note(b, GUILD, CID, STORY_MET_LIST, {"n": 3}))
+
+    def test_a_payload_is_ids_and_counts_only(self) -> None:
+        self.assertEqual(clean_payload({"sid": "a" * 32, "n": 2}), {"sid": "a" * 32, "n": 2})
+        with self.assertRaises(NotAnId):
+            clean_payload({"sid": "the dragon of the north", "n": 2})
+
+
+class TheDelivery(IsolatedAsyncioTestCase):
+    async def test_the_met_list_line_is_the_one_the_read_posts(self) -> None:
+        b = bot(headless=False)
+        await b._say_story_note(GUILD, CID, STORY_MET_LIST, {"n": 2})
+        channel, text = b.post.await_args.args
+        self.assertEqual((channel, text), (55, met_list_ui.notice(2)))
+
+    async def test_the_recap_lines_note_carries_its_undo_button(self) -> None:
+        b = bot(headless=False)
+        await b._say_story_note(GUILD, CID, STORY_RECAP_LINES, {"sid": "a" * 32, "n": 4})
+        self.assertEqual(b.post.await_args.args[1], recap_lines_ui.note(4))
+        self.assertIsNotNone(b.post.await_args.kwargs["view"])
+
+    async def test_the_secret_count_line_is_posted_with_its_button(self) -> None:
+        b = bot(headless=False)
+        await b._say_story_note(GUILD, CID, STORY_SECRET_COUNT, {"n": 1})
+        self.assertIn("1 thing", b.post.await_args.args[1])
+
+    async def test_a_gone_campaign_or_channel_says_nothing(self) -> None:
+        b = bot(headless=False, channel=None)
+        await b._say_story_note(GUILD, CID, STORY_MET_LIST, {"n": 2})
+        b.post.assert_not_awaited()
+        b.campaigns.get = AsyncMock(return_value=None)
+        await b._say_story_note(GUILD, CID, STORY_MET_LIST, {"n": 2})
+        b.post.assert_not_awaited()
+
+    async def test_a_refused_post_raises_so_the_row_is_tried_again(self) -> None:
+        b = bot(headless=False, posted=False)
+        with self.assertRaises(RuntimeError):
+            await b._say_story_note(GUILD, CID, STORY_MET_LIST, {"n": 2})

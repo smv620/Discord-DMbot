@@ -40,6 +40,11 @@ ALLOWED = {
     "migrations/0543_world_roads_door.py": "a DM-only web door (NULL for anyone else): the roads "
     "whose read length a kept map disagrees with, for World notes' Roads group (#4677); a read "
     "length is shown to the DM alone and a length the DM kept is never listed",
+    "migrations/0589_web_route_length.py": "a web door any member may call: it leaves out a length "
+    "DMbot only read for anyone who is not a DM of the campaign, so players see one only once the "
+    "DM set or kept it (#4392)",
+    "web/route_lengths.py": "attaches the door's lengths to a graph page: nothing DMbot only read "
+    "reaches a player (the door's rule), and the `read` flag is the DM's view only (#4392)",
     "memory/world_notes.py": "World notes, the DM's list only: lists DMbot's read of a length a "
     "map disagrees with, and ✅ makes it the DM's (#4670 4c)",
 }
