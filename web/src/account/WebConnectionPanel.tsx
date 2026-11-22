@@ -295,6 +295,7 @@ export default function ConnectionPanel({
           {edge.links.map((l, i) => (
             <Line
               key={l.id}
+              reload={reload}
               n={i + 1}
               link={l}
               a={a}
@@ -343,6 +344,7 @@ const NEXT: Record<Link["direction"], Link["direction"]> = { "a-b": "b-a", "b-a"
 
 /** One connection: its compact line, and (opened) its full options. */
 function Line({
+  reload,
   n,
   link,
   a,
@@ -360,6 +362,8 @@ function Line({
   api,
   refId,
 }: {
+  /** Reads the page's graph again after a change to a road or route (#5035). */
+  reload?: (() => void) | undefined;
   n: number;
   link: Link;
   a: string;
