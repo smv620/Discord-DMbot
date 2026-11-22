@@ -156,9 +156,29 @@ describe("the page is read again after a change (#5035)", () => {
 
   it("a new length from the page drops the local copy, so the panel shows what was read", async () => {
     const api = mockApi("table");
-    const { rerender, container } = render(<RouteLength_ api={api} refId={REF} on="connection" id="l1" length={{ words: "a day", read: false }} route canEdit onChanged={noop} />);
+    const { rerender, container } = render(<RouteLength_ api={api} refId={REF} on="connection" id="l1" length={undefined} route canEdit onChanged={noop} />);
+    // A change first, so the panel holds its own copy of it.
+    fireEvent.click(screen.getByRole("button", { name: w.button }));
+    fireEvent.input(screen.getByRole("textbox"), { target: { value: "a day" } });
+    fireEvent.click(screen.getByRole("button", { name: w.save }));
+    await screen.findByText(w.saved("a day"));
+    expect(container.textContent).toContain(w.line("a day"));
+    // The page reads the length again, and that new length is what shows.
     rerender(<RouteLength_ api={api} refId={REF} on="connection" id="l1" length={{ words: "a week", read: false }} route canEdit onChanged={noop} />);
-    expect(container.textContent).toContain("a week");
-    expect(container.textContent).not.toContain("a day");
+    expect(container.textContent).toContain(w.line("a week"));
+    expect(container.textContent).not.toContain(w.line("a day"));
+  });
+
+  it("a change that fails still reads the page again", async () => {
+    let reads = 0;
+    const api = mockApi("table");
+    api.changeRouteLength = async () => {
+      throw new ApiError("server");
+    };
+    render(<RouteLength_ api={api} refId={REF} on="connection" id="l1" length={undefined} route canEdit onChanged={() => (reads += 1)} />);
+    fireEvent.click(screen.getByRole("button", { name: w.button }));
+    fireEvent.click(screen.getByRole("button", { name: w.save }));
+    expect(await screen.findByText(w.couldNot)).toBeTruthy();
+    expect(reads).toBe(1);
   });
 });
