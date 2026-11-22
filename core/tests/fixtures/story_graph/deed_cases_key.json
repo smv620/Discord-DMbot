@@ -22,6 +22,6 @@
     {"doer": "the party", "deed": "cleared the road", "mattered_to": ["Brindle"], "effect": "helped", "kind": "help", "lines": [42], "why": "a line the batch never had"},
     {"doer": "the party", "deed": "cleared the road", "mattered_to": [], "effect": "helped", "kind": "help", "lines": [18], "why": "matters to nobody"},
     {"doer": "Kesh", "deed": "saved the caravan", "mattered_to": ["Tamsin Reedwell"], "effect": "helped", "kind": "save", "lines": [6], "covered": [["kesh", "tamsin reedwell"]], "why": "the same pair twice in a session"},
-    {"doer": "the party", "deed": "remembered the hermit", "mattered_to": ["the old hermit"], "effect": "pleased", "kind": "other", "lines": [19], "why": "a memory, not a deed: the prompt's call, not the checks' (B on #4997)"}
+    {"doer": "the party", "deed": "remembered the hermit", "mattered_to": ["the old hermit"], "effect": "pleased", "kind": "other", "lines": [19], "why": "a memory, not a deed; left to the prompt (known miss B, Supervisor's ruling on #4997)"}
   ]
 }

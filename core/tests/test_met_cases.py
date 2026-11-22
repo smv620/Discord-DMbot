@@ -70,7 +70,7 @@ class MetCases(unittest.TestCase):
 
 
 # What the checks score today; a change that moves these updates them on purpose
-EXPECTED = {"found": 10, "missed": 1, "must_not_said": 2}  # (known: A and B on #4997)
+EXPECTED = {"found": 11, "missed": 0, "must_not_said": 2}  # (known: a trace and B, #4997)
 
 
 if __name__ == "__main__":
