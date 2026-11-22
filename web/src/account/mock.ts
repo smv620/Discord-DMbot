@@ -1082,7 +1082,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const playersLines = new Map<string, string>();
   // A place's land, climate and ruler (#4287), by the name's id; the groups the ruler menu offers; and two places' sizes for the climate rule.
   const worldRows = new Map<string, PlaceWorldRow[]>();
+  // The pretend Saltmarsh (#4990): its culture is dwarves (strong) and the named Illuskan (some); who lives here is halflings
+  // (most) and humans with no share said. Shown to the DM only; a player's read is refused (placeWorld below).
+  worldRows.set("n24", [
+    { layer: "culture", value: "dwarf", words: "", group: null, groupName: null, how: "strong", part: "", read: false, source: "dm", shown: true, cultureId: null, culture: null },
+    { layer: "culture", value: "", words: "", group: null, groupName: null, how: "some", part: "", read: false, source: "dm", shown: true, cultureId: "culture-illuskan", culture: "Illuskan" },
+    { layer: "population", value: "halfling", words: "", group: null, groupName: null, how: "most", part: "", read: false, source: "dm", shown: true, cultureId: null, culture: null },
+    { layer: "population", value: "human", words: "", group: null, groupName: null, how: "", part: "", read: false, source: "dm", shown: true, cultureId: null, culture: null },
+  ]);
   const worldGroups = [{ id: "a".repeat(32), name: "Ten-Towns" }, { id: "b".repeat(32), name: "The Arcane Brotherhood" }];
+  // The campaign's named cultures (#4412): a named culture is made by "Something else…" with words, and reused by its id.
+  const cultureList: { id: string; name: string }[] = [{ id: "culture-illuskan", name: "Illuskan" }];
   const worldLevel = (name: string): string | null => (name === "Brynwater Crossing" ? "settlement" : name === "Saltmarsh" ? "region" : null);
   // A place's size, kind and setting (#4173), by the name's id: nothing is set until a DM sets it, except "Saltmarsh", which DMbot read as a town.
   const placeFacts = new Map<string, { level: string | null; levelFrom: "read" | "dm" | null; form: "water" | "route" | null; formFrom: "read" | "dm" | null; setting: boolean }>();
@@ -3037,11 +3047,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     // "Private scenes" (#4102): two in the table scenario; a second "Not private" on one says gone.
     async placeWorld(ref, placeId) {
       calls.push(`placeWorld:${ref}:${placeId}`);
+      // The DM's door: a player's read is refused, as the real one answers nothing to a player.
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       // A route place (#5010): Greywatch is a road with a hard going condition the DM set; other places are not roads.
       const route = named.name === "Greywatch" ? { road: true, condition: { value: "hard" as const, words: "", since: 3, before: null, read: false, shown: false } } : {};
-      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })), ...route };
+      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })), cultures: cultureList.map((c) => ({ ...c })), ...route };
     },
     // The quest sheet of the mock's kept thread (#4547): the example the spec gives, for its one thread node.
     async threadCard(ref, thread) {
@@ -3458,7 +3470,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       // only what the DM confirmed and showed: no "read" row and no hidden one (the real door also cuts by what the reader may know)
-      return { rows: (worldRows.get(placeId) ?? []).filter((r) => r.shown && !r.read).map((r) => ({ layer: r.layer, value: r.value, words: r.words, groupName: r.groupName, how: r.how, part: r.part })) };
+      // (the table reads land, climate and ruler only; a culture or who-lives-here row is not on the table yet, #4412)
+      return { rows: (worldRows.get(placeId) ?? []).filter((r) => r.shown && !r.read && r.layer !== "culture" && r.layer !== "population").map((r) => ({ layer: r.layer as "terrain" | "climate" | "control", value: r.value, words: r.words, groupName: r.groupName, how: r.how, part: r.part })) };
     },
     async privateScenes(ref): Promise<PrivateScene[]> {
       calls.push(`privateScenes:${ref}`);
@@ -4184,6 +4197,41 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         const at = from.findIndex((x) => x.id === change.character);
         if (at >= 0) to.push(...from.splice(at, 1));
         else if (!to.some((x) => x.id === change.character)) throw new ApiError("bad-target");
+        return { ...row, others: [...row.others] };
+      }
+      if (change.action === "map-culture" || change.action === "map-population") {
+        // A culture or who lives here (#4412): one row per lineage (or named culture); null clears the layer; "other" makes a named culture.
+        if (row.kind !== "place") throw new ApiError("bad-target");
+        const layer = change.action === "map-culture" ? "culture" : "population";
+        const mine = worldRows.get(id) ?? [];
+        if (change.value === null) {
+          worldRows.set(id, mine.filter((r) => r.layer !== layer));
+          return { ...row, others: [...row.others] };
+        }
+        // A named culture is stored with an empty value and its id (as the store does); "Something else" reuses a name already kept.
+        let cultureId: string | null = null;
+        let culture: string | null = null;
+        let value = change.value;
+        if (change.value === "other") {
+          const words = (change.words ?? "").trim();
+          if (!words) throw new ApiError("bad-target");
+          const existing = cultureList.find((c) => c.name.toLowerCase() === words.toLowerCase());
+          const made = existing ?? { id: `culture-${cultureList.length + 1}`, name: words };
+          if (!existing) cultureList.push(made);
+          cultureId = made.id;
+          culture = made.name;
+          value = "";
+        } else {
+          const named = cultureList.find((c) => c.id === change.value);
+          if (named) {
+            cultureId = named.id;
+            culture = named.name;
+            value = "";
+          }
+        }
+        const rest = mine.filter((r) => !(r.layer === layer && (cultureId !== null ? r.cultureId === cultureId : r.value === value)));
+        rest.push({ layer, value: value ?? "", words: "", group: null, groupName: null, how: change.how ?? "", part: "", read: false, source: "dm", shown: false, cultureId, culture });
+        worldRows.set(id, rest);
         return { ...row, others: [...row.others] };
       }
       if (change.action === "map-terrain" || change.action === "map-climate" || change.action === "map-control" || change.action === "map-show") {

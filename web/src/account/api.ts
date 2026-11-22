@@ -2681,6 +2681,9 @@ export type NameChange =
   // A place's land, climate and ruler (#4287): a null value (or group) is "Not sure"; `how` is the shade ("" for none).
   | { action: "map-terrain" | "map-climate"; value: string | null; how: string }
   | { action: "map-control"; group: string | null; how: string }
+  // A place's culture and who lives here (#4412): `value` is a lineage key, "other" (with `words`), a named culture's id, or null
+  // to clear every row of the layer; `how` is the strength (culture) or the share (who lives here), "" for none.
+  | { action: "map-culture" | "map-population"; value: string | null; how?: string; words?: string }
   | { action: "map-show"; shown: boolean }
   | { action: "spell"; name: string }
   // `player`: for a player character, the Discord ID of who plays it (#2985); the bot checks the person is in the server.
@@ -4351,7 +4354,10 @@ export function httpApi(
 
 /** One open row of a place's land, climate or ruler (#4287). `read` is true until the DM confirms it ("DMbot read this"). */
 export interface PlaceWorldRow {
-  layer: "terrain" | "climate" | "control";
+  layer: "terrain" | "climate" | "control" | "culture" | "population";
+  /** A culture row's named culture (#4412): its id and name, when the culture is one the campaign has named. */
+  cultureId?: string | null;
+  culture?: string | null;
   value: string;
   words: string;
   group: string | null;
@@ -4372,6 +4378,8 @@ export interface PlaceWorld {
   road?: boolean;
   /** The route place's condition (#5010), the same shape as a road link's (#4996). */
   condition?: RoadCondition;
+  /** The campaign's named cultures, for the culture picker (#4412). */
+  cultures?: { id: string; name: string }[];
 }
 
 /** What the table may be told of a place's land, climate and ruler: words only, no DM-only mark and no group the reader may not know. */
