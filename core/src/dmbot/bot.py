@@ -342,6 +342,7 @@ from dmbot.memory import (
     embed_sources,
     embedding,
     extractor,
+    heard,
     importance_step,
     lore_context,
     lore_queue,
@@ -1558,6 +1559,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 structured_split=settings.recap_structured_output_split,
                 structured_beats=settings.recap_structured_output_beats,
                 stored_split=self.recap_stored_split,
+                on_split=self.recap_split_made,
             )
         # PlotBot's check of each ready recap against the earlier accepted ones (#2122): advice for
         # the DM's recap page only. Off unless DMBOT_PLOT_CHECK is on (it needs the recaps).
@@ -9380,6 +9382,51 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if gone:
                 log.info("Deleted %d change-log row(s) too old to undo", gone)
 
+    async def recount_heard(
+        self, gid: int, cid: str, session_at: int, retold: Collection[int] | None = None
+    ) -> int | None:
+        """The correction pass for a session's counts of names said (#3172 item d, ruled on the
+        issue): count them again from the stored transcript, without the lines read aloud as last
+        time's recap, and put the result in the place of what the live count kept. `retold`: the
+        split just made (the recap worker's, which is kept on its job); else the session's own
+        stored split (none: every line is play, so an undo of the split brings the counts back).
+        Only a live session, never an import; only people who agree now. Idempotent and in one
+        transaction, so a second run, or a failure, leaves good counts. Never raises;
+        counts and the error type only in the log. Returns the rows written, None when nothing
+        was done."""
+        if self.memory is None or self.transcripts is None or self.lookup is None:
+            return None
+        try:
+            with log_context(guild_id=gid, campaign_id=cid):
+                found = await self.transcripts.session_at(gid, cid, session_at)
+                # A live session only: an import has no live count to correct (its names are not
+                # counted at all today, and counting them would change its importance rank). A
+                # live session whose counts were all retold has none left and may still be undone.
+                if found is None or await self.transcripts.is_import(gid, found.id):
+                    return None
+                if retold is None:
+                    retold = extractor.recap_numbers(
+                        await self.transcripts.session_split(gid, found.id)
+                    )
+                lines = await self.transcripts.lines(gid, found.id)
+                agreed = await self.consent.consenting(gid)  # (at this moment)
+                lookup = await self.lookup.get(gid, cid)
+                counts = heard.count_lines(lines, agreed, partial(mentions, lookup), retold)
+                rows = [
+                    Heard(entity_id, speaker, times)
+                    for (entity_id, speaker), times in counts.items()
+                    if self.consent.has_consent(gid, speaker)
+                ]
+                kept = await self.memory.replace_session_heard(gid, cid, session_at, rows)
+                self.lookup.drop([cid])
+                log.info(
+                    "Counted names said again: %d row(s), %d line(s) retold", kept, len(retold)
+                )
+                return kept
+        except Exception as exc:
+            log.warning("Counting names said again failed (%s)", type(exc).__name__)
+            return None
+
     async def keep_heard_names(self, table: Table) -> None:
         """After a session: keep how often each known name was said, for ranking hints
         next time. Only lines of people who still agree, checked again right before
@@ -9400,6 +9447,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.lookup is not None:
                 self.lookup.drop([cid])
             log.info("Kept how often %d name(s) were said", kept)
+            # A split that was made first (the recap's, an undo's) is applied after this flush:
+            # the later of the two wins, in either order (#3172 item d).
+            sid = table.transcript_session_id
+            if sid is not None and self.transcripts is not None:
+                try:
+                    made = await self.transcripts.session_split(gid, sid) is not None
+                except Exception as exc:
+                    log.warning("Counted names: the split was not read (%s)", type(exc).__name__)
+                    made = False
+                if made:  # (even one with no recap: a recount made before this flush is added to)
+                    await self.recount_heard(gid, cid, started)
 
     def _feed_name_answers(self, table: Table, user_id: int, at_ms: int, text: str) -> None:
         """One consented line to the who-answers-to-what learner, which also needs to know who
@@ -12514,6 +12572,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return 0
         released = await release_recap_lines(self.transcripts, gid, sid)  # one transaction
         if released:
+            # the counts of names said come back from the transcript, as they were before the cut
+            await self.recount_heard(gid, cid, session.started_at)
             await self.read_put_back_lines(gid)
         return len(released)
 

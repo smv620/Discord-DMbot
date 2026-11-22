@@ -36,7 +36,7 @@ from typing import Any, LiteralString
 
 from psycopg import errors, sql
 
-from dmbot.db import Database, row_int
+from dmbot.db import Conn, Database, row_int
 from dmbot.memory import (
     as_of,
     beliefs,
@@ -9575,6 +9575,29 @@ class MemoryStore:
 
     # ---- mentions and corrections -------------------------------------------------------
 
+    async def replace_session_heard(
+        self, guild_id: int, campaign_id: str, session_started_at: int, heard: Sequence[Heard]
+    ) -> int:
+        """Put a session's counts of names said in the place of what was kept, in one transaction
+        (#3172 item d's correction pass): running it twice gives the same rows, and a failure
+        leaves the old counts. No rows (every line was retold) leaves the session with none.
+        How many rows were written. Observations, not edits, as `add_session_heard`."""
+        _check_time(session_started_at)
+        rows = [
+            h
+            for h in heard
+            if is_id(h.entity_id) and 0 < h.times <= 2**31 - 1 and 0 < h.speaker_id <= INT64_MAX
+        ]
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "DELETE FROM memory_heard WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_started_at = %s",
+                (guild_id, campaign_id, session_started_at),
+            )
+            if not rows:
+                return 0
+            return await self._insert_heard(conn, guild_id, campaign_id, session_started_at, rows)
+
     async def add_session_heard(
         self, guild_id: int, campaign_id: str, session_started_at: int, heard: Sequence[Heard]
     ) -> int:
@@ -9595,30 +9618,42 @@ class MemoryStore:
         if not rows:
             return 0
         async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "INSERT INTO memory_heard"
-                " (guild_id, campaign_id, entity_id, session_started_at, speaker_id, times)"
-                " SELECT %s, %s, coalesce(e.merged_into, e.id), %s, h.speaker_id,"
-                " sum(h.times)"
-                " FROM unnest(%s::text[], %s::bigint[], %s::int[])"
-                " AS h(entity_id, speaker_id, times)"
-                " JOIN memory_entities e ON e.guild_id = %s AND e.campaign_id = %s"
-                " AND e.id = h.entity_id AND e.status IN ('proposed', 'confirmed', 'merged')"
-                " GROUP BY 3, 5"
-                " ON CONFLICT (guild_id, campaign_id, session_started_at, entity_id, speaker_id)"
-                " DO UPDATE SET times = memory_heard.times + EXCLUDED.times",
-                (
-                    guild_id,
-                    campaign_id,
-                    session_started_at,
-                    [h.entity_id for h in rows],
-                    [h.speaker_id for h in rows],
-                    [h.times for h in rows],
-                    guild_id,
-                    campaign_id,
-                ),
-            )
-            return cur.rowcount
+            return await self._insert_heard(conn, guild_id, campaign_id, session_started_at, rows)
+
+    async def _insert_heard(
+        self,
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        session_started_at: int,
+        rows: Sequence[Heard],
+    ) -> int:
+        """The insert both writers share: a name merged meanwhile counts for the one it was
+        merged into, a removed one is skipped."""
+        cur = await conn.execute(
+            "INSERT INTO memory_heard"
+            " (guild_id, campaign_id, entity_id, session_started_at, speaker_id, times)"
+            " SELECT %s, %s, coalesce(e.merged_into, e.id), %s, h.speaker_id,"
+            " sum(h.times)"
+            " FROM unnest(%s::text[], %s::bigint[], %s::int[])"
+            " AS h(entity_id, speaker_id, times)"
+            " JOIN memory_entities e ON e.guild_id = %s AND e.campaign_id = %s"
+            " AND e.id = h.entity_id AND e.status IN ('proposed', 'confirmed', 'merged')"
+            " GROUP BY 3, 5"
+            " ON CONFLICT (guild_id, campaign_id, session_started_at, entity_id, speaker_id)"
+            " DO UPDATE SET times = memory_heard.times + EXCLUDED.times",
+            (
+                guild_id,
+                campaign_id,
+                session_started_at,
+                [h.entity_id for h in rows],
+                [h.speaker_id for h in rows],
+                [h.times for h in rows],
+                guild_id,
+                campaign_id,
+            ),
+        )
+        return cur.rowcount
 
     # `memory_mentions` holds pointers, never words (#2329): the after-session name scan keeps
     # where a suggested name was said (a line reference and the place in it, `memory/places.py`),
