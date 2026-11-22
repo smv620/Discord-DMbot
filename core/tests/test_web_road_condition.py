@@ -127,8 +127,29 @@ class TheDoor(Roads):
         await self.show_it(False)
         self.assertNotIn("condition", await self.road_link(bob, full=False))
 
+    async def test_a_players_before_is_dropped_when_the_row_it_ended_was_hidden(self) -> None:
+        bob = await self.bob_session()
+        await self.began(1_000)
+        await self.road_press("connection", self.road, "open")
+        await self.road_press("connection", self.road, "closed")
+        await self.show_it(True)
+        seen = (await self.road_link(bob, full=False))["condition"]
+        self.assertEqual(
+            (seen["value"], seen["before"]), ("closed", {"value": "open", "words": ""})
+        )
+        await self.show_it(False)
+        self.assertNotIn("condition", await self.road_link(bob, full=False))
+
 
 class TheActions(Roads):
+    async def test_the_longest_words_go_through_and_spaces_are_squeezed(self) -> None:
+        words = "x" * 60
+        self.assertFalse((await self.road_press("place", self.pass_, "other", words)).error)
+        self.assertEqual((await self.conditions())["nodes"][0]["condition"]["words"], words)
+        await self.road_press("place", self.pass_, "other", " half \n washed   out ")
+        got = (await self.conditions())["nodes"][0]["condition"]
+        self.assertEqual(got["words"], "half washed out")
+
     async def test_set_changes_it_with_one_undo_and_none_takes_it_off(self) -> None:
         outcome = await self.road_press("place", self.pass_, "hard")
         self.assertFalse(outcome.error)

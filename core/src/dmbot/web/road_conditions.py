@@ -101,9 +101,8 @@ async def queue_set(db: Database, session: Session, ref: str, body: object) -> s
     "closed" | "gone" | "none" | "other", "words": <1 to 60 characters, only for "other">}`; `none`
     is "Not sure". The id of the answer the page polls at `.../web/answers/{id}`."""
     on, target = _target(body)
-    assert isinstance(body, dict)  # (`_target` checked it)
-    value = body.get("value")
-    words = body.get("words", "")
+    value = body.get("value") if isinstance(body, dict) else None
+    words = body.get("words", "") if isinstance(body, dict) else None
     if not isinstance(words, str) or not (value in VALUES or value == "other"):
         raise RecapError("bad_action")
     clean = " ".join(words.split())
@@ -126,9 +125,7 @@ async def queue_set(db: Database, session: Session, ref: str, body: object) -> s
 async def queue_keep(db: Database, session: Session, ref: str, body: object) -> str:
     """✅ Condition is right: `{"id": <a road's 32 hex>}`; DMbot's read becomes the DM's. Only a
     road (a connection) has a read to keep."""
-    _on, target = _target(
-        {"on": "connection", "id": body.get("id") if isinstance(body, dict) else None}
-    )
+    _on, target = _target(_of_road(body))
     return await relationships._queue(
         db, session, ref, entity=None, action="road-condition-keep", target="",
         text=f"c {target}", flag=False,
@@ -140,9 +137,7 @@ async def queue_show(db: Database, session: Session, ref: str, body: object) -> 
     shown = body.get("shown") if isinstance(body, dict) else None
     if not isinstance(shown, bool):
         raise RecapError("bad_action")
-    _on, target = _target(
-        {"on": "connection", "id": body.get("id") if isinstance(body, dict) else None}
-    )
+    _on, target = _target(_of_road(body))
     return await relationships._queue(
         db, session, ref, entity=None, action="road-condition-show", target="",
         text=f"c {target} {int(shown)}", flag=False,
