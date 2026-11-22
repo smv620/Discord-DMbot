@@ -72,6 +72,7 @@ function without(was: Record<string, Staged>, change: WebLinkChange): Record<str
 }
 
 export default function ConnectionPanel({
+  reload,
   edge,
   nameOf,
   kindOf,
@@ -85,6 +86,8 @@ export default function ConnectionPanel({
   guard,
   open: firstOpen = null,
 }: {
+  /** Reads the page's graph again after a change to a road or route (#5035); the line then comes from the API. */
+  reload?: () => void;
   edge: WebEdge;
   nameOf: (id: string) => string;
   kindOf: (id: string) => string;
@@ -413,7 +416,7 @@ function Line({
               length={link.length}
               route={!!link.route}
               canEdit={canEdit}
-              onChanged={() => undefined}
+              onChanged={() => reload?.()}
             />
           )}
           {/* A road's condition (#4451): behind ROAD_CONDITION_LIVE. The road is named by its two ends, as the panel names them. */}
@@ -427,8 +430,8 @@ function Line({
               condition={link.condition}
               road={!!link.road}
               canEdit={canEdit}
-              // The graph is not re-read here yet: the new condition shows once the page is read again (asked on the issue).
-              onChanged={() => undefined}
+              // A change is read again from the page's graph, so the line comes from the API (#5035).
+              onChanged={() => reload?.()}
             />
           )}
           {sourceWords && <p class="small muted">{sourceWords}</p>}
