@@ -267,6 +267,8 @@ class TheRecapTextJob(unittest.IsolatedAsyncioTestCase):
             b._run_recap_job = lambda *a: F._run_recap_job(b, *a)
             b.recap_worker = Worker()
             b.work_guild_ids = servers
+        b._log_queue_depth = lambda *a, **k: _none()
+            b._log_queue_depth = lambda *a, **k: _none()
             b.guilds = []
             b.run_recap_jobs = lambda: F.run_recap_jobs(b)
             b.release_recap_holds = lambda gid: _none()
