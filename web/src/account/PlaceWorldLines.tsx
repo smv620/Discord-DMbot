@@ -5,6 +5,7 @@
 import { useState } from "preact/hooks";
 
 import { placeWorldWords as w } from "../content/place-world-words";
+import { cultureLine, populationLine } from "../content/place-culture-lines";
 import { ApiError, type AccountApi, type NameRow, type PlaceWorldTable } from "./api";
 
 export default function PlaceWorldLines({ api, refId, row }: { api: AccountApi; refId: string; row: NameRow }) {
@@ -31,6 +32,11 @@ export default function PlaceWorldLines({ api, refId, row }: { api: AccountApi; 
   const land = by("terrain");
   const climate = by("climate");
   const rulers = data?.rows.filter((r) => r.layer === "control" && r.part === "") ?? [];
+  // A culture and who lives here (#4412): the rows the DM kept and showed, in the words of the panel.
+  const cultures = data?.rows.filter((r) => r.layer === "culture" && r.part === "") ?? [];
+  const people = data?.rows.filter((r) => r.layer === "population" && r.part === "") ?? [];
+  const cultureText = cultureLine(cultures);
+  const peopleText = populationLine(people);
   const landWord = land ? (land.value === "other" ? land.words : (w.land.choices[land.value]?.[0] ?? land.value).toLowerCase()) : "";
   const warmWord = climate ? (w.climate.warmth[climate.value] ?? climate.value).toLowerCase() : "";
   return (
@@ -44,7 +50,7 @@ export default function PlaceWorldLines({ api, refId, row }: { api: AccountApi; 
             <p role="alert">{w.table.failed}</p>
           ) : !data ? (
             <p class="muted">{w.table.loading}</p>
-          ) : !land && !climate && rulers.length === 0 ? (
+          ) : !land && !climate && rulers.length === 0 && cultures.length === 0 && people.length === 0 ? (
             <p class="muted">{w.table.none}</p>
           ) : (
             <>
@@ -53,6 +59,8 @@ export default function PlaceWorldLines({ api, refId, row }: { api: AccountApi; 
               {rulers.map((r, i) => (
                 <p key={i}>{w.rulerLine(w.ruler.lines[r.how] ?? w.ruler.lines["rules"]!, r.groupName ?? "")}</p>
               ))}
+              {cultureText && <p>{cultureText}</p>}
+              {peopleText && <p>{peopleText}</p>}
             </>
           )}
         </div>

@@ -60,6 +60,7 @@ export const placeWorldWords = {
     notSure: "Not sure",
     strengths: { strong: "strongly", some: "somewhat", traces: "a little", once: "once" } as Record<string, string>,
     strengthChoices: [["strong", "Strong"], ["some", "Some"], ["traces", "Traces"], ["once", "Once"]] as [string, string][],
+    ownCulture: "a culture of your own",
     adjective: { dwarf: "dwarven", elf: "elven", dragonborn: "dragonborn", goliath: "goliath", halfling: "halfling", human: "human", gnome: "gnomish", orc: "orcish", tiefling: "tiefling" } as Record<string, string>,
     plural: { dwarf: "dwarves", elf: "elves", dragonborn: "dragonborn", goliath: "goliaths", halfling: "halflings", human: "humans", gnome: "gnomes", orc: "orcs", tiefling: "tieflings" } as Record<string, string>,
   },
