@@ -1305,6 +1305,8 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "reading-",
             "names-fixed-",
             "world-",
+            "route-",
+            "road-",
             "maps-",
             "thread-",
             "part-",
@@ -1348,6 +1350,15 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         if got["action"] == "maps-add":  # (a sent map: the new map's id, for the page's list)
             out["mapId"] = str(got.get("resultId") or "") if done else None
         return out
+    if str(got["action"]).startswith(("route-", "road-")):
+        # a route's length or a road's condition (#4392, #4451): how it ended and the change it
+        # made, for the page's Undo (none when it changed nothing); no edge to draw
+        made = got.get("resultBatches") or []
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "batch": int(made[0]) if got["state"] == "done" and made else None,
+        }
     if str(got["action"]).startswith("world-"):
         # a World notes ✅, 🚫 or ↩ Undo (#4285): how it ended, how many a Keep kept, and the change
         # it made for the page's Undo (none when it changed nothing)
