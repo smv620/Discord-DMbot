@@ -138,7 +138,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         dm_bot_channel_id=None, ask_before_adding=True,
     )  # fmt: skip
     bot = SimpleNamespace(
-        settings=SimpleNamespace(recaps_on=True),
+        settings=SimpleNamespace(recaps_on=True, worker_on=False),
         import_job=SimpleNamespace(store=store),
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         **{"memory": SimpleNamespace(entities=AsyncMock(return_value=[])), **kw},

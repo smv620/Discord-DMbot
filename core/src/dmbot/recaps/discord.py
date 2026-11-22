@@ -61,6 +61,7 @@ from dmbot.memory.scene import SceneTracker, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.outbox import (
     IMPORT_CLOCK_OFFER,
+    IMPORT_RECAP_HOLD,
     RECAP_ALLOWANCE,
     RECAP_FAILED,
     RECAP_NAMES,
@@ -406,6 +407,7 @@ class RecapFeatures:
                                 RECAP_UNCHECKED: self.deliver_recap_unchecked,
                                 RECAP_ALLOWANCE: self.deliver_recap_allowance,
                                 IMPORT_CLOCK_OFFER: self.deliver_import_clock_offer,
+                                IMPORT_RECAP_HOLD: self.deliver_import_recap_hold,
                             },
                             self.outbox_wake,
                         ),
@@ -691,6 +693,7 @@ class RecapFeatures:
         quiet: bool = False,
         group_id: str = "",
         say: bool = True,
+        defer_question: bool = False,
     ) -> str:
         """Queue the recap, unless the session left name questions open or the story extractor is
         still to run: then hold it (#2169). With questions open the DM is asked at once; with only
@@ -703,7 +706,10 @@ class RecapFeatures:
         imported session): only open questions hold it, never a silent wait. `quiet`: the DM was
         asked about another recap of the same import already, so this hold is made asked but its
         question is not posted again. `group_id`: the import's id; its holds go together.
-        `say` False: a recap queued here is not announced (an import round says it once)."""
+        `say` False: a recap queued here is not announced (an import round says it once).
+        `defer_question` (an import's recap with the worker on, #4904 3b-3): the hold is made as
+        usual but its question is an outbox row the bot posts, so a worker needs no Discord; if
+        that post never lands, the hold's own reminder and expiry still end the wait."""
         gid, cid = campaign.guild_id, campaign.id
         # The name question, its reminder and its edits all go where the hold says (#3874 E2): the
         # DM Bot channel when the campaign has one, else the caller's. Counts only, as before.
@@ -726,6 +732,16 @@ class RecapFeatures:
                     held = True
                     if waiting == 0:
                         log.info("Recap: held until the story extractor has run")
+                        return "held"
+                    if defer_question and not quiet and self.outbox is not None:
+                        await self.outbox.add_now(
+                            gid,
+                            cid,
+                            IMPORT_RECAP_HOLD,
+                            {"session_at": session_at, "group": group_id or "-", "open": waiting},
+                            unique=True,
+                        )
+                        log.info("Recap: held for %d name question(s)", waiting)  # a count
                         return "held"
                     sent = quiet or await self.post(
                         channel_id,
@@ -752,6 +768,35 @@ class RecapFeatures:
             if await self._queue_recap(campaign, session_at, channel_id, dm, say=say)
             else "already"
         )
+
+    async def deliver_import_recap_hold(
+        self, gid: int, cid: str, payload: Mapping[str, Any]
+    ) -> None:
+        """The outbox's name question for a held import recap (#4904 3b-3): the line
+        `_hold_or_queue` posts itself with the worker off, built from the hold. A hold that has
+        gone (answered, released, expired) has nothing to ask; a campaign with no channel
+        releases the hold, so its recap is written; a
+        refused post raises, so the row is tried again."""
+        store = self.recap_holds
+        campaign = await self.campaigns.get(gid, cid)
+        at = int(payload["session_at"])
+        if store is None or campaign is None or await store.get(gid, cid, at) is None:
+            return
+        channel = campaign.dm_bot_channel_id or campaign.dm_screen_channel_id
+        if channel is None:
+            # Nobody can be asked, so release the hold as the in-process path does (a wait nobody
+            # knows about is no wait); the recap is queued, not left holding for ever.
+            await store.release(gid, cid, at)
+            return
+        group = "" if payload["group"] == "-" else str(payload["group"])
+        sent = await self.post(
+            channel,
+            recap_hold.question_text(int(payload["open"])),
+            view=hold_view(cid, at, group),
+            remember=hold_line_key(gid, cid, at, group),
+        )
+        if not sent:
+            raise RuntimeError("not-posted")
 
     async def recheck_recap_hold(self, table: Table) -> None:
         """After the story extractor (#2169): count the name questions again for a recap held
@@ -2297,6 +2342,7 @@ class RecapFeatures:
             quiet=asked_before,
             group_id=ready.import_id,
             say=False,
+            defer_question=self.settings.worker_on,
         )
         if result == "queued" and self.import_state is not None:
             await self.import_state.add_each(
