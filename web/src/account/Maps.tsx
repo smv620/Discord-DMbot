@@ -13,6 +13,7 @@ import { ApiError, type AccountApi, type MapItem, type MapsChange, type MapsRead
 import LazyPanel from "./LazyPanel";
 import MapAddForm from "./MapAddForm";
 import WorkProgress from "./WorkProgress";
+import CampaignNav from "./CampaignNav";
 
 /** The campaign in the address: `/account/maps/<server>.<campaign>`. */
 export function refFromPath(path: string): string | null {
@@ -119,6 +120,7 @@ export default function Maps({ api, refId }: { api: AccountApi; refId: string })
   const busy = since !== null;
   return (
     <section class="stack" aria-label={w.heading} aria-busy={busy}>
+      <CampaignNav api={api} campaignRef={refId} page="maps" name={null} />
       <p class="small">{w.lead}</p>
       <p class="small muted">{w.noCheck}</p>
       {busy && (

@@ -25,7 +25,8 @@ export type CampaignPageKey =
   | "pictures"
   | "maps"
   | "houseRules"
-  | "homebrew";
+  | "homebrew"
+  | "sharedRules";
 
 export const GROUP_OF: Record<CampaignPageKey, CampaignGroup> = {
   campaign: "overview",
@@ -41,6 +42,7 @@ export const GROUP_OF: Record<CampaignPageKey, CampaignGroup> = {
   maps: "story",
   houseRules: "rules",
   homebrew: "rules",
+  sharedRules: "rules",
 };
 
 export interface SectionPage {
@@ -72,6 +74,7 @@ export function sectionPages(ref: string, o: { isDm: boolean; importsOn?: boolea
     { key: "houseRules", href: `/account/house-rules/${e}`, label: words.pages.houseRules, note: words.pageNotes.houseRules },
     { key: "homebrew", href: `/account/homebrew/${e}`, label: words.pages.homebrew, note: words.pageNotes.homebrew },
   ];
-  if (o.isDm) rules.push({ key: "sharedRules", href: "/account/sharing", label: words.sharedRules, note: words.sharedRulesNote });
+  // A campaign's Shared rules is a page of that campaign (#5039): it keeps the campaign's navigation.
+  if (o.isDm) rules.push({ key: "sharedRules", href: `/account/sharing/${e}`, label: words.sharedRules, note: words.sharedRulesNote });
   return { story, add, rules };
 }

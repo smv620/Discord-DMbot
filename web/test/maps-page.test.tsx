@@ -42,7 +42,8 @@ describe("the Maps page", () => {
   it("shows a DM every map, with the question on a waiting one", async () => {
     render(<Maps api={mockApi("table")} refId={DM} />);
     await screen.findByText("Icewind Dale");
-    expect(screen.getAllByRole("listitem").length).toBe(5);
+    // (the campaign's navigation has lists of its own, so the items inside a navigation are not counted)
+    expect(screen.getAllByRole("listitem").filter((li) => !li.closest("nav")).length).toBe(5);
     expect(within(rowFor("Cave")).getByText(w.dmTitle("Dee"))).toBeTruthy();
     expect(within(rowFor("Cave")).getByRole("button", { name: w.useYes })).toBeTruthy();
   });
