@@ -18,6 +18,9 @@ interface DraftWire {
 export function draftFrom(wire: DraftWire): WizardDraft {
   const answers = { ...emptyAnswers(), ...(wire.answers ?? {}) } as WizardDraft["answers"];
   if (!Array.isArray(answers.characters)) answers.characters = [];
+  // An older draft kept one party name; it is read as a list of one (#4300).
+  // The old single name is dropped from the character once it is read as a list, so it is not sent back.
+  answers.characters = answers.characters.map(({ partyName, ...c }) => ({ ...c, partyNames: c.partyNames ?? (partyName ? [partyName] : []) }));
   if (!Array.isArray(answers.homebrew_links)) answers.homebrew_links = [];
   if (!Array.isArray(answers.skipped)) answers.skipped = [];
   return {
@@ -107,7 +110,7 @@ export function httpWizard(base: string, fetcher: typeof fetch = fetch): WizardA
     async pageText(guild, text) {
       const got = (await call("POST", at(guild, "/page-text"), { text })) as { name?: unknown; characters?: unknown };
       const names = Array.isArray(got.characters) ? got.characters.map(String) : [];
-      return { name: typeof got.name === "string" ? got.name : "", characters: names.map((full) => ({ full, partyName: full.split(" ")[0] ?? full })) };
+      return { name: typeof got.name === "string" ? got.name : "", characters: names.map((full) => ({ full, partyNames: [full.split(" ")[0] ?? full] })) };
     },
     async members(guild) {
       const got = (await call("GET", at(guild, "/members"))) as { members?: unknown };
