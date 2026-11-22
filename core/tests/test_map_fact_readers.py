@@ -31,6 +31,8 @@ ALLOWED = {
     "pictures/store.py": "a picture deleted with its map applies the same rule (§7.5, #4259)",
     "migrations/0472_campaign_maps.py": "adds the `map_id` column; nothing reads it (#4344)",
     "migrations/0466_place_world_table_door.py": "confirmed, shown rows; gate and for_players",
+    "migrations/0591_web_road_condition.py": "a web door any member may call: a player gets only a "
+    "confirmed, shown condition (the rule of `for_players`, again in SQL; #4451)",
     "migrations/0463_place_world_door.py": "a DM-only door: NULL for anyone else (#4287; #4311)",
     "migrations/0590_web_place_culture.py": "adds a culture's name to both place doors (the DM's "
     "and the table's, which still gives only confirmed, shown rows; #4412)",

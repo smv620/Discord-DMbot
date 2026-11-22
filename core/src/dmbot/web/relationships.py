@@ -39,7 +39,15 @@ from dmbot.memory.standing import dm_line_word
 from dmbot.memory.voice import split_effect_note
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
-from dmbot.web import all_names, graph_view, link_sources, pc_icons, route_lengths, which_choices
+from dmbot.web import (
+    all_names,
+    graph_view,
+    link_sources,
+    pc_icons,
+    road_conditions,
+    route_lengths,
+    which_choices,
+)
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -410,6 +418,8 @@ async def read_web(
     # a route's stated length (#4392): a length DMbot only read is the DM's alone (the door
     # leaves it out for anyone else), and only the DM's own view says it was read
     await route_lengths.with_route_lengths(db, session, ref, page, full=bool(own_view))
+    # a road's condition (#4451): a player is told only of one the DM kept and showed (the door)
+    await road_conditions.with_road_conditions(db, session, ref, page, full=bool(own_view))
     # each player character's picture, for the nodes this person may see (#3621)
     # (the DM's Players view is what a player gets, so it carries no tools for the picture)
     await pc_icons.with_icons(db, session, ref, page, tools=view != "players")

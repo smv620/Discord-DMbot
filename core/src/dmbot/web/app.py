@@ -95,6 +95,7 @@ from dmbot.web import (
     report,
     restores,
     reveals,
+    road_conditions,
     route_lengths,
     rule_sharing,
     rule_updates,
@@ -2335,6 +2336,54 @@ def create_app(
         session, _token = signed
         try:
             return {"answer": await route_lengths.queue_undo(db, session, ref, batch)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/road-condition", status_code=202)
+    async def me_campaign_road_condition(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """🚧 Condition on a road or route place: `{"on", "id", "value", "words"}` (#4451)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await road_conditions.queue_set(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/road-condition/keep", status_code=202)
+    async def me_campaign_road_condition_keep(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """✅ Condition is right: `{"id"}` of a road (#4451)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await road_conditions.queue_keep(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/road-condition/show", status_code=202)
+    async def me_campaign_road_condition_show(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """👁️ / 🙈 a road's condition: `{"id", "shown"}` (#4451)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await road_conditions.queue_show(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
