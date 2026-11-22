@@ -99,15 +99,16 @@ class Outbox:
         if not _KIND.match(kind):
             raise NotAnId("kind")
         body = json.dumps(clean_payload(payload))
+        # (the database keeps it to one: the partial unique index of 0595 refuses a second dedupe
+        # row of the same kind and payload while one waits or is sent, even from another writer)
         cur = await conn.execute(
-            "INSERT INTO outbox (guild_id, campaign_id, kind, payload, created_at)"
-            " SELECT %s, %s, %s, %s::jsonb, %s WHERE NOT (%s AND EXISTS ("
-            "   SELECT 1 FROM outbox WHERE guild_id = %s AND campaign_id = %s AND kind = %s"
-            "   AND payload = %s::jsonb AND state IN ('waiting', 'sending')))"
+            "INSERT INTO outbox (guild_id, campaign_id, kind, payload, created_at, dedupe)"
+            " VALUES (%s, %s, %s, %s::jsonb, %s, %s)"
+            " ON CONFLICT (guild_id, campaign_id, kind, payload)"
+            " WHERE dedupe AND state IN ('waiting', 'sending') DO NOTHING"
             " RETURNING id",
-            (guild_id, campaign_id, kind, body, int(self._now()), unique,
-             guild_id, campaign_id, kind, body),
-        )  # fmt: skip
+            (guild_id, campaign_id, kind, body, int(self._now()), unique),
+        )
         row = await cur.fetchone()
         return 0 if row is None else int(row["id"])
 
