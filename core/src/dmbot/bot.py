@@ -16910,9 +16910,9 @@ async def fill_parties(
 
 async def _story_note(bot: Any, gid: int, cid: str, kind: str, payload: Mapping[str, Any]) -> bool:
     """With no Discord (the worker, #4904 3b-4a) a story read's counts-only note is an outbox row
-    the bot posts, once for each kind, session and count; True when it was queued, False when the read
-    posts it itself (the bot, or no outbox). The payload is a session id and a count, never a
-    word of the story."""
+    the bot posts, once for each kind, session and count; True when it was queued, False when the
+    read posts it itself (the bot, or no outbox). The payload is a session id and a count, never
+    a word of the story."""
     outbox = getattr(bot, "outbox", None)
     if not getattr(bot, "headless", False) or outbox is None:
         return False
