@@ -367,6 +367,16 @@ class WhenTheSessionEnds(IsolatedAsyncioTestCase):
         with self.assertRaises(RuntimeError):
             await bot.deliver_import_recap_hold(GUILD, "c" * 32, payload)
 
+    async def test_the_outbox_row_with_no_channel_releases_the_hold(self) -> None:
+        bot = fake_bot()
+        bot.deliver_import_recap_hold = DMBot.deliver_import_recap_hold.__get__(bot)
+        bot.campaigns.get = AsyncMock(return_value=campaign())  # no channel at all
+        bot.recap_holds.get = AsyncMock(return_value=object())
+        payload = {"session_at": AT, "group": "-", "open": 2}
+        await bot.deliver_import_recap_hold(GUILD, "c" * 32, payload)
+        bot.post.assert_not_awaited()
+        bot.recap_holds.release.assert_awaited_once_with(GUILD, "c" * 32, AT)
+
     async def test_names_from_before_the_session_are_not_counted(self) -> None:
         bot = fake_bot(proposed=0)  # one proposed name, but from before the session
         await bot._hold_or_queue(campaign(), "s1", AT, 66, DM)

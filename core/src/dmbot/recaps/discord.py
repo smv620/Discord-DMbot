@@ -771,7 +771,8 @@ class RecapFeatures:
     ) -> None:
         """The outbox's name question for a held import recap (#4904 3b-3): the line
         `_hold_or_queue` posts itself with the worker off, built from the hold. A hold that has
-        gone (answered, released, expired) or a campaign with no channel has nothing to ask; a
+        gone (answered, released, expired) has nothing to ask; a campaign with no channel
+        releases the hold, so its recap is written; a
         refused post raises, so the row is tried again."""
         store = self.recap_holds
         campaign = await self.campaigns.get(gid, cid)
@@ -780,6 +781,9 @@ class RecapFeatures:
             return
         channel = campaign.dm_bot_channel_id or campaign.dm_screen_channel_id
         if channel is None:
+            # Nobody can be asked, so release the hold as the in-process path does (a wait nobody
+            # knows about is no wait); the recap is queued, not left holding for ever.
+            await store.release(gid, cid, at)
             return
         group = "" if payload["group"] == "-" else str(payload["group"])
         sent = await self.post(
