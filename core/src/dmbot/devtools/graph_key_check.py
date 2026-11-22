@@ -213,13 +213,18 @@ class Graph:
         }
         # (by the name as written and without a leading article, as the decide step's key reads
         # names: "The Black Hand" stored is the key's "Black Hand", #5055)
+        # `as_written` keeps the article: the readings' holder keys are compared to plain words
+        # ("party" is the party's own view), so "The party" must not also become "party" there
         self.by_key: dict[str, set[str]] = {}
+        self.as_written: dict[str, set[str]] = {}
         for e in self.entities.values():
+            self.as_written.setdefault(name_key(str(e["name"])), set()).add(str(e["id"]))
             for k in {name_key(str(e["name"])), _plain(str(e["name"]))} - {""}:
                 self.by_key.setdefault(k, set()).add(str(e["id"]))
         for a in tables.get("alias", ()):
             if a.get("status") != "rejected" and str(a["entity_id"]) in self.entities:
                 said = str(a["key"]) or name_key(str(a["text"]))
+                self.as_written.setdefault(said, set()).add(str(a["entity_id"]))
                 for k in {said, _plain(str(a["text"]))} - {""}:
                     self.by_key.setdefault(k, set()).add(str(a["entity_id"]))
         # a person the story never named is found by its description (#3736): "unnamed - Okthandom's
@@ -725,7 +730,7 @@ def _guesses(graph: Graph) -> list[tuple[str, frozenset[str], frozenset[str]]]:
     belief (a theory or an accusation in the party's or a character's point of view), or waiting
     as a claim's reading. The holder is "party" or a name key of the character."""
     keys: dict[str, set[str]] = {}
-    for key, ids in graph.by_key.items():
+    for key, ids in graph.as_written.items():
         for i in ids:
             keys.setdefault(i, set()).add(key)
     views = {str(p["id"]): p for p in graph.tables.get("perspective", ())}
@@ -1236,8 +1241,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="append",
         default=[],
         metavar="FILE",
-        help="with --why-missed: the sample run's decision record (decisions-*.jsonl), for the "
-        "careful AI's reasons; give it once for each file",
+        help="with --why-missed: the sample run's decision record (decisions-*.jsonl), for what "
+        "the careful AI decided; give it once for each file",
+    )
+    parser.add_argument(
+        "--reasons",
+        action="store_true",
+        help="with --why-missed: add the careful AI's own words from the decision record; for "
+        "reading on the server only (the record never goes on GitHub)",
     )
     args = parser.parse_args(argv)
     try:
@@ -1261,10 +1272,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         try:
             decided = why_missed.read_decisions(args.decisions)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:  # (ValueError: a file that is not text)
             sys.stderr.write(f"{exc}\n")
             return 2
-        whys = why_missed.explain(backup, key, args.docs, decided)
+        whys = why_missed.explain(backup, key, args.docs, decided, reasons=args.reasons)
         if args.counts_only:  # (the stages alone: no key names)
             counts = why_missed.tally(whys)
             sys.stdout.write(

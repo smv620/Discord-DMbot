@@ -47,14 +47,14 @@ python -m dmbot.devtools.graph_key_check BACKUP.dmbot.json.gz --docs both      #
 # options: --counts-only (ids and counts, no names)  --json OUT.json  --key OTHER_KEY.json
 ```
 
-**Why a name was missed (#5055).** `--why-missed` adds one line for each key name the run did not find and keep, with where it stopped and why: **not stored** (the reader never made it), **decided no** (stored, then turned down), **merged** (joined into another entry), **wrong kind**, or **waiting** (stored but never kept). Give the sample run's decision record, kept on the server beside the backups, to add the careful AI's own reason to each "no" and "not sure":
+**Why a name was missed (#5055).** `--why-missed` adds one line for each key name the run did not find and keep, with where it stopped and a fixed reason: **not stored** (the reader never made it), **decided no** (stored, then turned down, or turned down as another name), **merged** (joined into another entry), **wrong kind**, or **waiting** (stored but never kept: the careful AI was not sure, said no or yes but a rule refused it, or was never asked). Give the sample run's decision record, kept on the server beside the backups, so it can tell what the careful AI decided:
 
 ```bash
 python -m dmbot.devtools.graph_key_check BACKUP.dmbot.json.gz --docs both --why-missed \
     --decisions /var/lib/dmbot-sample-backups/decisions-YYYYmmdd-HHMMSS.jsonl
 ```
 
-It names key entries only, never a name the run made that the key does not list; with `--counts-only` it gives the count for each stage alone. Post the lines on #3545 after each deploy. Which step of the reader dropped a **not stored** name is the next slice of #5055.
+These lines name key entries only, never a name the run made that the key does not list, and may be posted on #3545 after each deploy. `--reasons` adds the careful AI's own words from the decision record to each line: those stay on the server (the record never goes on GitHub, and a reason may name anything), so read them there and never post them. With `--counts-only` it gives the count for each stage alone. Which step of the reader dropped a **not stored** name is the next slice of #5055.
 
 ### The importance check (#3172)
 
