@@ -1,8 +1,3 @@
-/** The party names of a character: the list, or the one name an older draft kept (#4300). */
-function partyNamesOf(c: WizardCharacter): string[] | undefined {
-  return c.partyNames ?? (c.partyName ? [c.partyName] : undefined);
-}
-
 /** @jsxImportSource preact */
 // The ten pages of the start-up wizard (#3956), one small component each. Each step saves what the person chose through
 // `onPatch` as soon as they choose it, so a reload or a later visit picks up where they were; the shell (Wizard.tsx) owns Back,
@@ -41,6 +36,18 @@ const DEFAULT_BOOKS = ["xanathar", "tasha"];
 const SHEET = /^https:\/\/www\.dndbeyond\.com\/(?:profile\/[^/]+\/)?characters\/\d+/;
 
 /** Step 1: where the campaign is, and the dndbeyond.com invite and public sheet links. */
+/** The party names of a character: the list, or the one name an older draft kept (#4300). */
+function partyNamesOf(c: WizardCharacter): string[] | undefined {
+  return c.partyNames ?? (c.partyName ? [c.partyName] : undefined);
+}
+
+/** The names shown in brackets after a character, or nothing: none for no names, and none for one name equal to the full name (#4300). */
+function bracketOf(c: WizardCharacter): string {
+  const names = partyNamesOf(c) ?? [];
+  if (names.length === 0 || (names.length === 1 && names[0] === c.full)) return "";
+  return names.join(", ");
+}
+
 export function WhereStep({ api, guild, draft, onPatch, pasted = "", onPasted }: StepProps) {
   const a = draft.answers;
   const [invite, setInvite] = useState(a.invite);
@@ -210,7 +217,7 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
         <ul>
           {a.characters.map((c, i) => (
             <li key={`${c.full}-${i}`}>
-              {c.full} {partyNamesOf(c) !== undefined && partyNamesOf(c)!.length > 0 && !(partyNamesOf(c)!.length === 1 && partyNamesOf(c)![0] === c.full) && <span class="small">({partyNamesOf(c)!.join(", ")})</span>}{" "}
+              {c.full} {bracketOf(c) && <span class="small">({bracketOf(c)})</span>}{" "}
               <button type="button" class="link" onClick={() => void onPatch((latest) => ({ characters: latest.characters.filter((_, j) => j !== i) }))}>
                 {t.remove}
               </button>
@@ -250,11 +257,11 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
               {t.partyHint}
             </span>
             {partyNames.length > 0 && (
-              <ul>
+              <ul aria-label={t.partyNamesList}>
                 {partyNames.map((n, i) => (
                   <li key={`${n}-${i}`}>
                     {n}{" "}
-                    <button type="button" class="link" onClick={() => setPartyNames((was) => was.filter((_, j) => j !== i))}>
+                    <button type="button" class="link" aria-label={`${t.remove} ${n}`} onClick={() => setPartyNames((was) => was.filter((_, j) => j !== i))}>
                       {t.remove}
                     </button>
                   </li>

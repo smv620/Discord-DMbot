@@ -903,7 +903,7 @@ describe("the party names of a character (#4300)", () => {
     addName("Hector, Savior of Lordaeron");
     expect(screen.getByText("Tav")).toBeTruthy();
     expect(screen.getByText("Hector, Savior of Lordaeron")).toBeTruthy();
-    fireEvent.click(screen.getAllByRole("button", { name: w.confirm.remove })[0]!);
+    fireEvent.click(screen.getByRole("button", { name: `${w.confirm.remove} Tav` }));
     expect(screen.queryByText("Tav")).toBeNull();
     expect(screen.getByText("Hector, Savior of Lordaeron")).toBeTruthy();
   });
@@ -935,9 +935,19 @@ describe("the party names of a character (#4300)", () => {
     expect(saved?.partyName).toBeUndefined();
   });
 
+  it("a saved draft's old single name is not sent back on the next save", async () => {
+    const api = await start();
+    await next(2);
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.fullLabel)), { target: { value: "Ivy Quickfoot" } });
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.add }));
+    await screen.findByText(/Ivy Quickfoot/);
+    expect(JSON.stringify(await api.get(G))).not.toContain('"partyName"');
+  });
+
   it("an older draft with only one party name is read as a list of one", () => {
     const draft = draftFrom({ answers: { characters: [{ full: "Tavin Ashgrove", partyName: "Tav", sheetUrl: "", player: "pending" }] } } as never);
     expect(draft.answers.characters[0]?.partyNames).toEqual(["Tav"]);
+    expect(draft.answers.characters[0]).not.toHaveProperty("partyName");
   });
 });
 

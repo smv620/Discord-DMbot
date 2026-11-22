@@ -19,7 +19,8 @@ export function draftFrom(wire: DraftWire): WizardDraft {
   const answers = { ...emptyAnswers(), ...(wire.answers ?? {}) } as WizardDraft["answers"];
   if (!Array.isArray(answers.characters)) answers.characters = [];
   // An older draft kept one party name; it is read as a list of one (#4300).
-  answers.characters = answers.characters.map((c) => ({ ...c, partyNames: c.partyNames ?? (c.partyName ? [c.partyName] : []) }));
+  // The old single name is dropped from the character once it is read as a list, so it is not sent back.
+  answers.characters = answers.characters.map(({ partyName, ...c }) => ({ ...c, partyNames: c.partyNames ?? (partyName ? [partyName] : []) }));
   if (!Array.isArray(answers.homebrew_links)) answers.homebrew_links = [];
   if (!Array.isArray(answers.skipped)) answers.skipped = [];
   return {
