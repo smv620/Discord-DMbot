@@ -8,7 +8,6 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
-from dmbot.campaigns.store import CampaignStore
 from dmbot.memory import weather_marks as wm
 from dmbot.memory.models import CONFIRMED, NewName, new_id
 from tests.test_memory_names import DM, GUILD, NamesTest
@@ -25,14 +24,16 @@ class OncePerPlace(NamesTest):
         self.place: str = place
         self.climate = await self.climate_row("hot")
 
-    async def climate_row(self, value: str) -> str:
+    async def climate_row(
+        self, value: str, *, place: str | None = None, campaign: str | None = None
+    ) -> str:
         row = new_id()
         async with self.db.guild(GUILD) as conn:
             await conn.execute(
                 "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
                 " status, source, created_at) VALUES (%s, %s, %s, %s, 'climate', %s, 'confirmed',"
                 " 'dm', 1)",
-                (GUILD, self.campaign.id, row, self.place, value),
+                (GUILD, campaign or self.campaign.id, row, place or self.place, value),
             )
         return row
 
@@ -204,24 +205,20 @@ class WhileTheTableIsPlaying(OncePerPlace):
         )  # fmt: skip
 
     async def other_campaign_place(self) -> tuple[str, str, str]:
-        """A second campaign with its own place and climate row: (campaign id, place, climate)."""
-        other = await CampaignStore(self.db).create(GUILD, "Two", DM)
+        """A second campaign made the same way as the class's own, with its own place and climate
+        row: (campaign id, place, climate)."""
+        other = await self.campaigns.create(GUILD, "Two", DM)
         made = await self.memory.add_names(
             GUILD, other.id, [NewName("Frostmere", "place", CONFIRMED)], source="dm"
         )
         (place,) = made.value
         assert place is not None
-        row = new_id()
-        async with self.db.guild(GUILD) as conn:
-            await conn.execute(
-                "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
-                " status, source, created_at) VALUES (%s, %s, %s, %s, 'climate', 'hot',"
-                " 'confirmed', 'dm', 1)",
-                (GUILD, other.id, row, place),
-            )
+        row = await self.climate_row("hot", place=place, campaign=other.id)
         return other.id, place, row
 
     async def test_taking_back_a_moment_leaves_another_campaigns_marks_alone(self) -> None:
+        # (both campaigns' marks are the same kind, value and moment: only the campaign id tells
+        # them apart, so this fails if `unmark_at` ignores the campaign)
         other_id, other_place, other_climate = await self.other_campaign_place()
         await wm.first_time(
             self.db, GUILD, self.campaign.id, [wm.Mark(self.place, "snow", self.climate, "hot")],
@@ -239,6 +236,7 @@ class WhileTheTableIsPlaying(OncePerPlace):
         )
 
     async def test_taking_back_a_moment_leaves_another_moment_alone(self) -> None:
+        # (both marks are on this campaign: only the moment tells them apart)
         await wm.first_time(
             self.db, GUILD, self.campaign.id, [wm.Mark(self.place, "snow", self.climate, "hot")],
             now=40,
