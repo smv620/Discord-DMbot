@@ -443,6 +443,7 @@ from dmbot.mentions import NO_PINGS
 from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
 from dmbot.outbox import (
     IMPORT_CLOCK_OFFER,
+    STORY_HELD_BACK,
     STORY_MET_LIST,
     STORY_RECAP_LINES,
     STORY_SECRET_COUNT,
@@ -690,6 +691,7 @@ from dmbot.ui.names import (
     ReviewButton,
     after_session_text,
     counts_after_session_text,
+    held_back_count_text,
     held_back_pointer,
     held_back_text,
     private_after_session_text,
@@ -10413,13 +10415,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if report.named and (campaign is not None or notice_channel is not None):
                 # the DM checks them where the name scan's are checked
                 if campaign is not None:
-                    await pointer_note.send(
-                        self,
-                        campaign,
-                        held_back_text(report.new_names),
-                        lambda: review_view(cid),
-                        held_back_pointer(len(report.new_names)),
-                    )
+                    if not await _story_note(
+                        self, gid, cid, STORY_HELD_BACK, {"sid": sid, "n": len(report.new_names)}
+                    ):
+                        await pointer_note.send(
+                            self,
+                            campaign,
+                            held_back_text(report.new_names),
+                            lambda: review_view(cid),
+                            held_back_pointer(len(report.new_names)),
+                        )
                 elif notice_channel is not None:
                     await self.post(
                         notice_channel, held_back_text(report.new_names), view=review_view(cid)
@@ -13279,6 +13284,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         gone or has no channel has nothing to say; a refused post raises, so the row is tried
         again. Nothing but a count and a session id rides in the row."""
         campaign = await self.campaigns.get(gid, cid)
+        if kind == STORY_HELD_BACK:  # (private to the DMs, with a count-only pointer: #3874 E1)
+            n = int(payload["n"])
+            if campaign is not None and n > 0 and not await pointer_note.send(
+                self, campaign, held_back_count_text(n), lambda: review_view(cid),
+                held_back_pointer(n),
+            ):  # fmt: skip
+                raise RuntimeError("not-posted")
+            return
         channel = self._upkeep_channel(campaign)[0] if campaign is not None else None
         if channel is None:
             return
@@ -13305,6 +13318,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self, gid: int, cid: str, payload: Mapping[str, Any]
     ) -> None:
         await self._say_story_note(gid, cid, STORY_SECRET_COUNT, payload)
+
+    async def deliver_story_held_back(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        await self._say_story_note(gid, cid, STORY_HELD_BACK, payload)
 
     async def deliver_story_met_list(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
         await self._say_story_note(gid, cid, STORY_MET_LIST, payload)

@@ -67,6 +67,7 @@ from dmbot.outbox import (
     RECAP_NAMES,
     RECAP_READY,
     RECAP_UNCHECKED,
+    STORY_HELD_BACK,
     STORY_MET_LIST,
     STORY_RECAP_LINES,
     STORY_SECRET_COUNT,
@@ -337,6 +338,9 @@ class RecapFeatures:
         async def deliver_story_met_list(
             self, gid: int, cid: str, payload: Mapping[str, Any]
         ) -> None: ...
+        async def deliver_story_held_back(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
         async def deliver_import_clock_offer(
             self, gid: int, cid: str, payload: Mapping[str, Any]
         ) -> None: ...
@@ -437,6 +441,7 @@ class RecapFeatures:
                                 STORY_RECAP_LINES: self.deliver_story_recap_lines,
                                 STORY_SECRET_COUNT: self.deliver_story_secret_count,
                                 STORY_MET_LIST: self.deliver_story_met_list,
+                                STORY_HELD_BACK: self.deliver_story_held_back,
                             },
                             self.outbox_wake,
                         ),

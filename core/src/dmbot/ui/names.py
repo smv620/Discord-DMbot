@@ -2533,6 +2533,17 @@ def held_back_text(names: list[str]) -> str:
     )
 
 
+def held_back_count_text(count: int) -> str:
+    """`held_back_text` with no names, for the worker's outbox row (#4904 3b-4b): a row carries no
+    word of the story, so the private message says how many and the check, which lists them,
+    opens from its button. Private to the DMs, like the one with names."""
+    return (
+        f"📝 **{_plural(count, 'new name')} to check** from this session. What was said about "
+        "them is held back until you check them. Say which are in your game: the check opens "
+        "privately for the DM."
+    )
+
+
 def held_back_pointer(count: int) -> str:
     """The line in the DM Bot channel, which the campaign's people read: how many, never which
     (#3874 E1). The names and the check are in the DMs' private message."""
