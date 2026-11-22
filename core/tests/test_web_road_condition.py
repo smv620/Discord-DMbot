@@ -12,7 +12,7 @@ from dmbot.memory import map_facts as mf
 from dmbot.memory import web_actions as wa
 from dmbot.memory.map_fact_store import Read
 from dmbot.memory.models import new_id
-from dmbot.web import road_conditions, route_lengths, sessions
+from dmbot.web import relationships, road_conditions, route_lengths, sessions
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW
 from tests.test_web_api import THURSDAY
@@ -142,6 +142,27 @@ class TheDoor(Roads):
 
 
 class TheActions(Roads):
+    async def test_the_answer_the_page_polls_carries_the_change_for_undo(self) -> None:
+        """The answers route knows these actions (it refused `road-` and `route-` before) and
+        gives the change number the page's Undo takes, for a road's condition and a route's
+        length alike."""
+        answer = await road_conditions.queue_set(
+            self.web, self.session, self.cref,
+            {"on": "place", "id": self.pass_, "value": "closed", "words": ""},
+        )  # fmt: skip
+        (outcome,) = await self.bot_loop()
+        got = await relationships.read_answer(self.web, self.session, self.cref, answer)
+        self.assertEqual(
+            (got["state"], got["error"], got["batch"]), ("done", "", outcome.batches[0])
+        )
+        length = await route_lengths.queue_set(
+            self.web, self.session, self.cref,
+            {"on": "place", "id": self.pass_, "words": "two days by cart"},
+        )  # fmt: skip
+        (made,) = await self.bot_loop()
+        seen = await relationships.read_answer(self.web, self.session, self.cref, length)
+        self.assertEqual((seen["state"], seen["batch"]), ("done", made.batches[0]))
+
     async def test_the_longest_words_go_through_and_spaces_are_squeezed(self) -> None:
         words = "x" * 60
         self.assertFalse((await self.road_press("place", self.pass_, "other", words)).error)
