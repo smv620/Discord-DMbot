@@ -43,6 +43,8 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const flight = useRef(false);
+  // The newest read: an answer older than a later one (a slow reload after a Save) is not drawn, so it can never put stale data back.
+  const latest = useRef(0);
 
   /** Read the place again. `scope` is the part of the choices to reset to what is saved: all of them for the first read, only the layer just
    * saved after a Save (so a choice not sent yet is never thrown away), none after the show switch. */
@@ -51,8 +53,10 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
       setFailed(true);
       return null;
     }
+    const mine = ++latest.current;
     try {
       const got = await api.placeWorld(refId, row.id);
+      if (mine !== latest.current) return got; // (a newer read is on its way or drawn: the caller still gets this answer)
       setData(got);
       setFailed(false);
       const saved = picksOf(got);
