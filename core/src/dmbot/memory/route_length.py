@@ -175,8 +175,9 @@ _NOT_SO = re.compile(
     re.I,
 )
 # A person's plan: "we will ride", "they'll go". A bare "will" or "would" is how lore gives a
-# length ("the journey would take three days", "it will be two days by cart"), so it stays (#4992)
-_PERSON = r"(?:we|i|they|you|he|she)"
+# length ("the journey would take three days", "it will be two days by cart"), so it stays (#4992).
+# Not "you": a guidebook speaks to its reader ("You will need two days by cart to Targos", #4997)
+_PERSON = r"(?:we|i|they|he|she)"
 _NOT_YET = re.compile(
     rf"\b{_PERSON}\s+(?:will|would|shall|might|may|could)\b|\b{_PERSON}['’]ll\b", re.I
 )

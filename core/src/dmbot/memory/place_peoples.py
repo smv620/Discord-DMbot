@@ -191,7 +191,7 @@ _POPULATION = (
 # ruling A on #4982); the article stays in what follows, as `_culture` reads it
 _IS_A = re.compile(r"^\s+(?P<verb>is|was)\s+(?=(?:an?|the)\b)", re.I)
 # A past state the text ends in the same clause ("… until the flood"): who lives there no longer
-_NO_LONGER = re.compile(r"\b(?:until|till|before)\b")
+_NO_LONGER = re.compile(r"\b(?:until|till|before)\b", re.I)  # (as its neighbours, #4997)
 _SHARES = {
     "almost entirely": "all", "almost all": "all", "mostly": "most", "mainly": "most",
     "largely": "most", "many": "many", "a few": "few",
