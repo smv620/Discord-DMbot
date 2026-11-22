@@ -1249,7 +1249,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         key = json.loads(args.key.read_text())
         campaign = backup.get("campaign") if isinstance(backup, dict) else None
         name = campaign.get("name") if isinstance(campaign, dict) else None
-        if not (isinstance(name, str) and sample_name.is_sample(name)) and not args.force:
+        sample = isinstance(name, str) and sample_name.is_sample(name)
+        if args.list_extras and not sample:  # (names go on a public issue: the sample's only)
+            raise ValueError("--list-extras is only for the public sample campaign.")
+        if not sample and not args.force:
             raise ValueError(
                 'This campaign is not "test of the frostmaiden (sample N)"; the check is only '
                 "for the sample."

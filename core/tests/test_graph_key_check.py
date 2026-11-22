@@ -646,6 +646,7 @@ class UnnamedPeople(unittest.TestCase):
         self.assertIn("place | confirmed | lore | Underdark", listed)
         self.assertIn("unnamed - Cerric's grandfather", listed)
         self.assertNotIn("Underdark", gkc.render(report, counts_only=True))
+        self.assertNotIn("| Cerric\n", listed)  # (a key match is never an extra)
 
     def test_other_must_not_names_still_count_as_descriptions(self) -> None:
         key = {**self.raider_key(), "must_not_names": ["maul barbarian", "the attackers"]}
