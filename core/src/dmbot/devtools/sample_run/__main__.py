@@ -403,7 +403,9 @@ async def run(
 
         async def score_step(label: str, docs: str) -> Mapping[str, int | str]:
             path = await steps.backup(campaigns, gid, cid, folder, label)
-            met = await steps.met_words(db, gid, cid)  # (#5055 D: a backup does not carry them)
+            # (#5055 D: a backup does not carry them; read just after it, close enough for a test
+            # campaign nobody else touches)
+            met = await steps.met_words(db, gid, cid)
             lines = steps.score(path, docs, met)
             for line in lines:
                 say(line)

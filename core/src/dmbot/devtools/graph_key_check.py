@@ -112,6 +112,7 @@ BY_DESIGN = "by_design"
 # (`memory_met`, which a backup does not carry, so the caller gives its words).
 DESCRIBED = "described"
 AS_ENTRY, ON_MET_LIST = "as_entry", "on_met_list"
+MET_KINDS = frozenset({"person", "group", "creature"})  # what the met list can hold
 HEADS = ("total", "found", "waiting", "wrong", "missing", "must-miss")
 WIDTHS = (6, 7, 9, 7, 9, 11)
 
@@ -453,7 +454,13 @@ def check(
     wanted = {"lore", "session"} if docs == "both" else {docs}
     report = Report()
     nodes = [n for n in key["nodes"] if wanted & set(n.get("docs", ["lore", "session"]))]
-    names: dict[str, list[str]] = {n["name"]: [n["name"], *n.get("aliases", [])] for n in nodes}
+    # (a described row is found by its `said_as` words too, in its own line and in its ties alike)
+    names: dict[str, list[str]] = {
+        n["name"]: [
+            n["name"], *n.get("aliases", []), *(n.get("said_as", []) if n.get(DESCRIBED) else [])
+        ]
+        for n in nodes
+    }  # fmt: skip
     kinds = {i: str(e["type"]) for i, e in graph.entities.items()}
     kind_of_key = {n["name"]: n["kind"] for n in nodes}
     matched_ids: set[str] = set()
@@ -469,10 +476,13 @@ def check(
         ids = lookup(n["name"])
         matched_ids |= ids
         if n.get(DESCRIBED):  # (its own line, never a name miss: #5055 D)
-            said = [*names[n["name"]], *n.get("said_as", [])]
-            ids |= graph.ids(said)
-            matched_ids |= ids
-            where = AS_ENTRY if ids else ON_MET_LIST if _on_met_list(said, met) else MISSING
+            # Found as an entry of any kind: the DM named it, or kept the person unnamed (the kind
+            # is the names table's business). The met list holds only beings the party was with
+            # (`met_reading.MET_ADDENDUM`), so only a being's row is looked for there: a place or
+            # item matched by "the dogs in the kennel" would be a false find.
+            being = n["kind"] in MET_KINDS
+            on_list = being and _on_met_list(names[n["name"]], met)
+            where = AS_ENTRY if ids else ON_MET_LIST if on_list else MISSING
             report.described.append(Row(n["name"], n["name"], where, n["kind"], False))
             continue
         if not ids:
@@ -1275,7 +1285,10 @@ def main(argv: Sequence[str] | None = None, *, met: Sequence[str] = ()) -> int:
                 "for the sample."
             )
         if args.met is not None:
-            met = [str(w) for w in json.loads(args.met.read_text())]
+            listed = json.loads(args.met.read_text())
+            if not isinstance(listed, list) or not all(isinstance(w, str) for w in listed):
+                raise ValueError("--met is a JSON list of words")
+            met = listed
         report = check(backup, key, args.docs, met)
     except (ValueError, OSError) as exc:
         sys.stderr.write(f"{exc}\n")
