@@ -27,6 +27,7 @@ from dmbot.ai import AIError
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import lore_queue as q
 from dmbot.memory import lore_read
+from dmbot.memory.background import NAMES_OVER_CAP
 from dmbot.memory.lore_pdfs import Staged
 from dmbot.memory.lore_queue import Claim, LoreQueue
 from dmbot.memory.name_documents import DocumentError
@@ -148,11 +149,12 @@ async def run_upload(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) ->
     error, names, links = q.FAILED, 0, 0
     staged_out: list[Staged] = []  # the staged file this read opened (a website PDF), if it did
     found: dict[str, list[str]] = {}  # the names this read proposed, kind by kind (#3207)
+    cut: list[int] = []  # names past the one-document limit (#5055 A): a count
     try:
         # The whole read has a limit: a hung call must not hold the claim (the reporter keeps it
         # alive) or the server's queue for good.
         async with asyncio.timeout(lore_read.LORE_TIME_LIMIT_S + READ_MARGIN_S):
-            error, names, links = await _read(bot, queue, claim, guild_id, found, staged_out)
+            error, names, links = await _read(bot, queue, claim, guild_id, found, staged_out, cut)
     except TimeoutError:
         error = q.OUT_OF_TIME
     except asyncio.CancelledError:
@@ -173,7 +175,13 @@ async def run_upload(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) ->
     for attempt in (1, 2):  # once more: a row left working is read again, and proposed twice
         try:
             if not await queue.finish(
-                guild_id, claim, error=error, names=names, links=links, found=found
+                guild_id,
+                claim,
+                error=error,
+                names=names,
+                links=links,
+                found=found,
+                names_cut=sum(cut),
             ):
                 log.warning("A lore upload was ended by another worker")
                 return
@@ -247,6 +255,7 @@ async def _read(
     guild_id: int,
     found: dict[str, list[str]],
     staged_out: list[Staged],
+    cut: list[int] | None = None,
 ) -> tuple[str, int, int]:
     """(error word or "", names, connections). An error word is an upload that read nothing.
     `found` is filled with the names the read proposed, by kind, for the website's Add all."""
@@ -344,6 +353,8 @@ async def _read(
                 return _LOST, 0, 0
             raise
         found.update({kind: list(ids) for kind, ids in done.stored.items()})
+        if cut is not None:
+            cut.append(done.dropped.get(NAMES_OVER_CAP, 0))
         return _outcome(done)
     finally:
         if pdf is not None:

@@ -290,6 +290,9 @@ class Proposed:
     # About how names were said (#3634), counts only:
     rules_dropped: int = 0  # a claim about a kind of creature the rules hold: not kept
     tidied: int = 0  # claims with a name that lost a leading "a"/"an" or a bracketed note
+    # New names said in this read that were past the session's limit (#5055 A): counted, so a name
+    # lost to the limit is told apart from one never heard. Counts only.
+    names_over_cap: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1544,6 +1547,7 @@ class ClaimStore:
             described_dropped,
             rules_dropped,
             tidied,
+            left_new,
         )
 
     @staticmethod

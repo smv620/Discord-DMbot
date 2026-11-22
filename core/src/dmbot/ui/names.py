@@ -2602,3 +2602,15 @@ def after_session_text(names: list[str], where: str = "this session") -> str:
         "Say which are in your game, so DMbot spells them right. The check opens privately "
         "for the DM."
     )
+
+
+def names_cut_note(count: int) -> str:
+    """The import notice's line for names a cap left out (#5055 A; Supervisor's ruling): DMbot
+    lists only so many new names from each session, and says how many more it heard rather than
+    dropping them silently. A count, never a name: the notice may be in the DM Bot channel."""
+    one = count == 1
+    return (
+        f"{_plural(count, 'more possible name')} {'was' if one else 'were'} heard in your imported "
+        "sessions but not listed: DMbot lists only so many new names from each session. Add any "
+        "you know with ➕ Add a name on the names panel."
+    )

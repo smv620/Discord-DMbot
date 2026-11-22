@@ -311,6 +311,7 @@ class Linking(ConfirmedMemoryTest):
         found += [said("Bram", "owes", name) for name in STRANGERS[5:]]
         got = await self.propose(*found, new_names=20)
         self.assertEqual((got.named, got.deferred), (20, 5))
+        self.assertEqual(got.names_over_cap, 5)  # counted, never silent (#5055 A)
         names = set(await self.entries())
         # The five said once are the ones left for next time.
         self.assertEqual(names, set(STRANGERS[5:]))

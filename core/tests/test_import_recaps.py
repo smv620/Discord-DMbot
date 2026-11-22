@@ -534,6 +534,23 @@ class TheCrashAndTheNews(WithImports):
         self.assertIn("2 imported sessions", text)
         self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
 
+    async def test_names_a_cap_left_out_are_told_as_a_count_once(self) -> None:
+        # (#5055 A) the scan's and the story reader's limits are counted, never silent: one line in
+        # the import's notice, a count only (the DM Bot channel is read by the campaign's people)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        campaign.dm_bot_channel_id = 88
+        await bot.import_state.bump(GUILD, self.campaign.id, "names_cut", 12)
+        await bot._tell_import_news(GUILD, self.store)
+        channel, text = bot.post.await_args.args[:2]
+        self.assertEqual(channel, 88)
+        self.assertIn("12 more possible names were heard in your imported sessions", text)
+        self.assertIn("➕ Add a name", text)
+        self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
+        bot.post.reset_mock()
+        await bot._tell_import_news(GUILD, self.store)  # (taken: told once)
+        bot.post.assert_not_awaited()
+
     async def test_the_dm_is_told_once_when_a_name_check_was_given_up(self) -> None:
         await self.imported(1)
         bot, campaign = fake_bot(self.store)

@@ -337,6 +337,19 @@ class ImportStore:
                 (ended, session_id),
             )
 
+    async def add_names_cut(self, guild_id: int, session_id: str, n: int) -> bool:
+        """Count `n` names a cap left out of this imported session (the name scan past its 10, the
+        story reader past its 20; #5055 A), kept for the sample run after the notice is gone.
+        False: the session is no import (a live one), so nothing is kept. A count only."""
+        if n <= 0:
+            return False
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE session_imports SET names_cut = names_cut + %s WHERE session_id = %s",
+                (n, session_id),
+            )
+            return bool(cur.rowcount)
+
     async def release_scan(self, guild_id: int, session_id: str) -> int:
         """The scan failed: give it back for the next round and count the try. Returns the tries."""
         async with self._db.guild(guild_id) as conn:

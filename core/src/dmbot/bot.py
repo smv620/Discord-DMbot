@@ -314,6 +314,7 @@ from dmbot.import_state import (
     ENTRIES,
     LEFT_TOLD,
     NAME_ASKS,
+    NAMES_CUT,
     PARTY,
     QUEUED,
     REPORTS,
@@ -699,6 +700,7 @@ from dmbot.ui.names import (
     held_back_count_text,
     held_back_pointer,
     held_back_text,
+    names_cut_note,
     private_after_session_text,
     review_view,
 )
@@ -10527,6 +10529,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     leaves=self.settings.party_leaves_on and not old_import,
                 )
             log.info(report.line())
+            if report.names_over_cap:  # (#5055 A: an import's notice says how many; counts only)
+                await self._note_names_cut(gid, cid, sid, report.names_over_cap)
             if report.heard_languages:  # (#4229 1d: each a question for the DM, never written)
                 await self._ask_heard_languages(gid, cid, report, session.started_at, sid)
             if report.goodbyes:  # (#4537 6b: each an after-session question, never a leave)
@@ -12246,7 +12250,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
         # (#394). Which known name each sounds like is worked out when the DM looks,
         # never saved: names can change, or be made secret, before then.
-        found = group_alike(find_new_names(lines, skip, unlimited=True))[:MAX_SUGGESTIONS]
+        every = group_alike(find_new_names(lines, skip, unlimited=True))
+        found = every[:MAX_SUGGESTIONS]
+        # What the cap left out is counted, never silent (#5055 A): an import's notice says how
+        # many, and a live session's log does. No rule changes here: the same 10 are offered.
+        if (cut := len(every) - len(found)) and session_id is not None:
+            await self._note_names_cut(gid, cid, session_id, cut)
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
         asked = await self._take_name_asks(gid, cid, session_id) if session_id is not None else []
         have = {name_key(f.name) for f in found}
@@ -12258,8 +12267,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # the session each name is made in, for the split-party check (#4043): never a guess
         session_at = await self._session_start(gid, session_id)
         log.info(  # counts only
-            "Name scan: %d name(s) suggested, %d with a kind, %d without",
-            len(found), len(kinds), len(found) - len(kinds),
+            "Name scan: %d name(s) suggested, %d with a kind, %d without, %d past the limit",
+            len(found), len(kinds), len(found) - len(kinds), len(every) - len(found),
         )  # fmt: skip
         for suggestion in found:
             written = None
@@ -12300,6 +12309,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
         return added
+
+    async def _note_names_cut(self, gid: int, cid: str, sid: str, n: int) -> None:
+        """Keep the count of names a cap left out of an imported session (#5055 A): on its import
+        row, for the sample run, and for the import's one notice at its end. A live session has
+        no import row, so only its log has the count. Never raises: a count must not stop the
+        scan or the read."""
+        if self.import_job is None or n <= 0:
+            return
+        try:
+            if await self.import_job.store.add_names_cut(gid, sid, n) and self.import_state:
+                await self.import_state.bump(gid, cid, NAMES_CUT, n)
+        except Exception as exc:
+            log.warning("Import: the names-cut count was not kept (%s)", type(exc).__name__)
 
     async def _scan_kinds(
         self, gid: int, cid: str, names: Sequence[str], lines: Sequence[str]
@@ -13787,7 +13809,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await self.import_state.counted(gid, UNCHECKED) if self.import_state is not None else {}
         )
         over = (
-            await self.import_state.campaigns_with(gid, [ADDED_NAMES, SPEAKERS, ENTRIES])
+            await self.import_state.campaigns_with(gid, [ADDED_NAMES, SPEAKERS, ENTRIES, NAMES_CUT])
             if self.import_state is not None
             else set()
         ) | set(skipped_by)
@@ -13799,6 +13821,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # that fails costs this campaign's news for this import, never the other campaigns')
             try:
                 skipped = await state.take_count(gid, cid, UNCHECKED) if state else 0
+                cut = await state.take_count(gid, cid, NAMES_CUT) if state else 0
                 names = await state.take_strings(gid, cid, ADDED_NAMES) if state else []
                 speakers = (
                     {int(v) for v in await state.take_strings(gid, cid, SPEAKERS)}
@@ -13842,6 +13865,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     f"{'it' if one else 'them'} may be missing. Add any with ➕ Add a name "
                     "on the names panel."
                 )
+                text = f"{text}\n{note}" if text else f"📝 {note}"
+            if cut:  # (#5055 A: a cap's cut is told, never silent; a count only)
+                note = names_cut_note(cut)
                 text = f"{text}\n{note}" if text else f"📝 {note}"
             if text:
                 await self.post(notice_to, text, view=review_view(cid) if names else None)
