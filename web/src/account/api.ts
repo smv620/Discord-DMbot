@@ -2515,7 +2515,18 @@ export interface PlaceSpelling {
   spelling: string;
 }
 /** One name in a campaign's memory, as the Names page lists it (#2295). */
-export interface NameRow {
+/** The three lines at the top of a character's card (#5051): sent to a DM only, and only while CARD_SUMMARY_LIVE. */
+export interface CardSummaryFields {
+  /** The sentence on who they are; null or absent while it is not written yet. */
+  who?: string | null;
+  /** True while DMbot is writing the sentence (`who` is then null). */
+  whoPending?: boolean;
+  /** A scene line on the first meeting, words only. */
+  firstMet?: string | null;
+  /** A scene line on the last mention, words only. */
+  lastMentioned?: string | null;
+}
+export interface NameRow extends CardSummaryFields {
   id: string;
   name: string;
   /** The kind's key; its words are in the page's `kinds`. */
@@ -2823,7 +2834,7 @@ export interface SheetAnswer {
 }
 
 /** One NPC's page, as the players see it, plus the caller's own note (#2266). */
-export interface NpcPage {
+export interface NpcPage extends CardSummaryFields {
   id: string;
   name: string;
   kind: string;
