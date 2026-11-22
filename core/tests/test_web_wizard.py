@@ -208,6 +208,9 @@ class TheAnswers(Wizard):
             ({"target": "2024", "fallback": "2024"}, "bad_fallback"),
             ({"supplements": ["necronomicon"]}, "bad_supplements"),
             ({"characters": [{"full": "x" * 101}]}, "bad_characters"),
+            ({"characters": [{"full": "A", "partyNames": ["n"] * 9}]}, "bad_characters"),
+            ({"characters": [{"full": "A", "partyNames": "Ric"}]}, "bad_characters"),
+            ({"characters": [{"full": "A", "partyNames": ["x" * 101]}]}, "bad_characters"),
             # (only a D&D Beyond character link is ever fetched, #4205)
             ({"characters": [{"full": "A", "sheet_url": "https://example.com/c/1"}]}, "bad_sheet"),
             ({"name": "x" * 101}, "bad_name"),
@@ -216,6 +219,23 @@ class TheAnswers(Wizard):
         ]
         for patch, code in bad:
             self.assertEqual(await self.refused(wizard.update, 2, patch), code)
+
+    async def test_the_names_the_party_calls_a_character_are_a_list_with_the_first_kept_as_one(
+        self,
+    ) -> None:
+        """#4300: each name on its own (a comma is part of a name), none twice, at most eight; the
+        old single `partyName` stays the first, and an older page's single name still works."""
+        await self.draft()
+        await self.call(
+            wizard.update, 2,
+            {"characters": [
+                {"full": "Cerric", "partyNames": ["Ric", " ric ", "Hector, Savior", ""]},
+                {"full": "Mira", "partyName": "Mi"},
+            ]},
+        )  # fmt: skip
+        got = (await self.call(wizard.get))["answers"]["characters"]
+        self.assertEqual(got[0]["partyNames"], ["Ric", "Hector, Savior"])
+        self.assertEqual((got[0]["partyName"], got[1]["partyNames"]), ("Ric", ["Mi"]))
 
     async def test_a_sheet_link_of_the_right_shape_is_kept_and_an_empty_one_too(self) -> None:
         await self.draft()

@@ -1043,6 +1043,22 @@ class TheCharacters(FinishTest):
         texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
         self.assertEqual(texts, ["Cerric Vanya'elen", "Ric"])  # (no "Cerric" beside it)
 
+    async def test_every_name_the_table_calls_a_character_is_kept_with_its_comma(self) -> None:
+        """#4300: a list of names, each its own; a comma belongs to a name."""
+        chars = [
+            {
+                "full": "Cerric Vanya'elen",
+                "party_names": ["Ric", "Hector, Savior of the Keep"],
+                "sheet_url": "",
+                "player": "pending",
+            }
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
+        self.assertEqual(texts, ["Cerric Vanya'elen", "Hector, Savior of the Keep", "Ric"])
+
     async def test_two_characters_with_one_first_name_get_none(self) -> None:
         chars = [
             {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},

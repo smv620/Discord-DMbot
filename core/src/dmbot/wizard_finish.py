@@ -597,18 +597,30 @@ async def _make_characters(
             entity_id = written.value.id
             have[name_key(name)] = entity_id
             made += 1
-        short = str(c.get("party_name", "")).strip() or _first_name(name, characters)
-        if short and name_key(short) != name_key(name):
-            try:  # (already there is fine: the call returns the existing alias)
-                await memory.add_alias(
-                    guild_id, campaign_id, entity_id, short, kind="short", source=DM,
-                    status=CONFIRMED,
-                )  # fmt: skip
-            except (MemoryRuleError, ValueError) as exc:
-                log.info("A wizard short name was refused: %s", type(exc).__name__)
+        # What the party calls them (#4300): each name the DM added, else the old single name, else
+        # the first name of a full name typed with no short one (#4224)
+        shorts = _party_names(c) or [_first_name(name, characters)]
+        for short in shorts:
+            if short and name_key(short) != name_key(name):
+                try:  # (already there is fine: the call returns the existing alias)
+                    await memory.add_alias(
+                        guild_id, campaign_id, entity_id, short, kind="short", source=DM,
+                        status=CONFIRMED,
+                    )  # fmt: skip
+                except (MemoryRuleError, ValueError) as exc:
+                    log.info("A wizard short name was refused: %s", type(exc).__name__)
     await memory.party_on_assignment(guild_id, campaign_id)
     log.info("A wizard run made %d player character(s)", made)  # counts only
     return made
+
+
+def _party_names(c: dict[str, Any]) -> list[str]:
+    """The names the table calls one wizard character: the list the DM added (#4300), or the one
+    name an older draft holds. Each is the DM's own word, trimmed; empty ones are dropped."""
+    raw = c.get("party_names")
+    if not isinstance(raw, list):
+        raw = [c.get("party_name", "")]
+    return [str(n).strip() for n in raw if str(n).strip()]
 
 
 def _first_name(name: str, characters: list[dict[str, Any]]) -> str:
@@ -628,7 +640,7 @@ def _first_name(name: str, characters: list[dict[str, Any]]) -> str:
         full = str(other.get("full", "")).strip()
         if name_key(full) == name_key(name):
             continue  # (this character, or one written the same)
-        for text in (full, str(other.get("party_name", "")).strip()):
+        for text in (full, *_party_names(other)):
             if text and key in (name_key(text), name_key(short_names.first_word(text))):
                 return ""
     return first
