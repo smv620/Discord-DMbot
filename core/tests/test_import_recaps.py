@@ -582,6 +582,7 @@ class TheCrashAndTheNews(WithImports):
         bot, campaign = fake_bot(self.store)
         campaign.id = self.campaign.id
         bot._scan_import = AsyncMock(return_value=["Kazeth"])
+        bot.extractor_ai = None  # (no story read here: its own tests)
         self.assertEqual(await DMBot.run_import_followups(bot, GUILD, news=False), 1)
         bot._scan_import.assert_awaited_once()
         bot._tell_finished_imports.assert_not_awaited()

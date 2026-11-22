@@ -139,6 +139,7 @@ def bot_for(store: Any, outcomes: list[str], **kw: Any) -> Any:
     )
     me._extract_imports_left = partial(BOT._extract_imports_left, me)
     me._tell_imports_left = partial(BOT._tell_imports_left, me)
+    me._import_open = partial(BOT._import_open, me)
     me._upkeep_channel = partial(BOT._upkeep_channel, me)
     return me
 
