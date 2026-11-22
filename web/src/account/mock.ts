@@ -4450,7 +4450,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (number === 1 || madeScripts.has(`${campaignRef}:${number}`)) return { state: "exists", cost: null, allowed: true, why: null };
       if (/\.script-plan$/.test(campaignRef)) return { state: "none", cost: null, allowed: false, why: "plan" };
       if (/\.script-off$/.test(campaignRef)) return { state: "none", cost: null, allowed: false, why: "off" };
-      return { state: "none", cost: "It uses about 6 cents of your AI allowance.", allowed: true, why: null };
+      return { state: "none", cost: "This will take about 3 AI calls. About 40 AI credits for the script.", allowed: true, why: null };
     },
     async makeScript(campaignRef, number, onLook): Promise<void> {
       calls.push(`makeScript:${campaignRef}:${number}`);
