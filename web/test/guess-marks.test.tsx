@@ -63,7 +63,7 @@ describe("the waiting card and Keep all", () => {
 
   it("the guess line is in Discord's words, with no full stop after the reason", async () => {
     await open([{ ...base, guess: "offered him food" }]);
-    expect(await screen.findByText("🤔 DMbot's guess: offered him food (your lore doesn't say so)")).toBeTruthy();
+    expect(await screen.findByText("🤔 DMbot's guess: offered him food (your lore only hints at it)")).toBeTruthy();
   });
 
   it("Keep all that leaves a guess says how many still need a yes", async () => {

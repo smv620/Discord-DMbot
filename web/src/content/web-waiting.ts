@@ -50,7 +50,7 @@ export const waitingWords = {
   proposedLine: (subject: string, how: string, object: string, hand: string): string => `Proposed: ${subject} ${how} ${object}${hand}`,
   proposedLabel: "Proposed: ",
   nowLabel: "Now: ",
-  guessLine: (guess: string): string => `🤔 DMbot's guess: ${guess} (your lore doesn't say so)`,
+  guessLine: (guess: string): string => `🤔 DMbot's guess: ${guess} (your lore only hints at it)`,
   // After a Keep all that leaves DMbot's guesses (#3928): Keep all never keeps a guess, so the DM is told how many still wait.
   guessesLeft: (n: number): string =>
     n === 1 ? "1 of DMbot's guesses still needs your yes." : `${n} of DMbot's guesses still need your yes.`,
