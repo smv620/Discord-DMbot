@@ -15,7 +15,7 @@ export const routeLengthWords = {
   undo: "↩️ Undo",
   undone: "↩️ Undone.",
   undoLate: "Couldn't undo that: something changed since.",
-  gone: "That route isn't there any more. The list is updated.",
+  gone: "That route isn't there any more. Open the page again to see it as it is now.",
   changed: "That length has changed. Open it again to see it.",
   couldNot: "Couldn't do that just now. Nothing changed. Try again in a moment.",
 } as const;

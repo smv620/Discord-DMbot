@@ -24,9 +24,9 @@ afterEach(() => {
 
 const REF = "100.cmp1";
 const noop = () => undefined;
-// "route-1" is a route the pretend campaign knows; its length starts as DMbot's read of "two days by cart".
+// "l1" is a route the pretend campaign knows; its length starts as DMbot's read of "two days by cart".
 function panel(length: RouteLength | undefined, route = true, canEdit = true, api = mockApi("table")) {
-  render(<RouteLength_ api={api} refId={REF} on="connection" id="route-1" length={length} route={route} canEdit={canEdit} onChanged={noop} />);
+  render(<RouteLength_ api={api} refId={REF} on="connection" id="l1" length={length} route={route} canEdit={canEdit} onChanged={noop} />);
   return api;
 }
 const read = { words: "two days by cart", read: true };
@@ -81,7 +81,7 @@ describe("a DM's route length", () => {
     cleanup();
     // The page still shows DMbot's read, but the length was changed since (another screen): the keep is refused as changed.
     const api = mockApi("table");
-    await api.changeRouteLength!(REF, { action: "set", on: "connection", id: "route-1", words: "a week" });
+    await api.changeRouteLength!(REF, { action: "set", on: "connection", id: "l1", words: "a week" });
     panel(read, true, true, api);
     fireEvent.click(screen.getByRole("button", { name: w.keepButton }));
     expect(await screen.findByText(w.changed)).toBeTruthy();
@@ -106,6 +106,17 @@ describe("a DM's route length", () => {
     fireEvent.click(screen.getByRole("button", { name: w.button }));
     fireEvent.click(screen.getByRole("button", { name: w.save }));
     expect(await screen.findByText(w.gone)).toBeTruthy();
+  });
+});
+
+describe("the mock's Story Graph routes", () => {
+  it("the mock's graph carries DMbot's read as a route with its length, marked for the DM", async () => {
+    const api = mockApi("table");
+    // The lonely pretend web has the connection l1 with DMbot's read (mock.ts startWeb).
+    const g = await api.webGraph!(`${REF}.web-lonely`, { center: "", hops: 1 });
+    const link = g.edges.flatMap((e) => e.links).find((l) => l.id === "l1");
+    expect(link?.route).toBe(true);
+    expect(link?.length).toEqual({ words: "two days by cart", read: true });
   });
 });
 

@@ -1368,7 +1368,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     return {
       center: centre,
       nodes: knownNodes,
-      edges: whoEdges,
+      edges: whoEdges.map((e) => ({ ...e, links: e.links.map((l) => ({ ...l, ...routeOf(l.id) })) })),
       truncated: false,
       maxHops: 8,
       canEdit: dm && all,
@@ -1383,10 +1383,21 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let improve = true;
   const calls: string[] = [];
   // Route lengths in a pretend campaign (#4392): by id, "" when none, and the batches Undo can take back.
+  // The routes the pretend campaign shows (#4986): the connection l1 has DMbot's read, the place Greywatch a length the DM kept,
+  // and Saltmarsh a route with no length yet. Places are keyed by name, since their ids follow the order the names were made in.
   const routeLengths = new Map<string, { words: string; read: boolean }>([
-    ["route-1", { words: "two days by cart", read: true }],
-    ["place-1", { words: "", read: false }],
+    ["l1", { words: "two days by cart", read: true }],
+    ["Greywatch", { words: "a day on foot", read: false }],
+    ["Saltmarsh", { words: "", read: false }],
   ]);
+  const routeKey = (id: string): string => {
+    const n = memory.find((x) => x.id === id);
+    return n && n.kind === "place" ? n.name : id;
+  };
+  const routeOf = (id: string) => {
+    const r = routeLengths.get(id);
+    return r ? { route: true as const, ...(r.words ? { length: { words: r.words, read: r.read } } : {}) } : {};
+  };
   const routeBatches = new Map<number, { id: string; prev: { words: string; read: boolean } }>();
   let routeBatch = 0;
   // The join question's groups per campaign (#4778 part b): made when first read, then changed by the answers.
@@ -2375,15 +2386,15 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         routeLengths.set(back.id, back.prev);
         return { batch: null };
       }
-      const prev = routeLengths.get(change.id);
+      const prev = routeLengths.get(routeKey(change.id));
       if (!prev) throw new ApiError("gone");
       // A keep of a length that is already the DM's own is refused as changed; the same words again change nothing.
       if (change.action === "keep" && !prev.read) throw new ApiError("changed");
       const words = change.action === "set" ? change.words.trim() : prev.words;
       if (change.action === "set" && words === prev.words) return { batch: null };
-      routeLengths.set(change.id, { words, read: false });
+      routeLengths.set(routeKey(change.id), { words, read: false });
       const batch = ++routeBatch;
-      routeBatches.set(batch, { id: change.id, prev });
+      routeBatches.set(batch, { id: routeKey(change.id), prev });
       return { batch };
     },
     // A character's lineage and class (#3925): DM only. "pc-cerric" is a Dwarf and a Cleric, "npc-guard-1" has none; any other node has none.
@@ -3065,7 +3076,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       // A route place (#5010): Greywatch is a road with a hard going condition the DM set; other places are not roads.
       const route = named.name === "Greywatch" ? { road: true, condition: { value: "hard" as const, words: "", since: 3, before: null, read: false, shown: false } } : {};
-      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })), ...route };
+      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })), ...route, ...routeOf(named.name) };
     },
     // The quest sheet of the mock's kept thread (#4547): the example the spec gives, for its one thread node.
     async threadCard(ref, thread) {
