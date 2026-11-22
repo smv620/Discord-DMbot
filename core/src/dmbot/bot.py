@@ -5034,9 +5034,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception as exc:  # the type only: a database error can quote a label
                 log.warning("Could not read an import's speaker labels: %s", type(exc).__name__)
                 labels = []
+            # A label is often a character's name ("Cerric Vale"): then only the whole label is
+            # skipped, never its words, or "Mira Vale" would be hidden by "Vale" (#5024).
+            known = (
+                set(await self.memory.known_keys(guild_id, campaign_id))
+                if labels and self.memory is not None
+                else set()
+            )
             for label in labels:
                 keys.add(name_key(label))
-                keys.update(name_key(word) for word in label.split())
+                if name_key(label) not in known:
+                    keys.update(name_key(word) for word in label.split())
         return keys
 
     def name_of(self, guild_id: int, user_id: int) -> str:

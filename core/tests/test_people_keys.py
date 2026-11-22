@@ -174,6 +174,21 @@ class TheImportLabels(NamesTest):
         await self.tie(self.campaign.id, "Cerric Vale", MIA)
         self.assertEqual(await self.proposed({MIA}), ["Oskar Vane"])
 
+    async def test_a_label_that_is_a_known_characters_name_hides_only_itself(self) -> None:
+        from dmbot.memory.models import CONFIRMED, NewName
+
+        self.bot.members = MemberDirectory(self.db)
+        await self.memory.add_names(
+            NAMES_GUILD, self.campaign.id, [NewName("Cerric Vale", "character", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        await self.tie(self.campaign.id, "Cerric Vale", MIA)
+        lines = ("We met Mira Vale and Cerric Vale.", "Mira Vale nodded to Cerric Vale.")
+        made = await self.bot._propose_new_names(
+            NAMES_GUILD, self.campaign.id, list(lines), {MIA}, None
+        )
+        self.assertEqual(sorted(made), ["Mira Vale"])  # (not hidden by "Vale")
+
     async def test_someone_not_tied_and_another_campaigns_labels_skip_nothing(self) -> None:
         self.bot.members = MemberDirectory(self.db)
         other = await self.campaigns.create(NAMES_GUILD, "Other", 77)
