@@ -8142,7 +8142,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # An entry the table doesn't hold (the DM's switch, a clue only some know, or a newcomer
         # not yet told, #2321) is as secret as a secret name: asked of the gate, never of a flag
         # (#4812). If the gate can't be read, nothing is sent.
-        if self.memory is None:
+        if self.memory is None or table.campaign_id is None:
             return asked
         try:
             held = await self.memory.entries_held(
