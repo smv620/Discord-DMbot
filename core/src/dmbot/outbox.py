@@ -28,6 +28,7 @@ RECAP_READY = "recap_ready"  # a recap is ready: the bot posts it, with its butt
 RECAP_FAILED = "recap_failed"  # a recap could not be written (payload: session_at, keeps)
 RECAP_NAMES = "recap_names"  # names the recap kept were added to the check (session_at, added)
 RECAP_UNCHECKED = "recap_unchecked"  # a recap could not be finished checking (session_at, keeps)
+IMPORT_RECAP_HOLD = "import_recap_hold"  # the DM's name questions a held import recap waits on
 IMPORT_CLOCK_OFFER = "import_clock_offer"  # the game date an imported session ended at (#4904 3b-2)
 RECAP_ALLOWANCE = "recap_allowance"  # the month's allowance is used up (nothing but the kind)
 
