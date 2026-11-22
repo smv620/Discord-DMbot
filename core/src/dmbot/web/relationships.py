@@ -15,6 +15,7 @@ A campaign is named by `<server>.<campaign>`, as for the recap and transcript pa
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from collections.abc import Callable, Collection, Mapping
 from typing import Any
@@ -39,11 +40,25 @@ from dmbot.memory.standing import dm_line_word
 from dmbot.memory.voice import split_effect_note
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
-from dmbot.web import all_names, graph_view, link_sources, pc_icons, route_lengths, which_choices
+from dmbot.web import (
+    all_names,
+    first_feelings,
+    graph_view,
+    link_sources,
+    pc_icons,
+    route_lengths,
+    which_choices,
+)
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 from dmbot.web.who_knows import who_text
+
+log = logging.getLogger(__name__)
+# (what the door gives for no ids: nothing to remind of)
+_NO_FEELINGS: dict[str, list[object]] = {
+    k: [] for k in ("claims", "entities", "aliases", "relations", "homes", "species")
+}
 
 # The website's steps spinner goes 1 to 8 (owner, #2934); MAX_NODES still bounds the work.
 MAX_HOPS = 8
@@ -1670,6 +1685,7 @@ async def read_waiting(
         found = await cur.fetchone()
         got = found["r"] if found else None
         info = None
+        feelings: dict[str, str] = {}
         if got is not None and got.get("status") == "ok" and got["claims"]:
             # The claims kept for a "Which one?" answer (#3463): the choices come from the
             # store's own function, run on the facts this door sends for the ids the list showed.
@@ -1678,6 +1694,18 @@ async def read_waiting(
                 "SELECT dmbot_web_which_info(%s, %s, %s) AS r", (guild_id, campaign_id, ids)
             )
             info = (await cur.fetchone() or {}).get("r")
+            # The first meeting's feeling reminder (#4942): only a reminder, so a failed read
+            # leaves the questions as they were
+            try:
+                cur = await conn.execute(
+                    "SELECT dmbot_web_first_feeling_info(%s, %s, %s) AS r",
+                    (guild_id, campaign_id, ids),
+                )
+                feelings = first_feelings.lines_by_claim(
+                    (await cur.fetchone() or {}).get("r") or _NO_FEELINGS
+                )
+            except Exception:
+                log.exception("first feelings: read failed")
     if got is None or got.get("status") != "ok":
         raise RecapError("not_found")
     choices = which_choices.choices_by_claim(info) if info else {}
@@ -1687,6 +1715,7 @@ async def read_waiting(
             "details": split_effect_note(str(c.get("details") or ""))[0],  # (never the note)
             "statement": _claim_statement(c),
             "canSecret": _can_be_secret(c),
+            "startingFeeling": feelings.get(str(c["id"])),
             **({"choices": choices[str(c["id"])]} if str(c["id"]) in choices else {}),
         }
         for c in got["claims"]
