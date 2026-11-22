@@ -71,6 +71,7 @@ from dmbot.outbox import (
     STORY_MET_LIST,
     STORY_RECAP_LINES,
     STORY_SECRET_COUNT,
+    STORY_WEATHER,
     Outbox,
 )
 from dmbot.recaps import allowance as recap_allowance
@@ -341,6 +342,9 @@ class RecapFeatures:
         async def deliver_story_held_back(
             self, gid: int, cid: str, payload: Mapping[str, Any]
         ) -> None: ...
+        async def deliver_story_weather(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
         async def deliver_import_clock_offer(
             self, gid: int, cid: str, payload: Mapping[str, Any]
         ) -> None: ...
@@ -442,6 +446,7 @@ class RecapFeatures:
                                 STORY_SECRET_COUNT: self.deliver_story_secret_count,
                                 STORY_MET_LIST: self.deliver_story_met_list,
                                 STORY_HELD_BACK: self.deliver_story_held_back,
+                                STORY_WEATHER: self.deliver_story_weather,
                             },
                             self.outbox_wake,
                         ),

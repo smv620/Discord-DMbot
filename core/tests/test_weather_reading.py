@@ -222,7 +222,9 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
 
         marked: list[Any] = []
 
-        async def first_time(_db: Any, _g: int, _c: str, marks: Any) -> list[bool]:
+        async def first_time(
+            _db: Any, _g: int, _c: str, marks: Any, now: int | None = None
+        ) -> list[bool]:
             marked.extend(marks)
             return [first] * len(marks)
 
@@ -233,6 +235,19 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
         ):
             await DMBot._weather_notes(bot, 1, "c" * 32, report, 1)  # type: ignore[arg-type]
         return marked
+
+    async def test_with_no_discord_the_note_is_an_outbox_row_and_no_message(self) -> None:
+        from unittest.mock import AsyncMock
+
+        bot, lookup = await self.bot(mf.Held((fact("arctic"),), "r" * 32))
+        bot.headless = True  # (#4904 3b-4b: the worker has no Discord)
+        bot.outbox = SimpleNamespace(add_now=AsyncMock())
+        await self.run_it(bot, lookup, wn.HEAT)
+        bot._dm_message.assert_not_awaited()
+        args, kwargs = bot.outbox.add_now.await_args
+        self.assertEqual(args[2], "story_weather")
+        self.assertEqual(sorted(args[3]), ["at", "session"])  # a moment and a date, no word
+        self.assertTrue(kwargs["unique"])
 
     async def test_heat_in_a_freezing_place_is_noted_privately_with_its_working(self) -> None:
         climate = fact("arctic")
