@@ -65,7 +65,7 @@ describe("the campaigns", () => {
 describe("a campaign's rules", () => {
   it("lists them numbered as the bot numbers them, newest first, with the \"instead of\"", async () => {
     page(mockApi("table"), `/account/house-rules/${REF}`);
-    expect(await screen.findByRole("heading", { name: "The Brynwater Crossing" })).toBeTruthy();
+    expect(await screen.findByRole("link", { name: "The Brynwater Crossing" })).toBeTruthy();
     const items = screen
       .getAllByRole("listitem")
       .map((li) => li.textContent)

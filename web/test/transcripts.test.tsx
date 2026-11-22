@@ -76,7 +76,7 @@ describe("the campaigns", () => {
 describe("a campaign's sessions", () => {
   it("lists them newest first with the day and the number of lines", async () => {
     page(mockApi("table"), `/account/transcripts/${REF}`);
-    expect(await screen.findByRole("heading", { name: "The Brynwater Crossing" })).toBeTruthy();
+    expect(await screen.findByRole("link", { name: "The Brynwater Crossing" })).toBeTruthy();
     const titles = screen.getAllByText(/^Session \d$/).map((e) => e.textContent);
     expect(titles).toEqual(["Session 3", "Session 2", "Session 1"]);
     expect(screen.getByText(/3 lines/)).toBeTruthy();
@@ -248,7 +248,7 @@ describe("how long the campaign keeps transcripts (#1575)", () => {
     expect(screen.queryByText(/Transcripts are kept/)).toBeNull();
     cleanup();
     page(older, `/account/transcripts/${REF}`);
-    await screen.findByRole("heading", { name: "The Brynwater Crossing" });
+    await screen.findByRole("link", { name: "The Brynwater Crossing" });
     expect(screen.queryByText(/Transcripts are kept/)).toBeNull();
   });
 });

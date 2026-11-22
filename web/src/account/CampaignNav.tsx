@@ -38,6 +38,37 @@ export function readCampaign(api: AccountApi, ref: string): Promise<CampaignPage
   return found;
 }
 
+/** The campaign's name as the first heading of the page, and the page's own title under it (#5038; the owner,
+ * 2026-11-22: "the actively selected campaign title should always be on top of every page"). The page's static
+ * heading (the page's title, drawn before any script runs) becomes the second-level heading and the campaign's
+ * name is put above it, at the top of the page's content, so on a phone the name is not a screen down. Done once for
+ * each page (a page with two navs has one name), and the space is kept while the name is loading, so the page does
+ * not jump. The campaign's own page already makes its one heading the name (CampaignPage), so it is left alone. */
+function useCampaignHeading(name: string | null, skip: boolean): void {
+  useEffect(() => {
+    if (skip || typeof document === "undefined") return;
+    const root = document.querySelector<HTMLElement>(".account");
+    if (!root) return;
+    let title = root.querySelector<HTMLElement>(":scope > [data-campaign-title]");
+    if (!title) {
+      title = document.createElement("h1");
+      title.setAttribute("data-campaign-title", "");
+      title.className = "campaign-title";
+      title.style.minHeight = "1.2em"; // (the space is kept while the name loads)
+      const pageTitle = root.querySelector<HTMLElement>(":scope > h1");
+      if (pageTitle) {
+        // The page's own title goes one level down, in the same place, with whatever it had.
+        const sub = document.createElement("h2");
+        for (const attr of Array.from(pageTitle.attributes)) sub.setAttribute(attr.name, attr.value);
+        sub.append(...Array.from(pageTitle.childNodes));
+        pageTitle.replaceWith(sub);
+      }
+      root.insertBefore(title, root.firstChild);
+    }
+    if (name) title.textContent = name;
+  }, [name, skip]);
+}
+
 export default function CampaignNav({
   api,
   campaignRef,
@@ -71,6 +102,7 @@ export default function CampaignNav({
   }, [isDmNow]);
 
   const campaign = name || found?.name || words.thisCampaign;
+  useCampaignHeading(name || found?.name || null, page === "campaign");
   // Settings is a part of the campaign's own page: its tab is the marked one once the person has gone there (#settings).
   const [hash, setHash] = useState(typeof window === "undefined" ? "" : window.location.hash);
   useEffect(() => {
