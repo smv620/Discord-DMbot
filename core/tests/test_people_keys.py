@@ -10,6 +10,7 @@ from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
+from dmbot.campaigns import CampaignStore
 from dmbot.consent import ConsentStore
 from dmbot.members import MemberDirectory
 from tests.pg import DatabaseTest
@@ -17,7 +18,7 @@ from tests.test_memory_names import GUILD as NAMES_GUILD
 from tests.test_memory_names import NamesTest
 
 GUILD, OTHER = 7301, 7302
-MIA, BRAM, NEVER = 9301, 9302, 9303
+MIA, BRAM, NEVER, DM = 9301, 9302, 9303, 9304
 
 
 def bot(directory: Any, cache: dict[int, str] | None = None) -> Any:
@@ -78,6 +79,30 @@ class TheDirectory(DatabaseTest):
     async def test_a_new_name_replaces_the_old_one(self) -> None:
         await self.directory.remember(GUILD, MIA, "Mia Reed", "mia_s")
         self.assertEqual(await self.directory.names(GUILD, [MIA]), {MIA: ["Mia Reed", "mia_s"]})
+
+    async def test_a_dm_without_consent_is_kept_and_returned_but_a_stranger_is_not(self) -> None:
+        campaign = await CampaignStore(self.db).create(GUILD, "One", DM)
+        await self.directory.remember(GUILD, DM, "Oskar Vane", "oskar_v")
+        await self.directory.remember(GUILD, NEVER, "Nobody", "nobody")  # (no consent, no DM)
+        self.assertEqual(
+            await self.directory.names(GUILD, [DM, NEVER]), {DM: ["Oskar Vane", "oskar_v"]}
+        )
+        self.assertIsNotNone(campaign)
+        await self.directory.forget(GUILD, MIA)  # (another person stopping keeps the DM)
+        self.assertEqual(await self.directory.names(GUILD, [DM]), {DM: ["Oskar Vane", "oskar_v"]})
+
+    async def test_the_sweep_keeps_a_player_of_a_confirmed_character(self) -> None:
+        from dmbot.memory.models import DM as DM_SOURCE
+        from dmbot.memory.store import MemoryStore
+
+        campaign = await CampaignStore(self.db).create(GUILD, "One", DM)
+        await MemoryStore(self.db).add_entity(
+            GUILD, campaign.id, type="character", name="Rook", source=DM_SOURCE,
+            status="confirmed", role="player_character", played_by=MIA,
+        )  # fmt: skip
+        self.now += 100 * 86400
+        self.assertEqual(await self.directory.sweep(GUILD, 90 * 86400), 0)  # Mia plays Rook
+        self.assertEqual(await self.directory.names(GUILD, [MIA]), {MIA: ["Mia Stone", "mia_s"]})
 
     async def test_the_sweep_drops_names_not_written_for_90_days_and_keeps_the_rest(self) -> None:
         await ConsentStore(self.db).grant(GUILD, BRAM)

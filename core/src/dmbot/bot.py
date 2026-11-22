@@ -2969,6 +2969,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # Re-checked now, after the awaits above: a revoke may have landed.
                 granted = times.get(member.id)
                 server = member.guild.name
+                if member.id == table.dm_user_id:  # (a DM's name is no story name either, #4904)
+                    self.note_member(gid, member)
                 if granted is not None and self.consent.has_consent(gid, member.id):
                     self.note_member(gid, member)  # refreshed at each session start (#2141)
                     text = reminder_text(
