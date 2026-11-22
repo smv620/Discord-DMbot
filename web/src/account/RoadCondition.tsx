@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 // A road's or route place's condition (#4451, page half): the line, DMbot's read, and the DM's 🚧 Condition menu. Players see the line only.
 // Drawn only behind ROAD_CONDITION_LIVE; with it off, nothing shows.
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 
 import { ROAD_CONDITION_LIVE } from "../content/road-condition-switch";
 import { roadConditionWords as w } from "../content/road-condition-words";
@@ -37,9 +37,15 @@ export default function RoadCondition({
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<Said | null>(null);
   const [undo, setUndo] = useState<number | null>(null);
+  // What the DM just set, shown until the graph is read again (the connection panel has no re-read): `prev` is what it was before, for Undo.
+  const [local, setLocal] = useState<{ cond: Condition | undefined; prev: Condition | undefined } | null>(null);
+  useEffect(() => {
+    setLocal(null);
+  }, [condition]);
   if (!ROAD_CONDITION_LIVE) return null;
 
-  const line = condition?.value ? w.line(condition.value, condition.words, condition.since, condition.before) : null;
+  const current = local ? local.cond : condition;
+  const line = current?.value ? w.line(current.value, current.words, current.since, current.before) : null;
   // The DM's view can set a road; a connection's read and show controls are for the connection only.
   const isDm = canEdit && road;
   const isConnection = on === "connection";
@@ -63,8 +69,10 @@ export default function RoadCondition({
     run(
       async () => {
         if (!api.roadCondition) throw new ApiError("server");
-        const before = condition?.value ?? null;
+        const before = current?.value ?? null;
         const made = await api.roadCondition(refId, { on, id, value, ...(value === "other" ? { words: words.trim() } : {}) });
+        const now = value === "none" ? undefined : { value: value as Condition["value"], words: words.trim(), since: null, before: current?.value ? { value: current.value, words: current.words } : null };
+        setLocal({ cond: now, prev: current });
         setUndo(made.batch);
         setMenu(false);
         setWords("");
@@ -81,7 +89,7 @@ export default function RoadCondition({
   const showHide = () =>
     run(async () => {
       if (!api.showRoadCondition) throw new ApiError("server");
-      await api.showRoadCondition(refId, id, !condition?.shown);
+      await api.showRoadCondition(refId, id, !current?.shown);
     });
 
   const takeBack = () =>
@@ -90,7 +98,10 @@ export default function RoadCondition({
         if (!api.undoRouteLength || undo === null) throw new ApiError("server");
         await api.undoRouteLength(refId, undo);
       },
-      () => setUndo(null),
+      () => {
+        setUndo(null);
+        setLocal((was) => (was ? { cond: was.prev, prev: was.cond } : null));
+      },
     );
 
   return (
@@ -98,7 +109,7 @@ export default function RoadCondition({
       {line && (
         <p class="small">
           {line}
-          {canEdit && condition?.read ? w.readNote : ""}
+          {canEdit && current?.read ? w.readNote : ""}
         </p>
       )}
       {isDm && (
@@ -108,7 +119,7 @@ export default function RoadCondition({
           </button>
           {menu && (
             <div class="stack" role="group" aria-label={w.menuPlaceholder}>
-              <p class="small muted">{w.menuPlaceholder}</p>
+              <p class="small muted">{`How is ${name} now?`}</p>
               {w.choices.map((c) => (
                 <div key={c.value} class="stack">
                   {c.value === "other" ? (
@@ -134,14 +145,14 @@ export default function RoadCondition({
               ))}
             </div>
           )}
-          {isConnection && condition?.read && (
+          {isConnection && current?.read && (
             <button type="button" class="button secondary" disabled={busy} onClick={() => void keep()}>
               {w.conditionRight}
             </button>
           )}
           {isConnection && (
             <button type="button" class="button secondary" disabled={busy} onClick={() => void showHide()}>
-              {condition?.shown ? w.hide : w.show}
+              {current?.shown ? w.hide : w.show}
             </button>
           )}
         </div>

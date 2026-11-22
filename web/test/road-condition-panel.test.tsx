@@ -118,6 +118,17 @@ describe("a road's condition in the connection panel (#4451)", () => {
     expect((await screen.findByRole("alert")).textContent?.trim()).toBe(w.gone);
   });
 
+  it("after a change the new line shows at once, and Undo puts the old one back", async () => {
+    panel({ condition: CLOSED });
+    fireEvent.click(screen.getByRole("button", { name: w.button }));
+    fireEvent.click(screen.getByRole("button", { name: `${w.choices[0]!.label}: ${w.choices[0]!.hint}` }));
+    expect(await screen.findByText(w.line("open", "", null, { value: "closed", words: "" }))).toBeTruthy();
+    const undo = await screen.findByRole("button", { name: w.undoLabel });
+    await waitFor(() => expect((undo as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(undo);
+    expect(await screen.findByText(w.line("closed", "", 5, { value: "open", words: "" }) + w.readNote)).toBeTruthy();
+  });
+
   it("nothing is drawn while ROAD_CONDITION_LIVE is off", () => {
     live.on = false;
     const { container } = panel({ condition: CLOSED });

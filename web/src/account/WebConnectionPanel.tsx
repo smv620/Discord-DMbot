@@ -401,14 +401,14 @@ function Line({
       </button>
       {isOpen && (
         <div class="stack" id={`web-link-${link.id}`}>
-          {/* A road's condition (#4451): behind ROAD_CONDITION_LIVE. The road's name in "Noted" is the link's words (asked on the issue). */}
+          {/* A road's condition (#4451): behind ROAD_CONDITION_LIVE. The road is named by its two ends, as the panel names them. */}
           {ROAD_CONDITION_LIVE && (link.road || link.condition) && (
             <RoadCondition
               api={api}
               refId={refId}
               on="connection"
               id={link.id}
-              name={link.words}
+              name={`the road between ${a} and ${b}`}
               condition={link.condition}
               road={!!link.road}
               canEdit={canEdit}
