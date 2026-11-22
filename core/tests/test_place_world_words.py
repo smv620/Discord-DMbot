@@ -35,7 +35,9 @@ class TheDoorsWordsMatchTheStores(unittest.TestCase):
         from dmbot.memory.web_actions import MAP_ACTIONS
         from dmbot.web.all_names import ACTIONS
 
-        self.assertEqual(set(_module().ACTIONS), set(MAP_ACTIONS))
+        # (#4412: 0590 adds `map-culture` and `map-population` to the same family)
+        culture = importlib.import_module("dmbot.migrations.0590_web_place_culture")
+        self.assertEqual({*_module().ACTIONS, *culture.ACTIONS}, set(MAP_ACTIONS))
         self.assertTrue(set(MAP_ACTIONS) <= set(ACTIONS))
 
 
