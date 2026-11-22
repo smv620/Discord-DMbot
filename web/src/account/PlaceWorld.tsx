@@ -5,6 +5,8 @@
 // own Undo, only what changed is sent, and a later one is sent only once the page has read the earlier one back as saved. Every press goes
 // through the page's own `act`. What players see of these is another piece (#4311). Shown by the Names page for a place, to a DM, while
 // PLACE_WORLD_LIVE.
+import RoadCondition from "./RoadCondition";
+import { ROAD_CONDITION_LIVE } from "../content/road-condition-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { HOWS, LAND, placeWorldWords as w, WARMTH } from "../content/place-world-words";
@@ -171,6 +173,20 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
   return (
     <div class="name-form stack" aria-busy={busy}>
       <h4>{w.heading}</h4>
+      {/* A route place's condition (#5010, #4996): behind ROAD_CONDITION_LIVE; the DM sets it, the page reads the place again after a change. */}
+      {ROAD_CONDITION_LIVE && data.road && (
+        <RoadCondition
+          api={api}
+          refId={refId}
+          on="place"
+          id={row.id}
+          name={row.name}
+          condition={data.condition}
+          road
+          canEdit
+          onChanged={() => void load("all")}
+        />
+      )}
       {land && (
         <p>
           {w.landLine(landWord, land.how === "partly")}
