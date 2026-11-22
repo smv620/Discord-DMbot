@@ -275,6 +275,23 @@ class PartyAndOthers:
     npcs: dict[str, str]
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class PartyAtSession:
+    """`MemoryStore.party_at_session`: the party at one session and what it knows (#4877)."""
+
+    members: tuple[str, ...]  # (entry ids; empty when no player character covers the session)
+    seen: gate.Visible  # (`Viewer.party_at(members)`: common knowledge only when empty)
+
+    @property
+    def entries(self) -> frozenset[str]:
+        """The entries that party knows in their own right (`(ENTRY, id)` in its view), and its
+        own members: the gate's "all" mode counts a member's own entry as known only when every
+        other member holds a row on it, and a joiner is asked, never copied (§5), so without this
+        a recap could not name the characters at its own table (#4877 review)."""
+        known = frozenset(i for (k, i) in self.seen.sureness if k == gate.ENTRY)
+        return known | frozenset(self.members)
+
+
 PERSON = "person"
 PLAYS = "plays"
 TRAVELS_WITH = "travels_with"  # a companion goes along with a player character or the party
@@ -1752,18 +1769,19 @@ class MemoryStore:
         place_ids: Sequence[str],
         names: Mapping[str, str],
         session_at: int | None = None,
+        members: Sequence[str] | None = None,
     ) -> list[str]:
         """The background lines of `maps.recap_colour` for the places a session visited, read in
         one snapshot (#4721): the party's view only, under the names the caller gives, the party
-        as it was at that session when `session_at` is given (#4537 slice 3b)."""
+        as it was at that session when `session_at` is given (#4537 slice 3b). `members`: that
+        party as the caller already read it (`party_at_session`, #4877), so the stage reads it
+        once."""
         from dmbot.maps import recap_colour  # (here: `dmbot.maps` imports this module)
 
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
-            viewer = (
-                gate.Viewer.party_at(await party_record.session_members(scope, session_at))
-                if session_at is not None
-                else None
-            )
+            if members is None and session_at is not None:
+                members = await party_record.session_members(scope, session_at)
+            viewer = gate.Viewer.party_at(members) if members is not None else None
             return await recap_colour.lines(scope, place_ids, names, viewer)
 
     async def entries_held(
@@ -3239,6 +3257,15 @@ class MemoryStore:
         that session is for them (§8)."""
         async with self._read(guild_id, campaign_id) as scope:
             return await party_record.session_members(scope, at)
+
+    async def party_at_session(self, guild_id: int, campaign_id: str, at: int) -> PartyAtSession:
+        """The party at the session that started at `at` and what it knows, read once in one
+        snapshot (#4877): a recap stage takes both from here, so a join or a leave while it is
+        being built can't split its list of player characters from the names it may use."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            members = await party_record.session_members(scope, at)
+            seen = await gate.visible_to(scope, gate.Viewer.party_at(members))
+            return PartyAtSession(tuple(members), seen)
 
     async def visible_to_party_at(self, guild_id: int, campaign_id: str, at: int) -> gate.Visible:
         """What the party at `at` knows, the party and its knowledge read in one snapshot so a
