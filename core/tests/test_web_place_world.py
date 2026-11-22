@@ -44,6 +44,25 @@ class TheDoor(PlaceWorld):
             got["groups"],
         )
 
+    async def test_a_route_place_carries_its_condition_with_the_session_and_what_it_was(
+        self,
+    ) -> None:
+        """#5010: the place row of a route says what the road's line says (`road`, `condition`);
+        a place that is no route says nothing of the kind."""
+        self.assertNotIn("road", await self.world())
+        await self.memory.set_place_form(self.g, self.one.id, self.keep, "route", source="dm")
+        mine = await self.world()
+        self.assertEqual((mine["road"], "condition" in mine), (True, False))
+        await self.memory.set_route_condition(
+            self.g, self.one.id, "open", place_id=self.keep, source="dm"
+        )
+        await self.memory.set_route_condition(
+            self.g, self.one.id, "closed", place_id=self.keep, source="dm"
+        )
+        got = (await self.world())["condition"]
+        self.assertEqual((got["value"], got["before"]), ("closed", {"value": "open", "words": ""}))
+        self.assertEqual((got["read"], got["shown"]), (False, False))
+
     async def test_what_the_dm_set_is_there_with_who_gave_it(self) -> None:
         self.assertEqual(
             await self.run_one(self.keep, action="map-terrain", value="hill", how="partly"), [""]
