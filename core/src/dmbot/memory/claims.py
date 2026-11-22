@@ -1071,6 +1071,74 @@ async def _learn_in_scene(w: Changes, relation_id: str, characters: Sequence[str
     return learned
 
 
+def feeling_pairs(
+    onto: Ontology,
+    claims: Sequence[Claim],
+    entities: Sequence[Mapping[str, Any]],
+    aliases: Sequence[Mapping[str, Any]],
+) -> dict[str, tuple[str, str]]:
+    """The two entries of each question that says how two characters feel (#4229 slice 4b), by
+    claim id. Pure. A question whose names no longer mean one entry each, whose two ends are the
+    same entry, or that is not a feeling between two characters, is left out."""
+    names = names_of(entities, aliases)
+    pairs: dict[str, tuple[str, str]] = {}
+    for claim in claims:
+        if is_condition(claim):
+            continue
+        a = _entry_of(names, claim.subject, claim.subject_picked)
+        b = _entry_of(names, claim.object, claim.object_picked)
+        if isinstance(a, str) or isinstance(b, str) or a[0] == b[0]:
+            continue
+        if feeling_of(onto, claim.relationship, claim.details, (a[1], b[1])) is None:
+            continue
+        pairs[claim.id] = (a[0], b[0])
+    return pairs
+
+
+def feeling_lines(
+    pairs: Mapping[str, tuple[str, str]],
+    entities: Sequence[Mapping[str, Any]],
+    relations: Sequence[Mapping[str, Any]],
+    homes: Sequence[Mapping[str, Any]],
+    species: Sequence[Mapping[str, Any]],
+) -> dict[str, str]:
+    """The reminder line for each pair that has never met (`first_feeling.line`), by claim id.
+    Pure: `relations` are the confirmed connections touching the pairs' entries (ended ones too:
+    two once connected have met; only live ones are homes), `homes` the DM's open, confirmed
+    feelings held by an entry (`toward_id` or `toward_lineage`), `species` the entries' lineage
+    links, oldest first."""
+    out: dict[str, str] = {}
+    ties: dict[str, list[first_feeling.Tie]] = {}
+    met: set[frozenset[str]] = set()
+    for r in relations:
+        s_id, o_id = str(r["subject_id"]), str(r["object_id"])
+        met.add(frozenset((s_id, o_id)))
+        if r["to_session_at"] is not None:
+            continue
+        ties.setdefault(s_id, []).append(
+            first_feeling.Tie(str(r["predicate"]), o_id, str(r["detail"] or ""))
+        )
+    lineages: dict[str, str] = {}
+    for r in species:
+        lineages.setdefault(str(r["entity_id"]), first_feeling.lineage_key(str(r["name"])))
+    kept = [
+        first_feeling.Kept(
+            str(r["holder_id"]), str(r["toward_id"] or ""), str(r["toward_lineage"] or ""),
+            float(r["score"]),
+        )
+        for r in homes
+        if r["toward_id"] is not None or r["toward_lineage"] is not None
+    ]  # fmt: skip
+    shown = {str(e["id"]): str(e["name"]) for e in entities if e["status"] == CONFIRMED}
+    for claim_id, (a, b) in pairs.items():
+        if frozenset((a, b)) in met:  # (not a first meeting: they're already connected)
+            continue
+        said = first_feeling.line(a, b, ties, lineages, kept, shown)
+        if said:
+            out[claim_id] = said
+    return out
+
+
 class ClaimStore:
     """Proposals from the extractor, and the DM's answers to them."""
 
@@ -1787,30 +1855,19 @@ class ClaimStore:
         """The "Starting feeling?" line for each question that would be the first `knows`
         between two characters (#4229 slice 4b): worked out now, never stored, from the DM's
         kept feelings only (`first_feeling`). A question whose names no longer mean one entry
-        each, or whose two already have a connection, gets none."""
-        out: dict[str, str] = {}
+        each, or whose two already have a connection, gets none. The two pure steps
+        (`feeling_pairs`, `feeling_lines`) are the website's too (#4942)."""
         if not claims:
-            return out
+            return {}
         async with self._store._read(guild_id, campaign_id) as scope:
             onto = await _load_ontology(scope)
             entities = await scope.select(
                 ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
             )
             aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
-            names = names_of(entities, aliases)
-            pairs: dict[str, tuple[str, str]] = {}
-            for claim in claims:
-                if is_condition(claim):
-                    continue
-                a = _entry_of(names, claim.subject, claim.subject_picked)
-                b = _entry_of(names, claim.object, claim.object_picked)
-                if isinstance(a, str) or isinstance(b, str) or a[0] == b[0]:
-                    continue
-                if feeling_of(onto, claim.relationship, claim.details, (a[1], b[1])) is None:
-                    continue
-                pairs[claim.id] = (a[0], b[0])
+            pairs = feeling_pairs(onto, claims, entities, aliases)
             if not pairs:
-                return out
+                return {}
             ids = sorted({i for pair in pairs.values() for i in pair})
             # (every confirmed connection, ended ones too: two once connected have met; only the
             # live ones are homes)
@@ -1829,35 +1886,7 @@ class ClaimStore:
                 RULE_LINKS, " AND entity_id = ANY(%s) AND kind = %s ORDER BY created_at, id",
                 [ids, SPECIES],
             )  # fmt: skip
-        ties: dict[str, list[first_feeling.Tie]] = {}
-        met: set[frozenset[str]] = set()
-        for r in rows:
-            s_id, o_id = str(r["subject_id"]), str(r["object_id"])
-            met.add(frozenset((s_id, o_id)))
-            if r["to_session_at"] is not None:
-                continue
-            ties.setdefault(s_id, []).append(
-                first_feeling.Tie(str(r["predicate"]), o_id, str(r["detail"] or ""))
-            )
-        lineages: dict[str, str] = {}
-        for r in species:
-            lineages.setdefault(str(r["entity_id"]), first_feeling.lineage_key(str(r["name"])))
-        kept = [
-            first_feeling.Kept(
-                str(r["holder_id"]), str(r["toward_id"] or ""), str(r["toward_lineage"] or ""),
-                float(r["score"]),
-            )
-            for r in homes
-            if r["toward_id"] is not None or r["toward_lineage"] is not None
-        ]  # fmt: skip
-        shown = {str(e["id"]): str(e["name"]) for e in entities if e["status"] == CONFIRMED}
-        for claim_id, (a, b) in pairs.items():
-            if frozenset((a, b)) in met:  # (not a first meeting: they're already connected)
-                continue
-            said = first_feeling.line(a, b, ties, lineages, kept, shown)
-            if said:
-                out[claim_id] = said
-        return out
+        return feeling_lines(pairs, entities, rows, homes, species)
 
     @staticmethod
     def _split(

@@ -2078,11 +2078,32 @@ class RecapFeatures:
             return  # the jobs are the worker's (#4903); holds and Post stay with the bot
         await self.run_recap_jobs()
 
+    async def _log_queue_depth(self, guild_ids: Sequence[int], *, audio: bool) -> None:
+        """With the worker on, one counts-only line a round: how many recap jobs wait and how long
+        the oldest has (#4914; "Recap queue (text): 2 waiting, oldest 140 s"). No ids, no words.
+        A depth that can't be read is skipped (the type of error in the log), never the round."""
+        if not self.settings.worker_on or self.recaps is None:
+            return
+        waiting, oldest = 0, 0
+        for guild_id in guild_ids:
+            try:
+                n, wait = await self.recaps.queue_depth(guild_id, audio=audio)
+            except Exception as exc:
+                log.warning("Recap queue depth could not be read (%s)", type(exc).__name__)
+                continue
+            waiting, oldest = waiting + n, max(oldest, wait)
+        if waiting:
+            log.info(
+                "Recap queue (%s): %d waiting, oldest %d s",
+                "audio" if audio else "text", waiting, oldest,
+            )  # fmt: skip
+
     async def run_recap_jobs(self) -> None:
         """The due recap jobs, a few at a time (no Discord: whatever a job wants said goes to the
         outbox with the worker on). The bot's round runs it with the worker off, else the worker."""
         if not self.settings.recaps_on or self.recaps is None or self.recap_worker is None:
             return
+        await self._log_queue_depth(await self.work_guild_ids(), audio=False)
         # Every server's due jobs together, the longest wait first: a campaign with many sessions,
         # or a server whose id sorts early, never keeps another's job from its turn (#3845). A
         # campaign has one job at a time (`due`), so oldest-first is round-robin across campaigns.
@@ -2143,6 +2164,7 @@ class RecapFeatures:
         wait to be made, one at a time (each is minutes of provider work)."""
         if self.audio_worker is None or self.recaps is None:
             return
+        await self._log_queue_depth(await self.work_guild_ids(), audio=True)
         for guild_id in await self.work_guild_ids():
             try:
                 if stuck := await self.recaps.fail_stuck_audio(guild_id):
