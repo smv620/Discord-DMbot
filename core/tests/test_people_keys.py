@@ -143,3 +143,41 @@ class TheScanWithNoCache(NamesTest):
         proposed = await self.proposed()
         self.assertIn("Oskar Vane", proposed)
         self.assertTrue(any("Mia" in name or "Stone" in name for name in proposed))
+
+
+class TheImportLabels(NamesTest):
+    """The second source (#5023): the label an import file gave a person the DM tied it to, for
+    someone with no consent row and so no name in the directory."""
+
+    LINES = (
+        "We met Cerric Vale and Oskar Vane at the gate.",
+        "Oskar Vane nodded to Cerric Vale, then to Cerric.",
+        "Vale said nothing; Oskar Vane smiled.",
+    )
+
+    async def tie(self, campaign_id: str, label: str, user: int) -> None:
+        async with self.db.guild(NAMES_GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO import_speakers (guild_id, campaign_id, label, user_id, updated_at)"
+                " VALUES (%s, %s, %s, %s, 1)",
+                (NAMES_GUILD, campaign_id, label, user),
+            )
+
+    async def proposed(self, users: set[int]) -> list[str]:
+        made = await self.bot._propose_new_names(
+            NAMES_GUILD, self.campaign.id, list(self.LINES), users, None
+        )
+        return sorted(made)
+
+    async def test_a_confirmed_speaker_with_no_consent_row_is_skipped_by_their_label(self) -> None:
+        self.bot.members = MemberDirectory(self.db)  # (and the directory knows nobody here)
+        await self.tie(self.campaign.id, "Cerric Vale", MIA)
+        self.assertEqual(await self.proposed({MIA}), ["Oskar Vane"])
+
+    async def test_someone_not_tied_and_another_campaigns_labels_skip_nothing(self) -> None:
+        self.bot.members = MemberDirectory(self.db)
+        other = await self.campaigns.create(NAMES_GUILD, "Other", 77)
+        await self.tie(other.id, "Cerric Vale", MIA)  # (another campaign's tie)
+        await self.tie(self.campaign.id, "Cerric Vale", BRAM)  # (tied to someone not asked about)
+        proposed = await self.proposed({MIA})
+        self.assertTrue(any("Cerric" in n or "Vale" in n for n in proposed))

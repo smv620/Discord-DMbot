@@ -531,6 +531,7 @@ from dmbot.timebot.store import ClockSection, ClockStore
 from dmbot.transcript import (
     fix_notes,
     import_clock,
+    import_map,
     left_out,
     lookback,
     name_pass_run,
@@ -4995,7 +4996,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Worst case after a restart: players see the notice once more.
             log.exception("Couldn't save that the recording notice was posted")
 
-    async def _people_keys(self, guild_id: int, users: Iterable[int]) -> set[str]:
+    async def _people_keys(
+        self, guild_id: int, users: Iterable[int], campaign_id: str | None = None
+    ) -> set[str]:
         """The name keys of people at the table, each whole name and each word of it ("Mia Stone":
         "mia stone", "mia", "stone"), so they are never proposed as story names. Discord's member
         cache first; for a person it has no name for (a worker has no cache, #4904 3b-4c) the
@@ -5021,6 +5024,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 for name in names:
                     keys.add(name_key(name))
                     keys.update(name_key(word) for word in name.split())
+        if missing and campaign_id is not None:
+            # An import's confirmed speaker may have no consent row, so no directory name: the
+            # label the file gave them is the second source (#5023).
+            try:
+                labels = await import_map.labels_of(
+                    self.campaigns.db, guild_id, campaign_id, missing
+                )
+            except Exception as exc:  # the type only: a database error can quote a label
+                log.warning("Could not read an import's speaker labels: %s", type(exc).__name__)
+                labels = []
+            for label in labels:
+                keys.add(name_key(label))
+                keys.update(name_key(word) for word in label.split())
         return keys
 
     def name_of(self, guild_id: int, user_id: int) -> str:
@@ -10335,7 +10351,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             lines = await transcripts.lines(gid, sid)
             # The people at the table are not story names (as in the name scan).
             people = {*dm_ids, *(await consenting())}
-            skip = await self._people_keys(gid, people)
+            skip = await self._people_keys(gid, people, cid)
 
             async def count_call() -> None:
                 await transcripts.record_extraction(
@@ -10609,7 +10625,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         only = [
             x if (x.user_id, x.started_ms) in mine else replace(x, topic=OFF_TOPIC) for x in every
         ]
-        skip = await self._people_keys(gid, users)
+        skip = await self._people_keys(gid, users, cid)
         try:
             report = await extractor.run(
                 self.extractor_ai,
@@ -11980,7 +11996,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
             return 0
         lookup = await self.lookup.get(gid, cid)
-        people = await self._people_keys(gid, users)
+        people = await self._people_keys(gid, users, cid)
         ai = self.name_pass_ai
 
         async def ask(system: str, question: str) -> Any:
@@ -12123,7 +12139,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.exception("Couldn't read the session to find where names were said")
         # People at the table aren't story names: skip their whole display names and
         # each word of them ("Mia Stone" → "Mia", "Stone").
-        skip = set(await self.memory.known_keys(gid, cid)) | await self._people_keys(gid, users)
+        skip = set(await self.memory.known_keys(gid, cid)) | await self._people_keys(
+            gid, users, cid
+        )
         # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
         # (#394). Which known name each sounds like is worked out when the DM looks,
         # never saved: names can change, or be made secret, before then.
