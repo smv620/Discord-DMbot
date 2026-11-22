@@ -97,6 +97,19 @@ class Stored(ConfirmedMemoryTest):
             )
             self.assertEqual([r["reading"] for r in await cur.fetchall()], [None])
 
+    async def test_a_claim_said_by_a_speaker_without_discord_survives_a_backup(self) -> None:
+        # (#4858: an import's speakers have no Discord account, so a claim cites them by a
+        # negative placeholder id; the file the bot itself wrote must pass its own check)
+        await self.claims.propose(
+            GUILD_A, self.c, [said("Bram", "carries", "Heartseeker")], {"1": -5, "2": DM},
+            opted_in={-5, DM}, dms={DM}, prompt_version="r1", model="m1", session_started_at=1_000,
+        )  # fmt: skip
+        (row,) = await self.stored()
+        self.assertIn(-5, row["speaker_ids"])
+        async with self.db.guild(GUILD_A) as conn:
+            rows = await MemorySection().dump(conn, GUILD_A, self.c)
+        self.assertEqual(len(MemorySection().check(json.loads(json.dumps(rows)))["claim"]), 1)
+
     async def test_a_reading_from_a_file_is_checked(self) -> None:
         await self.propose(readings.as_claim(THEORY, "player_said"))
         section = MemorySection()
