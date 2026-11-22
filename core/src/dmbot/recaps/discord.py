@@ -45,7 +45,7 @@ from dmbot.dm_screen.recap_panel import PlanFacts, audio_how
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.import_state import QUEUED, UNHONOURED, ImportState
 from dmbot.logs import log_context
-from dmbot.memory import gate
+from dmbot.memory import extractor, gate
 from dmbot.memory.exposures import secret_connections
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -330,6 +330,9 @@ class RecapFeatures:
         ): ...
         async def fetch_user(self, user_id: int, /) -> discord.User: ...
         async def run_web_backups(self) -> None: ...
+        async def recount_heard(
+            self, gid: int, cid: str, session_at: int, retold: Collection[int] | None = None
+        ) -> int | None: ...
         async def deliver_story_recap_lines(
             self, gid: int, cid: str, payload: Mapping[str, Any]
         ) -> None: ...
@@ -1398,6 +1401,11 @@ class RecapFeatures:
             await self._recanted(campaign.guild_id, campaign.id, session_at),
             shown,
         )[0]
+
+    async def recap_split_made(self, gid: int, cid: str, session_at: int, split: sp.Split) -> None:
+        """A session's split was made (#3172 item d): count its names said again without the lines
+        the split calls last time's recap. The lines are numbered as the story reader's are."""
+        await self.recount_heard(gid, cid, session_at, extractor.recap_numbers(split.to_json()))
 
     async def recap_stored_split(self, gid: int, cid: str, session_at: int) -> sp.Split | None:
         """The split kept once for the session (#3298), or None when none is kept (the recap then
