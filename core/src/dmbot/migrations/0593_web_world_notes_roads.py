@@ -10,11 +10,11 @@ from __future__ import annotations
 # row with `relation_id` set and `entity_id` NULL, 0500) never showed. The place group now also has
 # those rows, as `place:<fact id>` lines like a place's own, so ✅ Keep and 🚫 Not that run the same
 # store calls as for any other place line. The line's `name` is "the road between A and B" as
-# Discord says it, and its `entityId` is the road's first place. A road counts only while it is a
-# known `route_to` (`route_state = ''`) that the DM has not taken away or ended, between two kept
-# places (the store's own rule, `world_notes.read`). Nothing else about the door changes (only the
-# DM, DMbot's reads only, open rows only); no row changes. 0481 is the only migration that defines
-# the function, so it is written out again whole.
+# Discord says it, and its `entityId` is the road's first place. A road counts only while the DM has
+# not taken it away or ended it, between two kept places, as `world_notes.read` counts it (the
+# trigger of 0500 already keeps a condition to a known road). Nothing else about the door changes
+# (only the DM, DMbot's reads only, open rows only); no row changes. 0481 is the only migration
+# that defines the function, so it is written out again whole.
 SQL = r"""
     CREATE OR REPLACE FUNCTION dmbot_web_world_notes(g BIGINT, c TEXT) RETURNS JSONB
     LANGUAGE plpgsql STABLE SECURITY DEFINER AS $fn$
@@ -60,15 +60,14 @@ SQL = r"""
                                'name', 'the road between ' || ea.name || ' and ' || eb.name,
                                'layer', f.layer, 'value', f.value, 'words', f.words,
                                'part', f.part, 'how', NULLIF(f.how, ''),
-                               'fromSession', f.from_session_at,
+                               'ruler', NULL, 'fromSession', f.from_session_at,
                                'from', CASE WHEN f.from_session_at IS NULL THEN 'lore'
                                             ELSE 'session' END) AS line
                     FROM memory_map_facts f
                     JOIN memory_relations r
                       ON r.guild_id = f.guild_id AND r.campaign_id = f.campaign_id
                      AND r.id = f.relation_id AND r.status <> 'rejected'
-                     AND r.to_session_at IS NULL AND r.predicate = 'route_to'
-                     AND r.route_state = ''
+                     AND r.to_session_at IS NULL
                     JOIN memory_entities ea
                       ON ea.guild_id = r.guild_id AND ea.campaign_id = r.campaign_id
                      AND ea.id = r.subject_id AND ea.status IN ('confirmed', 'proposed')

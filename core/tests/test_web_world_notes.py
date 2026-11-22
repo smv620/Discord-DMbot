@@ -278,10 +278,13 @@ class TheRoadLine(WorldNotesDoor):
         got = await self.lines()
         self.assertEqual(sorted(line["id"] for line in got), sorted(n.id for n in store))
         (road,) = [line for line in got if line.get("layer") == mf.CONDITION]
+        (note,) = [n for n in store if n.layer == mf.CONDITION]
+        # (which end is first follows how the store keeps the road: Discord says it the same way)
         self.assertEqual(
             (road["name"], road["value"], road["entityId"], road["from"]),
-            ("the road between Greywater Keep and Bryn Shander", "closed", self.keep, "lore"),
+            (note.name, "closed", note.entity_id, "lore"),
         )
+        self.assertTrue(road["name"].startswith("the road between "))
 
     async def test_keep_takes_it_and_a_taken_away_road_is_not_listed(self) -> None:
         (road,) = [line for line in await self.lines() if line.get("layer") == mf.CONDITION]
@@ -292,4 +295,9 @@ class TheRoadLine(WorldNotesDoor):
         await self.memory.update_relation(
             self.g, self.one.id, self.road, source="dm", status="rejected"
         )
+        self.assertEqual([x for x in await self.lines() if x.get("layer") == mf.CONDITION], [])
+
+    async def test_not_that_turns_a_road_line_down(self) -> None:
+        (road,) = [line for line in await self.lines() if line.get("layer") == mf.CONDITION]
+        self.assertEqual((await self.act("world-not", road["id"])).error, "")
         self.assertEqual([x for x in await self.lines() if x.get("layer") == mf.CONDITION], [])
