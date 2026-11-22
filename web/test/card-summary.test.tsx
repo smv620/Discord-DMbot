@@ -46,18 +46,32 @@ describe("the card summary", () => {
     expect(again.container.textContent).toBe("");
   });
 
-  it("the mock's lore-only character shows Last mentioned and no first-met line", async () => {
+  it("the mock's full character gives the scenes, not bare session numbers", async () => {
+    const api = mockApi("table");
+    const rows = await api.allNames!(REF, { q: "Mira", kind: "", sort: "name" as const, page: 1 });
+    const row = rows.names.find((n) => n.name === "Mira Voss")!;
+    const { container } = render(<CardSummary card={row} />);
+    const lines = Array.from(container.querySelectorAll("p")).map((p) => p.textContent);
+    expect(lines).toEqual([
+      "A ferrywoman who works the Brynwater crossing.",
+      "First met: Session 3, 15 Nov: when the party reached the ferry landing at dusk.",
+      "Last mentioned: Session 9, 21 Nov: in the argument over the ferry's price.",
+    ]);
+  });
+
+  it("the mock's lore-only character: his sentence, the lore as where he was first met, and not mentioned yet", async () => {
     const api = mockApi("table");
     const rows = await api.allNames!(REF, { q: "Aldric", kind: "", sort: "name" as const, page: 1 });
     const row = rows.names.find((n) => n.name === "Aldric Thorn")!;
-    expect(row.who).toBe("In your lore: a ferryman on the Brynwater road.");
-    expect(row.firstMet).toBeUndefined();
-    expect(row.lastMentioned).toBe("Not mentioned at the table yet.");
     const { container } = render(<CardSummary card={row} />);
     const lines = Array.from(container.querySelectorAll("p")).map((p) => p.textContent);
-    // The lore line first, then "Not mentioned at the table yet." exactly as sent, with no prefix of the page's own.
-    expect(lines).toEqual(["In your lore: a ferryman on the Brynwater road.", "Not mentioned at the table yet."]);
-    expect(container.textContent).not.toContain("First met");
+    // Each line exactly as sent: no prefix of the page's own ("Not mentioned at the table yet." has no "Last mentioned:").
+    expect(lines).toEqual([
+      "A ferryman on the Brynwater road, in the old ferry's records.",
+      "First met: In your lore: Icewind Dale notes, under 'Brynwater Crossing'.",
+      "Not mentioned at the table yet.",
+    ]);
+    expect(container.textContent).not.toContain("Last mentioned");
   });
 
   it("the mock's pending character shows the writing line", async () => {
