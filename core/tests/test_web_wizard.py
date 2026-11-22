@@ -208,9 +208,9 @@ class TheAnswers(Wizard):
             ({"target": "2024", "fallback": "2024"}, "bad_fallback"),
             ({"supplements": ["necronomicon"]}, "bad_supplements"),
             ({"characters": [{"full": "x" * 101}]}, "bad_characters"),
-            ({"characters": [{"full": "A", "partyNames": ["n"] * 9}]}, "bad_characters"),
-            ({"characters": [{"full": "A", "partyNames": "Ric"}]}, "bad_characters"),
-            ({"characters": [{"full": "A", "partyNames": ["x" * 101]}]}, "bad_characters"),
+            ({"characters": [{"full": "A", "party_names": ["n"] * 9}]}, "bad_characters"),
+            ({"characters": [{"full": "A", "party_names": "Ric"}]}, "bad_characters"),
+            ({"characters": [{"full": "A", "party_names": ["x" * 101]}]}, "bad_characters"),
             # (only a D&D Beyond character link is ever fetched, #4205)
             ({"characters": [{"full": "A", "sheet_url": "https://example.com/c/1"}]}, "bad_sheet"),
             ({"name": "x" * 101}, "bad_name"),
@@ -229,13 +229,13 @@ class TheAnswers(Wizard):
         await self.call(
             wizard.update, 2,
             {"characters": [
-                {"full": "Cerric", "partyNames": ["Ric", " ric ", "Hector, Savior", ""]},
-                {"full": "Mira", "partyName": "Mi"},
+                {"full": "Cerric", "party_names": ["Ric", " ric ", "Hector, Savior", ""]},
+                {"full": "Mira", "party_name": "Mi"},
             ]},
         )  # fmt: skip
         got = (await self.call(wizard.get))["answers"]["characters"]
-        self.assertEqual(got[0]["partyNames"], ["Ric", "Hector, Savior"])
-        self.assertEqual((got[0]["partyName"], got[1]["partyNames"]), ("Ric", ["Mi"]))
+        self.assertEqual(got[0]["party_names"], ["Ric", "Hector, Savior"])
+        self.assertEqual((got[0]["party_name"], got[1]["party_names"]), ("Ric", ["Mi"]))
 
     async def test_a_sheet_link_of_the_right_shape_is_kept_and_an_empty_one_too(self) -> None:
         await self.draft()
