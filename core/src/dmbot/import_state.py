@@ -28,6 +28,7 @@ BATCHES = "batches"  # the import batches whose scans ended in its report
 PARTY = "party"  # player characters linked (a counter: the largest seen)
 UNHONOURED = "unhonoured"  # why recaps were not made (one line each, kept as many times)
 QUEUED = "queued"  # the starts of the sessions whose recap was queued at once
+NAME_ASKS = "name_asks"  # words PlotBot was not sure of in a session: "<session> <times> <word>"
 REPORTS = "reports"  # each scanned session's name-pass report, as text (#4904)
 
 _KIND = re.compile(r"^[a-z_]{1,40}$")
