@@ -935,6 +935,16 @@ describe("the party names of a character (#4300)", () => {
     expect(saved?.partyName).toBeUndefined();
   });
 
+  it("a name typed but not added is sent with the character, as Add would add it", async () => {
+    const api = await start();
+    await next(2);
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.fullLabel)), { target: { value: "Tavin Ashgrove" } });
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.partyLabel)), { target: { value: "  Tav  " } });
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.add }));
+    await screen.findByText(/Tavin Ashgrove/);
+    expect((await api.get(G))?.answers.characters[0]?.partyNames).toEqual(["Tav"]);
+  });
+
   it("a saved draft's old single name is not sent back on the next save", async () => {
     const api = await start();
     await next(2);

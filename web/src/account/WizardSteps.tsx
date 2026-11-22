@@ -36,6 +36,13 @@ const DEFAULT_BOOKS = ["xanathar", "tasha"];
 const SHEET = /^https:\/\/www\.dndbeyond\.com\/(?:profile\/[^/]+\/)?characters\/\d+/;
 
 /** Step 1: where the campaign is, and the dndbeyond.com invite and public sheet links. */
+/** The list with one more name, as the party-name Add adds it: trimmed, not a repeat in another case, at most eight (#5026). */
+function withName(list: string[], text: string): string[] {
+  const n = text.trim();
+  if (!n || list.length >= 8 || list.some((x) => x.toLowerCase() === n.toLowerCase())) return list;
+  return [...list, n];
+}
+
 /** The party names of a character: the list, or the one name an older draft kept (#4300). */
 function partyNamesOf(c: WizardCharacter): string[] | undefined {
   return c.partyNames ?? (c.partyName ? [c.partyName] : undefined);
@@ -180,13 +187,7 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
   const [adding, setAdding] = useState(false);
   // A name is added with Add or Enter: the box clears; the same name in another case is not added twice; a comma stays part of a name.
   const addPartyName = () => {
-    const n = party.trim();
-    if (!n || partyNames.length >= 8) return;
-    if (partyNames.some((x) => x.toLowerCase() === n.toLowerCase())) {
-      setParty("");
-      return;
-    }
-    setPartyNames([...partyNames, n]);
+    setPartyNames(withName(partyNames, party));
     setParty("");
   };
   const add = async () => {
@@ -194,7 +195,9 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
     if (!f || adding || a.characters.length >= 12) return;
     setAdding(true);
     try {
-      await onPatch((latest) => ({ characters: [...latest.characters, { full: f, partyNames, sheetUrl: WIZARD_SHEETS_LIVE ? sheetUrl.trim() : "", player: "pending" }].slice(0, 12) }));
+      // A name typed but not yet added goes in with the rest, as the Add button would add it (#5026).
+      const names = withName(partyNames, party);
+      await onPatch((latest) => ({ characters: [...latest.characters, { full: f, partyNames: names, sheetUrl: WIZARD_SHEETS_LIVE ? sheetUrl.trim() : "", player: "pending" }].slice(0, 12) }));
       setFull("");
       setParty("");
       setPartyNames([]);
