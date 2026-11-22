@@ -302,6 +302,13 @@ class Isolation(MemoryTest):
                 " session_started_at) VALUES (%s, %s, %s, 77)",
                 (GUILD_A, self.c, a),
             )
+        # and a character's card sentence and first mention (#5050): DMbot's words, ids and times
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_card_summaries (guild_id, campaign_id, entity_id, who)"
+                " VALUES (%s, %s, %s, 'A halfling innkeeper.')",
+                (GUILD_A, self.c, a),
+            )
         # and a being met in play that nobody named yet (#3172 slice 5), on its session
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
