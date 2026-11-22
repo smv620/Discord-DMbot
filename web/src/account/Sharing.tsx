@@ -30,7 +30,13 @@ const change = (kind: string): string => (kind === "homebrew" ? text.changePacks
 /** The campaign in the address: `/account/sharing/<server>.<campaign>`, or null for the overview (#5039). */
 export function refFromSharingPath(path: string): string | null {
   const match = /^\/account\/sharing\/([^/]+?)\/?$/.exec(path);
-  return match ? decodeURIComponent(match[1] ?? "") : null;
+  if (!match) return null;
+  // A malformed address names no campaign the user runs: the page then says so, rather than unmounting.
+  try {
+    return decodeURIComponent(match[1] ?? "");
+  } catch {
+    return "";
+  }
 }
 
 function Shares({ items }: { items: SharedRuleSet[] }) {

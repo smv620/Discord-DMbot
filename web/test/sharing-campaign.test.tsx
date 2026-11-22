@@ -20,6 +20,7 @@ describe("a campaign's Shared rules page", () => {
     expect(refFromSharingPath("/account/sharing/200000000000000001.cmp1")).toBe(REF);
     expect(refFromSharingPath("/account/sharing")).toBeNull();
     expect(refFromSharingPath("/account/sharing/")).toBeNull();
+    expect(refFromSharingPath("/account/sharing/%E0%A4%A")).toBe("");
   });
 
   it("keeps the campaign's navigation, and shows only that campaign's sets and packs", async () => {

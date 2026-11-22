@@ -26,7 +26,8 @@ describe("a campaign's Rules pages keep its navigation", () => {
   const rules = sectionPages(REF, { isDm: true }).rules;
   for (const page of rules) {
     const key = page.key;
-    if (!pageFor[key]) continue;
+    // A new DM Rules page must be walked here too: an unlisted key fails, rather than being skipped.
+    if (!pageFor[key]) throw new Error(`no walk for the Rules page ${key}`);
     it(`${key} (${page.href}) renders the campaign's navigation`, async () => {
       render(pageFor[key]!(mockApi("table"), page.href));
       await waitFor(() => expect(screen.getAllByRole("navigation").length).toBeGreaterThan(0));
