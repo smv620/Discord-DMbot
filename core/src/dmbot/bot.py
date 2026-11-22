@@ -2114,7 +2114,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             *(
                 [
                     self._watched(
-                        self._import_loop(clean=not self.settings.worker_on), "session-imports"
+                        self._import_loop(
+                            clean=not self.settings.worker_on, scan=not self.settings.worker_on
+                        ),
+                        "session-imports",
                     )
                 ]
                 if self.import_job is not None
@@ -7828,7 +7831,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
             log.info("Session languages: %d asked, %d on sheets", asked, len(on_sheets))
             text = heard_sheet_languages(campaign.name, label, on_sheets)
-            if text:  # (as an upload's sheet lines: one message, to the DMs alone)
+            if text and getattr(self, "headless", False):
+                # (a worker has no Discord and a row may carry no words: the questions above are
+                # kept and asked as usual; only this courtesy note is not sent, #4904 3b-4c)
+                log.info(
+                    "Session languages: note for %d on sheets not sent (no Discord)", len(on_sheets)
+                )
+            elif text:  # (as an upload's sheet lines: one message, to the DMs alone)
                 for dm in campaign.dm_accounts:
                     await self._dm_message(dm, text, None)
         except Exception as exc:
@@ -12929,12 +12938,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return "there"
         return user.display_name
 
-    async def _import_loop(self, *, clean: bool = True, followups: bool = True) -> None:
+    async def _import_loop(
+        self, *, clean: bool = True, scan: bool = True, followups: bool = True
+    ) -> None:
         """Every 30 seconds: the sessions a DM imported that wait to be cleaned (#2105), and what
         follows a cleaned one (the name scan, the story read, the recap and the news). A restart
-        puts a cleaning it was in the middle of back in the queue. `clean` is the Discord-free
-        half, the worker's with `DMBOT_WORKER` on (#4904); `followups` stays with the bot, which
-        posts the news and asks the DM."""
+        puts a cleaning it was in the middle of back in the queue. With `DMBOT_WORKER` on (#4904)
+        the worker runs the Discord-free halves, `clean` and `scan` (each in a loop of its own, so
+        a long story read never holds up a cleaning); `followups` stays with the bot, which tells
+        the DM the news."""
         assert self.import_job is not None
         await asyncio.sleep(45)
         if clean:
@@ -12950,13 +12962,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         await self.import_job.run_round(
                             gid, int(getattr(self.settings, "server_jobs_at_once", 1))
                         )
-                    if followups:
-                        await self.run_import_followups(gid)
+                    if scan or followups:
+                        await self.run_import_followups(gid, scan=scan, news=followups)
                 except Exception:
                     log.exception("Import: a round failed for a server")
             await asyncio.sleep(IMPORT_ROUND_S)
 
-    async def run_import_followups(self, gid: int) -> int:
+    async def run_import_followups(self, gid: int, *, scan: bool = True, news: bool = True) -> int:
         """After an imported session is cleaned (#2106): in date order, one per campaign, its name
         scan (once), then, for the sessions the DM chose Write recaps for, the recap through the
         same hold as a live session, so it waits for the name answers. Returns how many scans were
@@ -12964,9 +12976,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         that never finished is retaken after a while); a scan that fails is given back and tried
         again, and let go (empty window, no hold) after `IMPORT_SCAN_TRIES` so it never blocks the
         sessions after it. The DM hears of new names once per import, when its last session is
-        scanned, never once per session. Counts only in the log."""
+        scanned, never once per session. Counts only in the log. `scan` is the work (the plays, the
+        scans, the recaps' start), which a worker does with no Discord; `news` is what is said to
+        the DM about it, the bot's (#4904 3b-4c)."""
         assert self.import_job is not None
         store = self.import_job.store
+        if not scan:
+            await self._import_news(gid, store)
+            return 0
         # First: the DM's "plays which character" choices, so a session scanned below is linked to
         # the characters those choices make the players' own (#3036).
         await self._apply_import_plays(gid, store)
@@ -13015,10 +13032,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
                 await self._start_import_recap(gid, store, ready)
         await self._apply_import_plays(gid, store)
+        if news:
+            await self._import_news(gid, store)
+        return done
+
+    async def _import_news(self, gid: int, store: ImportStore) -> None:
+        """What the DM is told about their imports: the recaps queued, the sessions the story read
+        has not reached and the imports that are finished. Discord's, so the bot's; each reads
+        the counts the worker keeps in the database."""
         await self._tell_import_news(gid, store)
         await self._tell_imports_left(gid, store, await self._extract_imports_left(gid))
         await self._tell_finished_imports(gid, store)
-        return done
 
     async def _tell_finished_imports(self, gid: int, store: ImportStore) -> None:
         """Once for each import whose sessions have all finished their name scan and story read
@@ -13363,6 +13387,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         campaign = await self.campaigns.get(gid, cid)
         if campaign is None or self.memory is None or not campaign.dm_accounts:
+            return
+        table = self.tables.get(gid)
+        if table is not None and table.campaign_id == cid:
+            # Never during play, as in `_weather_notes` (a worker cannot see the table): sends
+            # nothing and marks nothing, so a later read may note it.
+            await weather_marks.unmark_at(self.memory._db, gid, cid, int(payload["at"]))
+            log.info("Weather notes: held back, the table is playing")
             return
         kept = await weather_marks.noted_at(self.memory._db, gid, cid, int(payload["at"]))
         if not kept:
