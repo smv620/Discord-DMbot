@@ -10537,7 +10537,10 @@ def name_refusal(onto: Ontology, n: NewName) -> str:
     """ "" when `add_names` takes this name, else the fixed label of the rule it breaks: the same
     checks, in the same order, as `_add_names` makes for each name (its spellings cleaned, the
     name rule, its kind active in the campaign, its role, a player character still waiting).
-    Pure: no database. A name `add_names` would only leave out (its key in use) passes here."""
+    Pure: no database. A name `add_names` would only leave out (its key in use) passes here; one
+    whose key is in use *and* has a bad other spelling is counted here as "spelling" though
+    `add_names` would have skipped it quietly (nothing is stored either way). Not covered, as the
+    lore read never sends them: the batch's own checks (source, status, `more`'s spellings)."""
     try:
         for t in (n.name, *n.others, *n.secrets):
             lookup_key(clean_text(t))

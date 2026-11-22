@@ -52,8 +52,29 @@ CASES = [
 ]
 
 
+PASSING = [
+    NewName("Mirelle", "npc", PROPOSED),
+    NewName("Tavin", "character", PROPOSED, role="player_character"),
+    NewName("Oakmere", "place", PROPOSED, others=("Oak Mere",), secrets=("the Drowned Town",)),
+    NewName("Grimfang", "creature", PROPOSED),
+]
+CASES += [
+    NewName("Wenna", "npc", PROPOSED, others=("   ",)),
+    NewName("Brindle", "place", PROPOSED, secrets=("y" * 300,)),
+]
+
+
 class TheSameAsAddNames(NamesTest):
-    """Every name `name_refusal` refuses makes `add_names` raise, so the two can't drift apart."""
+    """`name_refusal` and `add_names` agree both ways, so the two can't drift apart: every name
+    one refuses the other refuses, and every name one passes the other stores."""
+
+    async def test_each_passing_name_is_stored(self) -> None:
+        onto = await self.memory.ontology(GUILD, self.campaign.id)
+        for name in PASSING:
+            with self.subTest(name.name):
+                self.assertEqual(store.name_refusal(onto, name), "")
+        written = await self.memory.add_names(GUILD, self.campaign.id, PASSING, source=DM_SOURCE)
+        self.assertTrue(all(i is not None for i in written.value))
 
     async def test_each_refused_name_is_refused_by_the_store_too(self) -> None:
         onto = await self.memory.ontology(GUILD, self.campaign.id)

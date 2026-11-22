@@ -2724,7 +2724,9 @@ async def store(
     items: list[bg.Found] = []
     for item in found:
         try:
-            check_named(item.kind, item.name)  # one refused name must not stop the others
+            # one refused name must not stop the others; kept although `name_refusal` below checks
+            # this too: it runs before each name's note and place level are worked out
+            check_named(item.kind, item.name)
         except MemoryRuleError as exc:
             log.info("Skipped a name from a background: %s", exc)
             continue
@@ -2766,7 +2768,8 @@ async def store(
     # Each name checked as `add_names` will check it (#5056): one that a rule refuses is left out
     # alone and counted by its rule, where it used to make the whole call raise and lose every
     # name of the upload. (A stand-in store without the campaign's kinds skips this: `add_names`
-    # still checks, as before.)
+    # still checks, as before. The kinds are read before the write: one the DM switches off in
+    # between still makes `add_names` refuse the whole call, as before, and is logged below.)
     ontology = getattr(memory, "ontology", None)
     if names and ontology is not None:
         onto = await ontology(campaign.guild_id, campaign.id)
