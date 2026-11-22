@@ -174,6 +174,16 @@ class TheImportOpen(WithImports):
         self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
         self.assertTrue(await bot._import_open(GUILD, self.store, other.id))
 
+    async def test_a_gave_up_scan_still_has_its_recap_to_start(self) -> None:
+        # (a gave-up scan skips the name questions only: its recap is still written)
+        bot, _campaign = fake_bot(self.store)
+        sid = await self.imported(1, recap=True)
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.give_up_scan(GUILD, sid)
+        self.assertTrue(await bot._import_open(GUILD, self.store, self.campaign.id))
+        await self.store.mark_recap_started(GUILD, sid)
+        self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
+
 
 def fake_bot(store: ImportStore, **kw: Any) -> Any:
     campaign = SimpleNamespace(
