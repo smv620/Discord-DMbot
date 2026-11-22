@@ -36,7 +36,8 @@ export default function RoadCondition({
   const [words, setWords] = useState("");
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<Said | null>(null);
-  const [undo, setUndo] = useState<number | null>(null);
+  // The last change's batch, and the line it replaced, so Undo puts that line back even after a re-read.
+  const [undo, setUndo] = useState<{ batch: number | null; prev: Condition | undefined } | null>(null);
   // What the DM just set, shown until the graph is read again (the connection panel has no re-read): `prev` is what it was before, for Undo.
   const [local, setLocal] = useState<{ cond: Condition | undefined; prev: Condition | undefined } | null>(null);
   useEffect(() => {
@@ -45,7 +46,9 @@ export default function RoadCondition({
   if (!ROAD_CONDITION_LIVE) return null;
 
   const current = local ? local.cond : condition;
-  const line = current?.value ? w.line(current.value, current.words, current.since, current.before) : null;
+  // A player sees a connection's condition only once the DM has shown it (the server filters too).
+  const playerSees = canEdit || on !== "connection" || current?.shown === true;
+  const line = current?.value && playerSees ? w.line(current.value, current.words, current.since, current.before) : null;
   // The DM's view can set a road; a connection's read and show controls are for the connection only.
   const isDm = canEdit && road;
   const isConnection = on === "connection";
@@ -71,9 +74,20 @@ export default function RoadCondition({
         if (!api.roadCondition) throw new ApiError("server");
         const before = current?.value ?? null;
         const made = await api.roadCondition(refId, { on, id, value, ...(value === "other" ? { words: words.trim() } : {}) });
-        const now = value === "none" ? undefined : { value: value as Condition["value"], words: words.trim(), since: null, before: current?.value ? { value: current.value, words: current.words } : null };
+        // Only "Something else" carries the DM's words; a change keeps the read and shown flags of what was there (the server keeps them too).
+        const now =
+          value === "none"
+            ? undefined
+            : {
+                value: value as Condition["value"],
+                words: value === "other" ? words.trim() : "",
+                since: null,
+                before: current?.value ? { value: current.value, words: current.words } : null,
+                ...(current?.read !== undefined ? { read: current.read } : {}),
+                ...(current?.shown !== undefined ? { shown: current.shown } : {}),
+              };
         setLocal({ cond: now, prev: current });
-        setUndo(made.batch);
+        setUndo({ batch: made.batch, prev: current });
         setMenu(false);
         setWords("");
         setSaid({ ok: true, text: w.noted(name, value, words.trim(), before) });
@@ -95,12 +109,13 @@ export default function RoadCondition({
   const takeBack = () =>
     run(
       async () => {
-        if (!api.undoRouteLength || undo === null) throw new ApiError("server");
-        await api.undoRouteLength(refId, undo);
+        if (!api.undoRouteLength || undo === null || undo.batch === null) throw new ApiError("server");
+        await api.undoRouteLength(refId, undo!.batch!);
       },
       () => {
+        const back = undo;
         setUndo(null);
-        setLocal((was) => (was ? { cond: was.prev, prev: was.cond } : null));
+        setLocal({ cond: back?.prev, prev: undefined });
       },
     );
 
@@ -160,7 +175,7 @@ export default function RoadCondition({
       {said && (
         <p class={said.ok ? "small" : "small warn"} role={said.ok ? "status" : "alert"}>
           {said.text}{" "}
-          {undo !== null && said.ok && (
+          {undo !== null && undo.batch !== null && (
             <button type="button" class="link" disabled={busy} onClick={() => void takeBack()}>
               {w.undoLabel}
             </button>

@@ -804,7 +804,6 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     },
     threadCard: async (ref, thread) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads/${encodeURIComponent(thread)}/card`)) as ThreadCard,
-    // The story threads DMbot found (#4482): read only, DM only (the door answers anyone else with nothing).
     // A road's or route place's condition (#4451): queued for the bot, waited for, and no batch of its own (the Undo is undoRouteLength).
     roadCondition: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
@@ -835,6 +834,7 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     // A character's lineage and class (#3925): DM only; the door answers anyone else with nothing.
     nodeTraits: async (ref, node) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/nodes/${encodeURIComponent(node)}/traits`)) as { traits: NodeTrait[] }).traits,
+    // The story threads DMbot found (#4482): read only, DM only (the door answers anyone else with nothing).
     storyThreads: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads`)) as StoryThreads,
     // The open plot threads (#3696, slice 1): read only, DM only (the door answers anyone else with nothing).
     plotThreads: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/plot-threads`)) as PlotThreads,

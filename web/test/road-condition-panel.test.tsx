@@ -52,7 +52,7 @@ describe("a road's condition in the connection panel (#4451)", () => {
   });
 
   it("the players see the line only: no read note, no menu, no buttons", () => {
-    panel({ condition: CLOSED, canEdit: false });
+    panel({ condition: { ...CLOSED, shown: true }, canEdit: false });
     expect(screen.getByText(w.line("closed", "", 5, { value: "open", words: "" }))).toBeTruthy();
     expect(screen.queryByText(w.readNote, { exact: false })).toBeNull();
     expect(screen.queryByRole("button")).toBeNull();
@@ -122,7 +122,7 @@ describe("a road's condition in the connection panel (#4451)", () => {
     panel({ condition: CLOSED });
     fireEvent.click(screen.getByRole("button", { name: w.button }));
     fireEvent.click(screen.getByRole("button", { name: `${w.choices[0]!.label}: ${w.choices[0]!.hint}` }));
-    expect(await screen.findByText(w.line("open", "", null, { value: "closed", words: "" }))).toBeTruthy();
+    expect(await screen.findByText(w.line("open", "", null, { value: "closed", words: "" }) + w.readNote)).toBeTruthy();
     const undo = await screen.findByRole("button", { name: w.undoLabel });
     await waitFor(() => expect((undo as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(undo);

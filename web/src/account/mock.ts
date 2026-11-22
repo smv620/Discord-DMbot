@@ -2330,8 +2330,6 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const all = PRETEND_VIEWERS.filter((v) => v.name.toLowerCase().includes(needle));
       return { viewers: all.slice(0, 25), total: all.length };
     },
-    // The short summary of a picked name (#3243): a pretend DM reads it at once; a player's first name is behind a
-    // spoiler gate until they ask with `peek`. An id that is not on the graph is not found.
     // A road's or route place's condition (#4451): DM only; the mock keeps no state, the page's own list is what it draws.
     async roadCondition(ref, change) {
       calls.push(`roadCondition:${ref}:${change.on}:${change.id}:${change.value}`);
@@ -2373,6 +2371,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       return [];
     },
+    // The short summary of a picked name (#3243): a pretend DM reads it at once; a player's first name is behind a
+    // spoiler gate until they ask with `peek`. An id that is not on the graph is not found.
     async webNodeSummary(ref, id, peek) {
       calls.push(`webNodeSummary:${ref}:${id}${peek ? ":peek" : ""}`);
       await reachable();
