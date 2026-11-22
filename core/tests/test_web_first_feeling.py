@@ -89,3 +89,16 @@ class TheLine(Reminder):
         self.waiting_page = []
         empty = await self.door()
         self.assertEqual(first_feelings.lines_by_claim(empty), {})
+
+    async def test_too_many_ids_or_unknown_ones_give_no_facts(self) -> None:
+        await self.feel(keep=True)
+        self.waiting_page = self.waiting_page * 201  # (the page never asks for more than 200)
+        self.assertEqual((await self.door())["claims"], [])
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_first_feeling_info(%s, %s, %s) AS r",
+                (self.g, self.one.id, ["f" * 32]),
+            )
+            got = (await cur.fetchone() or {})["r"]
+        self.assertEqual(first_feelings.lines_by_claim(got), {})

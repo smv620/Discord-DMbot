@@ -22,11 +22,11 @@ def _claim(row: Mapping[str, Any]) -> Claim:
     return claim_of(
         {
             "id": row["id"], "subject": row["subject"], "relationship": row["relationship"],
-            "object": row["object"], "details": row.get("details") or "",
-            "how": row.get("how") or "", "lines": row.get("lines") or [], "speaker_ids": [],
+            "object": row["object"], "details": row.get("details") or "", "how": "", "lines": [],
+            "speaker_ids": [],
             "source": "", "prompt_version": "", "model": "", "status": "proposed", "reason": "",
             "session_started_at": 0, "created_at": 0, "decided_at": None, "fact_id": None,
-            "reading": row.get("reading"), "subject_picked": row.get("subject_picked"),
+            "reading": None, "subject_picked": row.get("subject_picked"),
             "object_picked": row.get("object_picked"),
         }
     )  # fmt: skip

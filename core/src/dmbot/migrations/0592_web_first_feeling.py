@@ -16,9 +16,10 @@ from __future__ import annotations
 # store reads them); every confirmed connection touching an entry (ended ones too: two once
 # connected have met); the DM's open, confirmed feelings (`status = 'confirmed'`, never one DMbot
 # only read) and the entries' lineage links. Ids, the DM's own words, names and numbers, never a
-# transcript line, a quote or a speaker. At most 200 ids, 5000 entries, 10000 names, 20000
-# connections, 5000 feelings and 5000 lineage links: a campaign beyond that gets fewer lines,
-# never an error. No row changes.
+# transcript line, a quote or a speaker (not even a claim's line numbers). At most 200 ids, 5000
+# entries, 10000 names, 50000 connections (the newest first, since a missing one could show a
+# reminder for two who have met), 5000 feelings and 5000 lineage links: a campaign beyond that gets
+# fewer lines, never an error. No row changes.
 SQL = r"""
     CREATE FUNCTION dmbot_web_first_feeling_info(g BIGINT, c TEXT, ids TEXT[]) RETURNS JSONB
     LANGUAGE plpgsql STABLE SECURITY DEFINER AS $fn$
@@ -39,9 +40,9 @@ SQL = r"""
             'claims', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                     'id', k.id, 'subject', k.subject, 'relationship', k.relationship,
-                    'object', k.object, 'details', k.details, 'how', k.how, 'lines', k.lines,
-                    'reading', k.reading, 'subject_picked', k.subject_picked,
-                    'object_picked', k.object_picked) ORDER BY k.created_at, k.id)
+                    'object', k.object, 'details', k.details,
+                    'subject_picked', k.subject_picked, 'object_picked', k.object_picked)
+                    ORDER BY k.created_at, k.id)
                 FROM memory_claims k
                 WHERE k.guild_id = g AND k.campaign_id = c AND k.id = ANY (ids)
                   AND k.status = 'proposed'), '[]'::jsonb),
@@ -67,7 +68,7 @@ SQL = r"""
                     'to_session_at', r.to_session_at) ORDER BY r.id)
                 FROM (SELECT * FROM memory_relations z
                       WHERE z.guild_id = g AND z.campaign_id = c AND z.status = 'confirmed'
-                      ORDER BY z.id LIMIT 20000) r), '[]'::jsonb),
+                      ORDER BY z.created_at DESC, z.id LIMIT 50000) r), '[]'::jsonb),
             'homes', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                     'holder_id', h.holder_id, 'toward_id', h.toward_id,

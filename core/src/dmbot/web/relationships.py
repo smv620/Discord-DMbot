@@ -1694,16 +1694,18 @@ async def read_waiting(
                 "SELECT dmbot_web_which_info(%s, %s, %s) AS r", (guild_id, campaign_id, ids)
             )
             info = (await cur.fetchone() or {}).get("r")
-            # The first meeting's feeling reminder (#4942): only a reminder, so a failed read
-            # leaves the questions as they were
+            # The first meeting's feeling reminder (#4942): only a reminder, so a failed read (the
+            # door, or working the line out) leaves the questions as they were. A savepoint, so a
+            # failed statement does not abort the transaction the rest of the page reads in.
             try:
-                cur = await conn.execute(
-                    "SELECT dmbot_web_first_feeling_info(%s, %s, %s) AS r",
-                    (guild_id, campaign_id, ids),
-                )
-                feelings = first_feelings.lines_by_claim(
-                    (await cur.fetchone() or {}).get("r") or _NO_FEELINGS
-                )
+                async with conn.transaction():
+                    cur = await conn.execute(
+                        "SELECT dmbot_web_first_feeling_info(%s, %s, %s) AS r",
+                        (guild_id, campaign_id, ids),
+                    )
+                    feelings = first_feelings.lines_by_claim(
+                        (await cur.fetchone() or {}).get("r") or _NO_FEELINGS
+                    )
             except Exception:
                 log.exception("first feelings: read failed")
     if got is None or got.get("status") != "ok":
