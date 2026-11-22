@@ -14,7 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
-from dmbot.campaigns import CampaignStore
+from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.consent import ConsentStore
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.models import DM as DM_SOURCE
@@ -47,9 +47,9 @@ class WithImports(DatabaseTest):
         state: str = "done",
         recap: bool = False,
         said: str = "Kazeth rides.",
-        campaign: Any = None,
+        campaign: Campaign | None = None,
     ) -> str:
-        cid = (campaign or self.campaign).id
+        cid = (campaign if campaign is not None else self.campaign).id
         sid = await self.transcripts.open_session(GUILD, cid, START + day * DAY)
         await self.transcripts.add_lines(
             GUILD, sid, [Line((START + day * DAY) * 1000, MIRA, said, said)]
@@ -167,11 +167,14 @@ class TheImportOpen(WithImports):
     async def test_another_campaigns_recap_does_not_hold_this_one_open(self) -> None:
         bot, _campaign = fake_bot(self.store)
         other = await self.campaigns.create(GUILD, "Two", DM)
-        await self.imported(1, recap=True, campaign=other)  # the other campaign's recap is asked
+        other_session = await self.imported(1, recap=True, campaign=other)  # its recap is asked
         mine = await self.imported(2)  # this campaign's own session, no recap
         await self.store.claim_scan(GUILD, mine, int(time.time()))
         await self.store.finish_scan(GUILD, mine, int(time.time()))
         self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
+        # the other campaign's session is scanned too, so only its recap (to start) holds it open
+        await self.store.claim_scan(GUILD, other_session, int(time.time()))
+        await self.store.finish_scan(GUILD, other_session, int(time.time()))
         self.assertTrue(await bot._import_open(GUILD, self.store, other.id))
 
     async def test_a_gave_up_scan_still_has_its_recap_to_start(self) -> None:
