@@ -110,6 +110,7 @@ export default function WebWaiting({
   const [answered, setAnswered] = useState(false);
   const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
+  const [keptAll, setKeptAll] = useState(false); // a Keep all was pressed on this visit: the guesses it left get a count (#3928)
   const [bulkOn, setBulkOn] = useState(false); // an "All true" / "All secret" press is on: every own button waits
   // The claim whose "Which one?" pick can still be taken back (#3463): only the latest pick offers Undo.
   const [undo, setUndo] = useState<string | null>(null);
@@ -623,12 +624,13 @@ export default function WebWaiting({
                       type="button"
                       class="button"
                       disabled={busy}
-                      onClick={() =>
+                      onClick={() => {
+                        setKeptAll(true);
                         void send({ kind: "backstory", action: "keep_all", ids },
                           (got) => (left > 0 && got.kept !== undefined ? w.keepAllCut(got.kept, left) : w.kept(got.kept)),
                           w.keepingStage(ids.length),
-                        )
-                      }
+                        );
+                      }}
                     >
                       {w.keepAll(ids.length)}
                     </button>
@@ -696,6 +698,9 @@ export default function WebWaiting({
               </div>
             );
           })}
+          {keptAll && list.backstory.some((b) => b.guess) && (
+            <p class="small">{w.guessesLeft(list.backstory.filter((b) => b.guess).length)}</p>
+          )}
         </div>
       )}
     </section>

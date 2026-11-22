@@ -81,7 +81,9 @@ export default function LinkFeeling({
         <p>
           <strong>{w.why(feeling)}</strong> {from || w.noSource}
         </p>
-        {link.quote ? (
+        {link.inferred ? (
+          <p class="muted">{w.inferred(link.inferred, link.source?.type === "upload" ? link.source.label : undefined)}</p>
+        ) : link.quote ? (
           <>
             <p class="muted">{w.quoteCaption}</p>
             <blockquote>

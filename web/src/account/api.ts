@@ -1984,6 +1984,8 @@ export interface WebLink {
   /** The words of the lore or session this connection was read from, for a DM only (#3606, #3607). Missing when none is
    * recorded, and from an older API. */
   quote?: string | null;
+  /** DMbot's reason for a connection it inferred from the lore, for the DM only (#3928); never a quote beside it. */
+  inferred?: string | null;
   /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
   check?: string;
   /** False: not revealed to the players yet (#2405). */
