@@ -84,6 +84,21 @@ class TheSets(Base):
         self.assertEqual(got, ["switched off", "plan", "switched off"])
         self.assertEqual(await self.state.take_each(1, self.one.id, "unhonoured"), [])
 
+    async def test_take_each_starting_takes_only_that_prefix_in_one_statement(self) -> None:
+        await self.state.add_each(
+            1, self.one.id, "name_asks", ["s1 3 Keirandal", "s2 2 Fenwick", "s1 1 Vane"]
+        )
+        got = await self.state.take_each_starting(1, self.one.id, "name_asks", "s1 ")
+        self.assertEqual(got, ["s1 3 Keirandal", "s1 1 Vane"])
+        self.assertEqual(
+            await self.state.take_each_starting(1, self.one.id, "name_asks", "s1 "), []
+        )
+        self.assertEqual(
+            await self.state.take_each_starting(1, self.one.id, "name_asks", "s2 "),
+            ["s2 2 Fenwick"],
+        )
+        self.assertEqual(await self.state.take_each_starting(1, self.one.id, "nothing", "x"), [])
+
     async def test_a_value_with_a_colon_comes_back_whole(self) -> None:
         await self.state.add_each(1, self.one.id, "unhonoured", ["it said: no"])
         self.assertEqual(await self.state.take_each(1, self.one.id, "unhonoured"), ["it said: no"])

@@ -52,3 +52,11 @@ class FakeImportState:
 
     async def take_each(self, gid: int, cid: str, kind: str) -> list[str]:
         return [v.partition(":")[2] for v in self.sets.pop((gid, cid, kind), [])]
+
+    async def take_each_starting(self, gid: int, cid: str, kind: str, prefix: str) -> list[str]:
+        have = self.sets.get((gid, cid, kind), [])
+        mine = [v.partition(":")[2] for v in have if v.partition(":")[2].startswith(prefix)]
+        self.sets[(gid, cid, kind)] = [
+            v for v in have if not v.partition(":")[2].startswith(prefix)
+        ]
+        return mine
