@@ -95,6 +95,7 @@ from dmbot.web import (
     report,
     restores,
     reveals,
+    route_lengths,
     rule_sharing,
     rule_updates,
     script_make,
@@ -2292,6 +2293,48 @@ def create_app(
         session, _token = signed
         try:
             return await node_traits.read(db, session, ref, node)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/route-length", status_code=202)
+    async def me_campaign_route_length(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """🛣️ Length on a route: `{"on", "id", "words"}` (#4392); polled at the answers route."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await route_lengths.queue_set(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/route-length/keep", status_code=202)
+    async def me_campaign_route_length_keep(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """✅ Length is right: `{"on", "id"}` (#4392)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await route_lengths.queue_keep(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/route-length/{batch}/undo", status_code=202)
+    async def me_campaign_route_length_undo(ref: str, batch: str, signed: Signed) -> dict[str, str]:
+        """↩ Undo of a length change made from the page (#4392)."""
+        session, _token = signed
+        try:
+            return {"answer": await route_lengths.queue_undo(db, session, ref, batch)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

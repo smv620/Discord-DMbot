@@ -62,7 +62,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.party_record import ENDED
 from dmbot.memory.reveal_proposals import RevealProposals
-from dmbot.memory.store import INT64_MAX, PERSON, MemoryStore
+from dmbot.memory.store import INT64_MAX, LENGTH_CHANGED, PERSON, ROUTE_GONE, MemoryStore
 from dmbot.memory.store import NAMES_NOT_SHOWN as NAMES_NOT_SHOWN_WORDS
 from dmbot.rules import homebrew, rule_sets, set_sync
 from dmbot.rules.house import HouseRuleError
@@ -162,6 +162,7 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # World notes (#4285, slice 1c): ✅ on the lines the page showed (their ids, space-separated), 🚫 on
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo", "world-bias")
+ROUTE_LENGTH_ACTIONS = ("route-length", "route-length-keep", "route-undo")  # (#4392)
 THREAD_STATE_ACTIONS = ("thread-state", "thread-check")  # a thread's state (#3696 slice 2a)
 THREAD_INVOLVE_ACTION = "thread-involve"  # who is involved in a thread (#3696 slice 2b)
 THREAD_NEW_ACTIONS = ("thread-new", "thread-due", "thread-party")  # (#3696 slice 2c)
@@ -489,6 +490,20 @@ class ActionStore:
             )
             return await cur.fetchone() is not None
 
+    async def route_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done route length action made from the
+        website (#4392), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action IN ('route-length', 'route-length-keep')"
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
     async def party_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int
     ) -> tuple[str, str] | None:
@@ -791,6 +806,10 @@ async def apply(
         return await _confirm(memory, actions, guild_id, cid, action)
     if action.action in MATCH_ACTIONS:
         return await _match(memory, guild_id, cid, action)
+    if action.action in ROUTE_LENGTH_ACTIONS:
+        if actions is None and action.action == "route-undo":
+            return _failed(FAILED)
+        return await _route_length(memory, actions, guild_id, cid, action)
     if action.action in WORLD_ACTIONS:
         if actions is None and action.action == "world-undo":
             return _failed(FAILED)
@@ -1830,6 +1849,61 @@ async def _reveals(
     if a.action == "reveals-keep" and batch is None:
         return _failed(NOTHING_LEFT)
     return Outcome(batches=(batch,) if batch is not None else ())
+
+
+async def _route_length(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """A route's stated length from the page (#4392), the same store calls as Discord's 🛣️ Length
+    and ✅ Length is right: `route-length` is `<c|p> <id>[ <words>]` (`set_route_length`, empty
+    words take it off), `route-length-keep` is `<c|p> <id>` (`keep_route_length`: DMbot's read
+    becomes the DM's). Each is one change with one Undo; nothing changed (the same words again)
+    writes nothing and carries no change number. A route that is gone is `gone`; a keep of a length
+    that is the DM's already or has changed is `changed` (the page's list was old). `route-undo`
+    takes back only a change this DM's own done route action made, read again here (a made-up number
+    must never reach `undo`)."""
+    if a.action == "route-undo":
+        assert actions is not None  # (checked by the caller)
+        return await _route_undo(memory, actions, guild_id, cid, a)
+    kind, _, rest = a.text.partition(" ")
+    target, _, words = rest.partition(" ")
+    if kind not in ("c", "p"):  # (the door's shape check says so too)
+        return _failed(GONE)
+    on = "connection" if kind == "c" else "place"
+    try:
+        batch: int | None
+        if a.action == "route-length-keep":
+            batch = (await memory.keep_route_length(guild_id, cid, target, on=on, source=DM)).batch
+        else:
+            batch = (
+                await memory.set_route_length(guild_id, cid, target, words, on=on, source=DM)
+            ).batch
+    except MemoryRuleError as exc:
+        text = str(exc)
+        if text == ROUTE_GONE:
+            return _failed(GONE)
+        return _failed(CHANGED if text == LENGTH_CHANGED else FAILED)
+    return Outcome(batches=(batch,) if batch is not None else ())
+
+
+async def _route_undo(
+    memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """↩ Undo of one length change from the page, as `_world_undo` does it."""
+    if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+        return _failed(GONE)
+    batch = int(a.text)
+    if not await actions.route_batch_made(guild_id, cid, a.user_id, batch):
+        return _failed(GONE)
+    try:
+        await memory.undo(guild_id, cid, batch)
+    except TooLateToUndo:
+        return _failed(TOO_LATE)
+    except MemoryRuleError as exc:
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (taken back already: a retried Undo)
+        return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
+    return Outcome()
 
 
 async def _join_choose(
