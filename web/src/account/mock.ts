@@ -1083,8 +1083,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const placeFacts = new Map<string, { level: string | null; levelFrom: "read" | "dm" | null; form: "water" | "route" | null; formFrom: "read" | "dm" | null; setting: boolean }>();
   // The card summary (#5051): one character with all three lines, one lore-only, one still being written.
   const cardSummaries: Record<string, CardSummaryFields> = {
-    "Mira Voss": { who: "A ferrywoman who works the Brynwater crossing.", firstMet: "the night on the ferry, 12 Oct", lastMentioned: "the Night of Lanterns" },
-    "Aldric Thorn": { who: "A dwarf who keeps the northern gate.", lastMentioned: "Not mentioned at the table yet." },
+    "Mira Voss": { who: "A ferrywoman who works the Brynwater crossing.", firstMet: "First met: Session 3, at the ferry", lastMentioned: "Last mentioned: Session 9" },
+    "Aldric Thorn": { who: "In your lore: a ferryman on the Brynwater road.", lastMentioned: "Not mentioned at the table yet." },
     "Old Pell": { who: null, whoPending: true },
   };
   const factsOf = (n: NameRow) => {

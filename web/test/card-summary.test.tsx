@@ -27,7 +27,7 @@ const REF = "200000000000000001.cmp1";
 
 describe("the card summary", () => {
   it("shows each line the API sends, in order", () => {
-    const { container } = render(<CardSummary card={{ who: "A ferrywoman.", firstMet: "the ford", lastMentioned: "last night" }} />);
+    const { container } = render(<CardSummary card={{ who: "A ferrywoman.", firstMet: "First met: the ford", lastMentioned: "Last mentioned: last night" }} />);
     const lines = Array.from(container.querySelectorAll("p")).map((p) => p.textContent);
     expect(lines).toEqual(["A ferrywoman.", "First met: the ford", "Last mentioned: last night"]);
   });
@@ -50,11 +50,13 @@ describe("the card summary", () => {
     const api = mockApi("table");
     const rows = await api.allNames!(REF, { q: "Aldric", kind: "", sort: "name" as const, page: 1 });
     const row = rows.names.find((n) => n.name === "Aldric Thorn")!;
-    expect(row.who).toBe("A dwarf who keeps the northern gate.");
+    expect(row.who).toBe("In your lore: a ferryman on the Brynwater road.");
     expect(row.firstMet).toBeUndefined();
     expect(row.lastMentioned).toBe("Not mentioned at the table yet.");
     const { container } = render(<CardSummary card={row} />);
-    expect(container.textContent).toContain(w.lastMentioned("Not mentioned at the table yet."));
+    const lines = Array.from(container.querySelectorAll("p")).map((p) => p.textContent);
+    // The lore line first, then "Not mentioned at the table yet." exactly as sent, with no prefix of the page's own.
+    expect(lines).toEqual(["In your lore: a ferryman on the Brynwater road.", "Not mentioned at the table yet."]);
     expect(container.textContent).not.toContain("First met");
   });
 
