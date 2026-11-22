@@ -41,6 +41,17 @@ describe("the first-feeling reminder", () => {
     expect(feelingParts("a ** b")).toEqual([{ text: "a ** b", bold: false }]);
   });
 
+  it("an escaped mark inside bold does not close it", () => {
+    expect(feelingParts("**a\\**b**")).toEqual([{ text: "a**b", bold: true }]);
+    expect(feelingParts("**a\\**b")).toEqual([{ text: "**a**b", bold: false }]);
+  });
+
+  it("a backslash at the end stays, and ** at the end or three stars are kept without empty parts", () => {
+    expect(feelingParts("a\\")).toEqual([{ text: "a\\", bold: false }]);
+    expect(feelingParts("**")).toEqual([{ text: "**", bold: false }]);
+    expect(feelingParts("***")).toEqual([{ text: "***", bold: false }]);
+  });
+
   it("the switch is off", () => {
     expect(FIRST_FEELING_LIVE).toBe(false);
   });
