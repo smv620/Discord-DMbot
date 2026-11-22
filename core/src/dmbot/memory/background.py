@@ -1385,7 +1385,8 @@ def keep_connections(
             if no_a or no_b:
                 lost["whose"] += 1
                 continue
-            first, second = reader.match(end_a), reader.match(end_b)
+            first = reader.match(end_a, small_whole_only=True)
+            second = reader.match(end_b, small_whole_only=True)
             if (c.variant_a or c.variant_b) and (first.ambiguous or second.ambiguous):
                 lost["spelling_clash"] += 1  # (a spelling is never a question: it is a guess)
                 continue
@@ -1494,7 +1495,7 @@ def keep_connections(
             )
             if c.change:  # (who it came from is a name DMbot has, and no end, or no hand-over)
                 prev_end, no_prev = speaker_end(c.from_holder, speaker)
-                prev = reader.match(prev_end)
+                prev = reader.match(prev_end, small_whole_only=True)
                 # (checked again here, whichever way the line came: one a pronoun check settled
                 # never went through `_handed`, so the kind and the quote are held to it now)
                 said_how, _, said_change = hand_over_of(c.how, c.from_holder, c.change)

@@ -32,6 +32,8 @@ ALLOWED = {
     "migrations/0472_campaign_maps.py": "adds the `map_id` column; nothing reads it (#4344)",
     "migrations/0466_place_world_table_door.py": "confirmed, shown rows; gate and for_players",
     "migrations/0463_place_world_door.py": "a DM-only door: NULL for anyone else (#4287; #4311)",
+    "migrations/0590_web_place_culture.py": "adds a culture's name to both place doors (the DM's "
+    "and the table's, which still gives only confirmed, shown rows; #4412)",
     "migrations/0530_map_features.py": "a pin's foreign key to a row; nothing reads it (#4670)",
     "migrations/0531_map_pins_web.py": "a DM-only web door, read only: an area pin's words (#4672)",
     "migrations/0481_world_notes_door.py": "World notes, DM-only: NULL for anyone else (#4285)",

@@ -30,6 +30,9 @@ def _row(r: dict[str, Any]) -> dict[str, Any]:
         "groupName": str(r["groupName"]) if r.get("groupName") else None,
         "how": str(r["how"]),
         "part": str(r["part"]),
+        # a named culture's name ("Illuskan") when the row holds one: `value` is then '' (#4412)
+        "cultureId": str(r["cultureId"]) if r.get("cultureId") else None,
+        "culture": str(r["culture"]) if r.get("culture") else None,
         # "read" until the DM confirms it: the page marks it "(DMbot read this)"
         "read": str(r["status"]) != map_facts.CONFIRMED,
         "source": str(r["source"]),
@@ -60,6 +63,8 @@ async def read(db: Database, session: Session, ref: str, place_id: str) -> dict[
         "form": got.get("form"),
         "rows": [_row(r) for r in got["rows"]],
         "groups": [{"id": str(g["id"]), "name": str(g["name"])} for g in got["groups"]],
+        # the campaign's kept named cultures for the picker, at most 14 (#4412)
+        "cultures": [{"id": str(c["id"]), "name": str(c["name"])} for c in got.get("cultures", [])],
     }
 
 
@@ -118,6 +123,7 @@ async def read_table(db: Database, session: Session, ref: str, place_id: str) ->
         ]  # (a row about only part of a place is not shown on the website: it is sent to no one)
     ]
     names = {str(r["group"]): str(r["groupName"] or "") for r in got["rows"] if r.get("group")}
+    cultures = {str(r["id"]): str(r["culture"]) for r in got["rows"] if r.get("culture")}
     return {
         "rows": [
             {
@@ -125,6 +131,7 @@ async def read_table(db: Database, session: Session, ref: str, place_id: str) ->
                 "value": "" if f.layer == map_facts.CONTROL else f.value,
                 "words": f.words,
                 "groupName": names.get(f.value) if f.layer == map_facts.CONTROL else None,
+                "culture": cultures.get(f.id),  # (a named culture's name, #4412)
                 "how": f.how,
                 "part": f.part,
             }

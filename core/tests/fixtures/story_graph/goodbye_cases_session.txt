@@ -1,0 +1,20 @@
+1 [DM] Okthandom says goodbye to everyone and heads north alone.
+2 [Player of Mira] I say goodbye to the party and take the road home.
+3 [DM] Brannick leaves the party at the crossroads.
+4 [DM] Selka parts ways with the company at the river.
+5 [DM] Tavin retires from adventuring and opens a bakery.
+6 [DM] Ulric stays behind in Brindle for good.
+7 [Player of Jessa] Jessa heads home to her family and won't be back.
+8 [DM] Corvin is not travelling with you any more; he bids farewell to the group.
+9 [DM] Dorran leaves the group and takes his share of the gold.
+10 [DM] Halric quits the party after the argument.
+11 [DM] Okthandom says goodbye to the innkeeper and goes to bed.
+12 [DM] Mira stays behind to guard the door.
+13 [DM] Brannick will leave the party at dawn.
+14 [Player of Selka] Selka wants to go home.
+15 [DM] Are you leaving the party, Tavin?
+16 [DM] If Ulric leaves the party, who carries the lantern?
+17 [DM] Jessa nearly left the party after the fight.
+18 [Player of Dorran] I'm dead tired, I'm going home for the night.
+19 [DM] Corvin heads home for the night and will meet you at dawn.
+20 [DM] Halric does not leave the party.
