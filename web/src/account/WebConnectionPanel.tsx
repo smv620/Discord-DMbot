@@ -5,6 +5,8 @@
 // heading while something waits, and leaving with changes pending asks first (closing, opening another line, picking another
 // name or line on the map, and leaving the page). A player gets the same list, read-only. Names are only ever text on the page.
 // Off (CONNECTION_PANEL_LIVE) the old panel, WebLinePanel, is shown as it was. Its own file, loaded when a line is chosen.
+import RoadCondition from "./RoadCondition";
+import { ROAD_CONDITION_LIVE } from "../content/road-condition-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { KNOWS_FEELING_LIVE } from "../content/knows-feeling-switch";
@@ -399,6 +401,21 @@ function Line({
       </button>
       {isOpen && (
         <div class="stack" id={`web-link-${link.id}`}>
+          {/* A road's condition (#4451): behind ROAD_CONDITION_LIVE. The road is named by its two ends, as the panel names them. */}
+          {ROAD_CONDITION_LIVE && (link.road || link.condition) && (
+            <RoadCondition
+              api={api}
+              refId={refId}
+              on="connection"
+              id={link.id}
+              name={`the road between ${a} and ${b}`}
+              condition={link.condition}
+              road={!!link.road}
+              canEdit={canEdit}
+              // The graph is not re-read here yet: the new condition shows once the page is read again (asked on the issue).
+              onChanged={() => undefined}
+            />
+          )}
           {sourceWords && <p class="small muted">{sourceWords}</p>}
           {link.knowWord && words.knowWords[link.knowWord] && <p class="small muted">{(link.knowLine ?? words.knowWords[link.knowWord])}</p>}
           {link.belief && (
