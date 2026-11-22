@@ -4,7 +4,7 @@ Invented fixtures only."""
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -105,7 +105,7 @@ class TheHeldBackNames(IsolatedAsyncioTestCase):
         b = bot(headless=False)
         with patch("dmbot.bot.pointer_note.send", AsyncMock(return_value=True)) as sent:
             await b._say_story_note(GUILD, CID, STORY_HELD_BACK, {"sid": "a" * 32, "n": 2})
-        args = sent.await_args.args
+        args = cast(Any, sent).await_args.args
         self.assertEqual(args[2], names_ui.held_back_count_text(2))
         self.assertEqual(args[4], names_ui.held_back_pointer(2))
 
