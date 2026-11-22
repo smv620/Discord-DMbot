@@ -865,7 +865,13 @@ function pretendWaiting(ref = ""): Waiting {
     : [];
   return {
     claims: [
-      { id: "c1", statement: "Mira Voss knows Far Hall", canSecret: true, at: 1791000000 },
+      {
+        id: "c1",
+        statement: "Mira Voss knows Far Hall",
+        canSecret: true,
+        at: 1791000000,
+        startingFeeling: "🤔 **Mithral Keep** (Tala's home) is unfriendly toward dwarves, and **Brewner** is a dwarf. You decide how they feel.",
+      },
       { id: "c2", statement: "Roan is dead", canSecret: false },
       ...shownHeld,
     ],
@@ -1076,7 +1082,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const playersLines = new Map<string, string>();
   // A place's land, climate and ruler (#4287), by the name's id; the groups the ruler menu offers; and two places' sizes for the climate rule.
   const worldRows = new Map<string, PlaceWorldRow[]>();
+  // The pretend Saltmarsh (#4990): its culture is dwarves (strong) and the named Illuskan (some); who lives here is halflings
+  // (most) and humans with no share said. Shown to the DM only; a player's read is refused (placeWorld below).
+  worldRows.set("n24", [
+    { layer: "culture", value: "dwarf", words: "", group: null, groupName: null, how: "strong", part: "", read: false, source: "dm", shown: true, cultureId: null, culture: null },
+    { layer: "culture", value: "", words: "", group: null, groupName: null, how: "some", part: "", read: false, source: "dm", shown: true, cultureId: "culture-illuskan", culture: "Illuskan" },
+    { layer: "population", value: "halfling", words: "", group: null, groupName: null, how: "most", part: "", read: false, source: "dm", shown: true, cultureId: null, culture: null },
+    { layer: "population", value: "human", words: "", group: null, groupName: null, how: "", part: "", read: false, source: "dm", shown: true, cultureId: null, culture: null },
+  ]);
   const worldGroups = [{ id: "a".repeat(32), name: "Ten-Towns" }, { id: "b".repeat(32), name: "The Arcane Brotherhood" }];
+  // The campaign's named cultures (#4412): a named culture is made by "Something else…" with words, and reused by its id.
+  const cultureList: { id: string; name: string }[] = [{ id: "culture-illuskan", name: "Illuskan" }];
   const worldLevel = (name: string): string | null => (name === "Brynwater Crossing" ? "settlement" : name === "Saltmarsh" ? "region" : null);
   // A place's size, kind and setting (#4173), by the name's id: nothing is set until a DM sets it, except "Saltmarsh", which DMbot read as a town.
   const placeFacts = new Map<string, { level: string | null; levelFrom: "read" | "dm" | null; form: "water" | "route" | null; formFrom: "read" | "dm" | null; setting: boolean }>();
@@ -1368,7 +1384,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     return {
       center: centre,
       nodes: knownNodes,
-      edges: whoEdges,
+      edges: whoEdges.map((e) => ({ ...e, links: e.links.map((l) => ({ ...l, ...routeOf(l.id) })) })),
       truncated: false,
       maxHops: 8,
       canEdit: dm && all,
@@ -1382,6 +1398,24 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
   let improve = true;
   const calls: string[] = [];
+  // Route lengths in a pretend campaign (#4392): by id, "" when none, and the batches Undo can take back.
+  // The routes the pretend campaign shows (#4986): the connection l1 has DMbot's read, the place Greywatch a length the DM kept,
+  // and Saltmarsh a route with no length yet. Places are keyed by name, since their ids follow the order the names were made in.
+  const routeLengths = new Map<string, { words: string; read: boolean }>([
+    ["l1", { words: "two days by cart", read: true }],
+    ["Greywatch", { words: "a day on foot", read: false }],
+    ["Saltmarsh", { words: "", read: false }],
+  ]);
+  const routeKey = (id: string): string => {
+    const n = memory.find((x) => x.id === id);
+    return n && n.kind === "place" ? n.name : id;
+  };
+  const routeOf = (id: string) => {
+    const r = routeLengths.get(id);
+    return r ? { route: true as const, ...(r.words ? { length: { words: r.words, read: r.read } } : {}) } : {};
+  };
+  const routeBatches = new Map<number, { id: string; prev: { words: string; read: boolean } }>();
+  let routeBatch = 0;
   // The join question's groups per campaign (#4778 part b): made when first read, then changed by the answers.
   const joinState: Record<string, { group: string; answer: "waiting" | "everyone"; names: string[] }[]> = {};
   // The "Still in the party?" questions waiting, by campaign (#4895). An answer takes its character out of the list.
@@ -2356,6 +2390,29 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-allowed");
     },
+    async changeRouteLength(ref, change) {
+      calls.push(`changeRouteLength:${ref}:${change.action}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (change.action === "undo") {
+        const back = routeBatches.get(change.batch);
+        if (!back) throw new ApiError("undo-late");
+        routeBatches.delete(change.batch);
+        routeLengths.set(back.id, back.prev);
+        return { batch: null };
+      }
+      const prev = routeLengths.get(routeKey(change.id));
+      if (!prev) throw new ApiError("gone");
+      // A keep of a length that is already the DM's own is refused as changed; the same words again change nothing.
+      if (change.action === "keep" && !prev.read) throw new ApiError("changed");
+      const words = change.action === "set" ? change.words.trim() : prev.words;
+      if (change.action === "set" && words === prev.words) return { batch: null };
+      routeLengths.set(routeKey(change.id), { words, read: false });
+      const batch = ++routeBatch;
+      routeBatches.set(batch, { id: routeKey(change.id), prev });
+      return { batch };
+    },
     // A character's lineage and class (#3925): DM only. "pc-cerric" is a Dwarf and a Cleric, "npc-guard-1" has none; any other node has none.
     async nodeTraits(ref, node) {
       calls.push(`nodeTraits:${ref}:${node}`);
@@ -3031,11 +3088,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     // "Private scenes" (#4102): two in the table scenario; a second "Not private" on one says gone.
     async placeWorld(ref, placeId) {
       calls.push(`placeWorld:${ref}:${placeId}`);
+      // The DM's door: a player's read is refused, as the real one answers nothing to a player.
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       // A route place (#5010): Greywatch is a road with a hard going condition the DM set; other places are not roads.
       const route = named.name === "Greywatch" ? { road: true, condition: { value: "hard" as const, words: "", since: 3, before: null, read: false, shown: false } } : {};
-      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })), ...route };
+      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })), cultures: cultureList.map((c) => ({ ...c })), ...route, ...routeOf(named.name) };
     },
     // The quest sheet of the mock's kept thread (#4547): the example the spec gives, for its one thread node.
     async threadCard(ref, thread) {
@@ -3452,7 +3511,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       // only what the DM confirmed and showed: no "read" row and no hidden one (the real door also cuts by what the reader may know)
-      return { rows: (worldRows.get(placeId) ?? []).filter((r) => r.shown && !r.read).map((r) => ({ layer: r.layer, value: r.value, words: r.words, groupName: r.groupName, how: r.how, part: r.part })) };
+      // (the table reads land, climate and ruler only; a culture or who-lives-here row is not on the table yet, #4412)
+      return { rows: (worldRows.get(placeId) ?? []).filter((r) => r.shown && !r.read && r.layer !== "culture" && r.layer !== "population").map((r) => ({ layer: r.layer as "terrain" | "climate" | "control", value: r.value, words: r.words, groupName: r.groupName, how: r.how, part: r.part })) };
     },
     async privateScenes(ref): Promise<PrivateScene[]> {
       calls.push(`privateScenes:${ref}`);
@@ -3513,6 +3573,9 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The pretend campaign page (#2416): a ref ending `.cp-none` is one nobody may see, `.cp-player` one
     // the person plays in without running it, `.cp-co` one they help run.
+    async visitCampaign(ref): Promise<void> {
+      calls.push(`visitCampaign:${ref}`);
+    },
     async campaignPage(ref): Promise<CampaignPage> {
       calls.push(`campaignPage:${ref}`);
       await reachable();
@@ -4175,6 +4238,41 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         const at = from.findIndex((x) => x.id === change.character);
         if (at >= 0) to.push(...from.splice(at, 1));
         else if (!to.some((x) => x.id === change.character)) throw new ApiError("bad-target");
+        return { ...row, others: [...row.others] };
+      }
+      if (change.action === "map-culture" || change.action === "map-population") {
+        // A culture or who lives here (#4412): one row per lineage (or named culture); null clears the layer; "other" makes a named culture.
+        if (row.kind !== "place") throw new ApiError("bad-target");
+        const layer = change.action === "map-culture" ? "culture" : "population";
+        const mine = worldRows.get(id) ?? [];
+        if (change.value === null) {
+          worldRows.set(id, mine.filter((r) => r.layer !== layer));
+          return { ...row, others: [...row.others] };
+        }
+        // A named culture is stored with an empty value and its id (as the store does); "Something else" reuses a name already kept.
+        let cultureId: string | null = null;
+        let culture: string | null = null;
+        let value = change.value;
+        if (change.value === "other") {
+          const words = (change.words ?? "").trim();
+          if (!words) throw new ApiError("bad-target");
+          const existing = cultureList.find((c) => c.name.toLowerCase() === words.toLowerCase());
+          const made = existing ?? { id: `culture-${cultureList.length + 1}`, name: words };
+          if (!existing) cultureList.push(made);
+          cultureId = made.id;
+          culture = made.name;
+          value = "";
+        } else {
+          const named = cultureList.find((c) => c.id === change.value);
+          if (named) {
+            cultureId = named.id;
+            culture = named.name;
+            value = "";
+          }
+        }
+        const rest = mine.filter((r) => !(r.layer === layer && (cultureId !== null ? r.cultureId === cultureId : r.value === value)));
+        rest.push({ layer, value: value ?? "", words: "", group: null, groupName: null, how: change.how ?? "", part: "", read: false, source: "dm", shown: false, cultureId, culture });
+        worldRows.set(id, rest);
         return { ...row, others: [...row.others] };
       }
       if (change.action === "map-terrain" || change.action === "map-climate" || change.action === "map-control" || change.action === "map-show") {

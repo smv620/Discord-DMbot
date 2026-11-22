@@ -48,6 +48,7 @@ from dmbot.web import (
     campaign_backup,
     campaign_delete,
     campaign_settings,
+    campaign_visits,
     discord_accounts,
     dm_players,
     email_change,
@@ -2339,6 +2340,18 @@ def create_app(
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/visit", status_code=204)
+    async def me_campaign_visit(ref: str, signed: Signed) -> None:
+        """The person opened this campaign's pages (#5037): its time goes on their own row, once a
+        minute at most. Never an error the page must show: a campaign not theirs records nothing."""
+        session, _token = signed
+        try:
+            await campaign_visits.record(db, session, ref)
+        except RecapError:
+            return None
+        except Exception:  # (a visit that cannot be noted is no reason to fail: counts only)
+            log.warning("campaign visit: not recorded", exc_info=False)
 
     @app.post("/me/campaigns/{ref}/road-condition", status_code=202)
     async def me_campaign_road_condition(
