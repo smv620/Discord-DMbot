@@ -1859,11 +1859,10 @@ def names_over_cap_line(dropped: Mapping[str, int]) -> str:
     n = dropped.get(bg.NAMES_OVER_CAP, 0)
     if not n:
         return ""
-    more = "1 more name" if n == 1 else f"{n} more names"
+    more = "1 more name was" if n == 1 else f"{n} more names were"
     return (
-        f"\n📄 DMbot lists up to {bg.MAX_NAMES} names from one document. It found {more} and "
-        f"left {'it' if n == 1 else 'them'} out. To get {'it' if n == 1 else 'them'}, split the "
-        "document and upload each part."
+        f"\n📄 {more} left out. DMbot lists up to {bg.MAX_NAMES} names from one document. To "
+        f"get {'it' if n == 1 else 'them'}, split the document and upload each part."
     )
 
 

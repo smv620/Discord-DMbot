@@ -2608,11 +2608,10 @@ def names_cut_note(count: int) -> str:
     """The import notice's line for names the name scan left out past its limit (#5055 A;
     Supervisor's ruling): DMbot says how many it did not list rather than dropping them silently.
     The count is summed over the import's sessions, so a name said in several of them can count
-    more than once: hence "up to". A count, never a name: the notice may be in the DM Bot
+    more than once: hence "as many as". A count, never a name: the notice may be in the DM Bot
     channel."""
-    more = "1 more name" if count == 1 else f"{count} more names"
+    more = "1 more name was" if count == 1 else f"{count} more names were"
     return (
-        f"DMbot lists up to {MAX_SUGGESTIONS} new names from each session. Your imported sessions "
-        f"had up to {more}, so {'it was' if count == 1 else 'they were'} left out. Add any you "
-        "know with ➕ Add a name on the names panel."
+        f"As many as {more} left out. DMbot lists up to {MAX_SUGGESTIONS} new names from each "
+        "session. Add any you know with ➕ Add a name on the names panel."
     )

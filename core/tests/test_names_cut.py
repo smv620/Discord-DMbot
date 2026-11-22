@@ -44,15 +44,15 @@ class TheWords(unittest.TestCase):
         self.assertEqual(names_over_cap_line({}), "")
         line = names_over_cap_line({bg.NAMES_OVER_CAP: 12})
         self.assertIn(f"lists up to {bg.MAX_NAMES} names from one document", line)
-        self.assertIn("It found 12 more names and left them out", line)
+        self.assertIn("12 more names were left out", line)
         self.assertIn("split the document", line)
         one = names_over_cap_line({bg.NAMES_OVER_CAP: 1})
-        self.assertIn("found 1 more name and left it out", one)
+        self.assertIn("1 more name was left out", one)
 
     def test_the_import_line_is_a_count_and_says_what_to_do(self) -> None:
         self.assertIn("up to 10 new names from each session", names_cut_note(3))
-        self.assertIn("had up to 1 more name, so it was left out", names_cut_note(1))
-        self.assertIn("had up to 3 more names, so they were left out", names_cut_note(3))
+        self.assertIn("As many as 1 more name was left out", names_cut_note(1))
+        self.assertIn("As many as 3 more names were left out", names_cut_note(3))
         self.assertIn("➕ Add a name", names_cut_note(3))
 
 

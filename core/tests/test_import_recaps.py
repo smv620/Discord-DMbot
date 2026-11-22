@@ -544,7 +544,7 @@ class TheCrashAndTheNews(WithImports):
         await bot._tell_import_news(GUILD, self.store)
         channel, text = bot.post.await_args.args[:2]
         self.assertEqual(channel, 88)
-        self.assertIn("Your imported sessions had up to 12 more names", text)
+        self.assertIn("As many as 12 more names were left out", text)
         self.assertIn("➕ Add a name", text)
         self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
         bot.post.reset_mock()
@@ -567,10 +567,10 @@ class TheCrashAndTheNews(WithImports):
 
         bot._scan_import = scan
         await rounds(bot, 5)
-        told = [c.args[1] for c in bot.post.await_args_list if "more names" in c.args[1]]
+        told = [c.args[1] for c in bot.post.await_args_list if "more names were" in c.args[1]]
         self.assertEqual(tries[0], 2)
         self.assertEqual(len(told), 1)
-        self.assertIn("up to 12 more names", told[0])
+        self.assertIn("As many as 12 more names", told[0])
         self.assertEqual(await self.store.scan_cut(GUILD, sid), 12)
 
     async def test_the_dm_is_told_once_when_a_name_check_was_given_up(self) -> None:
