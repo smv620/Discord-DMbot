@@ -12032,21 +12032,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
 
     async def _take_name_asks(self, gid: int, cid: str, session_id: str) -> list[tuple[str, int]]:
-        """The session's kept words, removed ([] when none). Other sessions' are put back."""
+        """The session's kept words, removed ([] when none). Other sessions' stay."""
         state = self.import_state
         if state is None:
             return self._name_pass_asks.pop(session_id, [])
         mine: list[tuple[str, int]] = []
-        others: list[str] = []
-        for text in await state.take_each(gid, cid, NAME_ASKS):
-            sid, _, rest = text.partition(" ")
+        # (one statement: the other sessions' words stay where they are, never taken and put back)
+        for text in await state.take_each_starting(gid, cid, NAME_ASKS, f"{session_id} "):
+            _, _, rest = text.partition(" ")
             times, _, heard = rest.partition(" ")
-            if sid == session_id and times.isdigit():
+            if times.isdigit():
                 mine.append((heard, int(times)))
-            else:
-                others.append(text)
-        if others:
-            await state.add_each(gid, cid, NAME_ASKS, others)
         return mine
 
     async def _propose_new_names(
