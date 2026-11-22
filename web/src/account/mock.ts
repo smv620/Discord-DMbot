@@ -3513,6 +3513,9 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The pretend campaign page (#2416): a ref ending `.cp-none` is one nobody may see, `.cp-player` one
     // the person plays in without running it, `.cp-co` one they help run.
+    async visitCampaign(ref): Promise<void> {
+      calls.push(`visitCampaign:${ref}`);
+    },
     async campaignPage(ref): Promise<CampaignPage> {
       calls.push(`campaignPage:${ref}`);
       await reachable();
