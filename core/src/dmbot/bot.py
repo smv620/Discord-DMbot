@@ -13068,13 +13068,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await self._import_news(gid, store, left)
         return done
 
-    async def _import_open(self, gid: int, store: ImportStore, cid: str) -> int:
+    async def _import_open(self, gid: int, store: ImportStore, cid: str) -> bool:
         """Whether an import is still being worked on, for the news that is told once at its end:
         sessions still to clean or scan, or whose recap is still to start. The scan and the news
         are separate processes with the worker on, so the news must not count an import as over
         while the worker has its recaps to start (#4904 3b-4c)."""
-        waiting = await store.pending_scans(gid, cid)
-        return waiting + sum(1 for r in await store.ready_for_recap(gid) if r.campaign_id == cid)
+        if await store.pending_scans(gid, cid):
+            return True
+        return any(r.campaign_id == cid for r in await store.ready_for_recap(gid))
 
     async def _import_news(
         self, gid: int, store: ImportStore, left: dict[str, int] | None = None
