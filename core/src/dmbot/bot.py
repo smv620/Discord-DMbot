@@ -10430,7 +10430,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 try:
                     left = await self.memory.secret_questions_still_waiting(gid, cid, asked)
                     if left and not await _story_note(
-                        self, gid, cid, STORY_SECRET_COUNT, {"n": left}
+                        self, gid, cid, STORY_SECRET_COUNT, {"sid": sid, "n": left}
                     ):
                         await self.post(
                             counts_channel,
@@ -10442,7 +10442,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if report.met_made and counts_channel is not None:  # (#4045: counts only)
                 try:
                     if not await _story_note(
-                        self, gid, cid, STORY_MET_LIST, {"n": report.met_made}
+                        self, gid, cid, STORY_MET_LIST, {"sid": sid, "n": report.met_made}
                     ):
                         await self.post(
                             counts_channel,
@@ -16910,7 +16910,7 @@ async def fill_parties(
 
 async def _story_note(bot: Any, gid: int, cid: str, kind: str, payload: Mapping[str, Any]) -> bool:
     """With no Discord (the worker, #4904 3b-4a) a story read's counts-only note is an outbox row
-    the bot posts, once for each kind and count; True when it was queued, False when the read
+    the bot posts, once for each kind, session and count; True when it was queued, False when the read
     posts it itself (the bot, or no outbox). The payload is a session id and a count, never a
     word of the story."""
     outbox = getattr(bot, "outbox", None)
