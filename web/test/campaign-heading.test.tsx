@@ -6,7 +6,10 @@ import { cleanup, render, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
 import CampaignNav from "../src/account/CampaignNav";
+import HomebrewPage from "../src/account/Homebrew";
 import HouseRulesPage from "../src/account/HouseRules";
+import Names from "../src/account/Names";
+import Transcripts from "../src/account/Transcripts";
 import { mockApi } from "../src/account/mock";
 
 afterEach(() => {
@@ -46,7 +49,25 @@ describe("the campaign's name on top", () => {
       { container: island },
     );
     await waitFor(() => expect(document.querySelectorAll("[data-campaign-title]")).toHaveLength(1));
-    expect((document.querySelector("[data-campaign-title]") as HTMLElement).style.minHeight).toBe("1.2em");
+  });
+
+  it("is hidden from a screen reader while it has no words, and shown once it has", async () => {
+    const island = shell("Names");
+    render(<CampaignNav api={mockApi("table")} campaignRef={REF} page="names" />, { container: island });
+    const title = (): HTMLElement => document.querySelector("[data-campaign-title]") as HTMLElement;
+    await waitFor(() => expect(title()).not.toBeNull());
+    await waitFor(() => expect(title().getAttribute("aria-hidden")).toBeNull());
+    expect(title().textContent).not.toBe("");
+  });
+
+  it("is undone when the last nav leaves: the page's own title is its h1 again", async () => {
+    const island = shell("Names");
+    const view = render(<CampaignNav api={mockApi("table")} campaignRef={REF} page="names" name="The Brynwater Crossing" />, { container: island });
+    await waitFor(() => expect(document.querySelector("[data-campaign-title]")).not.toBeNull());
+    view.unmount();
+    expect(document.querySelector("[data-campaign-title]")).toBeNull();
+    expect(headings()).toEqual([{ level: "H1", text: "Names" }]);
+    expect(document.getElementById("page-title")?.hasAttribute("data-page-title")).toBe(false);
   });
 
   it("leaves the campaign's own page alone (its one heading is already the name)", async () => {
@@ -64,5 +85,20 @@ describe("the campaign's name on top", () => {
     const named = headings().filter((h) => h.text === "The Brynwater Crossing");
     expect(named).toEqual([{ level: "H1", text: "The Brynwater Crossing" }]);
     expect(Array.from(document.querySelectorAll(".account h2, .account h3")).some((h) => h.textContent === "The Brynwater Crossing")).toBe(false);
+  });
+
+  // The pages that used to say the campaign's name again under the nav (#5038): one heading with the name, the h1.
+  it.each([
+    ["Homebrew", (api: ReturnType<typeof mockApi>) => <HomebrewPage api={api} path={`/account/homebrew/${REF}`} />],
+    ["Transcripts", (api: ReturnType<typeof mockApi>) => <Transcripts api={api} path={`/account/transcripts/${REF}`} />],
+    ["Names", (api: ReturnType<typeof mockApi>) => <Names api={api} path={`/account/names/${REF}`} />],
+  ])("%s: the name is the one heading with it, on top", async (title, view) => {
+    const island = shell(title);
+    render(view(mockApi("table")), { container: island });
+    await waitFor(() => expect(document.querySelector("[data-campaign-title]")?.textContent ?? "").not.toBe(""));
+    const name = document.querySelector("[data-campaign-title]")!.textContent!;
+    expect(headings()[0]).toEqual({ level: "H1", text: name });
+    const repeated = Array.from(document.querySelectorAll(".account h2, .account h3")).filter((h) => h.textContent === name);
+    expect(repeated).toEqual([]);
   });
 });
