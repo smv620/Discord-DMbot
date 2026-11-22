@@ -381,7 +381,7 @@ async def _lore_row(db: Database, guild: int, upload: str) -> dict[str, Any]:
     async with db.guild(guild, snapshot=True) as conn:
         cur = await conn.execute(
             "SELECT state, stage, error, done, total, names_found, links_found, words_done,"
-            " calls_made FROM lore_uploads WHERE guild_id = %s AND id = %s",
+            " calls_made, names_cut FROM lore_uploads WHERE guild_id = %s AND id = %s",
             (guild, upload),
         )
         return dict(await cur.fetchone() or {})
@@ -429,6 +429,8 @@ async def wait_lore(
                 "connections": int(row["links_found"]),
                 "words": int(row["words_done"]),
                 "calls": int(row["calls_made"]),
+                # names past the one-document limit (#5055 A): a loss to the cap, not a miss
+                "names cut": int(row["names_cut"]),
             }
         if row["state"] == "failed":
             raise SampleError(f"the lore read failed ({row['error'] or 'no reason'})")
@@ -539,7 +541,8 @@ async def _import_row(db: Database, guild: int, session: str) -> dict[str, Any]:
     async with db.guild(guild, snapshot=True) as conn:
         cur = await conn.execute(
             "SELECT state, reason, scanned, scan_finished, step_done, step_total, words_done,"
-            " calls_made, story_state, story_part, story_parts FROM session_imports"
+            " calls_made, story_state, story_part, story_parts, scan_cut, story_held"
+            " FROM session_imports"
             " WHERE guild_id = %s AND session_id = %s",
             (guild, session),
         )
@@ -611,6 +614,10 @@ async def wait_import(
         "words": int(row["words_done"]),
         "calls": int(row["calls_made"]),
         "story": str(row["story_state"] or "not read"),
+        # (#5055 A) names past the name scan's limit (left out), and new names past the story
+        # reader's (held for a later session): kept apart, as they mean different things
+        "scan cut": int(row["scan_cut"]),
+        "reader held": int(row["story_held"]),
     }
 
 

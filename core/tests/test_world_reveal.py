@@ -157,7 +157,7 @@ class TheDMsCopy(unittest.IsolatedAsyncioTestCase):
             notice=Notice(1, "c1", "n1", "the city guide, 3 Nov", 1, {"revealed": 1}),
             questions_left=0, trait_questions=0, thread_suggestions=0, secret_questions=0,
             knowledge_note="", revealed_lines=("**Ash Morrow**",),
-            pictures_unread=0, unread_pages=(),
+            pictures_unread=0, unread_pages=(), dropped={},
             pictures_kept=0, pictures_not_kept=0, pictures_undo=False,
             maps_asked=0, maps_over=0, maps_unsent=False,
         )  # fmt: skip

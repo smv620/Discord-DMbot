@@ -43,7 +43,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.name_longer import longer_names, widens
-from dmbot.memory.scan import Match, near_match_in, sound_keys
+from dmbot.memory.scan import MAX_SUGGESTIONS, Match, near_match_in, sound_keys
 from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import all_names, logic, name_origin, name_places, player_id, split_words
@@ -2601,4 +2601,17 @@ def after_session_text(names: list[str], where: str = "this session") -> str:
         f"📝 **{_plural(len(names), 'new name')} to check** from {where}: {shown}{more}.\n"
         "Say which are in your game, so DMbot spells them right. The check opens privately "
         "for the DM."
+    )
+
+
+def names_cut_note(count: int) -> str:
+    """The import notice's line for names the name scan left out past its limit (#5055 A;
+    Supervisor's ruling): DMbot says how many it did not list rather than dropping them silently.
+    The count is summed over the import's sessions, so a name said in several of them can count
+    more than once: hence "as many as". A count, never a name: the notice may be in the DM Bot
+    channel."""
+    more = "1 more name was" if count == 1 else f"{count} more names were"
+    return (
+        f"As many as {more} left out. DMbot lists up to {MAX_SUGGESTIONS} new names from each "
+        "session. Add any you know with ➕ Add a name on the names panel."
     )
