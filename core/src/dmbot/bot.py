@@ -829,6 +829,7 @@ FORGET_TIMEOUT_S = 10  # removing learned names must not hold up stopping a reco
 DISPLAY_NAME_REFRESH_S = 86400  # a person's Discord name is kept on their account once a day
 DISPLAY_NAME_TIMEOUT_S = 3  # for the background update
 AVATAR_SWEEP_EVERY_S = 24 * 3600.0  # linked players' Discord avatars are read again this often
+MEMBER_NAME_KEEP_S = 90 * 24 * 3600.0  # a directory name not written for this long is dropped
 AVATARS_PER_ROUND = 25  # ... a few at a time, so a big server never holds up the round
 NAMES_NOTED_MAX = 5000  # people remembered as just noted; the oldest half go past this
 PRESESSION_NOTE_WAIT_S = 15.0  # the longest the pre-session note may take (#1403)
@@ -4991,6 +4992,34 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception:
             # Worst case after a restart: players see the notice once more.
             log.exception("Couldn't save that the recording notice was posted")
+
+    async def _people_keys(self, guild_id: int, users: Iterable[int]) -> set[str]:
+        """The name keys of people at the table, each whole name and each word of it ("Mia Stone":
+        "mia stone", "mia", "stone"), so they are never proposed as story names. Discord's member
+        cache first; for a person it has no name for (a worker has no cache, #4904 3b-4c) the
+        directory of those who agreed to be recorded. Someone with no name found adds nothing."""
+        keys: set[str] = set()
+        missing: list[int] = []
+        for uid in users:
+            if uid < 0:  # (a speaker without Discord has only a placeholder name here)
+                continue
+            name = self.name_of(guild_id, uid)
+            if name.startswith("<@"):
+                missing.append(uid)
+                continue
+            keys.add(name_key(name))
+            keys.update(name_key(word) for word in name.split())
+        if missing and self.members is not None:
+            try:
+                found = await self.members.names(guild_id, missing)
+            except Exception as exc:  # the type only: a database error can quote a name
+                log.warning("Could not read the member directory: %s", type(exc).__name__)
+                found = {}
+            for names in found.values():
+                for name in names:
+                    keys.add(name_key(name))
+                    keys.update(name_key(word) for word in name.split())
+        return keys
 
     def name_of(self, guild_id: int, user_id: int) -> str:
         if user_id < 0:  # a speaker without Discord (#3690): never a mention or a member lookup
@@ -10304,14 +10333,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             lines = await transcripts.lines(gid, sid)
             # The people at the table are not story names (as in the name scan).
             people = {*dm_ids, *(await consenting())}
-            skip: set[str] = set()
-            for uid in people:
-                if uid < 0:
-                    continue  # (a speaker without Discord has only a placeholder name here)
-                name = self.name_of(gid, uid)
-                if not name.startswith("<@"):
-                    skip.add(name_key(name))
-                    skip.update(name_key(word) for word in name.split())
+            skip = await self._people_keys(gid, people)
 
             async def count_call() -> None:
                 await transcripts.record_extraction(
@@ -10585,12 +10607,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         only = [
             x if (x.user_id, x.started_ms) in mine else replace(x, topic=OFF_TOPIC) for x in every
         ]
-        skip: set[str] = set()
-        for uid in users:
-            name = self.name_of(gid, uid)
-            if not name.startswith("<@"):
-                skip.add(name_key(name))
-                skip.update(name_key(word) for word in name.split())
+        skip = await self._people_keys(gid, users)
         try:
             report = await extractor.run(
                 self.extractor_ai,
@@ -11961,14 +11978,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
             return 0
         lookup = await self.lookup.get(gid, cid)
-        people: set[str] = set()
-        for uid in users:
-            if uid < 0:  # (an imported speaker's stand-in label, "a player without Discord")
-                continue
-            name = self.name_of(gid, uid)
-            if not name.startswith("<@"):
-                people.add(name_key(name))
-                people.update(name_key(word) for word in name.split())
+        people = await self._people_keys(gid, users)
         ai = self.name_pass_ai
 
         async def ask(system: str, question: str) -> Any:
@@ -12111,14 +12121,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.exception("Couldn't read the session to find where names were said")
         # People at the table aren't story names: skip their whole display names and
         # each word of them ("Mia Stone" → "Mia", "Stone").
-        skip = set(await self.memory.known_keys(gid, cid))
-        for uid in users:
-            if uid < 0:  # (an imported speaker's stand-in label, never a name: #3962)
-                continue
-            name = self.name_of(gid, uid)
-            if not name.startswith("<@"):
-                skip.add(name_key(name))
-                skip.update(name_key(word) for word in name.split())
+        skip = set(await self.memory.known_keys(gid, cid)) | await self._people_keys(gid, users)
         # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
         # (#394). Which known name each sounds like is worked out when the DM looks,
         # never saved: names can change, or be made secret, before then.
@@ -14299,6 +14302,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     continue
                 queue = await directory.linked_players(guild.id)
                 self._avatars_swept[guild.id] = now
+                try:  # names not written for 90 days go (the person is seen again, they come back)
+                    await directory.sweep(guild.id, MEMBER_NAME_KEEP_S)
+                except Exception as exc:
+                    log.warning("Member names sweep failed: %s", type(exc).__name__)
             batch, rest = queue[:AVATARS_PER_ROUND], queue[AVATARS_PER_ROUND:]
             if rest:
                 self._avatar_queue[guild.id] = rest

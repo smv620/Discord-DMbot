@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from dmbot.db import Database
 
@@ -67,6 +67,35 @@ class MemberDirectory:
                 (guild_id, limit),
             )
             return [int(r["played_by"]) for r in await cur.fetchall()]
+
+    async def names(self, guild_id: int, user_ids: Sequence[int]) -> dict[int, list[str]]:
+        """The display name and username kept for each of these people, for the worker, which has
+        no Discord member cache to ask (#4904 3b-4c): who is at the table is not a story name.
+        Only someone with a consent row now, whatever a stale row says; nobody else is returned."""
+        if not user_ids:
+            return {}
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT d.user_id, d.display_name, d.username FROM member_directory d"
+                " WHERE d.guild_id = %s AND d.user_id = ANY(%s) AND EXISTS ("
+                "   SELECT 1 FROM consent x WHERE x.guild_id = d.guild_id"
+                "   AND x.user_id = d.user_id)",
+                (guild_id, list(user_ids)),
+            )
+            return {
+                int(r["user_id"]): [n for n in (r["display_name"], r["username"]) if n]
+                for r in await cur.fetchall()
+            }
+
+    async def sweep(self, guild_id: int, older_than_s: float) -> int:
+        """Drop rows not written for this long (a name is kept fresh while the person is seen, so
+        what is left is someone who has gone quiet). Returns how many went."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM member_directory WHERE guild_id = %s AND updated_at < %s",
+                (guild_id, int(self._now() - older_than_s)),
+            )
+            return int(cur.rowcount)
 
     async def forget(self, guild_id: int, user_id: int) -> None:
         """Drop one member: they stopped being recorded. Also drops any row in this server whose
