@@ -1077,6 +1077,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // A place's land, climate and ruler (#4287), by the name's id; the groups the ruler menu offers; and two places' sizes for the climate rule.
   const worldRows = new Map<string, PlaceWorldRow[]>();
   const worldGroups = [{ id: "a".repeat(32), name: "Ten-Towns" }, { id: "b".repeat(32), name: "The Arcane Brotherhood" }];
+  // The campaign's named cultures (#4412): a named culture is made by "Something else…" with words, and reused by its id.
+  const cultureList: { id: string; name: string }[] = [{ id: "culture-illuskan", name: "Illuskan" }];
   const worldLevel = (name: string): string | null => (name === "Brynwater Crossing" ? "settlement" : name === "Saltmarsh" ? "region" : null);
   // A place's size, kind and setting (#4173), by the name's id: nothing is set until a DM sets it, except "Saltmarsh", which DMbot read as a town.
   const placeFacts = new Map<string, { level: string | null; levelFrom: "read" | "dm" | null; form: "water" | "route" | null; formFrom: "read" | "dm" | null; setting: boolean }>();
@@ -3035,7 +3037,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       // A route place (#5010): Greywatch is a road with a hard going condition the DM set; other places are not roads.
       const route = named.name === "Greywatch" ? { road: true, condition: { value: "hard" as const, words: "", since: 3, before: null, read: false, shown: false } } : {};
-      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })), ...route };
+      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })), cultures: cultureList.map((c) => ({ ...c })), ...route };
     },
     // The quest sheet of the mock's kept thread (#4547): the example the spec gives, for its one thread node.
     async threadCard(ref, thread) {
@@ -3452,7 +3454,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       // only what the DM confirmed and showed: no "read" row and no hidden one (the real door also cuts by what the reader may know)
-      return { rows: (worldRows.get(placeId) ?? []).filter((r) => r.shown && !r.read).map((r) => ({ layer: r.layer, value: r.value, words: r.words, groupName: r.groupName, how: r.how, part: r.part })) };
+      // (the table reads land, climate and ruler only; a culture or who-lives-here row is not on the table yet, #4412)
+      return { rows: (worldRows.get(placeId) ?? []).filter((r) => r.shown && !r.read && r.layer !== "culture" && r.layer !== "population").map((r) => ({ layer: r.layer as "terrain" | "climate" | "control", value: r.value, words: r.words, groupName: r.groupName, how: r.how, part: r.part })) };
     },
     async privateScenes(ref): Promise<PrivateScene[]> {
       calls.push(`privateScenes:${ref}`);
@@ -4175,6 +4178,36 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         const at = from.findIndex((x) => x.id === change.character);
         if (at >= 0) to.push(...from.splice(at, 1));
         else if (!to.some((x) => x.id === change.character)) throw new ApiError("bad-target");
+        return { ...row, others: [...row.others] };
+      }
+      if (change.action === "map-culture" || change.action === "map-population") {
+        // A culture or who lives here (#4412): one row per lineage (or named culture); null clears the layer; "other" makes a named culture.
+        if (row.kind !== "place") throw new ApiError("bad-target");
+        const layer = change.action === "map-culture" ? "culture" : "population";
+        const mine = worldRows.get(id) ?? [];
+        if (change.value === null) {
+          worldRows.set(id, mine.filter((r) => r.layer !== layer));
+          return { ...row, others: [...row.others] };
+        }
+        let cultureId: string | null = null;
+        let culture: string | null = null;
+        if (change.value === "other") {
+          const words = (change.words ?? "").trim();
+          if (!words) throw new ApiError("bad-target");
+          const made = { id: `culture-${cultureList.length + 1}`, name: words };
+          cultureList.push(made);
+          cultureId = made.id;
+          culture = made.name;
+        } else {
+          const named = cultureList.find((c) => c.id === change.value);
+          if (named) {
+            cultureId = named.id;
+            culture = named.name;
+          }
+        }
+        const rest = mine.filter((r) => !(r.layer === layer && r.value === change.value));
+        rest.push({ layer, value: change.value, words: change.value === "other" ? (culture ?? "") : "", group: null, groupName: null, how: change.how ?? "", part: "", read: false, source: "dm", shown: false, cultureId, culture });
+        worldRows.set(id, rest);
         return { ...row, others: [...row.others] };
       }
       if (change.action === "map-terrain" || change.action === "map-climate" || change.action === "map-control" || change.action === "map-show") {
