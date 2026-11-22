@@ -110,11 +110,15 @@ describe("a DM's route length", () => {
 });
 
 describe("a player's route length", () => {
-  it("sees the line and no buttons", () => {
-    panel(read, false, false);
+  it("sees the line and no buttons once the length is kept, and never DMbot's unkept read", () => {
+    panel(ownWords, false, false);
     expect(screen.getByText(w.line("two days by cart"), { exact: false })).toBeTruthy();
     expect(screen.queryByRole("button")).toBeNull();
     expect(screen.queryByText(w.readNote, { exact: false })).toBeNull();
+    cleanup();
+    panel(read, false, false);
+    expect(screen.queryByText(w.line("two days by cart"), { exact: false })).toBeNull();
+    expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("nothing is drawn with the switch off", () => {

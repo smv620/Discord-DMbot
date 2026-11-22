@@ -42,7 +42,8 @@ export default function RouteLength({
   if (!ROUTE_LENGTH_LIVE) return null;
 
   const current = local ? local.length : length;
-  const line = current?.words ? w.line(current.words) + (canEdit && current.read ? w.readNote : "") : null;
+  // DMbot's read is the DM's to check: a player sees a length only once the DM has kept it (or set their own words).
+  const line = current?.words && (canEdit || !current.read) ? w.line(current.words) + (canEdit && current.read ? w.readNote : "") : null;
   const isDm = canEdit && route;
 
   async function run(action: () => Promise<void>): Promise<void> {
@@ -87,16 +88,26 @@ export default function RouteLength({
       onChanged();
     });
 
-  const takeBack = () =>
-    run(async () => {
-      if (!api.changeRouteLength || undo === null) throw new ApiError("server");
+  // An undo that is too late, or refused because something changed, says so; nothing else about it is claimed.
+  const takeBack = async (): Promise<void> => {
+    if (busy || undo === null) return;
+    setBusy(true);
+    setSaid(null);
+    try {
+      if (!api.changeRouteLength) throw new ApiError("server");
       await api.changeRouteLength(refId, { action: "undo", batch: undo.batch });
       const back = undo;
       setUndo(null);
       setLocal({ length: back.prev });
       setSaid({ ok: true, text: w.undone, undo: false });
       onChanged();
-    });
+    } catch (error) {
+      const kind = error instanceof ApiError ? error.kind : "";
+      setSaid({ ok: false, text: kind === "undo-late" || kind === "changed" ? w.undoLate : w.couldNot, undo: false });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const openForm = () => {
     setWords(current?.words ?? "");

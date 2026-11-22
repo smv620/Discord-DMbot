@@ -2113,13 +2113,13 @@ export interface NodeSummary {
 /** A name or a connection the DM shows the players (#2405). */
 export type WebRevealTarget = { kind: "name" | "link"; id: string };
 
-/** One change to the connections between names (DM only). */
 /** A route's length as the page shows it: DMbot's read (`read`, DM only) or the DM's words. */
 export interface RouteLength {
   words: string;
   read?: boolean;
 }
 export type RouteLengthChange = { action: "set"; on: "connection" | "place"; id: string; words: string } | { action: "keep"; on: "connection" | "place"; id: string } | { action: "undo"; batch: number };
+/** One change to the connections between names (DM only). */
 export type WebLinkChange =
   | { action: "add"; a: string; b: string; words: string; secret: boolean }
   | { action: "words"; id: string; words: string }
