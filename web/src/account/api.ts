@@ -2514,7 +2514,6 @@ export interface PlaceSpelling {
   /** The new spelling ("North Haven"). */
   spelling: string;
 }
-/** One name in a campaign's memory, as the Names page lists it (#2295). */
 /** The three lines at the top of a character's card (#5051): sent to a DM only, and only while CARD_SUMMARY_LIVE. */
 export interface CardSummaryFields {
   /** The sentence on who they are; null or absent while it is not written yet. */
@@ -2526,6 +2525,7 @@ export interface CardSummaryFields {
   /** A scene line on the last mention, words only. */
   lastMentioned?: string | null;
 }
+/** One name in a campaign's memory, as the Names page lists it (#2295). */
 export interface NameRow extends CardSummaryFields {
   id: string;
   name: string;

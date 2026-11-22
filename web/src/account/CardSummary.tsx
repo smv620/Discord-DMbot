@@ -15,8 +15,8 @@ export default function CardSummary({ card }: { card: CardSummaryFields }) {
   if (lines.length === 0) return null;
   return (
     <div class="stack">
-      {lines.map((line) => (
-        <p class="small" key={line}>
+      {lines.map((line, i) => (
+        <p class="small" key={i}>
           {line}
         </p>
       ))}
