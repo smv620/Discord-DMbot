@@ -52,6 +52,7 @@ export const campaignPage = {
   pagesLabel: "Pages in this part",
   pages: {
     recaps: "Recaps",
+    sharedRules: "Shared rules",
     timeline: "Story timeline",
     pictures: "Pictures",
     maps: "Maps",
