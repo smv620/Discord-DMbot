@@ -94,5 +94,24 @@ describe("a route place's condition on its panel (#5010)", () => {
     expect(screen.queryByText(w.line("hard", "", 3, null))).toBeNull();
     expect(reads).toBe(2);
   });
+
+  it("a slow older read never draws over a newer one", async () => {
+    const api = mockApi("table");
+    let release: (got: PlaceWorld) => void = () => undefined;
+    let reads = 0;
+    api.placeWorld = (): Promise<PlaceWorld> => {
+      reads += 1;
+      if (reads === 1) return new Promise((go) => (release = go)); // the slow, older read
+      return Promise.resolve(world({ road: true, condition: { value: "open", words: "", since: 5, before: null } }));
+    };
+    const other = { id: "place2".padEnd(32, "0"), name: "Elsewhere" } as unknown as NameRow;
+    const view = render(<PlaceWorldPanel api={api} refId={REF} row={row} act={act} />);
+    view.rerender(<PlaceWorldPanel api={api} refId={REF} row={other} act={act} />); // reads again for the other place
+    expect(await screen.findByText(w.line("open", "", 5, null))).toBeTruthy();
+    release(world({ road: true, condition: { value: "closed", words: "", since: 1, before: null } }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText(w.line("closed", "", 1, null))).toBeNull();
+    expect(screen.getByText(w.line("open", "", 5, null))).toBeTruthy();
+  });
 });
 
