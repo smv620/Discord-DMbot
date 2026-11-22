@@ -73,6 +73,7 @@ EVERY_ACTION = (
     "thread-involve",  # "Add who's involved" (#3696 slice 2b)
     "world-bias",  # ✏️ Change on a feeling DMbot read (#4932)
     "route-length", "route-length-keep", "route-undo",  # a route's stated length (#4392)
+    "road-condition", "road-condition-keep", "road-condition-show",  # a road's condition (#4451)
     "thread-new", "thread-due", "thread-party",  # a new thread or promise, due note, parties (2c)
     "thread-link", "thread-led-to",  # an event on a thread, what led to what (2d)
     "reveals-ask", "reveals-keep", "reveals-not",  # what the characters learned (#3863)

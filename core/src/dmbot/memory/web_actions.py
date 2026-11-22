@@ -23,7 +23,16 @@ from typing import TYPE_CHECKING, Any
 
 from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory import beliefs, evidence, link_edits, map_uploads, name_edits, placing, told
+from dmbot.memory import (
+    beliefs,
+    evidence,
+    link_edits,
+    map_facts,
+    map_uploads,
+    name_edits,
+    placing,
+    told,
+)
 from dmbot.memory import claims as claims_mod
 from dmbot.memory import lore_pdfs as lore_pdfs_mod
 from dmbot.memory import thread_clues as clues_mod
@@ -36,6 +45,8 @@ from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
 from dmbot.memory.claims import WAITING_NAME_REASON, ClaimStore
 from dmbot.memory.link_words import predicate_for_either
 from dmbot.memory.lookup import CampaignLookup
+from dmbot.memory.map_fact_store import GONE as MAP_GONE
+from dmbot.memory.map_fact_store import ONLY_KNOWN_ROAD, ONLY_ROUTES
 from dmbot.memory.models import (
     CLAIM_CONFIRMED,
     CLAIM_PROPOSED,
@@ -163,6 +174,7 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo", "world-bias")
 ROUTE_LENGTH_ACTIONS = ("route-length", "route-length-keep", "route-undo")  # (#4392)
+ROAD_CONDITION_ACTIONS = ("road-condition", "road-condition-keep", "road-condition-show")  # (#4451)
 THREAD_STATE_ACTIONS = ("thread-state", "thread-check")  # a thread's state (#3696 slice 2a)
 THREAD_INVOLVE_ACTION = "thread-involve"  # who is involved in a thread (#3696 slice 2b)
 THREAD_NEW_ACTIONS = ("thread-new", "thread-due", "thread-party")  # (#3696 slice 2c)
@@ -498,7 +510,8 @@ class ActionStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s AND action IN ('route-length', 'route-length-keep')"
+                " AND user_id = %s AND action IN ('route-length', 'route-length-keep',"
+                " 'road-condition', 'road-condition-keep', 'road-condition-show')"
                 " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
                 (guild_id, campaign_id, user_id, batch),
             )
@@ -810,6 +823,8 @@ async def apply(
         if actions is None and action.action == "route-undo":
             return _failed(FAILED)
         return await _route_length(memory, actions, guild_id, cid, action)
+    if action.action in ROAD_CONDITION_ACTIONS:
+        return await _road_condition(memory, guild_id, cid, action)
     if action.action in WORLD_ACTIONS:
         if actions is None and action.action == "world-undo":
             return _failed(FAILED)
@@ -1883,6 +1898,47 @@ async def _route_length(
         if text == ROUTE_GONE:
             return _failed(GONE)
         return _failed(CHANGED if text == LENGTH_CHANGED else FAILED)
+    return Outcome(batches=(batch,) if batch is not None else ())
+
+
+async def _road_condition(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Outcome:
+    """A road's or route place's condition from the page (#4451), the same store calls as
+    Discord's 🚧 Condition, ✅ Condition is right and 🙈 / 👁️. `road-condition` is
+    `<c|p> <id> <value>` (`none` takes it off) or `<c|p> <id> o <words>`; `road-condition-keep` is
+    `c <id>`; `road-condition-show` is `c <id> <1|0>`. Each is one change with one Undo
+    (`route-undo`, which reads the number again); the same value again writes nothing and carries
+    no change number. A road or place that is gone, or no longer a known road or a route, is
+    `gone`; words the store refuses are `failed`."""
+    kind, _, rest = a.text.partition(" ")
+    target, _, what = rest.partition(" ")
+    if kind not in ("c", "p") or (a.action != "road-condition" and kind != "c"):
+        return _failed(GONE)
+    try:
+        batch: int | None
+        if a.action == "road-condition-keep":
+            batch = (await memory.keep_road_condition(guild_id, cid, target, source=DM)).batch
+        elif a.action == "road-condition-show":
+            shown = what == "1"
+            batch = (
+                await memory.show_road_condition(guild_id, cid, target, shown, source=DM)
+            ).batch
+        else:
+            word, _, own = what.partition(" ")
+            own_words = word == "o"
+            value = None if word == "none" else (map_facts.OTHER if own_words else word)
+            batch = (
+                await memory.set_route_condition(
+                    guild_id, cid, value, words=own if own_words else "",
+                    place_id=target if kind == "p" else "",
+                    relation_id=target if kind == "c" else "",
+                    source=DM,
+                )
+            ).batch  # fmt: skip
+    except MemoryRuleError as exc:
+        text = str(exc)
+        if text in (MAP_GONE, ONLY_KNOWN_ROAD, ONLY_ROUTES):
+            return _failed(GONE)
+        return _failed(FAILED)
     return Outcome(batches=(batch,) if batch is not None else ())
 
 
