@@ -101,7 +101,8 @@ export const wizardWords = {
     none: "No characters yet. Add one below, or carry on and add them later.",
     fullLabel: "Character's full name",
     partyLabel: "What the party calls them",
-    partyHint: "Optional. For example 'Tav' for 'Tavin Ashgrove'.",
+    partyHint: "Optional. For example 'Tav' for 'Tavin Ashgrove'. Add one name at a time.",
+    partyAdd: "Add",
     // The label reads "Public character sheet link from dndbeyond.com (optional)"; "dndbeyond.com" is a link to its site, so it comes in pieces.
     sheetLabelBefore: "Public character sheet link from ",
     sheetLabelLink: "dndbeyond.com",

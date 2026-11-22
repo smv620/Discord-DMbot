@@ -1,3 +1,8 @@
+/** The party names of a character: the list, or the one name an older draft kept (#4300). */
+function partyNamesOf(c: WizardCharacter): string[] | undefined {
+  return c.partyNames ?? (c.partyName ? [c.partyName] : undefined);
+}
+
 /** @jsxImportSource preact */
 // The ten pages of the start-up wizard (#3956), one small component each. Each step saves what the person chose through
 // `onPatch` as soon as they choose it, so a reload or a later visit picks up where they were; the shell (Wizard.tsx) owns Back,
@@ -69,7 +74,7 @@ export function WhereStep({ api, guild, draft, onPatch, pasted = "", onPasted }:
         const got = await api.sheetState(guild, id);
         if (!mounted.current) return;
         if (got.state === "done") {
-          const next: WizardCharacter = { full: got.name, partyName: got.name.split(" ")[0] ?? got.name, sheetUrl: url, player: "pending" };
+          const next: WizardCharacter = { full: got.name, partyNames: [got.name.split(" ")[0] ?? got.name], sheetUrl: url, player: "pending" };
           await onPatch((latest) => ({ characters: [...latest.characters, next].slice(0, 12) }));
           setSheet("");
           return setSheetNote(t.sheetFound(got.name));
@@ -93,7 +98,7 @@ export function WhereStep({ api, guild, draft, onPatch, pasted = "", onPasted }:
       await onPatch((latest) => ({
         pageTextUsed: true,
         ...(latest.name ? {} : { name: got.name }),
-        characters: [...latest.characters, ...got.characters.map((c) => ({ full: c.full, partyName: c.partyName, sheetUrl: "", player: "pending" }))].slice(0, 12),
+        characters: [...latest.characters, ...got.characters.map((c) => ({ full: c.full, partyNames: c.partyNames ?? [], sheetUrl: "", player: "pending" }))].slice(0, 12),
       }));
       setPasteNote(t.pasteFound(got.characters.length)); // (the text stays in the box, so Back shows it again)
     } catch {
@@ -161,17 +166,31 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
   const t = w.confirm;
   const [name, setName] = useState(a.name);
   const [full, setFull] = useState("");
+  // The names the party calls this character, added one at a time (#4300): at most 8, each at most 100 characters.
   const [party, setParty] = useState("");
+  const [partyNames, setPartyNames] = useState<string[]>([]);
   const [sheetUrl, setSheetUrl] = useState("");
   const [adding, setAdding] = useState(false);
+  // A name is added with Add or Enter: the box clears; the same name in another case is not added twice; a comma stays part of a name.
+  const addPartyName = () => {
+    const n = party.trim();
+    if (!n || partyNames.length >= 8) return;
+    if (partyNames.some((x) => x.toLowerCase() === n.toLowerCase())) {
+      setParty("");
+      return;
+    }
+    setPartyNames([...partyNames, n]);
+    setParty("");
+  };
   const add = async () => {
     const f = full.trim();
     if (!f || adding || a.characters.length >= 12) return;
     setAdding(true);
     try {
-      await onPatch((latest) => ({ characters: [...latest.characters, { full: f, partyName: party.trim() || f, sheetUrl: WIZARD_SHEETS_LIVE ? sheetUrl.trim() : "", player: "pending" }].slice(0, 12) }));
+      await onPatch((latest) => ({ characters: [...latest.characters, { full: f, partyNames, sheetUrl: WIZARD_SHEETS_LIVE ? sheetUrl.trim() : "", player: "pending" }].slice(0, 12) }));
       setFull("");
       setParty("");
+      setPartyNames([]);
       setSheetUrl("");
     } finally {
       setAdding(false);
@@ -191,7 +210,7 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
         <ul>
           {a.characters.map((c, i) => (
             <li key={`${c.full}-${i}`}>
-              {c.full} {c.partyName !== c.full && <span class="small">({c.partyName})</span>}{" "}
+              {c.full} {partyNamesOf(c) !== undefined && partyNamesOf(c)!.length > 0 && !(partyNamesOf(c)!.length === 1 && partyNamesOf(c)![0] === c.full) && <span class="small">({partyNamesOf(c)!.join(", ")})</span>}{" "}
               <button type="button" class="link" onClick={() => void onPatch((latest) => ({ characters: latest.characters.filter((_, j) => j !== i) }))}>
                 {t.remove}
               </button>
@@ -207,13 +226,42 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
             {t.fullLabel}
             <input type="text" maxLength={100} value={full} onInput={(e) => setFull((e.target as HTMLInputElement).value)} />
           </label>
-          <label>
-            {t.partyLabel}
-            <input type="text" maxLength={100} value={party} onInput={(e) => setParty((e.target as HTMLInputElement).value)} aria-describedby="wizard-party-hint" />
+          <div>
+            <label>
+              {t.partyLabel}
+              <input
+                type="text"
+                maxLength={100}
+                value={party}
+                onInput={(e) => setParty((e.target as HTMLInputElement).value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addPartyName();
+                  }
+                }}
+                aria-describedby="wizard-party-hint"
+              />
+            </label>
+            <button type="button" class="button secondary" disabled={party.trim() === "" || partyNames.length >= 8} onClick={addPartyName}>
+              {t.partyAdd}
+            </button>
             <span class="small" id="wizard-party-hint">
               {t.partyHint}
             </span>
-          </label>
+            {partyNames.length > 0 && (
+              <ul>
+                {partyNames.map((n, i) => (
+                  <li key={`${n}-${i}`}>
+                    {n}{" "}
+                    <button type="button" class="link" onClick={() => setPartyNames((was) => was.filter((_, j) => j !== i))}>
+                      {t.remove}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
           {WIZARD_SHEETS_LIVE && (
             <label>
               {t.sheetLabelBefore}

@@ -81,7 +81,7 @@ export function mockWizard(): WizardApi & { calls: string[] } {
       const draft = mine(guild);
       draft.answers.pageTextUsed = true;
       if (!text.includes("Brannoc")) return { name: "", characters: [] };
-      return { name: "The Frostmaiden's Winter", characters: [{ full: "Brannoc Stonebelt", partyName: "Brannoc" }, { full: "Ivy Quickfoot", partyName: "Ivy" }] };
+      return { name: "The Frostmaiden's Winter", characters: [{ full: "Brannoc Stonebelt", partyNames: ["Brannoc"] }, { full: "Ivy Quickfoot", partyNames: ["Ivy"] }] };
     },
     async docAdd(guild, slot, input) {
       calls.push(`docAdd:${guild}:${slot}`);

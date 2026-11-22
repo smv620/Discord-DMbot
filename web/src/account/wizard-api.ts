@@ -5,9 +5,12 @@
 export type WizardSlot = "lore" | "secrets" | "ruleset" | "house" | "homebrew";
 
 export interface WizardCharacter {
-  /** The character's full name, and the name the party uses for it. */
+  /** The character's full name. */
   full: string;
-  partyName: string;
+  /** The names the party calls them, each added on its own (#4300): at most 8, the list may be empty. */
+  partyNames?: string[];
+  /** The one name an older draft kept (#4300): read as a list of one, and no longer sent. */
+  partyName?: string;
   /** The public sheet link, or "" when none was given. */
   sheetUrl: string;
   /** "pending", or the Discord id (as text) of the player. */
@@ -93,7 +96,7 @@ export interface WizardSheetRead {
 
 export interface WizardPageText {
   name: string;
-  characters: { full: string; partyName: string }[];
+  characters: { full: string; partyName?: string; partyNames?: string[] }[];
 }
 
 /** The refusals the pages word: no_room, too_fast, not_allowed, expired, bad_value, too_big, rights_needed. */

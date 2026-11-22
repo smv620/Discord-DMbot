@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Wizard from "../src/account/Wizard";
 import { maxBytesFor, MAX_FILE_BYTES, MAX_PDF_BYTES, WizardError } from "../src/account/wizard-api";
+import { draftFrom } from "../src/account/wizard-http";
 import { problemWords } from "../src/account/wizard-problems";
 import { mockWizard } from "../src/account/wizard-mock";
 import { SUPPLEMENTS, wizardWords as w } from "../src/content/wizard-words";
@@ -887,3 +888,56 @@ describe("the setting-up line (#4301)", () => {
     expect(screen.getByText(w.settingUp("The Frostmaiden"))).toBeTruthy();
   });
 });
+
+// The names the party calls a character (#4300): each added on its own, with Add or Enter, and removable; a comma stays part of a name.
+describe("the party names of a character (#4300)", () => {
+  const addName = (text: string) => {
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.partyLabel)), { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.partyAdd }));
+  };
+
+  it("adds names one at a time, keeps a comma in a name, and removes one", async () => {
+    await start();
+    await next(2);
+    addName("Tav");
+    addName("Hector, Savior of Lordaeron");
+    expect(screen.getByText("Tav")).toBeTruthy();
+    expect(screen.getByText("Hector, Savior of Lordaeron")).toBeTruthy();
+    fireEvent.click(screen.getAllByRole("button", { name: w.confirm.remove })[0]!);
+    expect(screen.queryByText("Tav")).toBeNull();
+    expect(screen.getByText("Hector, Savior of Lordaeron")).toBeTruthy();
+  });
+
+  it("the same name in another case is not added twice", async () => {
+    await start();
+    await next(2);
+    addName("Tav");
+    addName("tav");
+    expect(screen.getAllByRole("listitem").filter((li) => /tav/i.test(li.textContent ?? ""))).toHaveLength(1);
+  });
+
+  it("the ninth name is refused: Add is off at eight", async () => {
+    await start();
+    await next(2);
+    for (let i = 1; i <= 8; i++) addName(`Name ${i}`);
+    expect((screen.getByRole("button", { name: w.confirm.partyAdd }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("the character is sent with its partyNames list, and no partyName", async () => {
+    const api = await start();
+    await next(2);
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.fullLabel)), { target: { value: "Tavin Ashgrove" } });
+    addName("Tav");
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.add }));
+    await screen.findByText(/Tavin Ashgrove/);
+    const saved = (await api.get(G))?.answers.characters[0];
+    expect(saved?.partyNames).toEqual(["Tav"]);
+    expect(saved?.partyName).toBeUndefined();
+  });
+
+  it("an older draft with only one party name is read as a list of one", () => {
+    const draft = draftFrom({ answers: { characters: [{ full: "Tavin Ashgrove", partyName: "Tav", sheetUrl: "", player: "pending" }] } } as never);
+    expect(draft.answers.characters[0]?.partyNames).toEqual(["Tav"]);
+  });
+});
+
