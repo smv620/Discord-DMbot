@@ -125,6 +125,7 @@ export function WhoKnows({
   // Undefined from an older API: no answer is pressed, and nothing is said about one (#3214).
   const current = link.who;
   const holders = link.knownBy ?? [];
+  const guessOf = (id: string) => holders.find((h) => h.id === id)?.guess;
 
   // The character search: the same wait and list as the See as… picker.
   useEffect(() => {
@@ -158,7 +159,7 @@ export function WhoKnows({
       : current === "dm"
         ? words.whoStateDm
         : current === "some" && holders.length > 0
-          ? words.whoStateSome(words.whoNames(holders.map((h) => h.name)))
+          ? words.whoStateSome(words.whoNames(holders.map((h) => (h.guess ? words.guessNamed(h.name, h.guess) : h.name))))
           : current === "all"
             ? words.whoStateAll
             : current === "common"
@@ -266,12 +267,14 @@ export function WhoKnows({
                 <label class="choice">
                   <input type="checkbox" checked={chosen.has(v.id)} onChange={() => toggle(v)} />
                   <span>{v.name}</span>
+                  {guessOf(v.id) && <span class="small muted"> {words.guessMark(guessOf(v.id)!)}</span>}
                   {v.note && <span class="small muted"> ({v.note})</span>}
                 </label>
               </li>
             ))}
           </ul>
           {total > list.length && <p class="small muted">{words.seeAsMore(list.length, total)}</p>}
+          {[...chosen].some((id) => guessOf(id)) && <p role="status" class="small">{words.whoKeepsGuesses}</p>}
           <div class="row">
             <button type="button" class="button" disabled={chosen.size === 0 || busy} onClick={() => void save()}>
               {words.whoSave}

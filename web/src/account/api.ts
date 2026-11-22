@@ -1965,7 +1965,9 @@ export interface WebLink {
    * everyone at the table. Absent from an older API. */
   who?: "dm" | "some" | "all" | "common";
   /** The characters that know it, when `who` is "some". */
-  knownBy?: { id: string; name: string }[];
+  /** The characters that know it, when `who` is "some". `guess` is DMbot's guess of an NPC who knows it (#3940): the DM's
+   * view only, never a player's. */
+  knownBy?: { id: string; name: string; guess?: "sure" | "likely" }[];
   direction: "a-b" | "b-a" | "both";
   /** How a two-way connection reads with both names ("are rivals", "are friends or allies"), sent only when `direction` is
    * "both" (#4154, core #4166); the page writes "A ↔ B · <pairWords>". Absent from an older API. */

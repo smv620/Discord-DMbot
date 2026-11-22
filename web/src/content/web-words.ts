@@ -286,6 +286,10 @@ export const webPage = {
   whoSomeLabel: "Characters who know it",
   whoPickOne: "Pick at least one character.",
   whoSave: "Save",
+  // DMbot's guess of an NPC who knows it (#3940): marked in the state line and the picker, and the save says what it keeps.
+  guessMark: (g: "sure" | "likely"): string => `DMbot's guess (${g})`,
+  guessNamed: (name: string, g: "sure" | "likely"): string => `${name} (DMbot's guess, ${g})`,
+  whoKeepsGuesses: "Saving keeps DMbot's guesses you leave ticked as yours.",
   whoDoneDm: "Now only you know this.",
   whoDoneSome: (names: string): string => `Now only ${names} know this.`,
   whoDoneAll: "Now everyone at the table can see this.",
