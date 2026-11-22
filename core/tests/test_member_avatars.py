@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 
 import discord
 
@@ -180,3 +181,65 @@ class TheSweep(Avatars):
         self.assertIn("1 kept, 0 cleared, 0 failed, 0 to go", shown)
         self.assertNotIn(HASH, shown)
         self.assertNotIn(str(ALICE), shown)
+
+
+class TheNamesSweep(TheSweep):
+    """The 90-day sweep of member names that runs inside the daily avatar sweep (#5058): a name
+    not written for 90 days goes, a player's name is kept however old, it runs once a day, and its
+    failure is only a log line."""
+
+    async def age(self, user: int, days: int) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE member_directory SET updated_at = updated_at - %s "
+                "WHERE guild_id = %s AND user_id = %s",
+                (days * 24 * 3600, GUILD, user),
+            )
+
+    async def names(self, user: int) -> dict[int, list[str]]:
+        return await self.directory.names(GUILD, [user])
+
+    async def test_the_daily_sweep_drops_a_name_not_written_for_90_days(self) -> None:
+        await ConsentStore(self.db).grant(GUILD, BOB)
+        await self.directory.remember(GUILD, BOB, "Bob", "bob_b")
+        await self.age(BOB, 100)
+        await self.sweep(self.bot({}))
+        self.assertEqual(await self.names(BOB), {})
+
+    async def test_a_name_written_lately_stays(self) -> None:
+        await ConsentStore(self.db).grant(GUILD, BOB)
+        await self.directory.remember(GUILD, BOB, "Bob", "bob_b")
+        await self.age(BOB, 10)
+        await self.sweep(self.bot({}))
+        self.assertIn(BOB, await self.names(BOB))
+
+    async def test_the_player_of_a_confirmed_character_keeps_the_row_however_old(self) -> None:
+        await self.play(ALICE)
+        await self.age(ALICE, 100)
+        bot = self.bot({ALICE: SimpleNamespace(avatar=SimpleNamespace(key=HASH))})
+        await self.sweep(bot)
+        self.assertIn(ALICE, await self.names(ALICE))
+        self.assertEqual(await self.avatar(), HASH)
+
+    async def test_the_names_sweep_runs_once_a_day_per_server(self) -> None:
+        await ConsentStore(self.db).grant(GUILD, BOB)
+        bot = self.bot({})
+        await self.directory.remember(GUILD, BOB, "Bob", "bob_b")
+        await self.age(BOB, 100)
+        await self.sweep(bot)  # the first run of the day: it goes
+        self.assertEqual(await self.names(BOB), {})
+        await self.directory.remember(GUILD, BOB, "Bob", "bob_b")
+        await self.age(BOB, 100)
+        await self.sweep(bot)  # the same day on the same bot: no sweep, so it stays
+        self.assertIn(BOB, await self.names(BOB))
+
+    async def test_a_failing_names_sweep_is_a_log_line_and_the_avatars_are_still_read(self) -> None:
+        await self.play(ALICE)
+        self.directory.sweep = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
+        bot = self.bot({ALICE: SimpleNamespace(avatar=SimpleNamespace(key=HASH))})
+        with self.assertLogs("dmbot.bot", level="WARNING") as logs:
+            await self.sweep(bot)
+        shown = " ".join(logs.output)
+        self.assertIn("Member names sweep failed: RuntimeError", shown)
+        self.assertNotIn("down", shown)
+        self.assertEqual(await self.avatar(), HASH)
