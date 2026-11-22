@@ -212,6 +212,44 @@ class Sections:
             return self.heads[n] if n >= 0 else ""
         return ""
 
+    def at(self, position: int) -> str:
+        """The heading of the section that holds `position` in the text, or "" before the first
+        heading or on a heading line itself (a name in a heading is that section's title, so the
+        section it is "under" is the one above)."""
+        line_start = self.text.rfind("\n", 0, position) + 1
+        if line_start in self.starts:
+            n = self.starts.index(line_start) - 1
+        else:
+            n = bisect.bisect_right(self.starts, position) - 1
+        return self.heads[n] if n >= 0 else ""
+
+
+def first_headings(text: str, names: Mapping[str, Sequence[str]]) -> dict[str, str]:
+    """For each key, the heading above the first whole-word place in `text` where any of its
+    spellings is written (#5050, a character card's "In your lore: …, under '…'"), letters in any
+    case; no key for a name not found as written or with no heading above it. Pure, one pass over
+    the headings for the whole upload; never a word of the text beyond the heading itself."""
+    if not text or not names:
+        return {}
+    sections = Sections(text)
+    out: dict[str, str] = {}
+    for key, spellings in names.items():
+        first: int | None = None
+        for spelling in spellings:
+            words = spelling.split()
+            if not words:
+                continue
+            pattern = re.compile(
+                r"(?<!\w)" + r"\s+".join(re.escape(w) for w in words) + r"(?!\w)", re.IGNORECASE
+            )
+            found = pattern.search(text)
+            if found is not None and (first is None or found.start() < first):
+                first = found.start()
+        heading = sections.at(first) if first is not None else ""
+        if heading:
+            out[key] = heading
+    return out
+
 
 def section_of(text: str, quote: str) -> str:
     """The heading of the document's section a quote is in (see `Sections`); for one quote."""
