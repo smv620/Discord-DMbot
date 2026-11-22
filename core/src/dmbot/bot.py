@@ -312,6 +312,7 @@ from dmbot.import_state import (
     BATCHES,
     ENTRIES,
     LEFT_TOLD,
+    NAME_ASKS,
     PARTY,
     QUEUED,
     REPORTS,
@@ -11957,9 +11958,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # are answered (#2169). The report counts only what will really be offered: `run` leaves out
         # a word the campaign knows already, or a person at the table (the scan's own rule).
         if report.unsure or report.new:
-            self._name_pass_asks[session_id] = [
-                (c.heard, c.times) for c in (*report.unsure, *report.new)
-            ]
+            await self._keep_name_asks(
+                gid, cid, session_id, [(c.heard, c.times) for c in (*report.unsure, *report.new)]
+            )
         try:  # kept for the website's recap page (#2684); never stops the repair
             await NamePassLog.of(self.transcripts).record(gid, cid, session_id, report, now=now)
         except Exception:
@@ -12015,6 +12016,39 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if written.value:
             log.info("Short names: %d added", len(written.value))
 
+    async def _keep_name_asks(
+        self, gid: int, cid: str, session_id: str, asks: list[tuple[str, int]]
+    ) -> None:
+        """The words PlotBot was not sure of in a session, kept for the name scan that follows
+        (replacing an earlier set for the session). In the database when the bot has the import
+        state (a worker's scan hands them to the bot's, #4904 3b), else in memory as before."""
+        state = self.import_state
+        if state is None:
+            self._name_pass_asks[session_id] = asks
+            return
+        await self._take_name_asks(gid, cid, session_id)  # (replace: the earlier set goes)
+        await state.add_each(
+            gid, cid, NAME_ASKS, [f"{session_id} {times} {heard}" for heard, times in asks]
+        )
+
+    async def _take_name_asks(self, gid: int, cid: str, session_id: str) -> list[tuple[str, int]]:
+        """The session's kept words, removed ([] when none). Other sessions' are put back."""
+        state = self.import_state
+        if state is None:
+            return self._name_pass_asks.pop(session_id, [])
+        mine: list[tuple[str, int]] = []
+        others: list[str] = []
+        for text in await state.take_each(gid, cid, NAME_ASKS):
+            sid, _, rest = text.partition(" ")
+            times, _, heard = rest.partition(" ")
+            if sid == session_id and times.isdigit():
+                mine.append((heard, int(times)))
+            else:
+                others.append(text)
+        if others:
+            await state.add_each(gid, cid, NAME_ASKS, others)
+        return mine
+
     async def _propose_new_names(
         self,
         gid: int,
@@ -12064,7 +12098,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # never saved: names can change, or be made secret, before then.
         found = group_alike(find_new_names(lines, skip, unlimited=True))[:MAX_SUGGESTIONS]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
-        asked = self._name_pass_asks.pop(session_id, []) if session_id is not None else []
+        asked = await self._take_name_asks(gid, cid, session_id) if session_id is not None else []
         have = {name_key(f.name) for f in found}
         for name, times in asked:
             if name_key(name) not in skip and name_key(name) not in have:
