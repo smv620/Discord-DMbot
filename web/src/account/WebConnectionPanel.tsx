@@ -6,6 +6,8 @@
 // name or line on the map, and leaving the page). A player gets the same list, read-only. Names are only ever text on the page.
 // Off (CONNECTION_PANEL_LIVE) the old panel, WebLinePanel, is shown as it was. Its own file, loaded when a line is chosen.
 import RoadCondition from "./RoadCondition";
+import RouteLength from "./RouteLength";
+import { ROUTE_LENGTH_LIVE } from "../content/route-length-switch";
 import { ROAD_CONDITION_LIVE } from "../content/road-condition-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
 
@@ -401,6 +403,19 @@ function Line({
       </button>
       {isOpen && (
         <div class="stack" id={`web-link-${link.id}`}>
+          {/* A route's stated length (#4392): behind ROUTE_LENGTH_LIVE. The DM's view sets it; a player sees it once it is there. */}
+          {ROUTE_LENGTH_LIVE && (link.route || link.length) && (
+            <RouteLength
+              api={api}
+              refId={refId}
+              on="connection"
+              id={link.id}
+              length={link.length}
+              route={!!link.route}
+              canEdit={canEdit}
+              onChanged={() => undefined}
+            />
+          )}
           {/* A road's condition (#4451): behind ROAD_CONDITION_LIVE. The road is named by its two ends, as the panel names them. */}
           {ROAD_CONDITION_LIVE && (link.road || link.condition) && (
             <RoadCondition
