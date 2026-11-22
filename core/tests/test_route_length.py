@@ -139,6 +139,14 @@ class NotStated(unittest.TestCase):
             with self.subTest(quote):
                 self.assertEqual(rl.find(quote), "")
 
+    def test_a_bare_will_or_would_is_how_lore_gives_a_length(self) -> None:
+        for quote, words in (
+            ("The journey would take three days' ride from Bryn Shander.", "three days' ride"),
+            ("It will be two days by cart from Targos.", "two days by cart"),
+        ):
+            with self.subTest(quote):
+                self.assertEqual(rl.find(quote), words)  # (#4992: only a person's plan is dropped)
+
     def test_a_capitalised_may_is_a_name(self) -> None:
         self.assertEqual(rl.find("In May, Duskwater is 20 miles from Embervale."), "20 miles")
 

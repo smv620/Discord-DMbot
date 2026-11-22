@@ -174,9 +174,12 @@ _NOT_SO = re.compile(
     r"|hopes?\s+to)\b",
     re.I,
 )
-# (the "maybe" and "will" words in small letters only: "In May" or "Will the ferryman" is a name,
-# and a sentence that starts "Will…" is a question, which `hedges` already reads)
-_NOT_YET = re.compile(r"\b(?:will|would|shall|might|may|could|\w+['’]ll)\b")
+# A person's plan: "we will ride", "they'll go". A bare "will" or "would" is how lore gives a
+# length ("the journey would take three days", "it will be two days by cart"), so it stays (#4992)
+_PERSON = r"(?:we|i|they|you|he|she)"
+_NOT_YET = re.compile(
+    rf"\b{_PERSON}\s+(?:will|would|shall|might|may|could)\b|\b{_PERSON}['’]ll\b", re.I
+)
 _LATER = re.compile(r"\b(?:tomorrow|next\s+(?:week|month|day|year)|later)\b", re.I)
 
 

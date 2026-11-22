@@ -46,4 +46,4 @@ class RouteLengthCases(unittest.TestCase):
 
 
 # What the reader scores today; a reader change that moves these updates them on purpose
-EXPECTED = {"found": 10, "missed": 0, "wrong": 0, "must_not_said": 0}
+EXPECTED = {"found": 14, "missed": 0, "wrong": 0, "must_not_said": 0}
