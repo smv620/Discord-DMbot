@@ -935,6 +935,26 @@ describe("the party names of a character (#4300)", () => {
     expect(saved?.partyName).toBeUndefined();
   });
 
+  it("the names in brackets are joined with a middle dot, so a comma inside a name stays readable", async () => {
+    const api = await start();
+    await next(2);
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.fullLabel)), { target: { value: "Tavin Ashgrove" } });
+    addName("Ric");
+    addName("Hector, Savior of the Keep");
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.add }));
+    await screen.findByText(/Tavin Ashgrove/);
+    expect(screen.getByText("(Ric · Hector, Savior of the Keep)")).toBeTruthy();
+    expect((await api.get(G))?.answers.characters[0]?.partyNames).toEqual(["Ric", "Hector, Savior of the Keep"]);
+  });
+
+  it("at eight names one line says that is the most", async () => {
+    await start();
+    await next(2);
+    expect(screen.queryByText(w.confirm.partyFull)).toBeNull();
+    for (let i = 1; i <= 8; i++) addName(`Name ${i}`);
+    expect(screen.getByText(w.confirm.partyFull)).toBeTruthy();
+  });
+
   it("a name typed but not added is sent with the character, as Add would add it", async () => {
     const api = await start();
     await next(2);

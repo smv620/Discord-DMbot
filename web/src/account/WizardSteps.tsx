@@ -52,7 +52,7 @@ function partyNamesOf(c: WizardCharacter): string[] | undefined {
 function bracketOf(c: WizardCharacter): string {
   const names = partyNamesOf(c) ?? [];
   if (names.length === 0 || (names.length === 1 && names[0] === c.full)) return "";
-  return names.join(", ");
+  return names.join(" · ");
 }
 
 export function WhereStep({ api, guild, draft, onPatch, pasted = "", onPasted }: StepProps) {
@@ -259,6 +259,7 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
             <span class="small" id="wizard-party-hint">
               {t.partyHint}
             </span>
+            {partyNames.length >= 8 && <p class="small">{t.partyFull}</p>}
             {partyNames.length > 0 && (
               <ul aria-label={t.partyNamesList}>
                 {partyNames.map((n, i) => (
