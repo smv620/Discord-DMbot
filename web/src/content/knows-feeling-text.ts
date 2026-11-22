@@ -17,4 +17,7 @@ export const feelingWords = {
   },
   noSource: "DMbot doesn't have the line this came from. You can still change the feeling.",
   quoteLabel: "The words it came from, only you see them",
+  // A connection DMbot inferred from the lore (#3928): the reason, never the lore's words beside it.
+  inferred: (reason: string, label?: string): string =>
+    label ? `Why: DMbot's guess from your lore "${label}": ${reason}` : `Why: DMbot's guess from your lore: ${reason}`,
 } as const;

@@ -41,6 +41,8 @@ export interface Campaign {
   serverName: string;
   /** ISO date and time of the last session, or null if never played. */
   lastPlayedAt: string | null;
+  /** The latest of this person's own last visit, the campaign's last session and its creation (#5037); the account page's order. Absent from an older API. */
+  lastAccessedAt?: string | null;
   status: "active" | "paused";
   /** "owner": uses your hours. "co-dm": you help run it. "player": you play in it (#2460). */
   role: "owner" | "co-dm" | "player";
@@ -1988,6 +1990,8 @@ export interface WebLink {
   /** The words of the lore or session this connection was read from, for a DM only (#3606, #3607). Missing when none is
    * recorded, and from an older API. */
   quote?: string | null;
+  /** DMbot's reason for a connection it inferred from the lore, for the DM only (#3928); never a quote beside it. */
+  inferred?: string | null;
   /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
   check?: string;
   /** False: not revealed to the players yet (#2405). */
@@ -2687,6 +2691,9 @@ export type NameChange =
   // A place's land, climate and ruler (#4287): a null value (or group) is "Not sure"; `how` is the shade ("" for none).
   | { action: "map-terrain" | "map-climate"; value: string | null; how: string }
   | { action: "map-control"; group: string | null; how: string }
+  // A place's culture and who lives here (#4412): `value` is a lineage key, "other" (with `words`), a named culture's id, or null
+  // to clear every row of the layer; `how` is the strength (culture) or the share (who lives here), "" for none.
+  | { action: "map-culture" | "map-population"; value: string | null; how?: string; words?: string }
   | { action: "map-show"; shown: boolean }
   | { action: "spell"; name: string }
   // `player`: for a player character, the Discord ID of who plays it (#2985); the bot checks the person is in the server.
@@ -2872,6 +2879,8 @@ export interface WaitingClaim {
   at?: number | null;
   /** Set while a name in it could be two entries (Family ties, #3463): the questions still to answer. */
   choices?: WaitingChoice[];
+  /** The first meeting's reminder, in Discord's marks (`**name**` bold, a backslash escapes); shown only with FIRST_FEELING_LIVE (#4942). */
+  startingFeeling?: string | null;
 }
 /** One name in a kept claim and the entries it could mean; each carries its kind, a note and a plain tag. */
 export interface WaitingChoice {
@@ -3526,6 +3535,8 @@ export interface AccountApi {
   /** One change to one name (DMs only); the same action as the name card in Discord. */
   /** One campaign's page (#2416). Missing from an API older than that. */
   campaignPage?(campaignRef: string): Promise<CampaignPage>;
+  /** Notes that this person opened the campaign's pages, for the account page's order (#5037): a time only, once a minute at most. */
+  visitCampaign?(campaignRef: string): Promise<void>;
   /** Upload lore (#3022; core web/lore.py): DMbot reads the words and offers the names and connections for the DM to
    * check. Answers where it stands. Refusals: `needs-confirm` (the right-to-use box was not ticked), `slow-down` (one is
    * already open: `loreRead(ref)` finds it), `too-soon` (five an hour), `bad-text`, `ticket-too-long`, `bad-speaker`,
@@ -4187,8 +4198,8 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "changeRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal", "changeRouteLength"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "visitCampaign", "loreAdd", "loreRead", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {
@@ -4355,7 +4366,10 @@ export function httpApi(
 
 /** One open row of a place's land, climate or ruler (#4287). `read` is true until the DM confirms it ("DMbot read this"). */
 export interface PlaceWorldRow {
-  layer: "terrain" | "climate" | "control";
+  layer: "terrain" | "climate" | "control" | "culture" | "population";
+  /** A culture row's named culture (#4412): its id and name, when the culture is one the campaign has named. */
+  cultureId?: string | null;
+  culture?: string | null;
   value: string;
   words: string;
   group: string | null;
@@ -4379,6 +4393,8 @@ export interface PlaceWorld {
   /** The route place's stated length (#4392): the DM may set it when `route` is set. */
   route?: boolean;
   length?: RouteLength;
+  /** The campaign's named cultures, for the culture picker (#4412). */
+  cultures?: { id: string; name: string }[];
 }
 
 /** What the table may be told of a place's land, climate and ruler: words only, no DM-only mark and no group the reader may not know. */

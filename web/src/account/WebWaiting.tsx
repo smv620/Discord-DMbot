@@ -6,6 +6,8 @@
 // consent, secrets and Undo hold the same. Only a DM of the campaign gets the list from the API; a player
 // never sees this part. One answer at a time per item: its buttons wait while it is sent, and the list
 // is read again after, so what shows is always the API's own.
+import { FIRST_FEELING_LIVE } from "../content/first-feeling-switch";
+import { feelingParts } from "./starting-feeling";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { handBracket, handKeeps } from "../content/hand-over-words";
@@ -110,6 +112,7 @@ export default function WebWaiting({
   const [answered, setAnswered] = useState(false);
   const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
+  const [keptAll, setKeptAll] = useState(false); // a Keep all was pressed on this visit: the guesses it left get a count (#3928)
   const [bulkOn, setBulkOn] = useState(false); // an "All true" / "All secret" press is on: every own button waits
   // The claim whose "Which one?" pick can still be taken back (#3463): only the latest pick offers Undo.
   const [undo, setUndo] = useState<string | null>(null);
@@ -554,6 +557,11 @@ export default function WebWaiting({
           {list.claims.filter((c) => !c.choices?.length).map((c) => (
             <div key={c.id} class="panel" id={itemDomId(c.id)} tabIndex={-1}>
               <p id={`wc-${c.id}`}>{c.statement}</p>
+              {FIRST_FEELING_LIVE && c.startingFeeling && (
+                <p class="small">
+                  {feelingParts(c.startingFeeling).map((part, i) => (part.bold ? <strong key={i}>{part.text}</strong> : part.text))}
+                </p>
+              )}
               {typeof c.at === "number" && c.at > 0 && <p class="muted small">{w.saidAt(sessionDay(c.at))}</p>}
               <div class="row">
                 <button
@@ -623,12 +631,13 @@ export default function WebWaiting({
                       type="button"
                       class="button"
                       disabled={busy}
-                      onClick={() =>
+                      onClick={() => {
+                        setKeptAll(true);
                         void send({ kind: "backstory", action: "keep_all", ids },
                           (got) => (left > 0 && got.kept !== undefined ? w.keepAllCut(got.kept, left) : w.kept(got.kept)),
                           w.keepingStage(ids.length),
-                        )
-                      }
+                        );
+                      }}
                     >
                       {w.keepAll(ids.length)}
                     </button>
@@ -696,6 +705,9 @@ export default function WebWaiting({
               </div>
             );
           })}
+          {keptAll && list.backstory.some((b) => b.guess) && (
+            <p class="small">{w.guessesLeft(list.backstory.filter((b) => b.guess).length)}</p>
+          )}
         </div>
       )}
     </section>
