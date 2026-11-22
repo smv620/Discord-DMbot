@@ -41,9 +41,16 @@ class WithImports(DatabaseTest):
         self.store = ImportStore(self.db)
 
     async def imported(
-        self, day: int, *, state: str = "done", recap: bool = False, said: str = "Kazeth rides."
+        self,
+        day: int,
+        *,
+        state: str = "done",
+        recap: bool = False,
+        said: str = "Kazeth rides.",
+        campaign: Any = None,
     ) -> str:
-        sid = await self.transcripts.open_session(GUILD, self.campaign.id, START + day * DAY)
+        cid = (campaign or self.campaign).id
+        sid = await self.transcripts.open_session(GUILD, cid, START + day * DAY)
         await self.transcripts.add_lines(
             GUILD, sid, [Line((START + day * DAY) * 1000, MIRA, said, said)]
         )
@@ -52,7 +59,7 @@ class WithImports(DatabaseTest):
                 "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
                 " file_name, imported_by, imported_at, state, write_recap)"
                 " VALUES (%s, %s, %s, %s, 'a.txt', %s, 1, %s, %s)",
-                (GUILD, self.campaign.id, sid, "a" * 32, DM, state, recap),
+                (GUILD, cid, sid, "a" * 32, DM, state, recap),
             )
         return sid
 
@@ -129,6 +136,43 @@ class TheStore(WithImports):
                 (GUILD, sid, MIRA),
             )
         self.assertEqual(await self.store.scan_lines(GUILD, sid), [(MIRA, "we meet Kazeth")])
+
+
+class TheImportOpen(WithImports):
+    """The news at the end of an import waits while a session still needs its scan or its recap
+    (#4904 3b-4c): an import is open until both are done, and never because of another campaign."""
+
+    async def test_an_import_is_open_while_a_scan_waits_and_while_its_recap_is_to_start(
+        self,
+    ) -> None:
+        bot, _campaign = fake_bot(self.store)
+        sid = await self.imported(1, recap=True)
+        self.assertTrue(await bot._import_open(GUILD, self.store, self.campaign.id))  # scan waits
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.finish_scan(GUILD, sid, int(time.time()))
+        self.assertTrue(
+            await bot._import_open(GUILD, self.store, self.campaign.id)
+        )  # recap to start
+        await self.store.mark_recap_started(GUILD, sid)
+        self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
+
+    async def test_a_session_whose_recap_was_not_asked_for_is_over_once_scanned(self) -> None:
+        bot, _campaign = fake_bot(self.store)
+        sid = await self.imported(1)
+        self.assertTrue(await bot._import_open(GUILD, self.store, self.campaign.id))
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.finish_scan(GUILD, sid, int(time.time()))
+        self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
+
+    async def test_another_campaigns_recap_does_not_hold_this_one_open(self) -> None:
+        bot, _campaign = fake_bot(self.store)
+        other = await self.campaigns.create(GUILD, "Two", DM)
+        await self.imported(1, recap=True, campaign=other)  # the other campaign's recap is asked
+        mine = await self.imported(2)  # this campaign's own session, no recap
+        await self.store.claim_scan(GUILD, mine, int(time.time()))
+        await self.store.finish_scan(GUILD, mine, int(time.time()))
+        self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
+        self.assertTrue(await bot._import_open(GUILD, self.store, other.id))
 
 
 def fake_bot(store: ImportStore, **kw: Any) -> Any:
