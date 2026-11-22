@@ -257,6 +257,9 @@ CHECKS_ONLY = {
 DM_ONLY_UNPROVED = {
     "dmbot_web_thread_guesses": "0539: the guesses on a story thread's card (#4665), for a DM "
     "only; a guess's connection is proposed, never confirmed, and a turned-down one is left out",
+    "dmbot_web_world_notes": "0593: World notes lists a known road's condition DMbot read (#5003), "
+    "for a DM only, as Discord's list does (`world_notes.read`): a proposed road is listed, a "
+    "rejected or ended one is left out, and nothing here reaches a player",
 }
 
 
