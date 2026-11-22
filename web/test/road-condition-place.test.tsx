@@ -112,6 +112,7 @@ describe("a route place's condition on its panel (#5010)", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.queryByText(w.line("closed", "", 1, null))).toBeNull();
     expect(screen.getByText(w.line("open", "", 5, null))).toBeTruthy();
+    expect(reads).toBe(2); // (the stale answer was read, never drawn)
   });
 });
 
