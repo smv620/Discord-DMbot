@@ -9,6 +9,8 @@ import time
 import unittest
 from datetime import datetime
 
+from psycopg.types.json import Jsonb
+
 from dmbot.campaigns import CampaignStore
 from dmbot.web.me import _last_accessed
 from tests.test_web_api import ALICE, THURSDAY, WebApi
@@ -62,6 +64,43 @@ class LastAccessed(WebApi):
             self.assertEqual(
                 (await self.client.post(f"/me/campaigns/{bad}/visit", headers=REQ)).status_code, 204
             )
+
+
+class TheVisits(WebApi):
+    async def stored(self) -> dict[str, int]:
+        async with self.db.user(ALICE.id) as conn:
+            cur = await conn.execute(
+                "SELECT campaign_visits FROM web_users WHERE user_id = %s", (ALICE.id,)
+            )
+            return dict((await cur.fetchone() or {}).get("campaign_visits") or {})
+
+    async def test_nothing_is_written_for_a_campaign_that_does_not_exist_and_old_ones_go(
+        self,
+    ) -> None:
+        self.now = int(time.time()) - 3600
+        store = CampaignStore(self.db, clock=lambda: self.now)
+        made = await store.create(THURSDAY.id, "The Brynwater Crossing", ALICE.id)
+        await self.sign_in()
+        ghost = f"{THURSDAY.id}.{'0' * 32}"
+        await self.client.post(f"/me/campaigns/{ghost}/visit", headers=REQ)
+        self.assertEqual(await self.stored(), {})
+        # an old entry (and one that is not a time) is dropped when the next visit is written
+        async with self.db.user(ALICE.id) as conn:
+            await conn.execute(
+                "UPDATE web_users SET campaign_visits = %s WHERE user_id = %s",
+                (Jsonb({"1.old": 1_000, "2.odd": "soon"}), ALICE.id),
+            )
+        await self.client.post(f"/me/campaigns/{THURSDAY.id}.{made.id}/visit", headers=REQ)
+        self.assertEqual(list(await self.stored()), [f"{THURSDAY.id}.{made.id}"])
+
+    async def test_the_export_carries_the_times(self) -> None:
+        self.now = int(time.time()) - 3600
+        store = CampaignStore(self.db, clock=lambda: self.now)
+        made = await store.create(THURSDAY.id, "The Brynwater Crossing", ALICE.id)
+        await self.sign_in()
+        await self.client.post(f"/me/campaigns/{THURSDAY.id}.{made.id}/visit", headers=REQ)
+        got = (await self.client.get("/me/export")).json()
+        self.assertEqual(list(got["account"]["campaignVisits"]), [f"{THURSDAY.id}.{made.id}"])
 
 
 class TheOrder(unittest.TestCase):

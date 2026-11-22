@@ -2350,6 +2350,8 @@ def create_app(
             await campaign_visits.record(db, session, ref)
         except RecapError:
             return None
+        except Exception:  # (a visit that cannot be noted is no reason to fail: counts only)
+            log.warning("campaign visit: not recorded", exc_info=False)
 
     @app.post("/me/campaigns/{ref}/road-condition", status_code=202)
     async def me_campaign_road_condition(

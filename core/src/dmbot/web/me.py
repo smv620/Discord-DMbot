@@ -83,9 +83,12 @@ def _last_accessed(visit: int | None, played: str | None, started: str | None) -
     it was made (`started`), so a brand-new campaign is on top until something newer happens. ISO,
     or None when nothing is known (an older campaign the facts door did not describe)."""
     times = [datetime.fromtimestamp(visit, UTC)] if visit else []
-    times += [
-        datetime.fromisoformat(text.replace("Z", "+00:00")) for text in (played, started) if text
-    ]
+    for text in (played, started):
+        try:  # (a time that does not read is left out: /me is the page everyone lands on)
+            if text:
+                times.append(datetime.fromisoformat(text.replace("Z", "+00:00")))
+        except ValueError:
+            continue
     return _iso_time(int(max(times).timestamp())) if times else None
 
 
@@ -347,7 +350,7 @@ async def build_me(
         for campaign in campaigns:
             visit = visits.get(campaign["ref"])
             campaign["lastAccessedAt"] = _last_accessed(
-                int(visit) if isinstance(visit, int) else None,
+                int(visit) if isinstance(visit, int) and not isinstance(visit, bool) else None,
                 campaign.get("lastPlayedAt"),
                 campaign.get("startedAt"),
             )

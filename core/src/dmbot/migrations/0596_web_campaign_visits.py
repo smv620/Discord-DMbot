@@ -37,10 +37,12 @@ SQL = r"""
         SET campaign_visits = COALESCE((
                 SELECT jsonb_object_agg(e.key, e.value)
                 FROM jsonb_each(u.campaign_visits) e
-                WHERE e.key <> k AND (e.value #>> '{}')::BIGINT > now_s - 400 * 86400
+                WHERE e.key <> k AND jsonb_typeof(e.value) = 'number'
+                  AND (e.value #>> '{}')::BIGINT > now_s - 400 * 86400
             ), '{}'::jsonb) || jsonb_build_object(k, now_s)
         WHERE u.user_id = dmbot_current_user()
-          AND COALESCE((u.campaign_visits ->> k)::BIGINT, 0) < now_s - 60;
+          AND COALESCE(CASE WHEN jsonb_typeof(u.campaign_visits -> k) = 'number'
+                            THEN (u.campaign_visits ->> k)::BIGINT END, 0) < now_s - 60;
         GET DIAGNOSTICS wrote = ROW_COUNT;
         RETURN wrote > 0;
     END
