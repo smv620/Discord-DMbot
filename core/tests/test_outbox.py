@@ -176,6 +176,42 @@ class TheDedupe(Base):
         self.assertGreater(again, 0)
 
 
+class TheDedupeAtTheSameInstant(Base):
+    """The database keeps "say it once" (#5005, migration 0595), not only the check before the
+    insert: two writers that start together leave one row."""
+
+    async def test_two_writers_at_once_leave_one_row(self) -> None:
+        made = await asyncio.gather(
+            *(
+                self.box.add_now(1, self.one.id, "import_clock_offer", {"minute": 9}, unique=True)
+                for _ in range(8)
+            )
+        )
+        self.assertEqual(sum(1 for r in made if r > 0), 1)
+        async with self.db.guild(1) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM outbox WHERE kind = 'import_clock_offer'"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 1)
+
+    async def test_a_kind_that_wants_repeats_still_queues_alike_rows(self) -> None:
+        a = await self.box.add_now(1, self.one.id, "recap_ready", {"session_at": 5})
+        b = await self.box.add_now(1, self.one.id, "recap_ready", {"session_at": 5})
+        self.assertTrue(a > 0 and b > 0 and a != b)
+
+    async def test_a_dedupe_row_does_not_block_a_plain_one_or_another_campaign(self) -> None:
+        first = await self.box.add_now(
+            1, self.one.id, "import_clock_offer", {"minute": 9}, unique=True
+        )
+        plain = await self.box.add_now(1, self.one.id, "import_clock_offer", {"minute": 9})
+        other = await self.box.add_now(
+            2, self.two.id, "import_clock_offer", {"minute": 9}, unique=True
+        )
+        self.assertTrue(first > 0 and plain > 0 and other > 0)
+
+
 class ThePoisonRow(Base):
     async def test_a_row_that_died_on_its_last_try_is_given_up_on(self) -> None:
         row = await self.box.add_now(1, self.one.id, "recap_ready", {"session_at": 1})
