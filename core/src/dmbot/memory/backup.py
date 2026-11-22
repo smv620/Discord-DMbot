@@ -300,12 +300,17 @@ def _valid(column: str, value: object) -> bool:
             and len(value) <= LIST_MAX
             and all(isinstance(v, str) and 0 < len(v) <= LINE_REF_MAX for v in value)
         )
-    if column == "speaker_ids":  # Discord ids
+    if column == "speaker_ids":  # Discord ids, or a negative placeholder for a speaker with no
+        # Discord account (an import's, #3690): the bot writes those itself, so its own file must
+        # pass (#4858, where every claim of an imported session refused the restore)
         return (
             isinstance(value, list)
             and len(value) <= LIST_MAX
             and all(
-                isinstance(v, int) and not isinstance(v, bool) and 0 < v <= INT64_MAX for v in value
+                isinstance(v, int)
+                and not isinstance(v, bool)
+                and (0 < v <= INT64_MAX or -INT64_MAX <= v < 0)
+                for v in value
             )
         )
     if column in (
