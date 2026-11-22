@@ -8,7 +8,7 @@ import dataclasses
 import json
 import unittest
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import tests.test_consent_refusals as cr
 from dmbot.ai import Reply
@@ -142,6 +142,10 @@ class TheBotsCall(cr.Refusals):
         assert asked is not None
         ai = FakeRanker(*replies)
         self.bot.topic_ai = ai  # type: ignore[assignment]
+        # (the table holds every entry the lookup has, until a test says otherwise, #4812)
+        cast(Any, self.bot.memory).entries_held = AsyncMock(
+            return_value=frozenset(table.name_lookup.entities)
+        )
         return table, asked, ai
 
     def posted(self) -> Any:
@@ -242,13 +246,23 @@ class TheBotsCall(cr.Refusals):
         self.assertEqual(await self.bot._rank_question(table, twin), twin)
         self.assertEqual(ai.sent, [])
 
-    async def test_a_clue_only_some_know_stops_the_call_like_a_secret_name(self) -> None:
+    async def test_an_entry_the_table_doesnt_hold_is_secret_for_the_ranking(self) -> None:
         table, asked, ai = await self.question(answer("Marron"))
-        entities = {
-            k: dataclasses.replace(v, audience_limited=True) if v.name == "Maren" else v
-            for k, v in table.name_lookup.entities.items()
-        }
-        table.name_lookup = dataclasses.replace(table.name_lookup, entities=entities)
+        every = set(table.name_lookup.entities)
+        maren = next(i for i, e in table.name_lookup.entities.items() if e.name == "Maren")
+        cast(Any, self.bot.memory).entries_held = AsyncMock(return_value=frozenset(every - {maren}))
+        self.assertEqual(await self.bot._rank_question(table, asked), asked)
+        self.assertEqual(ai.sent, [])  # nothing at all was sent
+
+    async def test_an_entry_the_table_holds_is_ranked_as_before(self) -> None:
+        table, asked, ai = await self.question(answer("Marron"))
+        ranked = await self.bot._rank_question(table, asked)
+        self.assertEqual(self.names(ranked)[0], "Marron")
+        self.assertEqual(len(ai.sent), 1)
+
+    async def test_an_unreadable_gate_sends_nothing(self) -> None:
+        table, asked, ai = await self.question(answer("Marron"))
+        cast(Any, self.bot.memory).entries_held = AsyncMock(side_effect=RuntimeError("down"))
         self.assertEqual(await self.bot._rank_question(table, asked), asked)
         self.assertEqual(ai.sent, [])
 
