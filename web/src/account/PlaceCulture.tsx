@@ -7,7 +7,6 @@ import { useState } from "preact/hooks";
 import { placeWorldWords as w } from "../content/place-world-words";
 import type { NameChange, PlaceWorld, PlaceWorldRow } from "./api";
 
-export { cultureLine, populationLine } from "../content/place-culture-lines";
 import { LINEAGES, cultureLine, populationLine } from "../content/place-culture-lines";
 
 export default function PlaceCulture({

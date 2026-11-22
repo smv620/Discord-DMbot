@@ -1,6 +1,6 @@
-import { cultureWords, populationWords } from "./place-culture-lines";
 // The words of World notes on the Names page (#4285): the same as Discord's 🌍 World notes screen (slice 1b, the ux-critic's), so the two
 // stay level. DM only. A line's own words (the land, climate and ruler) come from the place screen's words (place-world-words.ts).
+import { cultureWords, populationWords } from "./place-culture-lines";
 import { placeWorldWords as place } from "./place-world-words";
 
 /** The words for each step, as Discord's card has them: "Mithral Keep is unfriendly toward elves". */
