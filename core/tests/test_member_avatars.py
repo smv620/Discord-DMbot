@@ -6,11 +6,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock
+from unittest.mock import patch
 
 import discord
 
-from dmbot.bot import DMBot
+from dmbot.bot import AVATAR_SWEEP_EVERY_S, DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.consent import ConsentStore
 from dmbot.members import MemberDirectory
@@ -182,13 +182,9 @@ class TheSweep(Avatars):
         self.assertNotIn(HASH, shown)
         self.assertNotIn(str(ALICE), shown)
 
-
-class TheNamesSweep(TheSweep):
-    """The 90-day sweep of member names that runs inside the daily avatar sweep (#5058): a name
-    not written for 90 days goes, a player's name is kept however old, it runs once a day, and its
-    failure is only a log line."""
-
     async def age(self, user: int, days: int) -> None:
+        # The fixture ages a row in SQL: the directory has no clock to inject, and this is the only
+        # way to make a row 90 days old in a test (the sweep compares `updated_at` with now).
         async with self.db.guild(GUILD) as conn:
             await conn.execute(
                 "UPDATE member_directory SET updated_at = updated_at - %s "
@@ -213,6 +209,16 @@ class TheNamesSweep(TheSweep):
         await self.sweep(self.bot({}))
         self.assertIn(BOB, await self.names(BOB))
 
+    async def test_the_90_day_line_is_exact(self) -> None:
+        await ConsentStore(self.db).grant(GUILD, BOB)
+        await self.directory.remember(GUILD, BOB, "Bob", "bob_b")
+        await self.age(BOB, 89)
+        await self.sweep(self.bot({}))
+        self.assertIn(BOB, await self.names(BOB))  # 89 days: stays
+        await self.age(BOB, 2)
+        await self.sweep(self.bot({}))
+        self.assertEqual(await self.names(BOB), {})  # 91 days: goes
+
     async def test_the_player_of_a_confirmed_character_keeps_the_row_however_old(self) -> None:
         await self.play(ALICE)
         await self.age(ALICE, 100)
@@ -232,12 +238,18 @@ class TheNamesSweep(TheSweep):
         await self.age(BOB, 100)
         await self.sweep(bot)  # the same day on the same bot: no sweep, so it stays
         self.assertIn(BOB, await self.names(BOB))
+        # A day later the gate opens again: the sweep runs and the old name goes.
+        bot._avatars_swept[GUILD] -= AVATAR_SWEEP_EVERY_S
+        await self.sweep(bot)
+        self.assertEqual(await self.names(BOB), {})
 
     async def test_a_failing_names_sweep_is_a_log_line_and_the_avatars_are_still_read(self) -> None:
         await self.play(ALICE)
-        self.directory.sweep = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
         bot = self.bot({ALICE: SimpleNamespace(avatar=SimpleNamespace(key=HASH))})
-        with self.assertLogs("dmbot.bot", level="WARNING") as logs:
+        with (
+            patch.object(self.directory, "sweep", side_effect=RuntimeError("down")),
+            self.assertLogs("dmbot.bot", level="WARNING") as logs,
+        ):
             await self.sweep(bot)
         shown = " ".join(logs.output)
         self.assertIn("Member names sweep failed: RuntimeError", shown)
