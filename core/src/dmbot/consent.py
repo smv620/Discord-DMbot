@@ -90,10 +90,14 @@ class ConsentStore:
         outside: str | None = None,
         clock: Callable[[], float] = time.monotonic,
         wall: Callable[[], float] = time.time,
+        max_age_s: float | None = None,
     ) -> None:
         """`outside`: the outside engine (deepgram, cloud) the server sends voices to, or
         None for local Whisper. Then only yeses given for that engine count. `clock`: what a
-        pause counts its minutes on (monotonic seconds)."""
+        pause counts its minutes on (monotonic seconds). `max_age_s`: how old the cached yeses of
+        a server may get before they are read again. The bot is told of every stop by its own
+        revokes and the website's follower, so it keeps them for ever (None); a worker is told of
+        neither, so it reads again (#4904 3b-4c: a stop reaches its next read within this long)."""
         self._db = db
         self._clock = clock
         self._wall = wall  # what a saved pause counts its end on (it must outlive a restart)
@@ -103,6 +107,8 @@ class ConsentStore:
         self._table_paused: dict[int, tuple[float | None]] = {}
         self._outside = outside
         self._cache: dict[int, frozenset[int]] = {}
+        self._max_age_s = max_age_s
+        self._loaded: dict[int, float] = {}  # when each server's cache was read, on `clock`
         self._locks: dict[int, asyncio.Lock] = {}
         # Revoked here but not (yet) saved: never trust the database for these.
         self._held_back: dict[int, set[int]] = {}
@@ -261,10 +267,16 @@ class ConsentStore:
         }
         return everyone - stopped
 
-    async def _agreed(self, guild_id: int) -> frozenset[int]:
+    def _fresh(self, guild_id: int) -> bool:
         if guild_id not in self._cache:
+            return False
+        age = self._max_age_s
+        return age is None or self._clock() - self._loaded.get(guild_id, 0.0) <= age
+
+    async def _agreed(self, guild_id: int) -> frozenset[int]:
+        if not self._fresh(guild_id):
             async with self._lock(guild_id):
-                if guild_id not in self._cache:
+                if not self._fresh(guild_id):
                     async with self._db.guild(guild_id) as conn:
                         users = await _select(conn, guild_id, self._outside)
                     self._store(guild_id, users)
@@ -472,6 +484,7 @@ class ConsentStore:
     def _store(self, guild_id: int, users: frozenset[int]) -> frozenset[int]:
         users = users - self._held_back.get(guild_id, set())
         self._cache[guild_id] = users
+        self._loaded[guild_id] = self._clock()
         return users
 
 

@@ -150,6 +150,7 @@ class ForTheWorkersRow(OncePerPlace):
             ),
             memory=self.memory,
             _dm_message=AsyncMock(return_value=object()),
+            tables={},
         )
         row = {"at": 40, "session": 1_000}
         await DMBot.deliver_story_weather(bot, GUILD, self.campaign.id, row)
@@ -167,6 +168,39 @@ class ForTheWorkersRow(OncePerPlace):
         bot._dm_message.reset_mock()
         await DMBot.deliver_story_weather(bot, GUILD, self.campaign.id, {**row, "at": 41})
         bot._dm_message.assert_not_awaited()
+
+
+class WhileTheTableIsPlaying(OncePerPlace):
+    async def test_a_row_that_arrives_during_play_sends_nothing_and_marks_nothing(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.bot import DMBot
+
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id,
+            [wm.Mark(self.place, "snow", self.climate, "hot")], now=40,
+        )  # fmt: skip
+        bot: Any = SimpleNamespace(
+            campaigns=SimpleNamespace(
+                get=AsyncMock(return_value=SimpleNamespace(dm_accounts=frozenset({7})))
+            ),
+            memory=self.memory,
+            _dm_message=AsyncMock(return_value=object()),
+            tables={GUILD: SimpleNamespace(campaign_id=self.campaign.id)},  # (the table is live)
+        )
+        row = {"at": 40, "session": 1_000}
+        await DMBot.deliver_story_weather(bot, GUILD, self.campaign.id, row)
+        bot._dm_message.assert_not_awaited()
+        self.assertEqual(await wm.noted_at(self.db, GUILD, self.campaign.id, 40), [])
+        # (so a later read may note it: the mark is new again)
+        self.assertEqual(
+            await wm.first_time(
+                self.db, GUILD, self.campaign.id,
+                [wm.Mark(self.place, "snow", self.climate, "hot")], now=90,
+            ),
+            [True],
+        )  # fmt: skip
 
 
 class TheBackup(unittest.TestCase):
