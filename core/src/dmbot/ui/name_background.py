@@ -96,7 +96,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.ontology import ACTIVE, DISGUISED_AS, FALLBACK_PREDICATE, Ontology, check_named
 from dmbot.memory.pronouns import is_pronoun
-from dmbot.memory.store import MemoryStore, refusal_for_log
+from dmbot.memory.store import MemoryStore, name_refusal, refusal_for_log
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 from dmbot.mentions import NO_PINGS
 from dmbot.pictures.keeper import Context as PictureContext
@@ -2701,6 +2701,7 @@ async def store(
     traits: Mapping[str, Sequence[Trait]] | None = None,
     made: dict[str, str] | None = None,
     notes: Mapping[str, str] | None = None,
+    refused: Counter[str] | None = None,
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
@@ -2713,6 +2714,8 @@ async def store(
     `fold_secret`: only when the DM chose "everyone knows it", a disguise the text gives is just
     another public name. `traits` (#2959 item 3): a new character's lineage and classes, by its
     name's key, written in the same change as the name.
+    `refused` (#5056): counted by the rule's fixed label, each name a rule refuses; it is left out
+    alone while the others are stored.
     `known_by` (the uploader's player character, #2935): a secret name the upload gives starts as
     known by that character, as a kept connection does; with none, it is the DM's alone. That is
     set after the names, in changes of its own: Undo of the names removes the name and, with it,
@@ -2721,7 +2724,9 @@ async def store(
     items: list[bg.Found] = []
     for item in found:
         try:
-            check_named(item.kind, item.name)  # one refused name must not stop the others
+            # one refused name must not stop the others; kept although `name_refusal` below checks
+            # this too: it runs before each name's note and place level are worked out
+            check_named(item.kind, item.name)
         except MemoryRuleError as exc:
             log.info("Skipped a name from a background: %s", exc)
             continue
@@ -2760,6 +2765,27 @@ async def store(
         )
         items.append(item)
     stored: dict[str, list[str]] = {}
+    # Each name checked as `add_names` will check it (#5056): one that a rule refuses is left out
+    # alone and counted by its rule, where it used to make the whole call raise and lose every
+    # name of the upload. (A stand-in store without the campaign's kinds skips this: `add_names`
+    # still checks, as before. The kinds are read before the write: one the DM switches off in
+    # between still makes `add_names` refuse the whole call, as before, and is logged below.)
+    ontology = getattr(memory, "ontology", None)
+    if names and ontology is not None:
+        onto = await ontology(campaign.guild_id, campaign.id)
+        refusals = [name_refusal(onto, n) for n in names]
+        left_out = Counter(r for r in refusals if r)
+        if left_out:
+            # (fixed labels and counts only: never a name from the DM's text)
+            log.info(
+                "Left out %d name(s) a rule refused: %s",
+                sum(left_out.values()),
+                ", ".join(f"{k}={v}" for k, v in sorted(left_out.items())),
+            )
+            if refused is not None:
+                refused.update(left_out)
+            keep = [i for i, r in enumerate(refusals) if not r]
+            names, items = [names[i] for i in keep], [items[i] for i in keep]
     if not names:
         return stored
     try:
