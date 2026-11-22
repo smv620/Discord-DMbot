@@ -28,6 +28,7 @@ RECAP_READY = "recap_ready"  # a recap is ready: the bot posts it, with its butt
 RECAP_FAILED = "recap_failed"  # a recap could not be written (payload: session_at, keeps)
 RECAP_NAMES = "recap_names"  # names the recap kept were added to the check (session_at, added)
 RECAP_UNCHECKED = "recap_unchecked"  # a recap could not be finished checking (session_at, keeps)
+IMPORT_CLOCK_OFFER = "import_clock_offer"  # the game date an imported session ended at (#4904 3b-2)
 RECAP_ALLOWANCE = "recap_allowance"  # the month's allowance is used up (nothing but the kind)
 
 MAX_TRIES = 5
@@ -76,28 +77,47 @@ class Outbox:
         return self._db.listen(channel)
 
     async def add(
-        self, conn: Conn, guild_id: int, campaign_id: str, kind: str, payload: Mapping[str, Any]
+        self,
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        payload: Mapping[str, Any],
+        *,
+        unique: bool = False,
     ) -> int:
         """Write a row in the caller's transaction (so it exists exactly when the work's result
-        does); the insert notifies the bot. Returns the row's id."""
+        does); the insert notifies the bot. Returns the row's id. With `unique`, a row of the same
+        kind and payload that is still waiting or being sent is the dedupe key: nothing is added
+        and 0 is returned (the same offer asked for twice is said once)."""
         if not _KIND.match(kind):
             raise NotAnId("kind")
+        body = json.dumps(clean_payload(payload))
         cur = await conn.execute(
             "INSERT INTO outbox (guild_id, campaign_id, kind, payload, created_at)"
-            " VALUES (%s, %s, %s, %s::jsonb, %s) RETURNING id",
-            (guild_id, campaign_id, kind, json.dumps(clean_payload(payload)), int(self._now())),
-        )
+            " SELECT %s, %s, %s, %s::jsonb, %s WHERE NOT (%s AND EXISTS ("
+            "   SELECT 1 FROM outbox WHERE guild_id = %s AND campaign_id = %s AND kind = %s"
+            "   AND payload = %s::jsonb AND state IN ('waiting', 'sending')))"
+            " RETURNING id",
+            (guild_id, campaign_id, kind, body, int(self._now()), unique,
+             guild_id, campaign_id, kind, body),
+        )  # fmt: skip
         row = await cur.fetchone()
-        assert row is not None
-        return int(row["id"])
+        return 0 if row is None else int(row["id"])
 
     async def add_now(
-        self, guild_id: int, campaign_id: str, kind: str, payload: Mapping[str, Any]
+        self,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        payload: Mapping[str, Any],
+        *,
+        unique: bool = False,
     ) -> int:
         """`add` in a transaction of its own, for a producer with no transaction of its work to
         join (the result is already saved)."""
         async with self._db.guild(guild_id) as conn:
-            return await self.add(conn, guild_id, campaign_id, kind, payload)
+            return await self.add(conn, guild_id, campaign_id, kind, payload, unique=unique)
 
     async def claim(self, guild_id: int, limit: int = 10) -> list[Row]:
         """The oldest rows that wait, or whose delivery went stale, marked `sending` for this bot.

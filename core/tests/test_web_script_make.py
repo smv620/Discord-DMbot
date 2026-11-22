@@ -41,6 +41,20 @@ class ScriptMake(Script):
         self.assertIn("AI call", got["cost"])
         self.assertIsNone(got["why"])
 
+    async def test_an_imported_session_names_the_credits_and_a_live_one_does_not(self) -> None:
+        # (#4151: the same words as Discord's question, from `credit_line`)
+        live = (await self.offer())["cost"]
+        self.assertNotIn("credit", live)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
+                " file_name, imported_by, imported_at) VALUES (%s, %s, %s, %s, 'x.txt', 1, 1)",
+                (THURSDAY.id, self.one.id, self.sid, "a" * 32),
+            )
+        got = (await self.offer())["cost"]
+        self.assertTrue(got.startswith(live), got)
+        self.assertRegex(got, r"About [0-9,]+ AI credits? for the script\.$")
+
     async def test_a_session_with_a_script_says_it_exists_and_cannot_be_pressed(self) -> None:
         await self.make_script()
         self.assertEqual((await self.offer())["state"], "exists")

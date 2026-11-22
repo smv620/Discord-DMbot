@@ -49,7 +49,7 @@ describe("Make the script", () => {
     const base = mockApi("table");
     await openScript(asOwner(base), 2);
     expect(await screen.findByText(text.scriptNone)).toBeTruthy();
-    expect(await screen.findByText("It uses about 6 cents of your AI allowance.")).toBeTruthy();
+    expect(await screen.findByText("This will take about 3 AI calls. About 40 AI credits for the script.")).toBeTruthy();
     expect(base.calls.some((c) => c.startsWith("makeScript"))).toBe(false); // (nothing is made before the press)
     fireEvent.click(screen.getByRole("button", { name: w.button }));
     expect(await screen.findByText(w.stage)).toBeTruthy();

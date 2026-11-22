@@ -27,6 +27,7 @@ from collections.abc import (
     Coroutine,
     Hashable,
     Iterable,
+    Mapping,
     Sequence,
 )
 from dataclasses import dataclass, replace
@@ -440,7 +441,7 @@ from dmbot.memory.web_reveals import RevealsStore
 from dmbot.memory.who_answers import WhoAnswers
 from dmbot.mentions import NO_PINGS
 from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
-from dmbot.outbox import Outbox
+from dmbot.outbox import IMPORT_CLOCK_OFFER, Outbox
 from dmbot.pictures import sweep as picture_sweep
 from dmbot.pictures.actions import PictureActions
 from dmbot.pictures.bucket import Bucket, BucketError
@@ -13215,14 +13216,46 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         if screen is None:
             return
-        if stored.split:
-            await self.post(screen, import_time_screen.SPLIT_WHY)
+        if self.settings.worker_on and self.outbox is not None:
+            # (#4904 3b-2) said by the bot's delivery round: a game minute and a flag, no words;
+            # the same offer asked for twice is one line
+            await self.outbox.add_now(
+                gid,
+                campaign.id,
+                IMPORT_CLOCK_OFFER,
+                {"minute": target, "split": stored.split},
+                unique=True,
+            )
             return
-        await self.post(
+        await self._say_import_time(campaign, screen, target, stored.split)
+
+    async def _say_import_time(
+        self, campaign: Campaign, screen: int, target: int, split: bool
+    ) -> bool:
+        """The import-time offer (or why there is none while the party is split) on the DM screen
+        or the DM Bot channel. True when Discord accepted it."""
+        if split:
+            return await self.post(screen, import_time_screen.SPLIT_WHY)
+        return await self.post(
             screen,
             import_time.offer_text(target),
             view=import_time_screen.offer_view(campaign.id, target),
         )
+
+    async def deliver_import_clock_offer(
+        self, gid: int, cid: str, payload: Mapping[str, Any]
+    ) -> None:
+        """The outbox's import-time offer (#4904 3b-2): the same line the scan says itself with the
+        worker off, built from the row's game minute. A campaign that is gone, or has no channel
+        any more, has nothing to say; a refused post raises, so the row is tried again."""
+        campaign = await self.campaigns.get(gid, cid)
+        screen = upkeep.channel_for(campaign) if campaign is not None else None
+        if campaign is None or screen is None:
+            return
+        if not await self._say_import_time(
+            campaign, screen, int(payload["minute"]), bool(payload["split"])
+        ):
+            raise RuntimeError("not-posted")
 
     async def _keep_import_clock_offer(
         self, gid: int, campaign_id: str, session_id: str, minute: int, *, split: bool

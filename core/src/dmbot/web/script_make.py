@@ -23,7 +23,7 @@ from typing import Any
 
 from dmbot import plan_rules, progress
 from dmbot.db import Database
-from dmbot.transcript.theatre_job import estimate_line
+from dmbot.transcript.theatre_job import credit_line, estimate_line
 from dmbot.web.names import _parse
 from dmbot.web.recap_choices import owner_access
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -104,9 +104,12 @@ async def offer(
     # too, so the page waits for it instead of offering a second press (`auto`, 0406).
     running_now = bool(got["running"] or got.get("auto"))
     state = "exists" if got["exists"] else "running" if running_now else "none"
+    # an imported session's script is paid with credits, so its cost says so, as Discord's does
+    # (#4151); a live session's is paid by the hours and says nothing about credits
+    cost = f"{estimate_line(lines)} {credit_line(bool(got.get('imported')))}".strip()
     return {
         "state": state,
-        "cost": estimate_line(lines) if state == "none" and why is None else None,
+        "cost": cost if state == "none" and why is None else None,
         "allowed": why is None or state == "exists",
         "why": None if state == "exists" else why,
         "running": got["running"],

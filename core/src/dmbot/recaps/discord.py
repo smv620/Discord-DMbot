@@ -60,6 +60,7 @@ from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
 from dmbot.memory.scene import SceneTracker, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.outbox import (
+    IMPORT_CLOCK_OFFER,
     RECAP_ALLOWANCE,
     RECAP_FAILED,
     RECAP_NAMES,
@@ -309,6 +310,9 @@ class RecapFeatures:
         ): ...
         async def fetch_user(self, user_id: int, /) -> discord.User: ...
         async def run_web_backups(self) -> None: ...
+        async def deliver_import_clock_offer(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
         async def run_picture_actions(self) -> None: ...
         async def run_picture_sweep(self) -> None: ...
         async def run_waiting_now(self) -> None: ...
@@ -401,6 +405,7 @@ class RecapFeatures:
                                 RECAP_NAMES: self.deliver_recap_names,
                                 RECAP_UNCHECKED: self.deliver_recap_unchecked,
                                 RECAP_ALLOWANCE: self.deliver_recap_allowance,
+                                IMPORT_CLOCK_OFFER: self.deliver_import_clock_offer,
                             },
                             self.outbox_wake,
                         ),
