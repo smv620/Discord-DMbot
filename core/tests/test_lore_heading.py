@@ -50,9 +50,19 @@ class FirstHeadings(unittest.TestCase):
         )
         self.assertEqual(got, {"tamsin": "Brindle", "varn": "Old Roads", "wenna": "Brindle"})
 
-    def test_the_earliest_spelling_wins(self) -> None:
+    def test_the_name_itself_decides_and_other_names_only_when_it_is_missing(self) -> None:
         got = lore_knowledge.first_headings(TEXT, {"varn": ("Captain Varn", "the ferryman")})
+        self.assertEqual(got, {"varn": "Old Roads"})  # (not an earlier "the ferryman")
+        got = lore_knowledge.first_headings(TEXT, {"varn": ("Captain Varn Holt", "the ferryman")})
         self.assertEqual(got, {"varn": "Hollowmere notes"})
+
+    def test_any_line_break_ends_a_heading_line(self) -> None:
+        text = "Intro\n\nSome words here.\x0cTamsin Reedwell\n\nTamsin keeps the inn.\n"
+        self.assertEqual(
+            lore_knowledge.first_headings(text, {"t": ("Tamsin Reedwell",)}), {"t": "Intro"}
+        )
+        crlf = "Brindle\r\n\r\nTamsin keeps the inn.\r\n"
+        self.assertEqual(lore_knowledge.first_headings(crlf, {"t": ("Tamsin",)}), {"t": "Brindle"})
 
     def test_whole_words_any_case_and_line_breaks_inside_a_name(self) -> None:
         text = "Notes\n\nThe innkeeper is TAMSIN\nReedwell. Tamsinia is someone else.\n"

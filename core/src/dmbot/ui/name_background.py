@@ -1181,7 +1181,9 @@ async def _read_background(
         await _owners_learn(memory, campaign, found, made_ids, world_names, owner_of)
     # (the heading each new name was read under, while the text is still here: kept with the
     # upload's label for the character card, #5050; the text itself is never kept, #2167)
-    headings = lore_knowledge.first_headings(
+    # (off the event loop: a long upload with many names is many passes over its text)
+    headings = await asyncio.to_thread(
+        lore_knowledge.first_headings,
         upload.text,
         {
             made_ids[name_key(f.name)]: (f.name, *f.also)

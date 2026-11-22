@@ -133,6 +133,7 @@ from dmbot.memory.lookalikes import family_of
 from dmbot.memory.lookalikes import find as find_look_alikes
 from dmbot.memory.lookalikes import pair as not_same_pair
 from dmbot.memory.lookup import LookupData
+from dmbot.memory.lore_knowledge import SECTION_MAX
 from dmbot.memory.models import (
     AFFECTED,
     ALIAS_KINDS,
@@ -6208,7 +6209,8 @@ class MemoryStore:
         # (cut to the column's limit; a heading only ever comes from `Sections`, which keeps it
         # under that, so this is a guard, not a rule)
         heads = [
-            clean_text(h)[:60] if (h := (headings or {}).get(i, "")).strip() else "" for i in ids
+            clean_text(h)[:SECTION_MAX] if (h := (headings or {}).get(i, "")).strip() else ""
+            for i in ids
         ]
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
