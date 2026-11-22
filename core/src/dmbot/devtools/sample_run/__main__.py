@@ -130,7 +130,7 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--deploy",
         type=str,
-        metavar="N",
+        metavar="LABEL",
         help="this deploy's label: a number from 1 to 9999 and, if you like, one lowercase letter "
         '(40, 40b); the campaign is "test of the frostmaiden (sample 40b)", and the newest three '
         "are kept (#4538)",

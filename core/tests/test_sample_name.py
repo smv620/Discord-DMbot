@@ -34,7 +34,14 @@ class Names(unittest.TestCase):
                 N(bad)
 
     def test_the_guard_takes_exactly_the_sample_names_and_nothing_like_them(self) -> None:
-        for good in (N(1), N(31), N(9999), sample_name.OLD_NAME):
+        for good in (
+            N(1),
+            N(31),
+            N(9999),
+            sample_name.OLD_NAME,
+            sample_name.name_for(sample_name.Label(40, "b")),
+            sample_name.name_for(sample_name.Label(40, "b"), 2),
+        ):
             self.assertTrue(sample_name.is_sample(good), good)
         for bad in (
             "test of the frostmaiden (sample 31) copy",
@@ -134,7 +141,7 @@ class TheCommandLine(unittest.TestCase):
             cli.deploy_label(None)
         self.assertEqual(str(err.exception), "Say which deploy this is: --deploy N")
 
-    def test_a_deploy_out_of_range_is_refused(self) -> None:
+    def test_a_deploy_that_is_not_a_label_is_refused(self) -> None:
         for bad in ("0", "-3", "10000", "40bb"):
             with self.assertRaises(SampleError):
                 cli.deploy_label(bad)
@@ -236,6 +243,8 @@ class TheLabels(unittest.TestCase):
     def test_parse_refuses_anything_else(self) -> None:
         for bad in (
             "40bb",
+            "040",
+            "0040",
             "b40",
             "40-b",
             "40B",
@@ -274,6 +283,21 @@ class TheLabels(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 self.assertIsNone(sample_name.deploy_of(name))
+
+    def test_a_new_40b_keeps_41_and_42_and_drops_40_and_40a_as_the_oldest(self) -> None:
+        existing = [
+            ("c40", "test of the frostmaiden (sample 40)"),
+            ("c40a", "test of the frostmaiden (sample 40a)"),
+            ("c41", "test of the frostmaiden (sample 41)"),
+            ("c42", "test of the frostmaiden (sample 42)"),
+        ]
+        kept = sample_name.plan_keep(existing, sample_name.Label(40, "b"))
+        self.assertEqual(set(kept.keep), {"c41", "c42"})
+        self.assertEqual(set(kept.delete), {"c40", "c40a"})
+        self.assertEqual(
+            kept.kept_numbers,
+            (sample_name.Label(40, "b"), sample_name.Label(41), sample_name.Label(42)),
+        )
 
     def test_labels_sort_by_number_then_letter(self) -> None:
         labels = [

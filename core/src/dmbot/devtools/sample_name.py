@@ -21,7 +21,7 @@ PREFIX = "test of the frostmaiden (sample "
 _NAMED = re.compile(
     r"^test of the frostmaiden \(sample (?P<n>[0-9]{1,4})(?P<l>[a-z])?(?:\.(?P<k>[1-9][0-9]?))?\)$"
 )
-_LABEL = re.compile(r"^(?P<n>[0-9]{1,4})(?P<l>[a-z])?$")
+_LABEL = re.compile(r"^(?P<n>[1-9][0-9]{0,3})(?P<l>[a-z])?$")  # no leading zero: "40", not "040"
 RUN_MAX = 99
 KEEP = 3  # the newest campaigns kept alive, so the owner can compare their story graphs
 DEPLOY_MAX = 9999
@@ -220,5 +220,5 @@ def slot_line(names: Iterable[str]) -> str:
         elif len(ks) == 1:
             parts.append(f"{label}.{ks[0]}")
         else:
-            parts.append(f"{label}.{ks[0]}–{label}.{ks[-1]}")
+            parts.append(f"{label}.{ks[0]}\u2013{label}.{ks[-1]}")
     return "Not kept for lack of slots: " + ", ".join(parts) + "." if parts else ""
