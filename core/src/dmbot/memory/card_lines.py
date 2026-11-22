@@ -3,9 +3,10 @@ were first met, and when they were last mentioned. This file is the pure part: f
 and last line that names a character, finding the scene around it, and saying it in plain words.
 No database, no AI, nothing sent anywhere.
 
-A scene is DMbot's own short description of what happened (a recap's beat, never a quote of
-what anyone said); with no recap for the session the line says the date alone, never an
-invented scene. The words are plain: no "node", "entity" or "graph".
+A scene is DMbot's own short description of what happened (a recap's beat, or a clause the
+background job wrote from the lines around the mention; never a quote of what anyone said, never
+invented). With no scene yet the line says it is still being written, never the date alone for
+good. The words are plain: no "node", "entity" or "graph".
 """
 
 from __future__ import annotations
@@ -159,13 +160,21 @@ def scene_words(beat: SceneLike | None) -> str:
     return what
 
 
-def when_line(label: str, number: int, started_at: int, beat: SceneLike | None) -> str:
+STILL_WRITING_SCENE = "(DMbot is still writing what happened)"
+
+
+def when_line(label: str, number: int, started_at: int, scene: str = "") -> str:
     """The finished line, label and all, for the card and the website to draw as it is:
-    "First met: Session 3, 15 Nov. The party reached the Northlook inn in Bryn Shander." The
-    scene is left off, with the date kept, when the session has no recap beats."""
-    head = f"{label}: Session {number}, {day(started_at)}."
-    scene = scene_words(beat)
-    return f"{head} {scene[0].upper()}{scene[1:]}." if scene else head
+    "First met: Session 3, 15 Nov. The party reached the Northlook inn in Bryn Shander."
+    `scene`: DMbot's words for what was happening, a recap beat's (`scene_words`) or the clause
+    the background job wrote and kept. Never the date alone for good: until the job has written a
+    scene the line says so ("First met: Session 3, 15 Nov (DMbot is still writing what
+    happened).") and the card never waits for it."""
+    head = f"{label}: Session {number}, {day(started_at)}"
+    text = _sentence(scene)
+    if not text:
+        return f"{head} {STILL_WRITING_SCENE}."
+    return f"{head}. {text[0].upper()}{text[1:]}."
 
 
 def lore_line(document: str, heading: str = "") -> str:

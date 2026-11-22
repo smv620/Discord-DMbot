@@ -145,7 +145,7 @@ class TheWords(unittest.TestCase):
             cl.FIRST_MET,
             3,
             self.FIRST,
-            beat("The party reached the Northlook inn.", (1,), "Bryn Shander"),
+            cl.scene_words(beat("The party reached the Northlook inn.", (1,), "Bryn Shander")),
         )
         self.assertEqual(
             text,
@@ -157,14 +157,28 @@ class TheWords(unittest.TestCase):
             cl.LAST_MENTIONED,
             1,
             self.FIRST,
-            beat("They reached Bryn Shander", (1,), "Bryn Shander"),
+            cl.scene_words(beat("They reached Bryn Shander", (1,), "Bryn Shander")),
         )
         self.assertEqual(text, "Last mentioned: Session 1, 14 Nov. They reached Bryn Shander.")
 
-    def test_a_session_with_no_recap_says_the_day_alone(self) -> None:
+    def test_a_scene_the_job_wrote_is_used_as_it_was_kept(self) -> None:
+        # (a session with no recap beat: the background job's own clause, stored on the row)
+        text = cl.when_line(cl.FIRST_MET, 4, self.FIRST, "when the party argued over the price")
         self.assertEqual(
-            cl.when_line(cl.LAST_MENTIONED, 7, self.FIRST, None),
-            "Last mentioned: Session 7, 14 Nov.",
+            text, "First met: Session 4, 14 Nov. When the party argued over the price."
+        )
+
+    def test_until_the_job_has_written_a_scene_the_line_says_so_and_is_never_the_date_alone(
+        self,
+    ) -> None:
+        for none in ("", "   ", cl.scene_words(None)):
+            self.assertEqual(
+                cl.when_line(cl.LAST_MENTIONED, 7, self.FIRST, none),
+                "Last mentioned: Session 7, 14 Nov (DMbot is still writing what happened).",
+            )
+        self.assertEqual(
+            cl.when_line(cl.FIRST_MET, 7, self.FIRST),
+            "First met: Session 7, 14 Nov (DMbot is still writing what happened).",
         )
 
     def test_the_lore_line_names_the_document_and_the_heading(self) -> None:
@@ -188,7 +202,8 @@ class TheWords(unittest.TestCase):
 
     def test_the_words_are_plain(self) -> None:
         lines = [
-            cl.when_line(cl.FIRST_MET, 1, self.FIRST, beat("They met", (1,), "the inn")),
+            cl.when_line(cl.FIRST_MET, 1, self.FIRST, "They met in the inn"),
+            cl.when_line(cl.FIRST_MET, 1, self.FIRST),
             cl.lore_line("Notes", "Inn"),
             cl.NEVER_AT_THE_TABLE,
             cl.STILL_WRITING,
