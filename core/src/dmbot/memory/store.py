@@ -9575,18 +9575,6 @@ class MemoryStore:
 
     # ---- mentions and corrections -------------------------------------------------------
 
-    async def session_has_heard(
-        self, guild_id: int, campaign_id: str, session_started_at: int
-    ) -> bool:
-        """Whether a session has counts of names said (the live count was flushed)."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT 1 FROM memory_heard WHERE guild_id = %s AND campaign_id = %s"
-                " AND session_started_at = %s LIMIT 1",
-                (guild_id, campaign_id, session_started_at),
-            )
-            return await cur.fetchone() is not None
-
     async def replace_session_heard(
         self, guild_id: int, campaign_id: str, session_started_at: int, heard: Sequence[Heard]
     ) -> int:

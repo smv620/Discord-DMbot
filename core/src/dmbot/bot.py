@@ -9378,8 +9378,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         time's recap, and put the result in the place of what the live count kept. `retold`: the
         split just made (the recap worker's, which is kept on its job); else the session's own
         stored split (none: every line is play, so an undo of the split brings the counts back).
-        Only a session that has counts (the live flush ran); only people who agree now. Idempotent
-        and in one transaction, so a second run, or a failure, leaves good counts. Never raises;
+        Only a live session, never an import; only people who agree now. Idempotent and in one
+        transaction, so a second run, or a failure, leaves good counts. Never raises;
         counts and the error type only in the log. Returns the rows written, None when nothing
         was done."""
         if self.memory is None or self.transcripts is None or self.lookup is None:
@@ -9387,7 +9387,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         try:
             with log_context(guild_id=gid, campaign_id=cid):
                 found = await self.transcripts.session_at(gid, cid, session_at)
-                if found is None or not await self.memory.session_has_heard(gid, cid, session_at):
+                # A live session only: an import has no live count to correct (its names are not
+                # counted at all today, and counting them would change its importance rank). A
+                # live session whose counts were all retold has none left and may still be undone.
+                if found is None or await self.transcripts.is_import(gid, found.id):
                     return None
                 if retold is None:
                     retold = extractor.recap_numbers(
@@ -9435,14 +9438,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # A split that was made first (the recap's, an undo's) is applied after this flush:
             # the later of the two wins, in either order (#3172 item d).
             sid = table.transcript_session_id
-            if sid is not None and kept:
+            if sid is not None and self.transcripts is not None:
                 try:
-                    retold = await self._recap_lines(gid, sid)
+                    made = await self.transcripts.session_split(gid, sid) is not None
                 except Exception as exc:
                     log.warning("Counted names: the split was not read (%s)", type(exc).__name__)
-                    retold = frozenset()
-                if retold:
-                    await self.recount_heard(gid, cid, started, retold)
+                    made = False
+                if made:  # (even one with no recap: a recount made before this flush is added to)
+                    await self.recount_heard(gid, cid, started)
 
     def _feed_name_answers(self, table: Table, user_id: int, at_ms: int, text: str) -> None:
         """One consented line to the who-answers-to-what learner, which also needs to know who

@@ -14,7 +14,7 @@ from dmbot.memory import heard
 from dmbot.memory.models import CONFIRMED, Heard, NewName
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
-from tests.test_memory_names import DM, GUILD, PLAYER, NamesTest
+from tests.test_memory_names import DM, GUILD, PLAYER, NamesTest, make_table
 
 START = 1_700_000_000
 
@@ -152,11 +152,40 @@ class TheRecount(NamesTest):
             {(self.orla, DM): 2, (self.rook, DM): 1, (self.orla, PLAYER): 1},
         )
 
-    async def test_a_session_with_no_counts_is_left_alone(self) -> None:
-        # (an import has no live flush: nothing is made up for it)
+    async def test_an_import_is_left_alone_but_a_live_session_with_no_counts_is_counted(
+        self,
+    ) -> None:
+        # (an import has no live count to correct, and counting it would change its importance
+        # rank; a live session whose counts were all retold has none left, and may be undone)
         await self.split((1, 1))
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
+                " file_name, imported_by, imported_at) VALUES (%s, %s, %s, %s, 'a.txt', %s, 1)",
+                (GUILD, self.campaign.id, self.sid, "a" * 32, DM),
+            )
         self.assertIsNone(await self.bot.recount_heard(GUILD, self.campaign.id, START))
         self.assertEqual(await self.rows(), {})
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM session_imports WHERE guild_id = %s", (GUILD,))
+        await self.split(None)  # (a live session, nothing retold, and no counts at all)
+        await self.bot.recount_heard(GUILD, self.campaign.id, START)
+        self.assertEqual(
+            await self.rows(),
+            {(self.orla, DM): 2, (self.rook, DM): 1, (self.orla, PLAYER): 1},
+        )
+
+    async def test_counts_that_were_all_retold_come_back_when_the_split_is_undone(self) -> None:
+        await self.live()
+        await self.split((1, 3))  # (every line retold: no rows left)
+        await self.bot.recount_heard(GUILD, self.campaign.id, START)
+        self.assertEqual(await self.rows(), {})
+        await self.split(None)  # (the DM hands the lines back)
+        await self.bot.recount_heard(GUILD, self.campaign.id, START)
+        self.assertEqual(
+            await self.rows(),
+            {(self.orla, DM): 2, (self.rook, DM): 1, (self.orla, PLAYER): 1},
+        )
 
     async def test_the_later_wins_when_the_split_was_made_before_the_flush(self) -> None:
         await self.split((1, 1))  # (the split first)
@@ -192,3 +221,55 @@ class TheRecount(NamesTest):
         self.assertEqual(await self.rows(), {(self.rook, PLAYER): 3})
         await self.memory.replace_session_heard(GUILD, self.campaign.id, START, [])
         self.assertEqual(await self.rows(), {})
+
+
+class TheLiveCountAgrees(NamesTest):
+    """One invented session through the live hooks, then counted again from the lines they kept:
+    the two must give the same counts (condition 2 of the ruling), whatever kinds of line passed."""
+
+    async def test_the_live_hook_path_and_the_recount_give_the_same_counts(self) -> None:
+        from functools import partial
+
+        from dmbot.memory.lookup import CampaignLookup
+        from dmbot.memory.scene import mentions
+        from dmbot.transcript.models import SIDEBAR_ANSWER, SIDEBAR_TABLE_QUESTION
+
+        await self.consent.grant(GUILD, DM)
+        await self.consent.grant(GUILD, PLAYER)
+        await self.memory.add_names(
+            GUILD,
+            self.campaign.id,
+            [
+                NewName("Orla Finch", "character", CONFIRMED),
+                NewName("Rook Pell", "character", CONFIRMED),
+            ],
+            source="dm",
+        )
+        table = make_table(self.campaign.id)
+        lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.campaign.id))
+        table.name_lookup = lookup
+        self.bot.transcripts = TranscriptStore(self.db)
+        self.bot.tables[GUILD] = table
+        base = START * 1000
+        self.bot._deliver_typed(table, PLAYER, "We met Orla Finch at the ford.", base + 1000)
+        self.bot._deliver_typed(table, DM, "Orla Finch and Rook Pell, and Orla Finch.", base + 2000)
+        self.bot._deliver_typed(table, PLAYER, "Rook Pell says nothing about it.", base + 3000)
+        # (said off the record: in neither the count nor the transcript)
+        self.bot._deliver_typed(table, PLAYER, "hey dmbot, off the record", base + 4000)
+        # (a line the off-topic filter later hides: counted live, and in the recount)
+        self.bot._deliver_typed(table, DM, "Did anyone see Orla Finch on the telly?", base + 5000)
+        table.unsaved.set_topic(DM, base + 5000, "off_topic", typed=True)
+        # (a DM sidebar question, DMbot's answer and a table question: kept, never counted)
+        for kind, text in (
+            ("question", "Who is Orla Finch?"),
+            (SIDEBAR_ANSWER, "Orla Finch is a ranger."),
+            (SIDEBAR_TABLE_QUESTION, "Where is Rook Pell?"),
+        ):
+            self.bot.sidebar_save(table, Line(base + 6000, DM, text, text, sidebar=kind))
+        lines = table.unsaved.lines()
+        self.assertTrue(any(x.sidebar for x in lines))  # (the sidebar kinds were kept)
+        self.assertFalse(any("off the record" in x.text for x in lines))
+        live = dict(table.heard_counts)
+        again = heard.count_lines(lines, {DM, PLAYER}, partial(mentions, lookup))
+        self.assertEqual(again, live)
+        self.assertTrue(live)  # (and there was something to count)
