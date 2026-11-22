@@ -1,6 +1,6 @@
-"""0597_web_world_notes_cultures
+"""0598_web_world_notes_cultures
 
-World notes on the website says which named culture a culture line is about (#5061, the core half
+World notes on the website says which named culture a culture line is about (#5062, the core half
 of #5045): a row that holds a named culture (`culture_id`, its `value` empty) was listed with no
 name, so the page could only say "a culture of your own".
 """

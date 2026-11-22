@@ -33,7 +33,7 @@ ALLOWED = {
     "migrations/0519_character_languages.py": "the website's DM-only door: skips given_by 'not'",
     # (on #4378's branch until it merges: its SQL lists only given_by = 'read')
     "migrations/0481_world_notes_door.py": "World notes' website door: only given_by 'read'",
-    "migrations/0597_web_world_notes_cultures.py": "World notes' website door, written out again: "
+    "migrations/0598_web_world_notes_cultures.py": "World notes' website door, written out again: "
     "only given_by 'read'",
     "migrations/0593_web_world_notes_roads.py": "World notes' website door, written out again: "
     "only given_by 'read'",

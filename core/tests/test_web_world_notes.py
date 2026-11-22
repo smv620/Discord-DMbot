@@ -304,7 +304,7 @@ class TheRoadLine(WorldNotesDoor):
 
 
 class TheNamedCulture(WorldNotesDoor):
-    """#5061 (migration 0597): a culture line that holds a named culture says its name."""
+    """#5062 (migration 0598): a culture line that holds a named culture says its name."""
 
     async def test_a_named_culture_line_carries_the_cultures_name(self) -> None:
         await self.memory.add_read_map_facts(
