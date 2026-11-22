@@ -148,6 +148,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.dm_screen.said_as_hears import HearStore
     from dmbot.dm_screen.said_as_listens import ListenStore
     from dmbot.dm_screen.web_settings import SettingStore
+    from dmbot.install_record import InstallStore
     from dmbot.mail import Mailer
     from dmbot.memory.exposures import ExposureStore
     from dmbot.memory.importance import ImportanceCache
@@ -207,6 +208,7 @@ CLIP_SWEEP_EVERY = (
     30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
 )
 RECAP_ROUND_S = 60
+WORK_GUILDS_KEEP_S = 30.0  # a worker works out its servers again after this long
 IMPORT_RECAP_TRIES = 3  # so is the start of an imported session's recap
 RECAP_RECALL_BUDGET = 3500  # characters of story memory PlotBot reads for one recap (#2254)
 PLOT_TALK_SWEEP_EVERY = 720  # rounds: about an hour at five seconds
@@ -259,6 +261,8 @@ class RecapFeatures:
         _audio_seen: dict[tuple[int, str, int], tuple[int, int]]
         _clip_sweep_rounds: int
         _group_locks: dict[str, asyncio.Lock]
+        _work_guilds: tuple[float, list[int]] | None
+        installs: InstallStore | None
         _group_made: dict[str, list[int]]
         _group_started: dict[tuple[int, str, str], float]
         import_state: ImportState | None
@@ -2214,9 +2218,22 @@ class RecapFeatures:
 
     async def work_guild_ids(self) -> list[int]:
         """The servers a background round works: the bot's own, and for the worker (no Discord
-        connection, so `guilds` is empty) every server that has a campaign (#3844)."""
+        connection, so `guilds` is empty) every server that has a campaign and that the bot has not
+        left (#3844, #5030): the bot's news covers only its own servers, so work for one it left
+        would cost AI calls for a campaign nobody can be told about. The answer is kept for a
+        short while, since every loop asks every round."""
         if self.headless:
-            return await self.campaigns.guilds_with_campaigns()
+            now = time.monotonic()
+            kept = getattr(self, "_work_guilds", None)
+            if kept is not None and now - kept[0] < WORK_GUILDS_KEEP_S:
+                return list(kept[1])
+            found = await self.campaigns.guilds_with_campaigns()
+            installs = getattr(self, "installs", None)
+            if installs is not None:
+                gone = await installs.left_among(found)
+                found = [g for g in found if g not in gone]
+            self._work_guilds = (now, found)
+            return list(found)
         return [g.id for g in self.guilds]
 
     async def run_recap_audio(self) -> None:
