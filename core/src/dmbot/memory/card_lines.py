@@ -11,7 +11,7 @@ invented scene. The words are plain: no "node", "entity" or "graph".
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Collection, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -42,29 +42,85 @@ class SceneLike(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class Hit:
-    """The session and the line a character was first (or last) named in."""
+class Seen:
+    """What one pass over one session's lines found for one character."""
 
-    session_index: int  # the position in the sessions given, as they were given
-    line_number: int  # `Said.number`: the 1-based place among the session's stored lines
+    first_play: int | None  # the first line that names them, not counting a recap read aloud
+    last: int  # the last line that names them, a recap's included (it still was said that day)
 
 
-def find_hit(
-    sessions: Iterable[Sequence[Line]],
+@dataclass(frozen=True, slots=True)
+class Where:
+    """A session (its place in the list given, oldest first) and a line number in it."""
+
+    session_index: int
+    line_number: int
+
+
+@dataclass(frozen=True, slots=True)
+class Span:
+    """Where a character was first met and last mentioned; None for never, at the table."""
+
+    first: Where | None
+    last: Where | None
+
+
+def scan_session(
+    lines: Sequence[Line],
     agreed: Collection[int],
-    named_in: Callable[[str], bool],
-    *,
-    newest: bool = False,
-) -> Hit | None:
-    """The first line that names the character, in sessions oldest first; with `newest`, the last
-    line, in sessions as given (newest first), reading each one from its end. The lines are the
-    live count's own (`heard.countable`: people who agree, no sidebar, no blank), so the card
-    can never name a line the count did not see. Stops at the first session that has one."""
-    for index, lines in enumerate(sessions):
-        found = [n for n, line in heard.countable(lines, agreed) if named_in(line.text)]
-        if found:
-            return Hit(index, found[-1] if newest else found[0])
-    return None
+    named_in: Callable[[str], Iterable[str]],
+    wanted: Collection[str],
+    retold: Collection[int] = (),
+) -> dict[str, Seen]:
+    """One pass over a session's lines for ALL the characters asked about at once (#5050: a batch
+    of characters costs one read of each session, never one per character). The lines are the live
+    count's own (`heard.countable`: people who agree, no sidebar, no blank), so the card can never
+    name a line the count did not see. `retold`: the lines read aloud as last time's recap: they
+    never make a "first met" (the first time the DM recaps someone is never when they appeared),
+    but they do count for "last mentioned". Only characters in `wanted` are noted."""
+    left_out = set(retold)
+    found: dict[str, Seen] = {}
+    for number, line in heard.countable(lines, agreed):
+        for entity_id in set(named_in(line.text)) & set(wanted):
+            before = found.get(entity_id)
+            first = before.first_play if before else None
+            if first is None and number not in left_out:
+                first = number
+            found[entity_id] = Seen(first, number)
+    return found
+
+
+def spans(
+    count: int, scan: Callable[[int], Mapping[str, Seen]], wanted: Collection[str]
+) -> dict[str, Span]:
+    """First and last mention of each character in `wanted` across `count` sessions, oldest first.
+    `scan(i)` is session i's pass (`scan_session`), asked for lazily and at most once for each
+    session, so a long campaign is read once for the whole batch. "First" is looked for from the
+    oldest session on and stops when every character has one; "last" from the newest back, the
+    same."""
+    memo: dict[int, Mapping[str, Seen]] = {}
+
+    def seen(index: int) -> Mapping[str, Seen]:
+        if index not in memo:
+            memo[index] = scan(index)
+        return memo[index]
+
+    first: dict[str, Where] = {}
+    last: dict[str, Where] = {}
+    want = set(wanted)
+    for index in range(count):
+        if len(first) == len(want):
+            break
+        for entity_id, hit in seen(index).items():
+            if entity_id in want and entity_id not in first and hit.first_play is not None:
+                first[entity_id] = Where(index, hit.first_play)
+    for index in range(count - 1, -1, -1):
+        if len(last) == len(want):
+            break
+        for entity_id, hit in seen(index).items():
+            if entity_id in want and entity_id not in last:
+                last[entity_id] = Where(index, hit.last)
+    return {entity_id: Span(first.get(entity_id), last.get(entity_id)) for entity_id in want}
 
 
 def scene_near(beats: Sequence[SceneLike], line_number: int) -> SceneLike | None:

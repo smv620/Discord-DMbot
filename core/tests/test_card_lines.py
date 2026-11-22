@@ -22,10 +22,6 @@ def beat(what: str, lines: tuple[int, ...], where: str = "") -> Beat:
     return Beat(1, what, (), lines, "event", where=where)
 
 
-def has(word: str):  # type: ignore[no-untyped-def]
-    return lambda text: word in text
-
-
 class TheSharedFilter(unittest.TestCase):
     LINES: ClassVar[list[Line]] = [
         line(1, DM, "Orla by the ford."),
@@ -42,28 +38,83 @@ class TheSharedFilter(unittest.TestCase):
         self.assertEqual(counted, {("orla", DM): 1, ("orla", PLAYER): 1})
 
 
-class TheHits(unittest.TestCase):
-    def test_the_first_hit_is_the_earliest_session_and_its_first_line(self) -> None:
-        sessions = [
-            [line(1, DM, "Nothing yet.")],
-            [line(1, DM, "Rook"), line(2, DM, "Orla here."), line(3, PLAYER, "Orla too.")],
-            [line(1, DM, "Orla later.")],
-        ]
-        hit = cl.find_hit(sessions, {DM, PLAYER}, has("Orla"))
-        self.assertEqual(hit, cl.Hit(1, 2))
+def named(*names: str):  # type: ignore[no-untyped-def]
+    """A stand-in matcher: the ids of the names that appear in the line."""
+    return lambda text: {n.lower() for n in names if n in text}
 
-    def test_the_last_hit_reads_the_newest_session_from_its_end(self) -> None:
-        newest_first = [
-            [line(1, DM, "Orla begins."), line(2, DM, "More."), line(3, PLAYER, "Orla ends.")],
-            [line(1, DM, "Orla long ago.")],
-        ]
-        hit = cl.find_hit(newest_first, {DM, PLAYER}, has("Orla"), newest=True)
-        self.assertEqual(hit, cl.Hit(0, 3))
 
-    def test_a_name_only_a_sidebar_or_a_stranger_said_is_never_a_hit(self) -> None:
-        sessions = [[line(1, DM, "Orla?", sidebar="question"), line(2, OTHER, "Orla!")]]
-        self.assertIsNone(cl.find_hit(sessions, {DM, PLAYER}, has("Orla")))
-        self.assertIsNone(cl.find_hit([], {DM}, has("Orla")))
+class TheScan(unittest.TestCase):
+    def test_one_pass_notes_every_character_asked_about(self) -> None:
+        lines = [
+            line(1, DM, "Orla and Rook at the ford."),
+            line(2, PLAYER, "Rook alone."),
+            line(3, DM, "Orla again."),
+        ]
+        got = cl.scan_session(lines, {DM, PLAYER}, named("Orla", "Rook"), {"orla", "rook"})
+        self.assertEqual(got["orla"], cl.Seen(1, 3))
+        self.assertEqual(got["rook"], cl.Seen(1, 2))
+
+    def test_a_character_not_asked_about_is_not_noted(self) -> None:
+        got = cl.scan_session([line(1, DM, "Orla.")], {DM}, named("Orla"), {"rook"})
+        self.assertEqual(got, {})
+
+    def test_the_recap_read_aloud_never_makes_a_first_but_does_make_a_last(self) -> None:
+        lines = [line(1, DM, "Last time Orla met Rook."), line(2, DM, "Rook is here.")]
+        got = cl.scan_session(lines, {DM}, named("Orla", "Rook"), {"orla", "rook"}, retold={1})
+        self.assertEqual(got["orla"], cl.Seen(None, 1))  # only the recap said her
+        self.assertEqual(got["rook"], cl.Seen(2, 2))
+
+    def test_the_counts_own_filter_applies(self) -> None:
+        lines = [
+            line(1, DM, "Orla?", sidebar="question"),
+            line(2, OTHER, "Orla!"),
+            line(3, PLAYER, "  "),
+            line(4, PLAYER, "Orla."),
+        ]
+        got = cl.scan_session(lines, {DM, PLAYER}, named("Orla"), {"orla"})
+        self.assertEqual(got["orla"], cl.Seen(4, 4))
+
+
+class TheSpans(unittest.TestCase):
+    def test_first_from_the_oldest_and_last_from_the_newest(self) -> None:
+        sessions = {
+            0: {"orla": cl.Seen(None, 2)},  # (only the recap said her)
+            1: {"orla": cl.Seen(5, 9), "rook": cl.Seen(1, 1)},
+            2: {"orla": cl.Seen(3, 3)},
+        }
+        got = cl.spans(3, lambda i: sessions[i], {"orla", "rook", "nobody"})
+        self.assertEqual(got["orla"], cl.Span(cl.Where(1, 5), cl.Where(2, 3)))
+        self.assertEqual(got["rook"], cl.Span(cl.Where(1, 1), cl.Where(1, 1)))
+        self.assertEqual(got["nobody"], cl.Span(None, None))  # (never, at the table)
+
+    def test_a_name_only_a_recap_said_has_a_last_and_no_first(self) -> None:
+        got = cl.spans(1, lambda i: {"orla": cl.Seen(None, 4)}, {"orla"})
+        self.assertEqual(got["orla"], cl.Span(None, cl.Where(0, 4)))
+
+    def test_each_session_is_read_at_most_once_for_the_whole_batch(self) -> None:
+        asked: list[int] = []
+
+        def scan(i: int) -> dict[str, cl.Seen]:
+            asked.append(i)
+            return {"orla": cl.Seen(1, 1)} if i in (0, 3) else {}
+
+        cl.spans(4, scan, {"orla", "rook"})
+        self.assertEqual(sorted(asked), [0, 1, 2, 3])
+        self.assertEqual(len(asked), len(set(asked)))  # (no session twice)
+
+    def test_the_search_stops_when_every_character_has_its_first_and_last(self) -> None:
+        asked: list[int] = []
+
+        def scan(i: int) -> dict[str, cl.Seen]:
+            asked.append(i)
+            return {"orla": cl.Seen(1, 1)}
+
+        got = cl.spans(100, scan, {"orla"})
+        self.assertEqual(got["orla"], cl.Span(cl.Where(0, 1), cl.Where(99, 1)))
+        self.assertEqual(sorted(asked), [0, 99])  # (a long campaign, two reads)
+
+    def test_no_sessions_means_no_span(self) -> None:
+        self.assertEqual(cl.spans(0, lambda i: {}, {"orla"}), {"orla": cl.Span(None, None)})
 
 
 class TheScene(unittest.TestCase):
