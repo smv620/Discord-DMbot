@@ -26,6 +26,8 @@ import re
 from collections.abc import Collection, Sequence
 from typing import NamedTuple
 
+from dmbot.memory import hedges
+
 HOURS, DAYS, MILES = "hours", "days", "miles"
 UNITS = (HOURS, DAYS, MILES)
 WORDS_MAX = 60  # the column's limit (as a route's means words)
@@ -162,14 +164,38 @@ def _lengths(text: str, ends: str) -> list[tuple[str, bool]]:
     return [(words.strip(), tied) for words, tied in out]
 
 
+# Not so, or not yet: a negation, a plan or a "maybe" in the sentence before the length ("is not two
+# days' march", "we will ride two days"), or a time still to come after it ("… tomorrow"). A length
+# said that way is no route's length (#4991; only ever says less)
+_NOT_SO = re.compile(
+    r"\b(?:not|never|no\s+longer|isn't|aren't|wasn't|weren't|will|would|shall|might|may|could"
+    r"|\w+'ll|plans?\s+to|planning\s+to|going\s+to|hopes?\s+to)\b",
+    re.I,
+)
+_LATER = re.compile(r"\b(?:tomorrow|next\s+(?:week|month|day|year)|later)\b", re.I)
+
+
+def _stated(text: str, words: str) -> bool:
+    """Whether the sentence that holds `words` states it: not asked, supposed, someone else's
+    view, denied or planned (`hedges`, `_NOT_SO`)."""
+    at = text.casefold().find(words.casefold())
+    if at < 0:
+        return True
+    before, after, _mark = hedges.sentence_at(text, at, at + len(words))
+    return not (
+        hedges.hedged(text, at, at + len(words)) or _NOT_SO.search(before) or _LATER.search(after)
+    )
+
+
 def find(quote: str, places: Collection[str] = ()) -> str:
     """The length's words a route's quote states by a set phrase, or "" when it states none, or
     more than one: a sentence with two lengths may be about two routes, and which is which is a
     guess this never makes. `places`: the route's own ends by name. A bare amount leading to one
     of them ("five hours to Easthaven") is a length too: "to" and a name the route ends at, never
     "to reach" (a deadline) or a place this route doesn't go to."""
-    found = _lengths(" ".join(quote.split()), _ends(places))
-    return found[0][0] if len(found) == 1 else ""
+    text = " ".join(quote.split())
+    found = _lengths(text, _ends(places))
+    return found[0][0] if len(found) == 1 and _stated(text, found[0][0]) else ""
 
 
 def find_on_way(lines: Sequence[str], places: Collection[str]) -> str:
@@ -186,7 +212,11 @@ def find_on_way(lines: Sequence[str], places: Collection[str]) -> str:
     for line in lines:
         text = " ".join(line.split())
         named = names_end.search(text) is not None
-        got += [words for words, tied in _lengths(text, ends) if tied or named]
+        got += [
+            words
+            for words, tied in _lengths(text, ends)
+            if (tied or named) and _stated(text, words)
+        ]
     return got[0] if len(got) == 1 else ""
 
 

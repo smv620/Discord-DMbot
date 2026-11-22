@@ -183,6 +183,10 @@ class Ends:
         # of some length (not just "of" or "the")
         if not any(len(w) >= SHORTEST and w not in FILLER for w in words):
             return Matched()
+        # (an end in small letters only, "a ring", is no name as a capitalised one is (#3431): it
+        # may match a whole name or spelling above, never by one of its words, #4991)
+        if end == end.casefold():
+            return Matched()
         fits = [n for n, haves in self._words.items() if any(set(words) <= have for have in haves)]
         if len(fits) == 1:
             return Matched(fits[0])
