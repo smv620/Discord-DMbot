@@ -234,6 +234,8 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         )  # fmt: skip
         me._upkeep_channel = lambda c: DMBot._upkeep_channel(me, c)  # type: ignore[arg-type]
         me._extract_session = partial(BOT._extract_session, me)  # (extract_claims calls it)
+        me.members = None  # (no directory: the cache answers, as before)
+        me._people_keys = partial(BOT._people_keys, me)
         return me
 
     def table(self) -> Any:

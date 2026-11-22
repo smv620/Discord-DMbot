@@ -55,6 +55,7 @@ class Base(DatabaseTest):
         self.dm = dm
         dm.transcripts = self.store
         dm.memory = object()
+        dm.members = None  # (no directory: the cache answers, as before)
         dm.campaigns = self.campaigns
         dm.consent = SimpleNamespace(consenting=self.consenting)
         dm.settings = SimpleNamespace(
