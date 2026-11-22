@@ -60,26 +60,36 @@ describe("the pickers", () => {
   });
 
   it("Save sends map-culture with the value and strength; Not sure sends null", async () => {
-    const send = vi.fn(async (_c: NameChange, _ok: string) => true);
-    render(<PlaceCulture data={data([])} name="Saltmarsh" busy={false} send={send} />);
+    const send = vi.fn(async (_c: NameChange, _ok: string, _m: (g: PlaceWorld) => boolean) => true);
+    render(<PlaceCulture data={data([row({ value: "elf", how: "once" })])} name="Saltmarsh" busy={false} send={send} />);
     fireEvent.click(screen.getByRole("button", { name: w.culture.heading }));
     fireEvent.change(screen.getByLabelText(w.culture.whose), { target: { value: "dwarf" } });
     fireEvent.change(screen.getByLabelText(w.culture.howStrong), { target: { value: "strong" } });
     fireEvent.click(screen.getAllByRole("button", { name: w.save })[0]!);
-    expect(send).toHaveBeenLastCalledWith({ action: "map-culture", value: "dwarf", how: "strong" }, w.notedCulture("Saltmarsh"));
+    expect(send.mock.calls.at(-1)?.[0]).toEqual({ action: "map-culture", value: "dwarf", how: "strong" });
     fireEvent.change(screen.getByLabelText(w.culture.whose), { target: { value: "" } });
     fireEvent.click(screen.getAllByRole("button", { name: w.save })[0]!);
-    expect(send).toHaveBeenLastCalledWith({ action: "map-culture", value: null }, w.notedCulture("Saltmarsh"));
+    expect(send.mock.calls.at(-1)?.[0]).toEqual({ action: "map-culture", value: null });
   });
 
   it("Not said sends no share, and Something else asks for the DM's words", async () => {
-    const send = vi.fn(async (_c: NameChange, _ok: string) => true);
+    const send = vi.fn(async (_c: NameChange, _ok: string, _m: (g: PlaceWorld) => boolean) => true);
     render(<PlaceCulture data={data([])} name="Saltmarsh" busy={false} send={send} />);
     fireEvent.click(screen.getByRole("button", { name: w.culture.heading }));
     fireEvent.change(screen.getByLabelText(w.population.whoLives), { target: { value: "human" } });
     fireEvent.click(screen.getAllByRole("button", { name: w.save })[1]!);
-    expect(send).toHaveBeenLastCalledWith({ action: "map-population", value: "human", how: "" }, w.notedPopulation("Saltmarsh"));
+    expect(send.mock.calls.at(-1)?.[0]).toEqual({ action: "map-population", value: "human", how: "" });
     fireEvent.change(screen.getByLabelText(w.population.whoLives), { target: { value: "other" } });
     expect(screen.getByPlaceholderText(w.culture.wordsLabel)).toBeTruthy();
+  });
+});
+
+describe("what is saved", () => {
+  it("the pickers start from the saved rows, and Save is off until something changes", () => {
+    const saved = data([row({ value: "dwarf", how: "strong" })]);
+    render(<PlaceCulture data={saved} name="Saltmarsh" busy={false} send={vi.fn(async () => true)} />);
+    fireEvent.click(screen.getByRole("button", { name: w.culture.heading }));
+    expect((screen.getByLabelText(w.culture.whose) as HTMLSelectElement).value).toBe("dwarf");
+    expect((screen.getAllByRole("button", { name: w.save })[0] as HTMLButtonElement).disabled).toBe(true);
   });
 });

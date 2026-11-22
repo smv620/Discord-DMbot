@@ -39,20 +39,43 @@ export default function PlaceCulture({
   data: PlaceWorld;
   name: string;
   busy: boolean;
-  send: (change: NameChange, ok: string) => Promise<boolean>;
+  send: (change: NameChange, ok: string, matches: (got: PlaceWorld) => boolean) => Promise<boolean>;
 }) {
   const [open, setOpen] = useState(false);
-  const [cValue, setCValue] = useState("");
-  const [cHow, setCHow] = useState("");
-  const [cWords, setCWords] = useState("");
-  const [pValue, setPValue] = useState("");
-  const [pHow, setPHow] = useState("");
-  const [pWords, setPWords] = useState("");
   const cultures = data.rows.filter((r) => r.layer === "culture");
   const people = data.rows.filter((r) => r.layer === "population");
   const cultureLines = cultureLine(cultures);
   const peopleLines = populationLine(people);
   const named = data.cultures ?? [];
+
+  // The pickers start from what is saved, so opening one never clears it; a named culture is chosen by its id.
+  const savedC = cultures[0];
+  const savedP = people[0];
+  const valueOf = (r: PlaceWorldRow | undefined): string => (r ? (r.cultureId ?? r.value) : "");
+  const wordsOf = (r: PlaceWorldRow | undefined): string => (r && r.value === "other" && !r.cultureId ? r.words : (r?.culture ?? ""));
+  const [cValue, setCValue] = useState(valueOf(savedC));
+  const [cHow, setCHow] = useState(savedC?.how ?? "");
+  const [cWords, setCWords] = useState(wordsOf(savedC));
+  const [pValue, setPValue] = useState(valueOf(savedP));
+  const [pHow, setPHow] = useState(savedP?.how ?? "");
+  const [pWords, setPWords] = useState(wordsOf(savedP));
+
+  const cultureReady = cValue === "" || (cHow !== "" && (cValue !== "other" || cWords.trim() !== ""));
+  const peopleReady = pValue === "" || (pValue !== "other" || pWords.trim() !== "");
+  const cultureChanged = cValue !== valueOf(savedC) || (cValue !== "" && (cHow !== (savedC?.how ?? "") || (cValue === "other" && cWords.trim() !== wordsOf(savedC))));
+  const peopleChanged = pValue !== valueOf(savedP) || (pValue !== "" && (pHow !== (savedP?.how ?? "") || (pValue === "other" && pWords.trim() !== wordsOf(savedP))));
+
+  // The read-back check: the saved rows show this choice (a named culture by its name, the other lineages untouched).
+  const cultureSaved = (g: PlaceWorld): boolean => {
+    const rows = g.rows.filter((r) => r.layer === "culture");
+    if (cValue === "") return rows.length === 0;
+    return rows.some((r) => (cValue === "other" ? r.culture === cWords.trim() : (r.cultureId ?? r.value) === cValue) && r.how === cHow);
+  };
+  const peopleSaved = (g: PlaceWorld): boolean => {
+    const rows = g.rows.filter((r) => r.layer === "population");
+    if (pValue === "") return rows.length === 0;
+    return rows.some((r) => (pValue === "other" ? r.culture === pWords.trim() : r.value === pValue) && r.how === pHow);
+  };
 
   async function saveCulture(): Promise<void> {
     if (busy) return;
@@ -60,7 +83,7 @@ export default function PlaceCulture({
       cValue === ""
         ? { action: "map-culture", value: null }
         : { action: "map-culture", value: cValue, how: cHow, ...(cValue === "other" ? { words: cWords.trim() } : {}) };
-    await send(change, w.notedCulture(name));
+    await send(change, w.notedCulture(name), cultureSaved);
   }
 
   async function savePeople(): Promise<void> {
@@ -69,11 +92,8 @@ export default function PlaceCulture({
       pValue === ""
         ? { action: "map-population", value: null }
         : { action: "map-population", value: pValue, how: pHow, ...(pValue === "other" ? { words: pWords.trim() } : {}) };
-    await send(change, w.notedPopulation(name));
+    await send(change, w.notedPopulation(name), peopleSaved);
   }
-
-  const cultureReady = cValue === "" || (cHow !== "" && (cValue !== "other" || cWords.trim() !== ""));
-  const peopleReady = pValue === "" || (pValue !== "other" || pWords.trim() !== "");
 
   return (
     <div class="stack">
@@ -111,7 +131,7 @@ export default function PlaceCulture({
               </select>
             </label>
           )}
-          <button type="button" class="button" disabled={busy || !cultureReady} onClick={() => void saveCulture()}>
+          <button type="button" class="button" disabled={busy || !cultureReady || !cultureChanged} onClick={() => void saveCulture()}>
             {w.save}
           </button>
           <label class="field">
@@ -138,7 +158,7 @@ export default function PlaceCulture({
               </select>
             </label>
           )}
-          <button type="button" class="button" disabled={busy || !peopleReady} onClick={() => void savePeople()}>
+          <button type="button" class="button" disabled={busy || !peopleReady || !peopleChanged} onClick={() => void savePeople()}>
             {w.save}
           </button>
         </div>

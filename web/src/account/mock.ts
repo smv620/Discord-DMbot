@@ -4189,24 +4189,29 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           worldRows.set(id, mine.filter((r) => r.layer !== layer));
           return { ...row, others: [...row.others] };
         }
+        // A named culture is stored with an empty value and its id (as the store does); "Something else" reuses a name already kept.
         let cultureId: string | null = null;
         let culture: string | null = null;
+        let value = change.value;
         if (change.value === "other") {
           const words = (change.words ?? "").trim();
           if (!words) throw new ApiError("bad-target");
-          const made = { id: `culture-${cultureList.length + 1}`, name: words };
-          cultureList.push(made);
+          const existing = cultureList.find((c) => c.name.toLowerCase() === words.toLowerCase());
+          const made = existing ?? { id: `culture-${cultureList.length + 1}`, name: words };
+          if (!existing) cultureList.push(made);
           cultureId = made.id;
           culture = made.name;
+          value = "";
         } else {
           const named = cultureList.find((c) => c.id === change.value);
           if (named) {
             cultureId = named.id;
             culture = named.name;
+            value = "";
           }
         }
-        const rest = mine.filter((r) => !(r.layer === layer && r.value === change.value));
-        rest.push({ layer, value: change.value, words: change.value === "other" ? (culture ?? "") : "", group: null, groupName: null, how: change.how ?? "", part: "", read: false, source: "dm", shown: false, cultureId, culture });
+        const rest = mine.filter((r) => !(r.layer === layer && (cultureId !== null ? r.cultureId === cultureId : r.value === value)));
+        rest.push({ layer, value: value ?? "", words: "", group: null, groupName: null, how: change.how ?? "", part: "", read: false, source: "dm", shown: false, cultureId, culture });
         worldRows.set(id, rest);
         return { ...row, others: [...row.others] };
       }

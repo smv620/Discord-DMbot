@@ -160,20 +160,29 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
   }
 
   // A culture or who-lives-here change (#4412): sent on its own, then the place is read again, as the other layers are.
-  async function sendCulture(change: NameChange, ok: string): Promise<boolean> {
-    const problem = await act(change, ok);
-    if (problem !== null) {
-      if (problem !== "") setNote({ ok: false, text: problem });
-      return false;
+  async function sendCulture(change: NameChange, ok: string, matches: (got: PlaceWorld) => boolean): Promise<boolean> {
+    if (flight.current) return false;
+    flight.current = true;
+    setBusy(true);
+    setNote(null);
+    try {
+      const problem = await act(change, ok);
+      if (problem !== null) {
+        if (problem !== "") setNote({ ok: false, text: problem });
+        return false;
+      }
+      await new Promise((go) => setTimeout(go, 0));
+      const got = await load("none");
+      if (got === null || !matches(got)) {
+        setNote({ ok: false, text: w.stillSaving });
+        return false;
+      }
+      setNote({ ok: true, text: ok });
+      return true;
+    } finally {
+      flight.current = false;
+      setBusy(false);
     }
-    await new Promise((go) => setTimeout(go, 0));
-    const got = await load("none");
-    if (got === null) {
-      setNote({ ok: false, text: w.stillSaving });
-      return false;
-    }
-    setNote({ ok: true, text: ok });
-    return true;
   }
 
   async function toggleShown(): Promise<void> {
@@ -294,7 +303,7 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
         </div>
       )}
 
-      <PlaceCulture data={data} name={row.name} busy={busy} send={sendCulture} />
+      <PlaceCulture key={row.id} data={data} name={row.name} busy={busy} send={sendCulture} />
       <button type="button" class="button secondary" disabled={busy || !changed} onClick={() => void save()}>
         {w.save}
       </button>
