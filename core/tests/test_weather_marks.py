@@ -115,6 +115,60 @@ class OncePerPlace(NamesTest):
         self.assertEqual(await self.rows(), [])
 
 
+class ForTheWorkersRow(OncePerPlace):
+    """The outbox row of #4904 3b-4b holds a moment and a session date; the bot reads the notes
+    back from the marks made at that moment and says what the read says itself."""
+
+    async def test_the_marks_made_at_a_moment_are_read_back_by_it_alone(self) -> None:
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id,
+            [wm.Mark(self.place, "snow", self.climate, "hot")], now=40,
+        )  # fmt: skip
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id,
+            [wm.Mark(self.place, "frost", self.climate, "hot")], now=90,
+        )  # fmt: skip
+        got = await wm.noted_at(self.db, GUILD, self.campaign.id, 40)
+        self.assertEqual(got, [(self.place, "snow", "hot")])
+        self.assertEqual(await wm.noted_at(self.db, GUILD, self.campaign.id, 41), [])
+
+    async def test_delivery_says_the_note_privately_as_the_read_does(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.bot import DMBot
+        from dmbot.maps import weather_note
+        from dmbot.ui.thread_questions import session_label
+
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id,
+            [wm.Mark(self.place, "snow", self.climate, "hot")], now=40,
+        )  # fmt: skip
+        bot: Any = SimpleNamespace(
+            campaigns=SimpleNamespace(
+                get=AsyncMock(return_value=SimpleNamespace(dm_accounts=frozenset({7})))
+            ),
+            memory=self.memory,
+            _dm_message=AsyncMock(return_value=object()),
+        )
+        row = {"at": 40, "session": 1_000}
+        await DMBot.deliver_story_weather(bot, GUILD, self.campaign.id, row)
+        text = bot._dm_message.await_args.args[1]
+        want = weather_note.message(
+            [weather_note.Note("Sunreach", "snow", "hot", None, None)], session_label(1_000)
+        )
+        self.assertEqual((bot._dm_message.await_args.args[0], text), (7, want))
+        bot._dm_message = AsyncMock(return_value=None)  # a refused message is tried again
+        with self.assertRaises(RuntimeError):
+            await DMBot.deliver_story_weather(bot, GUILD, self.campaign.id, row)
+        self.assertEqual(
+            bot._dm_message.await_count, 1
+        )  # (and nothing more is said for a moment with no marks)
+        bot._dm_message.reset_mock()
+        await DMBot.deliver_story_weather(bot, GUILD, self.campaign.id, {**row, "at": 41})
+        bot._dm_message.assert_not_awaited()
+
+
 class TheBackup(unittest.TestCase):
     def test_a_note_out_of_shape_is_damage_and_one_for_nothing_held_is_dropped(self) -> None:
         from dmbot.campaigns.models import CampaignError

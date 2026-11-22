@@ -447,6 +447,7 @@ from dmbot.outbox import (
     STORY_MET_LIST,
     STORY_RECAP_LINES,
     STORY_SECRET_COUNT,
+    STORY_WEATHER,
     Outbox,
 )
 from dmbot.pictures import sweep as picture_sweep
@@ -7718,7 +7719,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if not campaign.dm_accounts:
                 return  # (nobody to tell: nothing is marked, so a later read may)
             # (once per place and kind until its climate changes: marked before it is sent)
-            new = await weather_marks.first_time(self.memory._db, guild_id, campaign_id, marks)
+            at = int(time.time())
+            new = await weather_marks.first_time(
+                self.memory._db, guild_id, campaign_id, marks, now=at
+            )
             already = len(notes) - sum(new)
             notes = [n for n, first in zip(notes, new, strict=True) if first]
             log.info(
@@ -7726,6 +7730,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 len(report.heard_weather), len(notes), already,
             )  # fmt: skip
             if notes:
+                # (with no Discord, an outbox row of the moment the marks were made and the
+                # session's date: the bot reads the notes back and says them, #4904 3b-4b)
+                if await _story_note(
+                    self, guild_id, campaign_id, STORY_WEATHER, {"at": at, "session": started_at}
+                ):
+                    return
                 text = weather_note.message(notes, session_label(started_at))
                 for dm in campaign.dm_accounts:
                     await self._dm_message(dm, text, None)
@@ -13307,6 +13317,49 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         else:
             text, view = met_list_ui.notice(n), met_list_ui.notice_view(cid)
         if text and not await self.post(channel, text, view=view):
+            raise RuntimeError("not-posted")
+
+    async def deliver_story_weather(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        """The outbox's weather check for the DMs (#4904 3b-4b): the notes recorded at the row's
+        moment, read back by ids and said as the read says them itself (`_weather_notes`): one
+        private message to each of the campaign's DMs. A refused message raises, so the row is
+        tried again; none of this reaches a channel or a player."""
+        from dmbot.maps import weather_note
+        from dmbot.memory import gate, weather_marks
+        from dmbot.memory import map_facts as mf
+        from dmbot.memory.models import CONFIRMED
+        from dmbot.ui.thread_questions import session_label
+
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or self.memory is None or not campaign.dm_accounts:
+            return
+        kept = await weather_marks.noted_at(self.memory._db, gid, cid, int(payload["at"]))
+        if not kept:
+            return
+        names = {
+            e.id: e.name for e in await self.memory.entities(gid, cid) if e.status == CONFIRMED
+        }
+        notes: list[weather_note.Note] = []
+        for place_id, kind, climate in kept:
+            if place_id not in names or climate not in weather_note.CLIMATE_SAID:
+                continue
+            held = (await self.memory.map_facts_up(gid, cid, place_id, gate.Viewer(dm=True))).get(
+                mf.CLIMATE
+            )
+            outer = held.from_id if held is not None else None
+            notes.append(
+                weather_note.Note(
+                    names[place_id], kind, climate, None, names.get(outer) if outer else None
+                )
+            )
+        if not notes:
+            return
+        text = weather_note.message(notes, session_label(int(payload["session"])))
+        failed = False
+        for dm in campaign.dm_accounts:
+            if await self._dm_message(dm, text, None) is None:
+                failed = True
+        if failed:
             raise RuntimeError("not-posted")
 
     async def deliver_story_recap_lines(

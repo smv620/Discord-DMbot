@@ -67,4 +67,22 @@ async def first_time(
     return new
 
 
-__all__ = ["Mark", "first_time"]
+async def noted_at(
+    db: Database, guild_id: int, campaign_id: str, at: int
+) -> list[tuple[str, str, str]]:
+    """The (place id, kind, climate) of the notes `first_time` recorded at the moment `at`, in a
+    fixed order: what the worker's outbox row (#4904 3b-4b) reads back to say them, so the row
+    holds a time and no word of the story."""
+    async with db.guild(guild_id) as conn:
+        cur = await conn.execute(
+            "SELECT place_id, kind, climate FROM memory_weather_notes"
+            " WHERE guild_id = %s AND campaign_id = %s AND created_at = %s"
+            " ORDER BY place_id, kind",
+            (guild_id, campaign_id, at),
+        )
+        return [
+            (str(r["place_id"]), str(r["kind"]), str(r["climate"])) for r in await cur.fetchall()
+        ]
+
+
+__all__ = ["Mark", "first_time", "noted_at"]
