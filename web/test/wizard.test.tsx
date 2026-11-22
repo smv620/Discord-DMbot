@@ -947,12 +947,25 @@ describe("the party names of a character (#4300)", () => {
     expect((await api.get(G))?.answers.characters[0]?.partyNames).toEqual(["Ric", "Hector, Savior of the Keep"]);
   });
 
-  it("at eight names one line says that is the most", async () => {
+  it("at eight names one line says that is the most, under the list, and not before", async () => {
     await start();
     await next(2);
+    for (let i = 1; i <= 7; i++) addName(`Name ${i}`);
     expect(screen.queryByText(w.confirm.partyFull)).toBeNull();
-    for (let i = 1; i <= 8; i++) addName(`Name ${i}`);
-    expect(screen.getByText(w.confirm.partyFull)).toBeTruthy();
+    addName("Name 8");
+    const line = screen.getByText(w.confirm.partyFull);
+    const list = screen.getByRole("list", { name: w.confirm.partyNamesList });
+    expect(list.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("a single name equal to the full name shows no bracket", async () => {
+    await start();
+    await next(2);
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.fullLabel)), { target: { value: "Tavin Ashgrove" } });
+    addName("Tavin Ashgrove");
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.add }));
+    const row = (await screen.findByText(/Tavin Ashgrove/, { selector: "li" })) as HTMLElement;
+    expect(row.querySelector("span.small")).toBeNull();
   });
 
   it("a name typed but not added is sent with the character, as Add would add it", async () => {

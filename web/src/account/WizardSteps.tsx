@@ -259,7 +259,6 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
             <span class="small" id="wizard-party-hint">
               {t.partyHint}
             </span>
-            {partyNames.length >= 8 && <p class="small">{t.partyFull}</p>}
             {partyNames.length > 0 && (
               <ul aria-label={t.partyNamesList}>
                 {partyNames.map((n, i) => (
@@ -272,6 +271,7 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
                 ))}
               </ul>
             )}
+            {partyNames.length >= 8 && <p class="small">{t.partyFull}</p>}
           </div>
           {WIZARD_SHEETS_LIVE && (
             <label>
