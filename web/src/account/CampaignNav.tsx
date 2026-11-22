@@ -27,6 +27,9 @@ export function readCampaign(api: AccountApi, ref: string): Promise<CampaignPage
   if (!byRef) reads.set(api, (byRef = new Map()));
   let found = byRef.get(ref);
   if (!found) {
+    // Opening a campaign's pages is a visit, noted once for each page load (#5037): the account page's order
+    // follows it. A failure is no reason to hold the page.
+    void api.visitCampaign?.(ref)?.catch(() => undefined);
     // A failed read is not kept, so the next page (or a retry) asks again instead of showing no
     // Settings tab for good.
     found = api.campaignPage(ref).catch(() => {

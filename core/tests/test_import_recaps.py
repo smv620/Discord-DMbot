@@ -173,6 +173,8 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         "_start_import_recap",
         "_apply_import_plays",
         "_tell_import_news",
+        "_import_news",
+        "_import_open",
         "_upkeep_channel",
         "_say_group_writing",
         "_say_writing",
@@ -573,6 +575,23 @@ class TheCrashAndTheNews(WithImports):
         await DMBot.run_import_followups(bot, GUILD)
 
         bot._link_import_party.assert_awaited_once()
+
+    async def test_the_workers_scan_tells_nothing_and_the_bots_news_scans_nothing(self) -> None:
+        # (#4904 3b-4c: the worker has no Discord, so its half only works; the bot's only tells)
+        await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._scan_import = AsyncMock(return_value=["Kazeth"])
+        bot.extractor_ai = None  # (no story read here: its own tests)
+        self.assertEqual(await DMBot.run_import_followups(bot, GUILD, news=False), 1)
+        bot._scan_import.assert_awaited_once()
+        bot._tell_finished_imports.assert_not_awaited()
+        bot._tell_imports_left.assert_not_awaited()
+        self.assertEqual(bot.post.await_args_list, [])  # not a word to Discord from the scan
+        bot._scan_import.reset_mock()
+        self.assertEqual(await DMBot.run_import_followups(bot, GUILD, scan=False), 0)
+        bot._scan_import.assert_not_awaited()
+        bot._tell_finished_imports.assert_awaited_once()  # the news is the bot's
 
     async def test_a_failed_party_link_after_a_scan_changes_nothing_else(self) -> None:
         # The link runs after the scan is finished: when it raises, the scan still counts as done,

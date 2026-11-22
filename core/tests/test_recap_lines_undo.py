@@ -107,12 +107,22 @@ class TheUndo(Base):
         async def read(gid: int) -> None:
             reads.append(gid)
 
-        me: Any = SimpleNamespace(transcripts=self.lines, read_put_back_lines=read)
+        recounted: list[tuple[int, str]] = []
+
+        async def recount(gid: int, cid: str, session_at: int) -> None:
+            recounted.append((gid, cid))  # (#3172 item d: the counts of names come back)
+
+        me: Any = SimpleNamespace(
+            transcripts=self.lines, read_put_back_lines=read, recount_heard=recount
+        )
         undo: Any = DMBot.undo_recap_lines
         self.assertEqual(await undo(me, self.g, "f" * 32, self.sid), 0)  # another campaign's
         self.assertEqual(await undo(me, self.g, self.c, "e" * 32), 0)  # no such session
         self.assertEqual(reads, [])
+        self.assertEqual(recounted, [])
         self.assertEqual(await undo(me, self.g, self.c, self.sid), 2)
         self.assertEqual(reads, [self.g])
+        self.assertEqual(recounted, [(self.g, self.c)])  # the names said are counted again
         self.assertEqual(await undo(me, self.g, self.c, self.sid), 0)  # nothing left: no sweep
         self.assertEqual(reads, [self.g])
+        self.assertEqual(recounted, [(self.g, self.c)])
