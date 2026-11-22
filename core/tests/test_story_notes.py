@@ -4,12 +4,13 @@ Invented fixtures only."""
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.bot import DMBot, _story_note
 from dmbot.outbox import (
+    STORY_HELD_BACK,
     STORY_MET_LIST,
     STORY_RECAP_LINES,
     STORY_SECRET_COUNT,
@@ -17,6 +18,7 @@ from dmbot.outbox import (
     clean_payload,
 )
 from dmbot.ui import met_list as met_list_ui
+from dmbot.ui import names as names_ui
 from dmbot.ui import recap_lines as recap_lines_ui
 
 GUILD = 7001
@@ -90,3 +92,35 @@ class TheDelivery(IsolatedAsyncioTestCase):
         b = bot(headless=False, posted=False)
         with self.assertRaises(RuntimeError):
             await b._say_story_note(GUILD, CID, STORY_MET_LIST, {"n": 2})
+
+
+class TheHeldBackNames(IsolatedAsyncioTestCase):
+    async def test_the_private_message_has_a_count_and_no_name(self) -> None:
+        text = names_ui.held_back_count_text(3)
+        self.assertIn("3 new names to check", text)
+        self.assertNotIn("**Bram**", text)
+        self.assertIn("1 new name to check", names_ui.held_back_count_text(1))
+
+    async def test_delivery_asks_the_dms_privately_with_a_count_pointer(self) -> None:
+        b = bot(headless=False)
+        with patch("dmbot.bot.pointer_note.send", AsyncMock(return_value=True)) as sent:
+            await b._say_story_note(GUILD, CID, STORY_HELD_BACK, {"sid": "a" * 32, "n": 2})
+        args = cast(Any, sent).await_args.args
+        self.assertEqual(args[2], names_ui.held_back_count_text(2))
+        self.assertEqual(args[4], names_ui.held_back_pointer(2))
+
+    async def test_a_refused_private_message_raises_so_the_row_is_tried_again(self) -> None:
+        b = bot(headless=False)
+        with (
+            patch("dmbot.bot.pointer_note.send", AsyncMock(return_value=False)),
+            self.assertRaises(RuntimeError),
+        ):
+            await b._say_story_note(GUILD, CID, STORY_HELD_BACK, {"sid": "a" * 32, "n": 2})
+
+    async def test_a_gone_campaign_or_no_names_says_nothing(self) -> None:
+        b = bot(headless=False)
+        with patch("dmbot.bot.pointer_note.send", AsyncMock(return_value=True)) as sent:
+            await b._say_story_note(GUILD, CID, STORY_HELD_BACK, {"sid": "a" * 32, "n": 0})
+            b.campaigns.get = AsyncMock(return_value=None)
+            await b._say_story_note(GUILD, CID, STORY_HELD_BACK, {"sid": "a" * 32, "n": 2})
+        sent.assert_not_awaited()

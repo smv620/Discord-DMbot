@@ -32,6 +32,7 @@ IMPORT_RECAP_HOLD = "import_recap_hold"  # the DM's name questions a held import
 IMPORT_CLOCK_OFFER = "import_clock_offer"  # the game date an imported session ended at (#4904 3b-2)
 STORY_RECAP_LINES = "story_recap_lines"  # an imported session was split into recap lines (sid, n)
 STORY_SECRET_COUNT = "story_secret_count"  # secret-sounding questions wait for the DM (a count)
+STORY_HELD_BACK = "story_held_back"  # new names the story read held back (sid, a count)
 STORY_MET_LIST = "story_met_list"  # creatures the party met have no name yet (a count)
 RECAP_ALLOWANCE = "recap_allowance"  # the month's allowance is used up (nothing but the kind)
 
