@@ -60,6 +60,7 @@ from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
 from dmbot.memory.scene import SceneTracker, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.outbox import (
+    IMPORT_CLOCK_OFFER,
     RECAP_ALLOWANCE,
     RECAP_FAILED,
     RECAP_NAMES,
@@ -401,6 +402,7 @@ class RecapFeatures:
                                 RECAP_NAMES: self.deliver_recap_names,
                                 RECAP_UNCHECKED: self.deliver_recap_unchecked,
                                 RECAP_ALLOWANCE: self.deliver_recap_allowance,
+                                IMPORT_CLOCK_OFFER: self.deliver_import_clock_offer,
                             },
                             self.outbox_wake,
                         ),

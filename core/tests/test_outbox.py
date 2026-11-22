@@ -146,6 +146,36 @@ class TheClaim(Base):
         self.assertEqual(len(await self.box.claim(1)), 1)
 
 
+class TheDedupe(Base):
+    async def test_a_unique_row_is_added_once_while_one_waits(self) -> None:
+        first = await self.box.add_now(
+            1, self.one.id, "import_clock_offer", {"minute": 5}, unique=True
+        )
+        again = await self.box.add_now(
+            1, self.one.id, "import_clock_offer", {"minute": 5}, unique=True
+        )
+        other = await self.box.add_now(
+            1, self.one.id, "import_clock_offer", {"minute": 6}, unique=True
+        )
+        self.assertGreater(first, 0)
+        self.assertEqual(again, 0)  # (the same offer asked for twice: said once)
+        self.assertGreater(other, 0)  # (another minute is another offer)
+        plain = await self.box.add_now(1, self.one.id, "import_clock_offer", {"minute": 5})
+        self.assertGreater(plain, 0)  # (not unique: as before)
+
+    async def test_once_it_is_sent_the_same_offer_may_come_again(self) -> None:
+        first = await self.box.add_now(
+            1, self.one.id, "import_clock_offer", {"minute": 5}, unique=True
+        )
+        (row,) = await self.box.claim(1)
+        await self.box.sent(1, row.id)
+        again = await self.box.add_now(
+            1, self.one.id, "import_clock_offer", {"minute": 5}, unique=True
+        )
+        self.assertGreater(first, 0)
+        self.assertGreater(again, 0)
+
+
 class ThePoisonRow(Base):
     async def test_a_row_that_died_on_its_last_try_is_given_up_on(self) -> None:
         row = await self.box.add_now(1, self.one.id, "recap_ready", {"session_at": 1})
