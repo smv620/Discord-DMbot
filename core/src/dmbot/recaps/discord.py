@@ -68,9 +68,11 @@ from dmbot.outbox import (
     RECAP_READY,
     RECAP_UNCHECKED,
     STORY_HELD_BACK,
+    STORY_JOINED,
     STORY_MET_LIST,
     STORY_RECAP_LINES,
     STORY_SECRET_COUNT,
+    STORY_THREADS,
     STORY_WEATHER,
     Outbox,
 )
@@ -345,6 +347,12 @@ class RecapFeatures:
         async def deliver_story_weather(
             self, gid: int, cid: str, payload: Mapping[str, Any]
         ) -> None: ...
+        async def deliver_story_threads(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
+        async def deliver_story_joined(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
         async def deliver_import_clock_offer(
             self, gid: int, cid: str, payload: Mapping[str, Any]
         ) -> None: ...
@@ -447,6 +455,8 @@ class RecapFeatures:
                                 STORY_MET_LIST: self.deliver_story_met_list,
                                 STORY_HELD_BACK: self.deliver_story_held_back,
                                 STORY_WEATHER: self.deliver_story_weather,
+                                STORY_THREADS: self.deliver_story_threads,
+                                STORY_JOINED: self.deliver_story_joined,
                             },
                             self.outbox_wake,
                         ),

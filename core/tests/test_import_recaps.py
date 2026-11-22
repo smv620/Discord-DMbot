@@ -174,6 +174,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         "_apply_import_plays",
         "_tell_import_news",
         "_import_news",
+        "_import_open",
         "_upkeep_channel",
         "_say_group_writing",
         "_say_writing",
