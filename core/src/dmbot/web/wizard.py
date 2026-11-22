@@ -173,6 +173,9 @@ def _characters(value: Any, finishing: bool = False) -> list[dict[str, Any]]:
             raise RecapError("bad_sheet")
         # What the party calls them (#4300): a list, each name on its own (a comma is part of a
         # name). `party_name` stays as the first one, for a draft or a page that only knows one.
+        # A page that sends both is read by the list (an empty list clears the old name); the new
+        # page sends only the list. The same name in another case is one name here; the finish
+        # step folds a little more (`name_key`), which only repeats an alias that is kept once.
         raw = item.get("party_names")
         if raw is None:
             raw = [item.get("party_name", "")]

@@ -1059,6 +1059,41 @@ class TheCharacters(FinishTest):
         texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
         self.assertEqual(texts, ["Cerric Vanya'elen", "Hector, Savior of the Keep", "Ric"])
 
+    async def test_a_name_another_character_is_called_blocks_a_first_name(self) -> None:
+        """#4300: the collision check reads every name the table calls the other character."""
+        chars = [
+            {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Zed Rook", "party_names": ["Mira"], "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        texts = [t for t, _, _ in await self.aliases_of("Mira Dawn")]
+        self.assertEqual(texts, ["Mira Dawn"])  # (no "Mira" beside it)
+        self.assertEqual([t for t, _, _ in await self.aliases_of("Zed Rook")], ["Mira", "Zed Rook"])
+
+    async def test_a_draft_with_only_the_old_single_name_still_finishes(self) -> None:
+        """#4300: `party_name` alone (no list) is kept; an empty one still gets the first name."""
+        chars = [
+            {
+                "full": "Cerric Vanya'elen",
+                "party_name": "Ric",
+                "sheet_url": "",
+                "player": "pending",
+            },
+            {"full": "Dane Holt", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual(
+            [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")],
+            ["Cerric Vanya'elen", "Ric"],
+        )
+        self.assertEqual(
+            [t for t, _, _ in await self.aliases_of("Dane Holt")], ["Dane", "Dane Holt"]
+        )
+
     async def test_two_characters_with_one_first_name_get_none(self) -> None:
         chars = [
             {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},
