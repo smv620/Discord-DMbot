@@ -1076,6 +1076,14 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const playersLines = new Map<string, string>();
   // A place's land, climate and ruler (#4287), by the name's id; the groups the ruler menu offers; and two places' sizes for the climate rule.
   const worldRows = new Map<string, PlaceWorldRow[]>();
+  // The pretend Saltmarsh (#4990): its culture is dwarves (strong) and the named Illuskan (some); who lives here is halflings
+  // (most) and humans with no share said. Shown to the DM only; a player's read is refused (placeWorld below).
+  worldRows.set("n24", [
+    { layer: "culture", value: "dwarf", words: "", group: null, groupName: null, how: "strong", part: "", read: false, source: "dm", shown: true, cultureId: null, culture: null },
+    { layer: "culture", value: "", words: "", group: null, groupName: null, how: "some", part: "", read: false, source: "dm", shown: true, cultureId: "culture-illuskan", culture: "Illuskan" },
+    { layer: "population", value: "halfling", words: "", group: null, groupName: null, how: "most", part: "", read: false, source: "dm", shown: true, cultureId: null, culture: null },
+    { layer: "population", value: "human", words: "", group: null, groupName: null, how: "", part: "", read: false, source: "dm", shown: true, cultureId: null, culture: null },
+  ]);
   const worldGroups = [{ id: "a".repeat(32), name: "Ten-Towns" }, { id: "b".repeat(32), name: "The Arcane Brotherhood" }];
   // The campaign's named cultures (#4412): a named culture is made by "Something else…" with words, and reused by its id.
   const cultureList: { id: string; name: string }[] = [{ id: "culture-illuskan", name: "Illuskan" }];
@@ -3033,6 +3041,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     // "Private scenes" (#4102): two in the table scenario; a second "Not private" on one says gone.
     async placeWorld(ref, placeId) {
       calls.push(`placeWorld:${ref}:${placeId}`);
+      // The DM's door: a player's read is refused, as the real one answers nothing to a player.
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       // A route place (#5010): Greywatch is a road with a hard going condition the DM set; other places are not roads.
