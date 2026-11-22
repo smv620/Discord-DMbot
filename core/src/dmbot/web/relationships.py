@@ -46,6 +46,7 @@ from dmbot.web import (
     graph_view,
     link_sources,
     pc_icons,
+    road_conditions,
     route_lengths,
     which_choices,
 )
@@ -425,6 +426,8 @@ async def read_web(
     # a route's stated length (#4392): a length DMbot only read is the DM's alone (the door
     # leaves it out for anyone else), and only the DM's own view says it was read
     await route_lengths.with_route_lengths(db, session, ref, page, full=bool(own_view))
+    # a road's condition (#4451): a player is told only of one the DM kept and showed (the door)
+    await road_conditions.with_road_conditions(db, session, ref, page, full=bool(own_view))
     # each player character's picture, for the nodes this person may see (#3621)
     # (the DM's Players view is what a player gets, so it carries no tools for the picture)
     await pc_icons.with_icons(db, session, ref, page, tools=view != "players")

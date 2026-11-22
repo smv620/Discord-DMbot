@@ -28,6 +28,7 @@ BATCHES = "batches"  # the import batches whose scans ended in its report
 PARTY = "party"  # player characters linked (a counter: the largest seen)
 UNHONOURED = "unhonoured"  # why recaps were not made (one line each, kept as many times)
 QUEUED = "queued"  # the starts of the sessions whose recap was queued at once
+NAME_ASKS = "name_asks"  # words PlotBot was not sure of in a session: "<session> <times> <word>"
 REPORTS = "reports"  # each scanned session's name-pass report, as text (#4904)
 
 _KIND = re.compile(r"^[a-z_]{1,40}$")
@@ -158,6 +159,33 @@ class ImportState:
     async def take_each(self, guild_id: int, campaign_id: str, kind: str) -> list[str]:
         """The values `add_each` kept, in the order added, removed."""
         return [v.partition(":")[2] for v in await self.take_strings(guild_id, campaign_id, kind)]
+
+    async def take_each_starting(
+        self, guild_id: int, campaign_id: str, kind: str, prefix: str
+    ) -> list[str]:
+        """The values `add_each` kept that start with `prefix`, removed in ONE statement (the rest
+        stay; a value another process adds meanwhile is never lost), in the order added. For a kind
+        shared by several sessions of a campaign: each takes only its own (#4994)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "WITH cur AS (SELECT data FROM import_state WHERE guild_id = %s"
+                " AND campaign_id = %s AND kind = %s FOR UPDATE),"
+                # (each value is `<32 hex of its own key>:<value>`: the value starts at 34)
+                " mine AS (SELECT COALESCE(jsonb_agg(e ORDER BY o), '[]'::jsonb) AS m FROM cur"
+                "   CROSS JOIN LATERAL jsonb_array_elements_text(cur.data) WITH ORDINALITY"
+                "   AS a(e, o) WHERE starts_with(substr(e, 34), %s)),"
+                " upd AS (UPDATE import_state SET updated_at = %s, data = ("
+                "   SELECT COALESCE(jsonb_agg(e ORDER BY o), '[]'::jsonb) FROM cur"
+                "   CROSS JOIN LATERAL jsonb_array_elements_text(cur.data) WITH ORDINALITY"
+                "   AS a(e, o) WHERE NOT starts_with(substr(e, 34), %s))"
+                "   WHERE guild_id = %s AND campaign_id = %s AND kind = %s RETURNING 1)"
+                " SELECT m FROM mine",
+                (guild_id, campaign_id, self._kind(kind), prefix, int(self._now()), prefix,
+                 guild_id, campaign_id, self._kind(kind)),
+            )  # fmt: skip
+            row = await cur.fetchone()
+        data: Any = None if row is None else row["m"]
+        return [str(v)[33:] for v in data] if isinstance(data, list) else []
 
     async def take_strings(self, guild_id: int, campaign_id: str, kind: str) -> list[str]:
         """The set, removed ([] when there was none)."""

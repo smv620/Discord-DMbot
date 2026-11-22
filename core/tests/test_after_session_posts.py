@@ -239,3 +239,35 @@ class TheUnhonouredRecapsLine(unittest.IsolatedAsyncioTestCase):
     async def test_with_no_dm_bot_channel_it_stays_on_the_dm_screen(self) -> None:
         fake = await self.go(None)
         self.assertEqual(fake.post.await_args.args[0], SCREEN)
+
+
+class TheNameAsks(unittest.IsolatedAsyncioTestCase):
+    """The words PlotBot was not sure of are kept for the name scan that follows (#4904 3b): per
+    session, replaced by a newer set, taken once, other sessions' left alone."""
+
+    def bot(self, *, with_state: bool) -> Any:
+        bot: Any = SimpleNamespace(
+            import_state=FakeImportState() if with_state else None, _name_pass_asks={}
+        )
+        bot._take_name_asks = lambda *a: DMBot._take_name_asks(bot, *a)
+        return bot
+
+    async def test_in_the_database_per_session_replaced_and_taken_once(self) -> None:
+        bot = self.bot(with_state=True)
+        keep = DMBot._keep_name_asks
+        take = DMBot._take_name_asks
+        await keep(bot, GUILD, "c" * 32, "s1", [("Keirandal", 3), ("Vane Oskar", 1)])
+        await keep(bot, GUILD, "c" * 32, "s2", [("Fenwick", 2)])
+        await keep(bot, GUILD, "c" * 32, "s1", [("Keirandal", 4)])  # (replaces the first set)
+        self.assertEqual(await take(bot, GUILD, "c" * 32, "s1"), [("Keirandal", 4)])
+        self.assertEqual(await take(bot, GUILD, "c" * 32, "s1"), [])  # (once)
+        self.assertEqual(await take(bot, GUILD, "c" * 32, "s2"), [("Fenwick", 2)])  # (kept)
+
+    async def test_without_the_state_it_is_the_old_dict(self) -> None:
+        bot = self.bot(with_state=False)
+        await DMBot._keep_name_asks(bot, GUILD, "c" * 32, "s1", [("Keirandal", 3)])
+        self.assertEqual(bot._name_pass_asks, {"s1": [("Keirandal", 3)]})
+        self.assertEqual(
+            await DMBot._take_name_asks(bot, GUILD, "c" * 32, "s1"), [("Keirandal", 3)]
+        )
+        self.assertEqual(bot._name_pass_asks, {})

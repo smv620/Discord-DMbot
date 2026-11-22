@@ -1007,6 +1007,30 @@ class RecapStore:
             row = await cur.fetchone()
         return int(row["n"]) if row else 0
 
+    async def queue_depth(self, guild_id: int, *, audio: bool) -> tuple[int, int]:
+        """How many recap jobs in a server wait to run (the text jobs, or the narration of ready
+        recaps) and how long the oldest has waited, in seconds (0 when none): counts only, for the
+        worker's round log (#3845 4b, #4914). Waiting means due now, as `due_aged` and `audio_due`
+        count it; a job that is leased is still waiting."""
+        now = int(self._now())
+        if audio:
+            where = f"{AUDIO_DUE_WHERE}"
+            args: tuple[Any, ...] = (guild_id, AUDIO_MAX_TRIES, now)
+            oldest = "audio_next_at"
+        else:
+            where = "state NOT IN ('ready', 'failed') AND status = 'draft' AND next_at <= %s"
+            args = (guild_id, now)
+            oldest = "next_at"
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT count(*) AS n, COALESCE(%s - min({oldest}), 0) AS wait FROM recap_jobs"
+                f" WHERE guild_id = %s AND {where}",
+                (now, *args),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return int(row["n"]), max(0, int(row["wait"]))
+
     async def used_in_month(self, guild_id: int, campaign_id: str, now: float) -> Usage:
         """The campaign's recaps and narrated recaps this calendar month, UTC (#1428). A written
         recap counts once and each Try again counts again; a job that never got written does not.

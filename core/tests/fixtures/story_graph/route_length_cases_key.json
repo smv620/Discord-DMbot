@@ -14,7 +14,8 @@
     {"quote": "The journey would take three days' ride from Bryn Shander.", "ends": ["Bryn Shander"], "words": "three days' ride"},
     {"quote": "It will take two days by cart to reach Easthaven.", "ends": ["Easthaven"], "words": "two days by cart"},
     {"quote": "From Bryn Shander it may take a week by sled to Targos.", "ends": ["Bryn Shander", "Targos"], "words": "a week by sled"},
-    {"quote": "The pass is a day's ride from Hollowdeep, and will be for years.", "ends": ["Hollowdeep"], "words": "a day's ride"}
+    {"quote": "The pass is a day's ride from Hollowdeep, and will be for years.", "ends": ["Hollowdeep"], "words": "a day's ride"},
+    {"quote": "You will need two days by cart to Targos.", "ends": ["Targos"], "words": "two days by cart"}
   ],
   "must_not": [
     {"quote": "Travelers say Kragmoor lies three days' ride from Thistledown.", "ends": ["Kragmoor", "Thistledown"]},
