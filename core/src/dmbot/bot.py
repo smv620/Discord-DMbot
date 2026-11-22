@@ -8140,13 +8140,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         lookup = await self._names_now(table)  # fresh: a name may have just been made secret
         if lookup is None:
             return asked
-        # A clue only some people know, or an entry the players haven't been told of (#2321), is as
-        # secret as a secret name.
+        # An entry the table doesn't hold (the DM's switch, a clue only some know, or a newcomer
+        # not yet told, #2321) is as secret as a secret name: asked of the gate, never of a flag
+        # (#4812). If the gate can't be read, nothing is sent.
+        if self.memory is None or table.campaign_id is None:
+            return asked
+        try:
+            held = await self.memory.entries_held(
+                table.guild_id, table.campaign_id, live_at=table.started_at or None
+            )
+        except Exception as exc:
+            log.warning("Rank: the table's holdings could not be read (%s)", type(exc).__name__)
+            return asked
         secret = {
-            entry.key
-            for entry in lookup.names
-            if entry.secret
-            or getattr(lookup.entities.get(entry.entity_id), "unseen_by_players", False)
+            entry.key for entry in lookup.names if entry.secret or entry.entity_id not in held
         }
         agreed = [
             t for _, who, t in table.recent.spoken if self.consent.has_consent(table.guild_id, who)
