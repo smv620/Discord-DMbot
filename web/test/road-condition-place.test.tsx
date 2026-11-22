@@ -75,4 +75,24 @@ describe("a route place's condition on its panel (#5010)", () => {
     fireEvent.click(screen.getByRole("button", { name: `${w.choices[0]!.label}: ${w.choices[0]!.hint}` }));
     await waitFor(() => expect(api.calls).toContain(`roadCondition:${REF}:place:${PLACE}:open`));
   });
+
+  it("a condition change shows the new line from a fresh read, and reads the place once more", async () => {
+    const api = mockApi("table");
+    let reads = 0;
+    api.placeWorld = async () => {
+      reads += 1;
+      api.calls.push(`placeWorld:${REF}:${PLACE}`);
+      return reads === 1
+        ? world({ road: true, condition: { value: "hard", words: "", since: 3, before: null } })
+        : world({ road: true, condition: { value: "closed", words: "", since: 4, before: { value: "hard", words: "" } } });
+    };
+    render(<PlaceWorldPanel api={api} refId={REF} row={row} act={act} />);
+    expect(await screen.findByText(w.line("hard", "", 3, null))).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.button }));
+    fireEvent.click(screen.getByRole("button", { name: `${w.choices[2]!.label}: ${w.choices[2]!.hint}` }));
+    expect(await screen.findByText(w.line("closed", "", 4, { value: "hard", words: "" }))).toBeTruthy();
+    expect(screen.queryByText(w.line("hard", "", 3, null))).toBeNull();
+    expect(reads).toBe(2);
+  });
 });
+

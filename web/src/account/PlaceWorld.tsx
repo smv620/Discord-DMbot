@@ -184,7 +184,7 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
           condition={data.condition}
           road
           canEdit
-          onChanged={() => void load("all")}
+          onChanged={() => void load("none")}
         />
       )}
       {land && (
