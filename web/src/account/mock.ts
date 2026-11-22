@@ -865,7 +865,13 @@ function pretendWaiting(ref = ""): Waiting {
     : [];
   return {
     claims: [
-      { id: "c1", statement: "Mira Voss knows Far Hall", canSecret: true, at: 1791000000 },
+      {
+        id: "c1",
+        statement: "Mira Voss knows Far Hall",
+        canSecret: true,
+        at: 1791000000,
+        startingFeeling: "🤔 **Mithral Keep** (Tala's home) is unfriendly toward dwarves, and **Brewner** is a dwarf. You decide how they feel.",
+      },
       { id: "c2", statement: "Roan is dead", canSecret: false },
       ...shownHeld,
     ],

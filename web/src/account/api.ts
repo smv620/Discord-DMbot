@@ -2862,6 +2862,8 @@ export interface WaitingClaim {
   at?: number | null;
   /** Set while a name in it could be two entries (Family ties, #3463): the questions still to answer. */
   choices?: WaitingChoice[];
+  /** The first meeting's reminder, in Discord's marks (`**name**` bold, a backslash escapes); shown only with FIRST_FEELING_LIVE (#4942). */
+  startingFeeling?: string | null;
 }
 /** One name in a kept claim and the entries it could mean; each carries its kind, a note and a plain tag. */
 export interface WaitingChoice {
