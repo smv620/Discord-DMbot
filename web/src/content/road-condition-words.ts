@@ -25,10 +25,12 @@ export const roadConditionWords = {
     return `🚧 Condition: ${now}${since !== null ? ` since session ${since}` : ""}${was}`;
   },
   readNote: " (DMbot read this. Players see it once you press ✅ Condition is right.)",
+  undoLabel: "↩ Undo",
   conditionRight: "✅ Condition is right",
   hide: "🙈 Hide from players",
   show: "👁️ Show to players",
   gone: "That's gone. Open the page again to see it as it is now.",
+  couldNot: "Couldn't do that just now. Nothing changed. Try again in a moment.",
   /** After a change: "🚧 Noted: Icewind Pass is closed.", with the earlier value, "was open; now it's closed.", own words, or no condition. */
   noted: (name: string, value: RoadValue | "none", words: string, before: RoadValue | null): string => {
     if (value === "none") return `🚧 Noted: no condition for ${name}.`;

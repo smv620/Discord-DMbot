@@ -1937,8 +1937,22 @@ export type WebLinkKind = "family" | "ally" | "group" | "work" | "other";
 
 /** Where a connection came from (#2946, API #3540). The API cuts it for a player: a session number or unknown, never a label. */
 export type WebLinkSource = { type: "session"; n: number } | { type: "upload"; label: string; line?: number } | { type: "dm" } | { type: "unknown" };
+/** A road's condition as the bot keeps it (#4451): its value, the DM's words for "other", the session it began, and the value before. */
+export interface RoadCondition {
+  value: "open" | "hard" | "closed" | "gone" | "other";
+  words: string;
+  since: number | null;
+  before: { value: "open" | "hard" | "closed" | "gone" | "other"; words: string } | null;
+  /** DMbot read this, for the DM's view: "Condition is right" keeps it (#4451). */
+  read?: boolean;
+  /** The DM has shown it to the players (a connection, #4451). */
+  shown?: boolean;
+}
 export interface WebLink {
   id: string;
+  /** A road (#4451): the DM may set its condition. Absent for anything else. */
+  road?: boolean;
+  condition?: RoadCondition;
   words: string;
   /** The table's own words as said, without the curly quotes `words` shows them in (#3574): only for a connection with no kind
    * of its own. The edit form starts from these. Missing for every other connection and from an older API. */
@@ -3588,7 +3602,10 @@ export interface AccountApi {
   /** The short summary of a picked name (#3243). `peek` answers a spoiler gate for a player. Missing from an older API. */
   webNodeSummary?(ref: string, id: string, peek?: boolean): Promise<NodeSummary>;
   /** A road's or route place's condition (#4451): queued for the bot and waited for. `on` is "connection" or "place"; `words` only with "other". */
-  roadCondition?(ref: string, change: { on: "connection" | "place"; id: string; value: "open" | "hard" | "closed" | "gone" | "none" | "other"; words?: string }): Promise<void>;
+  roadCondition?(
+    ref: string,
+    change: { on: "connection" | "place"; id: string; value: "open" | "hard" | "closed" | "gone" | "none" | "other"; words?: string },
+  ): Promise<{ batch: number | null }>;
   /** Marks a connection's condition as the DM has checked it (#4451). */
   keepRoadCondition?(ref: string, id: string): Promise<void>;
   /** Shows or hides a connection's condition from the players (#4451). */

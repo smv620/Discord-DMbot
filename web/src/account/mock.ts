@@ -2338,6 +2338,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return { batch: 90 };
     },
     async keepRoadCondition(ref, id) {
       calls.push(`keepRoadCondition:${ref}:${id}`);

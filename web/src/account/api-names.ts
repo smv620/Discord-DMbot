@@ -810,7 +810,8 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
       const queued = (await call("POST", `${base}/road-condition`, change)) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
-      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
     },
     keepRoadCondition: async (ref, id) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
