@@ -81,6 +81,14 @@ class TheRule(unittest.TestCase):
     def test_another_spelling_is_never_one(self) -> None:
         self.assertFalse(self.kept(("1", "figurine", "item"), main="Wolf Figurine of Kel"))
 
+    def test_a_small_letter_end_matches_a_name_only_whole_when_asked(self) -> None:
+        from dmbot.memory.end_match import Ends
+
+        ends = Ends({"ring of frostmere": "Ring of Frostmere"}, ["Ring of Frostmere"])
+        self.assertEqual(ends.match("Frostmere", small_whole_only=True).name, "Ring of Frostmere")
+        self.assertIsNone(ends.match("a ring", small_whole_only=True).name)  # (#4991)
+        self.assertEqual(ends.match("a ring").name, "Ring of Frostmere")  # (the clash check's way)
+
 
 class OnlyWhole(unittest.TestCase):
     """`keep_connections`' `whole_only` (the reviewer's finding on #4923): a word of a small-letter
