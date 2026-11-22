@@ -344,9 +344,7 @@ class Linking(ConfirmedMemoryTest):
         first += [said("Bram", "owes", name) for name in STRANGERS[5:25]]
         got = await self.propose(*first, new_names=20)
         self.assertEqual(got.names_over_cap, 5)
-        later = await self.propose(
-            *[said("Bram", "fears", n) for n in STRANGERS[:5]], new_names=2
-        )
+        later = await self.propose(*[said("Bram", "fears", n) for n in STRANGERS[:5]], new_names=2)
         self.assertEqual(later.named, 2)  # two of the five held are made now
         self.assertEqual(later.names_over_cap, 0)  # the other three were counted already
 
