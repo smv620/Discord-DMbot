@@ -47,6 +47,15 @@ python -m dmbot.devtools.graph_key_check BACKUP.dmbot.json.gz --docs both      #
 # options: --counts-only (ids and counts, no names)  --json OUT.json  --key OTHER_KEY.json
 ```
 
+**Why a name was missed (#5055).** `--why-missed` adds one line for each key name the run did not find and keep, with where it stopped and why: **not stored** (the reader never made it), **decided no** (stored, then turned down), **merged** (joined into another entry), **wrong kind**, or **waiting** (stored but never kept). Give the sample run's decision record, kept on the server beside the backups, to add the careful AI's own reason to each "no" and "not sure":
+
+```bash
+python -m dmbot.devtools.graph_key_check BACKUP.dmbot.json.gz --docs both --why-missed \
+    --decisions /var/lib/dmbot-sample-backups/decisions-YYYYmmdd-HHMMSS.jsonl
+```
+
+It names key entries only, never a name the run made that the key does not list; with `--counts-only` it gives the count for each stage alone. Post the lines on #3545 after each deploy. Which step of the reader dropped a **not stored** name is the next slice of #5055.
+
 ### The importance check (#3172)
 
 `core/src/dmbot/devtools/rank_key_check.py` scores a backup's importance ranks and story roles against `rank_key.json`: ranks exact, one step off and further off, and the key's roles found and missed. It works out each rank from the backup exactly as the bot does (the floor and the newest assessment). While the key is a draft, the report says "against the draft key".

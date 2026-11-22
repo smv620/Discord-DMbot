@@ -2,7 +2,7 @@
 
     python -m dmbot.devtools.graph_key_check BACKUP.dmbot.json.gz
         [--key core/tests/fixtures/story_graph/master_key.json] [--docs lore|session|both]
-        [--counts-only] [--json OUT.json]
+        [--counts-only] [--json OUT.json] [--why-missed [--decisions decisions-*.jsonl ...]]
 
 The key lists what the graph should hold after the public sample lore and session are read (see
 `core/tests/fixtures/story_graph/README.md`). This tool takes the campaign's backup (the file the
@@ -211,14 +211,17 @@ class Graph:
             for e in tables.get("entity", ())
             if _live(e) and not e.get("merged_into")
         }
+        # (by the name as written and without a leading article, as the decide step's key reads
+        # names: "The Black Hand" stored is the key's "Black Hand", #5055)
         self.by_key: dict[str, set[str]] = {}
         for e in self.entities.values():
-            self.by_key.setdefault(name_key(str(e["name"])), set()).add(str(e["id"]))
+            for k in {name_key(str(e["name"])), _plain(str(e["name"]))} - {""}:
+                self.by_key.setdefault(k, set()).add(str(e["id"]))
         for a in tables.get("alias", ()):
             if a.get("status") != "rejected" and str(a["entity_id"]) in self.entities:
-                self.by_key.setdefault(str(a["key"]) or name_key(str(a["text"])), set()).add(
-                    str(a["entity_id"])
-                )
+                said = str(a["key"]) or name_key(str(a["text"]))
+                for k in {said, _plain(str(a["text"]))} - {""}:
+                    self.by_key.setdefault(k, set()).add(str(a["entity_id"]))
         # a person the story never named is found by its description (#3736): "unnamed - Okthandom's
         # child" (or an older backup's "Okthandom's child (name unknown)") is the key's
         # "Okthandom's child". Kept apart from the names, so a description never matches a name.
@@ -235,7 +238,7 @@ class Graph:
         miss; "unnamed - maul barbarian" is the person the story never named, which is right)."""
         found: set[str] = set()
         for n in names:
-            found |= self.by_key.get(name_key(n), set())
+            found |= self.by_key.get(name_key(n), set()) | self.by_key.get(_plain(n), set())
         return found
 
     def described(self, names: Sequence[str]) -> set[str]:
@@ -1222,6 +1225,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--counts-only", action="store_true", help="print ids and counts, no names")
     parser.add_argument("--json", type=Path, help="also write the counts and rows as json")
     parser.add_argument("--i-know-this-is-the-test-campaign", action="store_true", dest="force")
+    parser.add_argument(
+        "--why-missed",
+        action="store_true",
+        help="also say, for each key name not found and kept, where it stopped and why (#5055)",
+    )
+    parser.add_argument(
+        "--decisions",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="with --why-missed: the sample run's decision record (decisions-*.jsonl), for the "
+        "careful AI's reasons; give it once for each file",
+    )
     args = parser.parse_args(argv)
     try:
         backup = decode_backup(args.backup.read_bytes())
@@ -1238,6 +1255,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         sys.stderr.write(f"{exc}\n")
         return 2
     sys.stdout.write(f"Documents scored: {args.docs}\n" + render(report, args.counts_only))
+    if args.why_missed:
+        # (here, not at the top: `why_missed` reads this module's lookups)
+        from dmbot.devtools import why_missed
+
+        try:
+            decided = why_missed.read_decisions(args.decisions)
+        except OSError as exc:
+            sys.stderr.write(f"{exc}\n")
+            return 2
+        whys = why_missed.explain(backup, key, args.docs, decided)
+        if args.counts_only:  # (the stages alone: no key names)
+            counts = why_missed.tally(whys)
+            sys.stdout.write(
+                "Why missed: "
+                + ", ".join(f"{s} {counts[s]}" for s in why_missed.STAGES if counts[s])
+                + "\n"
+            )
+        else:
+            sys.stdout.write(why_missed.render(whys))
     if args.json:
         rows = [asdict(t) for t in report.ties]
         entries = [asdict(e) for e in report.entries]
