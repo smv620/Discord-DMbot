@@ -151,39 +151,45 @@ def _ends(places: Collection[str]) -> str:
     return "|".join(re.escape(n) for n in names)
 
 
-def _lengths(text: str, ends: str) -> list[tuple[str, bool]]:
+def _lengths(text: str, ends: str) -> list[tuple[str, bool, tuple[int, int]]]:
     """Every length phrase in `text`, each with whether it is tied to an end by name ("five hours
-    to Easthaven"). The name-tied form adds only what the set phrases don't already cover."""
-    found = [(m.span(), m["words"] or m["bare"]) for m in _PHRASE.finditer(text)]
-    out = [(words, False) for _, words in found]
+    to Easthaven") and where it is (so its own sentence is the one judged, never an earlier one
+    with the same words). The name-tied form adds only what the set phrases don't already cover."""
+    found = [(m.span("words") if m["words"] else m.span("bare"), m["words"] or m["bare"])
+             for m in _PHRASE.finditer(text)]  # fmt: skip
+    out = [(words, False, span) for span, words in found]
     if ends:
         to_end = re.compile(rf"\b(?P<to>{_AMOUNT})\s+to\s+(?:{ends}){_NAME_END}", re.I)
         for m in to_end.finditer(text):
             if not any(m.start() < e and s < m.end() for (s, e), _ in found):  # (no overlap)
-                out.append((m["to"], True))
-    return [(words.strip(), tied) for words, tied in out]
+                out.append((m["to"], True, m.span("to")))
+    return [(words.strip(), tied, span) for words, tied, span in out]
 
 
 # Not so, or not yet: a negation, a plan or a "maybe" in the sentence before the length ("is not two
 # days' march", "we will ride two days"), or a time still to come after it ("… tomorrow"). A length
 # said that way is no route's length (#4991; only ever says less)
 _NOT_SO = re.compile(
-    r"\b(?:not|never|no\s+longer|isn't|aren't|wasn't|weren't|will|would|shall|might|may|could"
-    r"|\w+'ll|plans?\s+to|planning\s+to|going\s+to|hopes?\s+to)\b",
+    r"\b(?:not|never|no\s+longer|(?:is|are|was|were)n['’]t|plans?\s+to|planning\s+to|going\s+to"
+    r"|hopes?\s+to)\b",
     re.I,
 )
+# (the "maybe" and "will" words in small letters only: "In May" or "Will the ferryman" is a name,
+# and a sentence that starts "Will…" is a question, which `hedges` already reads)
+_NOT_YET = re.compile(r"\b(?:will|would|shall|might|may|could|\w+['’]ll)\b")
 _LATER = re.compile(r"\b(?:tomorrow|next\s+(?:week|month|day|year)|later)\b", re.I)
 
 
-def _stated(text: str, words: str) -> bool:
-    """Whether the sentence that holds `words` states it: not asked, supposed, someone else's
-    view, denied or planned (`hedges`, `_NOT_SO`)."""
-    at = text.casefold().find(words.casefold())
-    if at < 0:
-        return True
-    before, after, _mark = hedges.sentence_at(text, at, at + len(words))
+def _stated(text: str, span: tuple[int, int]) -> bool:
+    """Whether the sentence that holds the length at `span` states it: not asked, supposed,
+    someone else's view, denied or planned (`hedges`, `_NOT_SO`, `_NOT_YET`, `_LATER`)."""
+    start, end = span
+    before, after, _mark = hedges.sentence_at(text, start, end)
     return not (
-        hedges.hedged(text, at, at + len(words)) or _NOT_SO.search(before) or _LATER.search(after)
+        hedges.hedged(text, start, end)
+        or _NOT_SO.search(before)
+        or _NOT_YET.search(before)
+        or _LATER.search(after)
     )
 
 
@@ -195,7 +201,7 @@ def find(quote: str, places: Collection[str] = ()) -> str:
     "to reach" (a deadline) or a place this route doesn't go to."""
     text = " ".join(quote.split())
     found = _lengths(text, _ends(places))
-    return found[0][0] if len(found) == 1 and _stated(text, found[0][0]) else ""
+    return found[0][0] if len(found) == 1 and _stated(text, found[0][2]) else ""
 
 
 def find_on_way(lines: Sequence[str], places: Collection[str]) -> str:
@@ -214,8 +220,8 @@ def find_on_way(lines: Sequence[str], places: Collection[str]) -> str:
         named = names_end.search(text) is not None
         got += [
             words
-            for words, tied in _lengths(text, ends)
-            if (tied or named) and _stated(text, words)
+            for words, tied, span in _lengths(text, ends)
+            if (tied or named) and _stated(text, span)
         ]
     return got[0] if len(got) == 1 else ""
 

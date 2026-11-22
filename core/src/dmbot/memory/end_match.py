@@ -165,7 +165,7 @@ class Ends:
             if owner in self._words:
                 self._words[owner].append(set(_words(spelling)))
 
-    def match(self, end: str) -> Matched:
+    def match(self, end: str, *, small_whole_only: bool = False) -> Matched:
         exact = self._exact.get(name_key(end))
         if exact is not None:
             return Matched(exact, key=name_key(end))
@@ -183,9 +183,11 @@ class Ends:
         # of some length (not just "of" or "the")
         if not any(len(w) >= SHORTEST and w not in FILLER for w in words):
             return Matched()
-        # (an end in small letters only, "a ring", is no name as a capitalised one is (#3431): it
-        # may match a whole name or spelling above, never by one of its words, #4991)
-        if end == end.casefold():
+        # (`small_whole_only`, for a connection's end the AI wrote: an end in small letters, "a
+        # ring", is a description, not a name (#3431), so it matches a name only whole, never by one
+        # of its words (#4991). The spelling-clash check leaves it off: its variants are always in
+        # small letters, and a clash it misses would keep a link it should drop, #2757)
+        if small_whole_only and not any(ch.isupper() for ch in end):
             return Matched()
         fits = [n for n, haves in self._words.items() if any(set(words) <= have for have in haves)]
         if len(fits) == 1:

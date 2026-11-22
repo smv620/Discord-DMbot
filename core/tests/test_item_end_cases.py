@@ -32,13 +32,13 @@ def score(key: dict[str, Any]) -> dict[str, int]:
     ends = reader(key["kept"])
     counts = {"found": 0, "missed": 0, "wrong": 0, "must_not_said": 0}
     for c in key["cases"]:
-        got = ends.match(c["end"]).name
+        got = ends.match(c["end"], small_whole_only=True).name
         if got is None:
             counts["missed"] += 1
         else:
             counts["found" if got == c["name"] else "wrong"] += 1
     for m in key["must_not"]:
-        hit = ends.match(m["end"])
+        hit = ends.match(m["end"], small_whole_only=True)
         counts["must_not_said"] += bool(hit.name or hit.ambiguous)
     return counts
 
