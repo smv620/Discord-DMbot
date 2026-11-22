@@ -403,10 +403,11 @@ async def run(
 
         async def score_step(label: str, docs: str) -> Mapping[str, int | str]:
             path = await steps.backup(campaigns, gid, cid, folder, label)
-            lines = steps.score(path, docs)
+            met = await steps.met_words(db, gid, cid)  # (#5055 D: a backup does not carry them)
+            lines = steps.score(path, docs, met)
             for line in lines:
                 say(line)
-            return {"lines": len(lines), **steps.score_numbers(path, docs)}
+            return {"lines": len(lines), **steps.score_numbers(path, docs, met)}
 
         async def found_step() -> Mapping[str, int | str]:
             n = await characters.found_by_the_read(db, memory, gid, cid)
@@ -945,7 +946,8 @@ async def part2(args: argparse.Namespace, say: Callable[[str], None] | None = No
         path = await steps.backup(
             steps.campaign_store(db), args.guild, args.part2, folder, "answered"
         )
-        for line in steps.score(path, "both"):
+        met = await steps.met_words(db, args.guild, args.part2)
+        for line in steps.score(path, "both", met):
             say(line)
     finally:
         await db.close()

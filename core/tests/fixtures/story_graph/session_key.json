@@ -1,9 +1,10 @@
 {
  "campaign": "test of the frostmaiden (sample)",
  "source": "the public sample session, https://docs.google.com/document/d/1BtHZ4O75886WHOoTq0FCPst2hdg7YLnsaCiI-kNsv-E/edit?usp=sharing (the plain-text export; each connection names its line)",
- "version": 2,
+ "version": 3,
  "goes_with": "the small sample lore, https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing",
  "how_to_read": {
+  "described": "true = a thing the story describes but never names (the kennel, Garret's old sled); DMbot never makes a name from a description, so it is scored on its own line, found as an entry or on the met-but-not-named list by its said_as words, and is never a name miss (#5055 D)",
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted); needs_context = only readable with the lore or the recap (for example 'she' is Keegan); recap_only = only in the 'Previously' recap on line 1, so background and never this session's event; by_rule = made by a rule, not read",
   "relation": "owns, carries, sibling, spouse, member, works_for, knows (+ one of nine feeling words), associate; place ties by word: works_in, last_seen_in; in (only a place inside a place); route (a road or way between two places, either way round, #4255)",
   "must_find": "false = a good find if present, not a miss if absent",
@@ -107,6 +108,8 @@
    "name": "Garret's clients",
    "kind": "group",
    "aliases": [],
+   "described": true,
+   "said_as": ["Garret's clients", "Garret's client", "the people Garret guided"],
    "note": "Unnamed. Hired Garret as a guide; Keegan never met them."
   },
   {
@@ -196,18 +199,24 @@
    "name": "The kennel",
    "kind": "place",
    "aliases": [],
+   "described": true,
+   "said_as": ["kennel"],
    "note": "Where Jebidiah keeps the dogs, in Targos."
   },
   {
    "name": "The windbreak shelter",
    "kind": "place",
    "aliases": [],
+   "described": true,
+   "said_as": ["windbreak shelter", "windbreak", "shelter against the cliff"],
    "note": "Unnamed small shelter against a cliff where the party spends the blizzard."
   },
   {
    "name": "Garret's old sled",
    "kind": "item",
    "aliases": [],
+   "described": true,
+   "said_as": ["Garret's old sled", "old sled", "Garret's sled"],
    "note": "The sled Keegan lets the party take."
   },
   {
