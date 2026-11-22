@@ -8,9 +8,10 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from dmbot.campaigns.store import CampaignStore
 from dmbot.memory import weather_marks as wm
 from dmbot.memory.models import CONFIRMED, NewName, new_id
-from tests.test_memory_names import GUILD, NamesTest
+from tests.test_memory_names import DM, GUILD, NamesTest
 
 
 class OncePerPlace(NamesTest):
@@ -201,6 +202,67 @@ class WhileTheTableIsPlaying(OncePerPlace):
             ),
             [True],
         )  # fmt: skip
+
+    async def other_campaign_place(self) -> tuple[str, str, str]:
+        """A second campaign with its own place and climate row: (campaign id, place, climate)."""
+        other = await CampaignStore(self.db).create(GUILD, "Two", DM)
+        made = await self.memory.add_names(
+            GUILD, other.id, [NewName("Frostmere", "place", CONFIRMED)], source="dm"
+        )
+        (place,) = made.value
+        assert place is not None
+        row = new_id()
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
+                " status, source, created_at) VALUES (%s, %s, %s, %s, 'climate', 'hot',"
+                " 'confirmed', 'dm', 1)",
+                (GUILD, other.id, row, place),
+            )
+        return other.id, place, row
+
+    async def test_taking_back_a_moment_leaves_another_campaigns_marks_alone(self) -> None:
+        other_id, other_place, other_climate = await self.other_campaign_place()
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id, [wm.Mark(self.place, "snow", self.climate, "hot")],
+            now=40,
+        )  # fmt: skip
+        await wm.first_time(
+            self.db, GUILD, other_id, [wm.Mark(other_place, "snow", other_climate, "hot")], now=40,
+        )  # fmt: skip
+        deleted = await wm.unmark_at(self.db, GUILD, self.campaign.id, 40)
+        self.assertEqual(deleted, 1)
+        self.assertEqual(await wm.noted_at(self.db, GUILD, self.campaign.id, 40), [])
+        self.assertEqual(
+            await wm.noted_at(self.db, GUILD, other_id, 40),
+            [(other_place, "snow", "hot")],
+        )
+
+    async def test_taking_back_a_moment_leaves_another_moment_alone(self) -> None:
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id, [wm.Mark(self.place, "snow", self.climate, "hot")],
+            now=40,
+        )  # fmt: skip
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id, [wm.Mark(self.place, "frost", self.climate, "hot")],
+            now=90,
+        )  # fmt: skip
+        self.assertEqual(await wm.unmark_at(self.db, GUILD, self.campaign.id, 40), 1)
+        self.assertEqual(
+            await wm.noted_at(self.db, GUILD, self.campaign.id, 90),
+            [(self.place, "frost", "hot")],
+        )
+
+    async def test_taking_back_a_moment_with_nothing_there_deletes_nothing(self) -> None:
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id, [wm.Mark(self.place, "snow", self.climate, "hot")],
+            now=40,
+        )  # fmt: skip
+        self.assertEqual(await wm.unmark_at(self.db, GUILD, self.campaign.id, 77), 0)
+        self.assertEqual(
+            await wm.noted_at(self.db, GUILD, self.campaign.id, 40),
+            [(self.place, "snow", "hot")],
+        )
 
 
 class TheBackup(unittest.TestCase):
