@@ -3,7 +3,7 @@
 // A connection DMbot inferred from the lore (#3928, page half of #4967): its "Why?" says it is DMbot's guess with the
 // reason and never shows the lore's words beside it; the waiting card's guess line is in Discord's words; and a Keep all
 // that leaves guesses says how many still need a yes.
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { WaitingBackstory, WebLink } from "../src/account/api";
@@ -64,7 +64,6 @@ describe("the waiting card and Keep all", () => {
   it("the guess line is in Discord's words, with no full stop after the reason", async () => {
     await open([{ ...base, guess: "offered him food" }]);
     expect(await screen.findByText("🤔 DMbot's guess: offered him food (your lore doesn't say so)")).toBeTruthy();
-    expect(w.guessLine("offered him food")).toBe("🤔 DMbot's guess: offered him food (your lore doesn't say so)");
   });
 
   it("Keep all that leaves a guess says how many still need a yes", async () => {
@@ -91,8 +90,8 @@ describe("the waiting card and Keep all", () => {
   });
 
   it("the section holds no guess line before any Keep all is pressed", async () => {
-    const card = within(document.body);
     await open([{ ...base, id: "c1", guess: "offered him food" }, { ...base, id: "c2", object: "Mara" }]);
-    expect(card.queryByText(/still need/)).toBeNull();
+    expect(await screen.findByText(w.guessLine("offered him food"))).toBeTruthy();
+    expect(screen.queryByText(/still need/)).toBeNull();
   });
 });
