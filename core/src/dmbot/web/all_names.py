@@ -17,7 +17,7 @@ import re
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory import map_facts, place_levels
+from dmbot.memory import map_facts, place_levels, place_peoples
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.background import LABELS
 from dmbot.memory.models import MERGE_MANY_MAX, PLAYERS_TEXT_MAX, PRONOUNCED
@@ -288,6 +288,8 @@ ACTIONS = (
     "map-terrain",  # a place's land (#4287): {value, how}; null value is "Not sure"
     "map-climate",  # its climate (#4287): {value, how}
     "map-control",  # who rules it (#4287): {group, how}; null group is "Not sure"
+    "map-culture",  # its culture (#4412): {value, how, words?}; null value clears every lineage
+    "map-population",  # who lives there (#4412): {value, how?, words?}; null value clears
     "map-show",  # whether players who can see it see its land, climate and ruler: {shown}
 )
 
@@ -295,6 +297,7 @@ KIND_WORD = re.compile(
     r"^[a-z_]{2,20}$"
 )  # the stored kind keys ("place", "character"); never "concept" (an idea)
 KINDS_MAX = 8
+PEOPLE_WORDS_MAX = 60  # the DM's own words for a culture or who lives there (#4412)
 
 
 def _text(value: object) -> str:
@@ -455,6 +458,35 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             elif not isinstance(value, str) or value not in map_facts.VALUES[layer]:
                 raise RecapError("bad_name")
             text = f"{value} {how}".strip() if value else ""
+    elif action in ("map-culture", "map-population"):  # (#4412) a lineage, a named culture or words
+        layer = action[4:]
+        value = body.get("value")
+        how = body.get("how") or ""
+        words = body.get("words") or ""
+        hows = map_facts.HOWS[layer]
+        if not isinstance(how, str) or not isinstance(words, str):
+            raise RecapError("bad_name")
+        words = " ".join(words.split())  # (a blank is no words)
+        if value is None:  # "Not sure": the layer is cleared (every lineage)
+            if how or words:
+                raise RecapError("bad_name")
+            text = ""
+        else:
+            lineage = isinstance(value, str) and value in place_peoples.LINEAGES
+            named = layer == "culture" and isinstance(value, str) and bool(ID_PATTERN.match(value))
+            if not (lineage or named or value == place_peoples.OTHER):
+                raise RecapError("bad_name")
+            if (how and how not in hows) or (layer == "culture" and not how):
+                raise RecapError("bad_name")
+            if value == place_peoples.OTHER:
+                words = " ".join(words.split())
+                if not 1 <= len(words) <= PEOPLE_WORDS_MAX:
+                    raise RecapError("bad_name")
+                text = f"{value} {how or '-'} {words}"
+            else:
+                if words:
+                    raise RecapError("bad_name")
+                text = f"{value} {how or '-'}"
     elif action == "map-show":  # 🙈 / 👁️ (#4287)
         if not isinstance(body.get("shown"), bool):
             raise RecapError("bad_action")
