@@ -6,7 +6,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { AccountApi, WebLink } from "../src/account/api";
+import type { AccountApi, WebLink, WebLinkChange, WebViewer } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import { WhoKnows } from "../src/account/WebLinePanel";
 import { webPage as w } from "../src/content/web-words";
@@ -66,5 +66,85 @@ describe("a connection with no guess", () => {
     await waitFor(() => expect(screen.getByRole("checkbox", { name: /^Cerric/ })).toBeTruthy());
     expect(screen.queryByText(/DMbot's guess/)).toBeNull();
     expect(screen.queryByText(w.whoKeepsGuesses)).toBeNull();
+  });
+});
+
+describe("the shown list sent with a save (#4968 ruling, core #4976)", () => {
+  const viewer = (id: string, name = id): WebViewer => ({ id, name, kind: "npc", group: "other" });
+  function picker(holders: NonNullable<WebLink["knownBy"]>, pages: (q: string) => WebViewer[], who: WebLink["who"] = "some") {
+    const api = mockApi("table");
+    api.webViewers = async (_ref, q) => {
+      const viewers = pages(q);
+      return { viewers, total: viewers.length };
+    };
+    const sent: WebLinkChange[] = [];
+    const act = async (change: WebLinkChange) => {
+      sent.push(change);
+      return null;
+    };
+    render(<WhoKnows api={api} refId={REF} link={{ ...link(holders), who }} act={act} />);
+    return { sent };
+  }
+
+  it("save sends every id the picker showed across searches, once each, at most 50", async () => {
+    let calls = 0;
+    const { sent } = picker([{ id: "pc-cerric", name: "Cerric" }], () => {
+      calls++;
+      if (calls === 1) return [viewer("pc-cerric", "Cerric"), viewer("pc-mira", "Mira")];
+      return [viewer("npc-tavin", "Tavin"), viewer("pc-mira", "Mira")];
+    });
+    fireEvent.click(screen.getByRole("button", { name: w.whoSome }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /^Mira/ })).toBeTruthy());
+    fireEvent.input(screen.getByRole("searchbox"), { target: { value: "Tav" } });
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: /^Tavin/ })).toBeTruthy());
+    fireEvent.click(screen.getByRole("checkbox", { name: /^Tavin/ }));
+    fireEvent.click(screen.getByRole("button", { name: w.whoSave }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    const change = sent[0] as Extract<WebLinkChange, { action: "who" }>;
+    expect(change.shown?.sort()).toEqual(["npc-tavin", "pc-cerric", "pc-mira"]);
+    expect(change.shown).toHaveLength(3);
+  });
+
+  it("the shown list holds the 50 most recently shown when more were shown", async () => {
+    let calls = 0;
+    const { sent } = picker([{ id: "pc-cerric", name: "Cerric" }], () => {
+      calls++;
+      const from = calls === 1 ? 1 : 31;
+      return Array.from({ length: 30 }, (_, i) => viewer(`v${from + i}`));
+    });
+    fireEvent.click(screen.getByRole("button", { name: w.whoSome }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "v1" })).toBeTruthy());
+    fireEvent.input(screen.getByRole("searchbox"), { target: { value: "x" } });
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "v60" })).toBeTruthy());
+    fireEvent.click(screen.getByRole("checkbox", { name: "v60" }));
+    fireEvent.click(screen.getByRole("button", { name: w.whoSave }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    const change = sent[0] as Extract<WebLinkChange, { action: "who" }>;
+    expect(change.shown).toHaveLength(50);
+    expect(change.shown).toContain("v60");
+    expect(change.shown).not.toContain("v1");
+  });
+
+  it("a guessed holder never shown isn't in shown", async () => {
+    const { sent } = picker([{ id: "npc-ghost", name: "Ghost", guess: "likely" }, { id: "pc-cerric", name: "Cerric" }], () => [viewer("pc-cerric", "Cerric")]);
+    fireEvent.click(screen.getByRole("button", { name: w.whoSome }));
+    // Ghost is ticked but never drawn; Cerric is drawn and unticked, so the save goes ahead without Cerric.
+    fireEvent.click(await screen.findByRole("checkbox", { name: /^Cerric/ }));
+    fireEvent.click(screen.getByRole("button", { name: w.whoSave }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    const change = sent[0] as Extract<WebLinkChange, { action: "who" }>;
+    expect(change.characters).toEqual(["npc-ghost"]);
+    expect(change.shown).toEqual(["pc-cerric"]);
+    expect(change.shown).not.toContain("npc-ghost");
+  });
+
+  it("save sends no shown when the list showed nobody", async () => {
+    // The connection is "dm" today, so saving the ticked holder is a change, and the list has nobody to show.
+    const { sent } = picker([{ id: "pc-cerric", name: "Cerric" }], () => [], "dm");
+    fireEvent.click(screen.getByRole("button", { name: w.whoSome }));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.whoSave }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: w.whoSave }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect("shown" in sent[0]!).toBe(false);
   });
 });

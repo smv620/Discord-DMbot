@@ -213,9 +213,11 @@ describe("who knows this, on a held connection", () => {
     fireEvent.click(await within(panel).findByRole("checkbox", { name: "Cerric" }));
     fireEvent.click(within(panel).getByRole("checkbox", { name: "Mira" }));
     fireEvent.click(within(panel).getByRole("button", { name: w.whoSave }));
-    await waitFor(() =>
-      expect(changes).toEqual([{ action: "who", id: "l1", who: "some", characters: ["pc-cerric", "pc-mira"] }]),
-    );
+    await waitFor(() => expect(changes).toHaveLength(1));
+    // The save also says which characters the picker's list showed (#4970, core #4976): the ticked two are among them.
+    expect(changes[0]).toMatchObject({ action: "who", id: "l1", who: "some", characters: ["pc-cerric", "pc-mira"] });
+    expect(changes[0]).toHaveProperty("shown");
+    expect((changes[0] as { shown: string[] }).shown).toEqual(expect.arrayContaining(["pc-cerric", "pc-mira"]));
   });
 
   it("the state line names the characters, and \"and n more\" past five", async () => {

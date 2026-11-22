@@ -2129,7 +2129,9 @@ export type WebLinkChange =
   // "everyone" is the table's answer; the read side calls the same answer "all" (WebLink.who). The bot's door takes
   // these names with #3202, so this change is not sent while WHO_KNOWS_LIVE is off.
   // "common" is 🌍 Common knowledge (#4559): no characters, and the bot shows the names to the players first.
-  | { action: "who"; id: string; who: "dm" | "some" | "everyone" | "common"; characters?: string[] }
+  // `shown` is every character the picker's list showed while it was open (at most 50, the most recent): the bot never
+  // removes or confirms a guess the page did not show (#4968 ruling, core #4976). Omitted when the list showed nobody.
+  | { action: "who"; id: string; who: "dm" | "some" | "everyone" | "common"; characters?: string[]; shown?: string[] }
   | { action: "remove"; id: string; confirm: true }
   // Takes back an earlier edit by its `batch` (core #4156); `id` is any link of the pair, the route's path wants one.
   | { action: "undo"; id: string; batch: number };
