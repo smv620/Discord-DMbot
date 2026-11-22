@@ -143,6 +143,7 @@ class NotStated(unittest.TestCase):
         for quote, words in (
             ("The journey would take three days' ride from Bryn Shander.", "three days' ride"),
             ("It will be two days by cart from Targos.", "two days by cart"),
+            ("You will need two days by cart to Targos.", "two days by cart"),  # (#4997)
         ):
             with self.subTest(quote):
                 self.assertEqual(rl.find(quote), words)  # (#4992: only a person's plan is dropped)

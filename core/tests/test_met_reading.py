@@ -88,6 +88,12 @@ class Reading(unittest.TestCase):
             self.assertTrue(in_words_of(many, [f"A {one} here."]), many)
         self.assertFalse(in_words_of("ogre", ["Two barbarians jump out."]))
 
+    def test_a_possessive_says_its_word(self) -> None:  # (Supervisor's ruling A on #4997)
+        self.assertTrue(in_words_of("ogre", ["The ogre's club smashes the cart."]))
+        self.assertTrue(in_words_of("ogre", ["The ogre’s club smashes the cart."]))
+        self.assertTrue(in_words_of("ogres", ["The ogre's club smashes the cart."]))
+        self.assertFalse(in_words_of("troll", ["The ogre's club smashes the cart."]))
+
     def test_the_same_words_are_one_encounter_and_the_cap_holds(self) -> None:
         items, past = gathered(
             [Met("barbarians", 2, ("1",)), Met("the barbarian", 0, ("4",))]
