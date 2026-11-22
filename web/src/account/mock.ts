@@ -2332,6 +2332,31 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The short summary of a picked name (#3243): a pretend DM reads it at once; a player's first name is behind a
     // spoiler gate until they ask with `peek`. An id that is not on the graph is not found.
+    // A road's or route place's condition (#4451): DM only; the mock keeps no state, the page's own list is what it draws.
+    async roadCondition(ref, change) {
+      calls.push(`roadCondition:${ref}:${change.on}:${change.id}:${change.value}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+    },
+    async keepRoadCondition(ref, id) {
+      calls.push(`keepRoadCondition:${ref}:${id}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+    },
+    async showRoadCondition(ref, id, shown) {
+      calls.push(`showRoadCondition:${ref}:${id}:${shown}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+    },
+    async undoRouteLength(ref, batch) {
+      calls.push(`undoRouteLength:${ref}:${batch}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+    },
     // A character's lineage and class (#3925): DM only. "pc-cerric" is a Dwarf and a Cleric, "npc-guard-1" has none; any other node has none.
     async nodeTraits(ref, node) {
       calls.push(`nodeTraits:${ref}:${node}`);

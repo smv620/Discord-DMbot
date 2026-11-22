@@ -805,6 +805,32 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     threadCard: async (ref, thread) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads/${encodeURIComponent(thread)}/card`)) as ThreadCard,
     // The story threads DMbot found (#4482): read only, DM only (the door answers anyone else with nothing).
+    // A road's or route place's condition (#4451): queued for the bot, waited for, and no batch of its own (the Undo is undoRouteLength).
+    roadCondition: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/road-condition`, change)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    keepRoadCondition: async (ref, id) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/road-condition/keep`, { id })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    showRoadCondition: async (ref, id, shown) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/road-condition/show`, { id, shown })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    // Takes back a route-length change by its batch (the same undo route as the length page): a road's condition changes come back with it (#4451).
+    undoRouteLength: async (ref, batch) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/route-length/${batch}/undo`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
     // A character's lineage and class (#3925): DM only; the door answers anyone else with nothing.
     nodeTraits: async (ref, node) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/nodes/${encodeURIComponent(node)}/traits`)) as { traits: NodeTrait[] }).traits,
