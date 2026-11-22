@@ -436,7 +436,11 @@ class ThePath(NamesTest):
         self.assertRegex(text, r"About [\d,]+ AI credits? for the lore\.")
         self.assertNotIn("cent", text)  # (the old cents wording is gone)
         self.assertIn("not a published book", text)
-        self.assertIn("does not keep it, only a short line", text)
+        self.assertIn(
+            "DMbot does not keep it. It keeps a short line beside each name until you answer it, "
+            "and, for you alone, the document's name and the heading each name was found under.",
+            text,
+        )
         self.assertEqual(
             [b.label for b in view.children],
             ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel", ui_bg.KNOWS_LABELS["world"]],

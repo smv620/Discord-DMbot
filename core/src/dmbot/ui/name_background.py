@@ -179,7 +179,8 @@ def rights_text(pictures: bool = False) -> str:
         f"Use this for {NOT_A_BOOK}. (For a book or adventure, use the **Shared story** "
         "switch.)\n**Pressing 🤖 Find names says this is your own writing, and you may use "
         "it.** The text is sent once to Anthropic (an AI company) to be read. DMbot does not "
-        "keep it, only a short line beside each name until you answer it."
+        "keep it. It keeps a short line beside each name until you answer it, and, for you alone, "
+        "the document's name and the heading each name was found under."
         + (PICTURES_KEPT_NOTE if pictures else "")
     )
 
