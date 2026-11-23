@@ -286,14 +286,16 @@ class Found:
 
 
 def tally(
-    heard: Iterable[Heard], texts: Mapping[str, str] | None = None
+    heard: Iterable[Heard], texts: Mapping[str, str] | None = None, *, every: bool = False
 ) -> tuple[list[Found], list[Outcome]]:
     """The session's names from every batch's checked answers, by name key: hearings are distinct
     lines (a line cited twice is one hearing), the reason is the strongest given (introduced
     first), and a name needs the hearings its reason asks for (`HEARINGS`); the rest end as
     `too_few_hearings`. `texts`: every line the reader read, by number; a line that holds one of
     the name's spellings is a hearing even when the reader cited another (it cites at most
-    `LINES_MAX`). Most heard first."""
+    `LINES_MAX`). Most heard first. `every`: no name ends with too few hearings here: the after-
+    session step counts hearings for a whole group of spellings (`name_groups`, design section 5),
+    so a spelling heard once may still join one heard once more."""
     by_key: dict[str, list[Heard]] = {}
     for h in heard:
         by_key.setdefault(h.key, []).append(h)
@@ -307,7 +309,7 @@ def tally(
         why = min((h.why for h in group), key=WHYS.index)
         spelled = Counter(h.name for h in group).most_common(1)[0][0]
         kind = Counter(h.kind for h in group).most_common(1)[0][0]
-        if len(lines) < HEARINGS[why]:
+        if not every and len(lines) < HEARINGS[why]:
             dropped.append(Outcome(spelled, TOO_FEW))
             continue
         kept.append(Found(spelled, kind, why, len(lines), lines))
