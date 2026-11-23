@@ -710,8 +710,6 @@ function pretendReveals(): RevealProposal[] {
   ];
 }
 
-// The "Still in the party?" questions waiting in a pretend campaign (#4895): one death, one goodbye with two in it.
-/** Two deeds the party did in the pretend campaign (#3591): ids are 32 hex characters, as the page sends them. */
 /** Six heads-ups from this session in the pretend campaign (#3695): a clash, an ended one, a pinned one, a secret clue with a list and one without, and one more clash. */
 function pretendContinuity(): ContinuityHit[] {
   const at = { subject: "", relationship: "", object: "", details: "" };
@@ -725,12 +723,14 @@ function pretendContinuity(): ContinuityHit[] {
     { id: "c6".repeat(16), kind: "clash", level: "possible", name: "Sister Ilse", now: now("Sister Ilse", "is", "in the crypt"), earlier: null, earlierWords: "Ilse left the abbey", ended: "destroyed", earlierSession: 3, quote: null, pinned: false, learner: null, listed: null, choice: "story_changed" },
   ];
 }
+/** Two deeds the party did in the pretend campaign (#3591): ids are 32 hex characters, as the page sends them. */
 function pretendDeeds(): (DeedWaiting & { done: boolean })[] {
   return [
     { id: "a1".repeat(16), doer: "Mira Voss", text: "pulled Tavin out of the river", viewers: ["Tavin"], effect: "Helped them", kind: "rescue", done: false },
     { id: "b2".repeat(16), doer: "Captain Brask", text: "turned away the ferrymen at dusk", viewers: ["Old Pell", "Tamsin Reed"], effect: "Annoyed them", kind: "", done: false },
   ];
 }
+// The "Still in the party?" questions waiting in a pretend campaign (#4895): one death, one goodbye with two in it.
 function pretendLeaveGroups(): LeaveGroup[] {
   return [
     { group: "dead-okthandom", kind: "died", characters: [{ id: "lv-okthandom", name: "Okthandom" }] },

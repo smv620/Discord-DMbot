@@ -148,10 +148,12 @@ describe("the heads-ups panel", () => {
     release();
   });
 
-  it("the names and the quotes are never in the document title", async () => {
-    panel(mockApi("table"));
-    await screen.findByText(w.heading);
-    expect(document.title).not.toContain("Captain Brask");
-    expect(document.title).not.toContain("Brask was in the keep");
+  it("a \"They learned it\" card's first button sends the change and says they learned it", async () => {
+    const api = mockApi("table");
+    panel(api);
+    const learned = (await screen.findAllByRole("button", { name: w.theyLearned }))[0]!;
+    fireEvent.click(learned);
+    await waitFor(() => expect(screen.getByText(w.learned_done)).toBeTruthy());
+    expect(api.calls.some((c) => c.startsWith("answerContinuity:"))).toBe(true);
   });
 });

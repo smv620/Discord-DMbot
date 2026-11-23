@@ -19,7 +19,6 @@ export const continuityWords = {
   refused: "DMbot couldn't do that one yet, so it is still waiting. Check the names it mentions, then try again.",
   couldNot: "Couldn't do that. Try again in a minute.",
   failed: "Couldn't load the heads-ups.",
-  working: "Working on it…",
   wasnt_done: "Taken out. DMbot forgets it.",
   changed_done: "Noted. The story is changed.",
   learned_done: "Noted. They learned it.",

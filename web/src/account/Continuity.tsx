@@ -2,6 +2,7 @@
 // "Heads-ups from this session" on the Names page (#3695, page half 1): where the story may clash with itself, answered one at a time
 // in Discord's words, five on the page at once. DM only: the door answers anyone else with not-allowed. Nothing is asked or read while
 // CONTINUITY_LIVE is off; a second press waits for the first answer; no name, quote or word of the story goes into the title or a URL.
+import { Fragment } from "preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { CONTINUITY_LIVE } from "../content/continuity-switch";
@@ -16,10 +17,10 @@ type Said = { ok: boolean; text: string };
 function joined(parts: [string, boolean][]) {
   const shown = parts.filter(([text]) => text !== "");
   return shown.map(([text, bold], i) => (
-    <>
+    <Fragment key={i}>
       {i > 0 ? " " : ""}
       {bold ? <strong>{text}</strong> : text}
-    </>
+    </Fragment>
   ));
 }
 
@@ -39,7 +40,7 @@ function lineOf(h: ContinuityHit) {
   const level = w.levelOf(h.level);
   const when = h.earlierSession != null ? w.inSession(h.earlierSession) : "";
   const quote = h.quote != null ? w.quoted(h.quote) : "";
-  const before = h.earlierWords ?? w.before;
+  const before = h.earlierWords || w.before;
   if (h.kind === "knows_a_secret") {
     const listed = h.listed && h.listed.length > 0 ? h.listed.join(", ") : w.emptyList;
     return (
@@ -86,10 +87,13 @@ export default function Continuity({ api, refId, onSignedOut }: { api: AccountAp
   const [problem, setProblem] = useState<string | null>(null);
   const [said, setSaid] = useState<Said | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  // Lines set aside with Ignore stay on the page as "waiting", without a call, until the panel is asked again.
+  // Lines set aside with Ignore stay off the page, without a call, until the page is reloaded (the panel's state is not kept).
   const [ignored, setIgnored] = useState<Set<string>>(new Set());
   const flight = useRef(false);
   const live = useRef(true);
+  // The panel's campaign now: a read that was asked for an earlier campaign must not overwrite this one's list.
+  const now = useRef(refId);
+  now.current = refId;
   useEffect(() => {
     live.current = true;
     return () => void (live.current = false);
@@ -97,13 +101,14 @@ export default function Continuity({ api, refId, onSignedOut }: { api: AccountAp
 
   async function read(): Promise<void> {
     if (!api.continuityHits) return;
+    const asked = refId;
     try {
-      const got = await api.continuityHits(refId);
-      if (!live.current) return;
+      const got = await api.continuityHits(asked);
+      if (!live.current || now.current !== asked) return;
       setHits({ total: got.total, list: got.hits });
       setProblem(null);
     } catch (error) {
-      if (!live.current) return;
+      if (!live.current || now.current !== asked) return;
       if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut?.();
       setProblem(w.failed);
     }
@@ -135,7 +140,7 @@ export default function Continuity({ api, refId, onSignedOut }: { api: AccountAp
     setSaid(null);
     try {
       await api.answerContinuity(refId, { claim: h.id, choice });
-      if (live.current) setSaid({ ok: true, text: choice === "not" ? w.wasnt_done : w.changed_done });
+      if (live.current) setSaid({ ok: true, text: choice === "not" ? w.wasnt_done : h.choice === "they_learned_it" ? w.learned_done : w.changed_done });
     } catch (error) {
       if (live.current) {
         if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut?.();
@@ -143,7 +148,7 @@ export default function Continuity({ api, refId, onSignedOut }: { api: AccountAp
         setSaid({ ok: false, text: kind === "gone" ? w.gone : kind === "refused" ? w.refused : w.couldNot });
       }
     } finally {
-      await askAndRead(); // (what shows is always the API's own)
+      if (live.current) await askAndRead(); // (what shows is always the API's own; nothing after a sign-out or an unmount)
       flight.current = false;
       if (live.current) setBusy(null);
     }
