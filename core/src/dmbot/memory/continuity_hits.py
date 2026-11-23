@@ -45,13 +45,15 @@ def _id(value: str | None) -> str | None:
 
 
 def hit_of(conflict: Conflict) -> Hit | None:
-    """The pointers of one heads-up the check found. The earlier fact is the first one a "the story
-    changed" answer would end, else the ended entry it would bring back. None when the claim or
-    its entry has no id the table can hold (the page would have nothing to point at)."""
+    """The pointers of one heads-up the check found. `earlier_id` is the first fact a "the story
+    changed" answer would end (a clash, a pinned fact), and None for the two death kinds: there the
+    read door reads the entry's own open ending (dead or destroyed) by `entity_id`, as the card's
+    line does. None when the claim or its entry has no id the table can hold (the page would
+    have nothing to point at)."""
     claim_id, entity_id = _id(conflict.claim.id), _id(conflict.entity_id)
     if claim_id is None or entity_id is None:
         return None
-    earlier = _id(conflict.clash_ids[0]) if conflict.clash_ids else _id(conflict.revive_id)
+    earlier = _id(conflict.clash_ids[0]) if conflict.clash_ids else None
     return Hit(
         claim_id=claim_id,
         kind=conflict.kind[:40],
@@ -113,6 +115,17 @@ class ContinuityHits:
             )
             for r in rows
         ]  # fmt: skip
+
+    async def has(self, guild_id: int, campaign_id: str, claim_id: str) -> bool:
+        """Whether the last ask listed this claim: the page answers only its own lines, as the
+        card does."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM continuity_hits WHERE guild_id = %s AND campaign_id = %s"
+                " AND claim_id = %s LIMIT 1",
+                (guild_id, campaign_id, claim_id),
+            )
+            return await cur.fetchone() is not None
 
     async def drop(self, guild_id: int, campaign_id: str, claim_id: str) -> None:
         """An answered claim leaves the set at once (its page line goes, whatever its kind)."""

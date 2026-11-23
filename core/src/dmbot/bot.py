@@ -374,6 +374,9 @@ from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.card_summaries import CardSummaries
+from dmbot.memory.claims import GONE as CLAIM_GONE
+from dmbot.memory.claims import ODD_NOW as CLAIM_ODD_NOW
+from dmbot.memory.claims import STOPPED_NOW as CLAIM_STOPPED_NOW
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import CHANGED as CONTINUITY_CHANGED
 from dmbot.memory.continuity import NOT_TRUE as CONTINUITY_NOT_TRUE
@@ -15520,15 +15523,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def _answer_continuity(
         self, guild_id: int, campaign_id: str, claim_id: str, choice: str
-    ) -> bool:
+    ) -> str:
         """A heads-up answered from the website (#3695 half 1), through the card's own answer
         (`ContinuityStore.answer`), with who is recorded asked again now. "c": the story changed
         (the claim becomes a fact, in one change; the story watch then looks, as after the card's
-        button); "n": it wasn't real. False when the claim is not waiting any more (answered in
-        Discord, say). Either way the claim leaves the page's kept set at once."""
+        button); "n": it wasn't real. Only a claim the last ask listed (the card answers only its
+        own lines). As on the card, a claim not waiting any more, or one someone who stopped
+        being recorded said, ends the heads-up (`GONE`); any other refusal leaves it waiting and on
+        the page (`REFUSED`)."""
         db, memory = self._picture_db, self.memory
         if db is None or memory is None:
             raise RuntimeError("the heads-ups cannot be answered yet")
+        hits = ContinuityHits(db)
+        if not await hits.has(guild_id, campaign_id, claim_id):
+            return web_actions.GONE
         action = CONTINUITY_CHANGED if choice == "c" else CONTINUITY_NOT_TRUE
         try:
             await ContinuityStore(memory).answer(
@@ -15539,14 +15547,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 opted_in=await self.consent.consenting(guild_id),
                 levels=self.settings.continuity,
             )
-        except MemoryRuleError:
-            await ContinuityHits(db).drop(guild_id, campaign_id, claim_id)
-            return False
-        await ContinuityHits(db).drop(guild_id, campaign_id, claim_id)
+        except MemoryRuleError as exc:
+            if (str(exc) or CLAIM_GONE) not in (CLAIM_GONE, CLAIM_STOPPED_NOW, CLAIM_ODD_NOW):
+                return web_actions.REFUSED  # (the card shows the rule and keeps the heads-up)
+            await hits.drop(guild_id, campaign_id, claim_id)
+            return web_actions.GONE
+        await hits.drop(guild_id, campaign_id, claim_id)
         if action == CONTINUITY_CHANGED:
-            await self._watch_after_answer(guild_id, campaign_id)
+            # (in the background, as after the card's button: the answer never waits on it)
+            self._track(self._watch_after_answer(guild_id, campaign_id), "continuity-watch")
         log.info("Continuity heads-up answered from the website: %s", choice)  # a word only
-        return True
+        return web_actions.APPLIED
 
     async def _watch_after_answer(self, guild_id: int, campaign_id: str) -> None:
         """A condition the DM just confirmed may have left their adventure behind (#1729): the

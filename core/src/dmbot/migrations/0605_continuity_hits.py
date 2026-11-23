@@ -12,9 +12,10 @@ from dmbot.migrations._shared import _isolate
 
 # `continuity_hits` holds pointers only, never words (GraphEngineer's answer (a) and Supervisor's
 # ruling on #3695): the claim, the kind of heads-up, its level, the entry it is about, the earlier
-# fact it clashes with and that fact's session, the character learning a secret (a secret clue's
-# line), whether the earlier fact is pinned, and its place in the list. A line in words would go
-# stale the moment someone stops being recorded or a fact changes; the read door works the words
+# fact it clashes with and that fact's session (none for a death: the door reads the entry's own
+# open ending by `entity_id`, as the card's line does), the character learning a secret (a secret
+# clue's line), whether the earlier fact is pinned, and its place in the list. A line in words would
+# go stale the moment someone stops being recorded or a fact changes; the read door works the words
 # out from these pointers at read time, with consent read then. One set for each campaign, replaced
 # whole on each ask (`continuity-ask`), isolated with forced row-level security, its campaign key
 # `ON UPDATE CASCADE` (a campaign moved to another server takes it along), not in a backup (it is

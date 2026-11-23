@@ -57,6 +57,12 @@ class ThePointers(MemoryTest):
         await self.hits.replace(self.g, self.other.id, [])  # (emptying B leaves A alone)
         self.assertEqual(len(await self.hits.listed(self.g, self.one.id)), 1)
 
+    async def test_has_says_whether_the_last_ask_listed_a_claim(self) -> None:
+        await self.hits.replace(self.g, self.one.id, [hit(C1)])
+        self.assertTrue(await self.hits.has(self.g, self.one.id, C1))
+        self.assertFalse(await self.hits.has(self.g, self.one.id, C2))
+        self.assertFalse(await self.hits.has(self.g, self.other.id, C1))
+
     async def test_an_answered_claim_leaves_the_set_whatever_its_kind(self) -> None:
         await self.hits.replace(self.g, self.one.id, [hit(C1), hit(C1, "pinned"), hit(C2)])
         await self.hits.drop(self.g, self.one.id, C1)
@@ -134,9 +140,9 @@ class TheApplier(unittest.TestCase):
     def test_an_answer_goes_through_and_one_no_longer_waiting_is_gone(self) -> None:
         said: list[tuple[str, str]] = []
 
-        async def answer(guild: int, cid: str, claim: str, choice: str) -> bool:
+        async def answer(guild: int, cid: str, claim: str, choice: str) -> str:
             said.append((claim, choice))
-            return claim == C1
+            return {C1: wa.APPLIED, C2: wa.GONE}.get(claim, wa.REFUSED)
 
         self.assertEqual(
             run(action("continuity-answer", f"{C1} c"), continuity_answer=answer).result_id, C1
@@ -144,10 +150,14 @@ class TheApplier(unittest.TestCase):
         self.assertEqual(
             run(action("continuity-answer", f"{C2} n"), continuity_answer=answer).error, wa.GONE
         )
-        self.assertEqual(said, [(C1, "c"), (C2, "n")])
+        self.assertEqual(
+            run(action("continuity-answer", f"{'3' * 32} c"), continuity_answer=answer).error,
+            wa.REFUSED,
+        )
+        self.assertEqual(said, [(C1, "c"), (C2, "n"), ("3" * 32, "c")])
 
     def test_a_player_a_bad_text_or_a_failure_changes_nothing(self) -> None:
-        async def answer(*_: Any) -> bool:
+        async def answer(*_: Any) -> str:
             raise RuntimeError("boom")
 
         self.assertEqual(run(action("continuity-ask", user=99)).error, wa.NOT_ALLOWED)
@@ -171,10 +181,11 @@ class ThePointersOfAHeadsUp(unittest.TestCase):
     def test_the_earlier_fact_its_session_and_the_pin_are_kept_and_no_words(self) -> None:
         self.assertEqual(hit_of(self.conflict()), Hit(C1, "clash", "likely", E1, F1, 7, None, True))
 
-    def test_a_death_points_at_the_entry_it_would_bring_back(self) -> None:
-        h = hit_of(self.conflict(clash_ids=(), revive_id=E2, earlier=None))
-        assert h is not None
-        self.assertEqual((h.earlier_id, h.earlier_session), (E2, None))
+    def test_a_death_keeps_no_earlier_fact_the_door_reads_the_entry_s_own_ending(self) -> None:
+        for revive in (E1, None):  # (acting after the end; back from the end)
+            h = hit_of(self.conflict(clash_ids=(), revive_id=revive, earlier=None))
+            assert h is not None
+            self.assertEqual((h.entity_id, h.earlier_id, h.earlier_session), (E1, None, None))
 
     def test_a_claim_or_entry_with_no_id_the_table_can_hold_is_left_out(self) -> None:
         self.assertIsNone(hit_of(self.conflict(entity_id="")))
@@ -182,10 +193,12 @@ class ThePointersOfAHeadsUp(unittest.TestCase):
 
 
 class TheBotsAnswer(unittest.TestCase):
-    def bot(self, *, fails: bool, headless: bool = False) -> Any:
+    """`DMBot._answer_continuity` on a stand-in bot, with the card's own refusals."""
+
+    def bot(self, *, fails: str | None = None, headless: bool = False, listed: bool = True) -> Any:
         from dmbot.memory.models import MemoryRuleError
 
-        calls: dict[str, list[Any]] = {"answer": [], "drop": [], "watch": []}
+        calls: dict[str, list[Any]] = {"answer": [], "drop": [], "watch": [], "opted": []}
 
         class Store:
             def __init__(self, _memory: Any) -> None:
@@ -193,13 +206,17 @@ class TheBotsAnswer(unittest.TestCase):
 
             async def answer(self, *a: Any, **kw: Any) -> str:
                 calls["answer"].append(a)
-                if fails:
-                    raise MemoryRuleError("gone")
+                calls["opted"].append(kw["opted_in"])
+                if fails is not None:
+                    raise MemoryRuleError(fails)
                 return "done"
 
         class Hits:
             def __init__(self, _db: Any) -> None:
                 pass
+
+            async def has(self, *_a: Any) -> bool:
+                return listed
 
             async def drop(self, *a: Any) -> None:
                 calls["drop"].append(a)
@@ -213,45 +230,129 @@ class TheBotsAnswer(unittest.TestCase):
         async def watch(*a: Any, **kw: Any) -> None:
             calls["watch"].append(a)
 
-        bot: Any = SimpleNamespace(
+        tracked: list[Any] = []
+        return SimpleNamespace(
             _picture_db=object(), memory=object(), settings=SimpleNamespace(continuity=None),
             consent=SimpleNamespace(consenting=consenting), campaigns=SimpleNamespace(get=get),
             watch_story=watch, headless=headless, calls=calls, Store=Store, Hits=Hits,
+            tracked=tracked, _track=lambda work, _name: tracked.append(work),
         )  # fmt: skip
-        return bot
 
-    def answer(self, bot: Any, choice: str) -> bool:
+    def answer(self, bot: Any, choice: str) -> str:
         from unittest.mock import patch
 
         from dmbot.bot import DMBot
 
         bot._watch_after_answer = lambda g, c: DMBot._watch_after_answer(bot, g, c)
+
+        async def both() -> str:
+            said = await DMBot._answer_continuity(bot, 5, "c1", C1, choice)
+            for work in bot.tracked:  # (what went to the background, run after the answer)
+                await work
+            return said
+
         with (
             patch("dmbot.bot.ContinuityStore", bot.Store),
             patch("dmbot.bot.ContinuityHits", bot.Hits),
         ):
-            return asyncio.run(DMBot._answer_continuity(bot, 5, "c1", C1, choice))
+            return asyncio.run(both())
 
-    def test_the_story_changed_drops_the_line_and_the_story_watch_looks(self) -> None:
-        bot = self.bot(fails=False)
-        self.assertTrue(self.answer(bot, "c"))
+    def test_the_story_changed_drops_the_line_and_the_story_watch_looks_later(self) -> None:
+        bot = self.bot()
+        self.assertEqual(self.answer(bot, "c"), wa.APPLIED)
         self.assertEqual(bot.calls["answer"][0][3], "c")
+        self.assertEqual(bot.calls["opted"], [{1}])  # (who is recorded, asked again now)
         self.assertEqual(len(bot.calls["drop"]), 1)
+        self.assertEqual(len(bot.tracked), 1)  # (in the background, never in the answer's way)
         self.assertEqual(len(bot.calls["watch"]), 1)
 
     def test_wasn_t_real_drops_the_line_and_watches_nothing(self) -> None:
-        bot = self.bot(fails=False)
-        self.assertTrue(self.answer(bot, "n"))
+        bot = self.bot()
+        self.assertEqual(self.answer(bot, "n"), wa.APPLIED)
         self.assertEqual(bot.calls["answer"][0][3], "n")
         self.assertEqual(bot.calls["watch"], [])
 
-    def test_a_claim_no_longer_waiting_is_gone_and_still_leaves_the_page(self) -> None:
-        bot = self.bot(fails=True)
-        self.assertFalse(self.answer(bot, "c"))
-        self.assertEqual(len(bot.calls["drop"]), 1)
-        self.assertEqual(bot.calls["watch"], [])
+    def test_a_claim_gone_or_said_by_someone_who_stopped_ends_the_heads_up(self) -> None:
+        from dmbot.memory.claims import GONE, STOPPED_NOW
+
+        for why in (GONE, STOPPED_NOW):
+            bot = self.bot(fails=why)
+            self.assertEqual(self.answer(bot, "c"), wa.GONE)
+            self.assertEqual(len(bot.calls["drop"]), 1)
+            self.assertEqual(bot.calls["watch"], [])
+
+    def test_any_other_refusal_leaves_it_waiting_and_on_the_page(self) -> None:
+        from dmbot.memory.claims import A_READING
+
+        bot = self.bot(fails=A_READING)
+        self.assertEqual(self.answer(bot, "c"), wa.REFUSED)
+        self.assertEqual(bot.calls["drop"], [])
+
+    def test_a_claim_the_last_ask_did_not_list_is_never_answered(self) -> None:
+        bot = self.bot(listed=False)
+        self.assertEqual(self.answer(bot, "c"), wa.GONE)
+        self.assertEqual(bot.calls["answer"], [])
 
     def test_a_worker_with_no_discord_skips_the_story_watch(self) -> None:
-        bot = self.bot(fails=False, headless=True)
-        self.assertTrue(self.answer(bot, "c"))
+        bot = self.bot(headless=True)
+        self.assertEqual(self.answer(bot, "c"), wa.APPLIED)
         self.assertEqual(bot.calls["watch"], [])
+
+
+class TheBotsAsk(unittest.TestCase):
+    """`DMBot._work_out_continuity`: a DM only, the card's check with consent read now and the
+    configured levels, and only pointers the table can hold."""
+
+    def run_ask(self, user: int) -> tuple[int, dict[str, Any], list[Any]]:
+        from unittest.mock import patch
+
+        from dmbot.bot import DMBot
+
+        seen: dict[str, Any] = {}
+        kept: list[Any] = []
+        good = SimpleNamespace(
+            claim=SimpleNamespace(id=C1), kind="clash", level="likely", entity_id=E1,
+            clash_ids=(F1,), revive_id=None, earlier=None, learner_id=None, pinned=False,
+        )  # fmt: skip
+        bad = SimpleNamespace(**{**vars(good), "entity_id": "not-an-id"})
+
+        class Store:
+            def __init__(self, _memory: Any) -> None:
+                pass
+
+            async def check(self, *_a: Any, **kw: Any) -> Any:
+                seen.update(kw)
+                return SimpleNamespace(conflicts=(good, bad))
+
+        class Hits:
+            def __init__(self, _db: Any) -> None:
+                pass
+
+            async def replace(self, _g: int, _c: str, hits: list[Any]) -> int:
+                kept.extend(hits)
+                return len(hits)
+
+        async def get(*_: Any) -> Any:
+            return SimpleNamespace(dm_user_ids=[ALICE.id])
+
+        async def consenting(_g: int) -> set[int]:
+            return {ALICE.id}
+
+        bot: Any = SimpleNamespace(
+            _picture_db=object(), memory=object(), campaigns=SimpleNamespace(get=get),
+            consent=SimpleNamespace(consenting=consenting),
+            settings=SimpleNamespace(continuity="levels"),
+        )  # fmt: skip
+        with patch("dmbot.bot.ContinuityStore", Store), patch("dmbot.bot.ContinuityHits", Hits):
+            n = asyncio.run(DMBot._work_out_continuity(bot, 5, "c1", user))
+        return n, seen, kept
+
+    def test_the_card_s_check_with_consent_now_and_only_holdable_pointers(self) -> None:
+        n, seen, kept = self.run_ask(ALICE.id)
+        self.assertEqual(n, 1)
+        self.assertEqual(seen, {"opted_in": {ALICE.id}, "levels": "levels"})
+        self.assertEqual([h.claim_id for h in kept], [C1])
+
+    def test_someone_who_is_not_a_dm_is_refused(self) -> None:
+        with self.assertRaises(RuntimeError):
+            self.run_ask(99)

@@ -123,6 +123,9 @@ CANNOT_SHOW = "cannot_show"  # 🌍 Common knowledge asked for what the players 
 NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
 FAILED = "failed"  # anything unexpected; the action can be sent again
 GONE = "gone"  # a waiting question that is not waiting any more
+# a heads-up whose answer the rules refused: nothing changed and it is still waiting, as on the
+# card, which shows the rule's message and keeps the heads-up (#3695)
+REFUSED = "refused"
 NO_CLOCK = "no_clock"  # a time limit's date asked for with no game clock to count on (#4503)
 CHANGED = "changed"  # an Undo refused: something done since is in the way (#4156)
 TOO_LATE = "too_late"  # an Undo past the store's limit (#4156)
@@ -1677,9 +1680,11 @@ RevealsAskFn = Callable[[int, str, int], Awaitable[int]]
 RevealsDropFn = Callable[[int, str, str], Awaitable[None]]
 # (#3695 half 1) work out the campaign's continuity heads-ups and keep their pointers for the page:
 # (server, campaign, DM) -> how many; and answer one as the card's button does: (server, campaign,
-# claim id, "c" or "n") -> True when it was applied, False when the claim is not waiting any more.
+# claim id, "c" or "n") -> APPLIED, GONE (not waiting any more, or someone who said it stopped) or
+# REFUSED (a rule refused it; still waiting).
 ContinuityAskFn = Callable[[int, str, int], Awaitable[int]]
-ContinuityAnswerFn = Callable[[int, str, str, str], Awaitable[bool]]
+ContinuityAnswerFn = Callable[[int, str, str, str], Awaitable[str]]
+APPLIED = "applied"
 CHOSE_MAX = 10  # characters named in one pick's answer (the answer is 200 characters at most)
 
 
@@ -1978,10 +1983,12 @@ async def _continuity(
 ) -> Outcome:
     """The continuity heads-ups from the page (#3695 half 1), through the bot's own check and the
     card's own answer (`ContinuityStore.check` / `answer`, consent read at that moment). The sender
-    is a DM of the campaign (checked above, and again by the bot). `continuity-ask` works the list
+    is a DM of the campaign (checked above; the ask checks again). `continuity-ask` works the list
     out (no AI call) and keeps its pointers for the page, replacing the earlier set; the answer is
     `n:<how many>`. `continuity-answer` is "<claim id> c" (the story changed) or "<claim id> n" (it
-    wasn't real); a claim no longer waiting (answered in Discord, say) is `gone`. There is no Undo,
+    wasn't real), and only for a claim the last ask listed (the card answers only its own lines); a
+    claim no longer listed or waiting (answered in Discord, say) is `gone`, and one whose answer a
+    rule refused stays waiting and is `refused`, as on the card. There is no Undo,
     as on the card: "the story changed" is one change in the change log, which the fact's own Undo
     can take back. "Ignore" never reaches the queue: it writes nothing, on Discord too."""
     if a.action == "continuity-ask":
@@ -1996,11 +2003,13 @@ async def _continuity(
     if answer is None or not re.fullmatch(r"[0-9a-f]{32}", claim_id) or choice not in ("c", "n"):
         return _failed(FAILED)
     try:
-        applied = await answer(guild_id, cid, claim_id, choice)
+        said = await answer(guild_id, cid, claim_id, choice)
     except Exception as exc:  # (the type only)
         log.warning("A continuity heads-up could not be answered (%s)", type(exc).__name__)
         return _failed(FAILED)
-    return Outcome(result_id=claim_id) if applied else _failed(GONE)
+    if said == APPLIED:
+        return Outcome(result_id=claim_id)
+    return _failed(REFUSED if said == REFUSED else GONE)
 
 
 async def _route_length(
