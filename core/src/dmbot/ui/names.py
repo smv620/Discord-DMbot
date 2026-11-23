@@ -850,6 +850,15 @@ async def known_as(memory: MemoryStore, campaign: Campaign, name: str) -> str | 
     return await memory.confirmed_name_for(campaign.guild_id, campaign.id, name_key(name))
 
 
+def already_a_name(name: str, entry: str) -> str:
+    """What ✏️ Spelled another way… says when the spelling typed is a name the campaign already
+    has (#5133 slice 3c, as ruled), naming the entry too when the spelling is one of its others."""
+    join = "Press 🔗 Same as a known name… to join them."
+    if name_key(name) == name_key(entry):
+        return f"**{_md(entry)}** is already a name in this campaign. {join}"
+    return f"**{_md(name)}** is already a name for **{_md(entry)}**. {join}"
+
+
 def already_known(name: str, entry: str) -> str:
     if name_key(name) == name_key(entry):
         return f"DMbot already knows **{_md(entry)}**. Open it with 🔍 Find a name."
@@ -1254,9 +1263,9 @@ def suggestion_text(
     elif match is not None:
         question = f"Sounds like **{_md(match.name)}**. The same, or new?"
     elif counts is not None:
-        # (#5133 slice 3c: the question is on the title line, with how it was heard; what to press
-        # is said only when there is no guess to say yes to)
-        question = "" if kind else "Pick what it is to add it, or press 🚫 Not a name."
+        # (#5133 slice 3c: the question is on the title line, with how it was heard; with no
+        # guess, the kind menu's own words say what to do: "Spelled Hrothgar? Pick what it is")
+        question = ""
     else:
         question = (
             "Is this a name in your game?"
@@ -1286,7 +1295,8 @@ def suggestion_text(
     # extra for a name with no line: DMbot never makes one up.
     told = f"\nPlayers know: {_md(players)}" if players else ""
     if counts is not None and heard.startswith(":"):  # (the title line asks, then what's known)
-        head = f"📝 **{title}**{heard}{told}"
+        # (DMbot's guess right under it: a yes keeps it as that, so it is never a screen below)
+        head, read = f"📝 **{title}**{heard}{told}{read}", ""
     else:
         head = f"📝 **{title}**{told}{heard}"
     ask = f"\n{question}" if question else ""
@@ -1344,6 +1354,40 @@ async def tagged_name(memory: MemoryStore, campaign: Campaign, entity: Entity) -
 def _and(items: list[str]) -> str:
     """ "A", "A and B", "A, B and C"."""
     return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def yes_spelled(name: str) -> str:
+    """The new card's yes (#5133 slice 3c): "✅ Yes, spelled Hrothgar", or "✅ Yes, this spelling"
+    when the name won't fit a phone's button."""
+    label = f"✅ Yes, spelled {name}"
+    return label if len(label) <= REVIEW_LABEL_MAX else "✅ Yes, this spelling"
+
+
+def spelled_pick(name: str) -> str:
+    """The new card's kind menu, when DMbot has no guess: one pick says yes to the spelling too."""
+    fits = len(f"✅ Yes, spelled {name}") <= REVIEW_LABEL_MAX
+    return f"Spelled {name}? Pick what it is" if fits else "This spelling? Pick what it is"
+
+
+NOT_ASKED_SHOWN = 3  # spellings named in "won't ask about …"; then "or N more spellings"
+
+
+def not_a_name_note(spellings: Sequence[str]) -> str:
+    """ "🚫 Not a name. DMbot won't ask about Hrothgar, Rothgar or hroth gar again." (#5133 3c)"""
+    named = [_md(s) for s in spellings]
+    if len(named) > NOT_ASKED_SHOWN:
+        shown = ", ".join(named[: NOT_ASKED_SHOWN - 1])
+        rest = len(named) - (NOT_ASKED_SHOWN - 1)
+        return f"🚫 Not a name. DMbot won't ask about {shown} or {rest} more spellings again."
+    listed = named[0] if len(named) == 1 else ", ".join(named[:-1]) + f" or {named[-1]}"
+    return f"🚫 Not a name. DMbot won't ask about {listed} again."
+
+
+def kept_note(name: str, kind: str, also: Sequence[str]) -> str:
+    """The new card's yes (#5133 slice 3c-2a): what was kept, and as what. Its other spellings are
+    still kept as its other names here; 3c-2b turns them into "change to" rules and says so."""
+    others = f" (also {_and([f'**{_md(a)}**' for a in also])})" if also else ""
+    return f"✅ Kept **{_md(name)}**{others} as {a_kind(kind)}."
 
 
 def its_label(name: str) -> str:
@@ -1521,6 +1565,32 @@ class ChangeWordsForm(discord.ui.Modal, title="What is the whole name?"):
         await self.review.apply_words(interaction, self.entity_id, self.heard, self.name.value)
 
 
+class SpelledForm(discord.ui.Modal, title="How is it spelled?"):
+    """The new card's ✏️ Spelled another way… (#5133 slice 3c): the name filled in, to fix its
+    spelling or add the words it is missing (it folds in ✏️ Change the words, #2570). Submitting
+    keeps it under that spelling."""
+
+    name: discord.ui.TextInput[SpelledForm] = discord.ui.TextInput(
+        label="The name, spelled right",
+        placeholder="Fix the spelling, or add words it's missing",
+        max_length=NAME_MAX,
+    )
+
+    def __init__(self, review: SuggestionReview, entity_id: str, start: str) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.review = review
+        self.entity_id = entity_id
+        self.name.default = start
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self.review.apply_words(interaction, self.entity_id, "", self.name.value, keep=True)
+
+
 class GroupNameForm(discord.ui.Modal, title="What is the group called?"):
     """ "They're a group" (#3383, part 2): the DM names the group the listed names belong to."""
 
@@ -1618,6 +1688,12 @@ class SuggestionReview(_Menu):
         self.spellings: list[str] = []
         self.found: Found | None = None  # what made the current one a name (#5133 3b), or None
         self._buttons()
+
+    @property
+    def new_card(self) -> bool:
+        """The card of #5133 slice 3c: a name the after-session step kept what made it a name for,
+        with no question of its own ("Sounds like…" and spelled-out cards keep theirs)."""
+        return self.found is not None and not self.fix_to and self.match is None
 
     def _added(self, entity: Entity) -> str:
         """ "**Oskar Vane** (also **Vane**)": every name confirmed with it."""
@@ -1761,6 +1837,71 @@ class SuggestionReview(_Menu):
 
     def _buttons(self) -> None:
         self.clear_items()
+        if self.new_card:
+            self._new_buttons()
+        else:
+            self._old_buttons()
+        self._more_buttons()
+
+    def _new_buttons(self) -> None:
+        """Yes to this spelling, another spelling, or not a name (#5133 slice 3c, as ruled): with
+        DMbot's guess, one press keeps it as that; without one, the kind menu is the yes."""
+        name = self.name or "it"
+        row = 0
+        if self.known_kind:
+            self.add_item(
+                _Button(
+                    self._yes, label=yes_spelled(name), style=discord.ButtonStyle.success, row=0
+                )
+            )
+        else:
+            self.kind = _Select(
+                self._kind_picked,
+                placeholder=logic.shorten(spelled_pick(name), 150),
+                options=[
+                    discord.SelectOption(label=label, value=kind) for kind, label in KINDS.items()
+                ],
+                row=0,
+            )
+            self.add_item(self.kind)
+            row = 1
+        self.add_item(
+            _Button(
+                self._spelled_another,
+                label="✏️ Spelled another way…",
+                style=discord.ButtonStyle.primary,
+                row=row,
+            )
+        )
+        self.add_item(
+            _Button(self._no, label="🚫 Not a name", style=discord.ButtonStyle.secondary, row=row)
+        )
+        # Another kind than DMbot's guess (its own mark, so it never reads as another spelling),
+        # and the answers for another time, on the next row; with no guess, "Later" goes up beside
+        # the answers, so no row holds four buttons with the 📜 ones (#112)
+        if self.known_kind:
+            self.add_item(
+                _Button(
+                    self._pick_kind,
+                    label="🏷️ Something else",
+                    style=discord.ButtonStyle.secondary,
+                    row=row + 1,
+                )
+            )
+        self.add_item(
+            _Button(
+                self._same,
+                label="🔗 Same as a known name…",
+                style=discord.ButtonStyle.secondary,
+                row=row + 1,
+            )
+        )
+        later = row + 1 if self.known_kind else row
+        self.add_item(
+            _Button(self._later, label="⏳ Later", style=discord.ButtonStyle.secondary, row=later)
+        )
+
+    def _old_buttons(self) -> None:
         if self.fix_to:  # someone spelled this suggestion out: fix its spelling first (#2168)
             buttons = [
                 (self._fix_pending, "✏️ Fix spelling", discord.ButtonStyle.success),
@@ -1831,6 +1972,9 @@ class SuggestionReview(_Menu):
                 row=1,
             )
         )
+
+    def _more_buttons(self) -> None:
+        """What every card has below its answers: a list's own, Undo, and where it was said."""
         if self.is_list:  # a list the readers offered as one name (#3383)
             self.add_item(
                 _Button(
@@ -1962,17 +2106,7 @@ class SuggestionReview(_Menu):
             await self._ask_player(interaction, campaign, entity)
             return
         if self.known_kind:  # it was read with its kind: one press (#2167)
-            try:
-                written = await memory.confirm_entity(
-                    campaign.guild_id, campaign.id, entity.id, self.known_kind, source=DM
-                )
-            except MemoryRuleError:
-                await _tell(interaction, GONE)
-                return
-            changed(interaction, campaign)
-            added = f"✅ Added {self._added(entity)}."
-            note = "\n".join(filter(None, (added, split_words.for_one(written.split))))
-            await self._saved(interaction, campaign, memory, note)
+            await self._confirm_as(interaction, campaign, memory, entity, self.known_kind)
             return
         await self._ask_kind(interaction, entity)
 
@@ -1984,7 +2118,9 @@ class SuggestionReview(_Menu):
         if current is not None:
             await self._ask_kind(interaction, current[2])
 
-    async def _ask_kind(self, interaction: discord.Interaction, entity: Entity) -> None:
+    async def _ask_kind(
+        self, interaction: discord.Interaction, entity: Entity, *, lead: str = ""
+    ) -> None:
         self.clear_items()
         self.kind = _Select(
             self._kind_picked,
@@ -1995,7 +2131,8 @@ class SuggestionReview(_Menu):
         )
         self.add_item(self.kind)
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
-        await _replace(interaction, f"**What is {_md(entity.name)}?**", self)
+        ask = f"**What is {_md(entity.name)}?**"
+        await _replace(interaction, f"{lead}\n{ask}" if lead else ask, self)
 
     async def _ask_player(
         self, interaction: discord.Interaction, campaign: Campaign, entity: Entity
@@ -2019,18 +2156,7 @@ class SuggestionReview(_Menu):
         if kind == PC:  # who plays them?
             await self._ask_player(interaction, campaign, entity)
             return
-        try:
-            written = await memory.confirm_entity(
-                campaign.guild_id, campaign.id, entity.id, kind, source=DM
-            )
-        except MemoryRuleError:
-            await _tell(interaction, GONE)
-            return
-        changed(interaction, campaign)  # the next card sees it at once
-        note = "\n".join(
-            filter(None, (f"✅ Added {self._added(entity)}.", split_words.for_one(written.split)))
-        )
-        await self._saved(interaction, campaign, memory, note)
+        await self._confirm_as(interaction, campaign, memory, entity, kind)
 
     def _type_id(self, campaign: Campaign, entity: Entity) -> _Button:
         """⌨️ Type a Discord ID, for a player who is not in the server yet (#3004). It is for this
@@ -2225,6 +2351,17 @@ class SuggestionReview(_Menu):
         the transcript windows (their bold marks are dropped by `longer_names`)."""
         return list(self.places.windows)
 
+    async def _spelled_another(self, interaction: discord.Interaction) -> None:
+        """✏️ Spelled another way… (#5133 slice 3c): the form, with the name filled in."""
+        current = await self._current(interaction)
+        if current is None:
+            return
+        campaign, _memory_unused, entity = current
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only the DM can change a name.")
+            return
+        await interaction.response.send_modal(SpelledForm(self, entity.id, entity.name))
+
     async def _change_words(self, interaction: discord.Interaction) -> None:
         """The name is longer or different (#2570): offer the likely longer names from the card's
         quotes, or go straight to the form when there are none."""
@@ -2248,12 +2385,21 @@ class SuggestionReview(_Menu):
         )
 
     async def apply_words(
-        self, interaction: discord.Interaction, entity_id: str, heard: str, words: str
+        self,
+        interaction: discord.Interaction,
+        entity_id: str,
+        heard: str,
+        words: str,
+        *,
+        keep: bool = False,
     ) -> None:
         """The DM saved the whole name (#2570): the card goes on with it, as with a fixed
         spelling. What was heard becomes a way it is said, so the Cleaner fixes it in later
         transcripts, and the old single word stops being offered where it is part of the new name
-        (it is not marked "not a name": said alone elsewhere it can still be offered)."""
+        (it is not marked "not a name": said alone elsewhere it can still be offered).
+
+        `keep` (the new card's ✏️ Spelled another way…, #5133 slice 3c): the spelling is the DM's
+        yes, so the name is kept under it at once, as DMbot's guess, or the kind is asked."""
         await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
@@ -2264,7 +2410,12 @@ class SuggestionReview(_Menu):
             return
         new = " ".join(words.split())
         if not new:
-            await _tell(interaction, "The name was empty. Press ✏️ Change the words and type it.")
+            await _tell(
+                interaction,
+                "Type the name, then press Submit."
+                if keep
+                else "The name was empty. Press ✏️ Change the words and type it.",
+            )
             return
         if len(new) > NAME_MAX:
             await _tell(
@@ -2276,7 +2427,9 @@ class SuggestionReview(_Menu):
         if name_key(new) != name_key(entity.name):
             clash = await known_as(memory, campaign, new)
             if clash is not None:
-                await _tell(interaction, already_known(new, clash))
+                await _tell(
+                    interaction, already_a_name(new, clash) if keep else already_known(new, clash)
+                )
                 return
         # The old word is part of the new name: keeping it as an old spelling would turn every
         # "Harrow" said alone into "Harrow's Keep".
@@ -2295,7 +2448,60 @@ class SuggestionReview(_Menu):
             await _tell(interaction, f"Couldn't change it. {exc} Nothing was changed.")
             return
         changed(interaction, campaign)
+        if keep:
+            await self._keep_as_spelled(interaction, campaign, memory, entity.id)
+            return
         await self._next(interaction, campaign, memory, note=f"✏️ Saved as **{_md(new)}**.")
+
+    async def _keep_as_spelled(
+        self, interaction: discord.Interaction, campaign: Campaign, memory: MemoryStore, eid: str
+    ) -> None:
+        """After ✏️ Spelled another way…: kept as DMbot's guess, or the kind is asked (one pick
+        keeps it). A player's character is asked who plays them, as a yes would."""
+        entity = await memory.entity(campaign.guild_id, campaign.id, eid)
+        if entity is None or entity.status != PROPOSED:
+            await _tell(interaction, GONE)
+            return
+        self.name = entity.name
+        # (its other spellings as they are now: the one typed may have been one of them, and the
+        # old spelling may be kept as another, so the reply names what was really kept)
+        own = name_key(entity.name)
+        self.also = [
+            a.text
+            for a in await memory.aliases(campaign.guild_id, campaign.id, entity_id=entity.id)
+            if a.key != own
+        ]
+        if entity.role == PLAYER_CHARACTER:
+            await self._ask_player(interaction, campaign, entity)
+        elif self.known_kind:
+            await self._confirm_as(interaction, campaign, memory, entity, self.known_kind)
+        else:  # (the spelling is saved already: Back leaves it saved and the name waiting)
+            await self._ask_kind(interaction, entity, lead=f"✏️ Saved as **{_md(entity.name)}**.")
+
+    async def _confirm_as(
+        self,
+        interaction: discord.Interaction,
+        campaign: Campaign,
+        memory: MemoryStore,
+        entity: Entity,
+        kind: str,
+    ) -> None:
+        """Kept as `kind`, and the next card, with what was kept said above it."""
+        try:
+            written = await memory.confirm_entity(
+                campaign.guild_id, campaign.id, entity.id, kind, source=DM
+            )
+        except MemoryRuleError:
+            await _tell(interaction, GONE)
+            return
+        changed(interaction, campaign)  # the next card sees it at once
+        added = (
+            kept_note(entity.name, kind, self.also)
+            if self.new_card
+            else f"✅ Added {self._added(entity)}."
+        )
+        note = "\n".join(filter(None, (added, split_words.for_one(written.split))))
+        await self._saved(interaction, campaign, memory, note)
 
     async def _split(self, interaction: discord.Interaction) -> None:
         """ "These are separate names" (#3383): a list offered as one name becomes a waiting name
@@ -2492,9 +2698,14 @@ class SuggestionReview(_Menu):
             await _tell(interaction, GONE)
             return
         changed(interaction, campaign)
-        names = _and([f"**{_md(n)}**" for n in [entity.name, *self.also]])
-        verb = "aren't names" if self.also else "isn't a name"
-        note = f"🚫 OK, {names} {verb}. DMbot won't suggest {'them' if self.also else 'it'} again."
+        if self.new_card:  # (#5133 slice 3c: every spelling heard, as ruled)
+            note = not_a_name_note([entity.name, *self.also])
+        else:
+            names = _and([f"**{_md(n)}**" for n in [entity.name, *self.also]])
+            verb = "aren't names" if self.also else "isn't a name"
+            note = (
+                f"🚫 OK, {names} {verb}. DMbot won't suggest {'them' if self.also else 'it'} again."
+            )
         await self._saved(interaction, campaign, memory, note)
 
     async def _later(self, interaction: discord.Interaction) -> None:
