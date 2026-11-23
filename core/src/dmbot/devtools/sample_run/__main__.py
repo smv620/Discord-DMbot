@@ -83,6 +83,15 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--lore", type=Path, help="the lore text file")
     parser.add_argument("--session", type=Path, help="the session text file")
     parser.add_argument(
+        "--version",
+        choices=tuple(sample_name.VERSIONS),
+        default=sample_name.TYPED,
+        help="which version of the sample session --session is (docs/design/session_names.md, "
+        "section 8): typed (the default, as always), no-capitals (the owner's edit with the "
+        "capital-letter clues taken out) or spoken (through speech-to-text). Each is its own "
+        'series: its own campaigns ("sample N.k no capitals") and summaries, never mixed',
+    )
+    parser.add_argument(
         "--repeat",
         type=int,
         default=DEFAULT_REPEAT,
@@ -305,7 +314,9 @@ async def run(
         gid, dm = args.guild, args.dm
         # The checks that need the database, still before anything is changed or spent.
         await steps.require_paid(db, dm, now, guild_id=gid)
-        found = await steps.check_existing(db, campaigns, gid, dm, None if run_k else deploy)
+        found = await steps.check_existing(
+            db, campaigns, gid, dm, None if run_k else deploy, args.version
+        )
         ids = set(players.values()) if not off else {dm}
         agreed = await ConsentStore(db).consenting(gid)
         refused = await steps.refused_accounts(db, gid, ids)
@@ -320,11 +331,11 @@ async def run(
 
         if run_k is not None:  # (a sibling's campaign is no reason to stop: no replacing here)
             campaign = await steps.make_campaign(
-                campaigns, gid, dm, deploy=deploy, run=run_k, say=say
+                campaigns, gid, dm, deploy=deploy, run=run_k, say=say, version=args.version
             )
         else:
             campaign = await steps.fresh_campaign(
-                db, campaigns, gid, dm, deploy=deploy, say=say, found=found
+                db, campaigns, gid, dm, deploy=deploy, say=say, found=found, version=args.version
             )
         cid = campaign.id
         where.append(cid)
@@ -732,11 +743,11 @@ async def _make_room(
     try:
         campaigns = steps.campaign_store(db)
         await steps.require_paid(db, args.dm, int(time.time()), guild_id=args.guild)
-        found = await steps.check_existing(db, campaigns, args.guild, args.dm, deploy)
+        found = await steps.check_existing(db, campaigns, args.guild, args.dm, deploy, args.version)
         free = await steps.free_slots(db, args.dm, int(time.time()), args.guild)
         _kept, allowed = await steps.clear_for_deploy(
             db, campaigns, args.guild, args.dm, deploy=deploy, say=say, found=found,
-            need=need, free=free,
+            need=need, free=free, version=args.version,
         )  # fmt: skip
         return allowed
     finally:
@@ -866,21 +877,56 @@ async def _finish(
     elif args.map is not None:  # (#4646)
         map_step.skipped(say, "a run failed, so none was kept" if failed else "no run was kept")
     stats = spread.summarize(runs)
-    say(f"Sample summary, commit {commit}: {len(runs)} runs, about ${spent:.2f} (#3545)")
+    version = summary_version(args)
+    say(
+        f"Sample summary, commit {commit}, {version} session: {len(runs)} runs, about"
+        f" ${spent:.2f} (#3545)"
+    )
     for line in spread.render(stats):
         say(line)
     for name in spread.sure_flags(stats):
         say(f"SURE STEP VARIED with the same input, a bug to file: {name}")
-    before = args.compare or _newest(folder, "summary-*.json")
+    before = args.compare or _newest(folder, summary_glob(args.version))
     if before is not None:
         old_commit, old = spread.load(before)
+        old_version = spread.version_of(before)
+        if old_version != args.version:  # (only an explicit --compare can be another series)
+            raise SampleError(
+                f"--compare is a summary of the {old_version} session, not the {args.version} one:"
+                " the versions are never mixed"
+            )
         moved = spread.compare(stats, old)
         say(f"Since {old_commit or 'the last summary'}: " + ("nothing moved" if not moved else ""))
         for line in moved:
             say(line)
     if runs:
-        spread.save(folder / f"summary-{stamp}.json", stats, commit=commit)
+        spread.save(
+            folder / summary_file(args.version, stamp), stats, commit=commit, version=args.version
+        )
     return 1 if failed else 0
+
+
+def summary_version(args: argparse.Namespace) -> str:
+    """The version's words for the summary line: "typed", "no capitals", "spoken"."""
+    return sample_name.VERSIONS[args.version] or sample_name.TYPED
+
+
+def summary_file(version: str, stamp: str) -> str:
+    """The summary's file name: the typed one keeps the name it always had (`summary-STAMP.json`),
+    so the last typed summary before this change is still compared with; another version's
+    carries its name (`summary-no-capitals-STAMP.json`), so each series compares only with its
+    own (docs/design/session_names.md, section 8: "numbers are never mixed across versions")."""
+    if version == sample_name.TYPED:
+        return f"summary-{stamp}.json"
+    return f"summary-{version}-{stamp}.json"
+
+
+def summary_glob(version: str) -> str:
+    """The pattern for this version's summaries: a stamp starts with a digit, a version's name
+    with a letter, so the typed series never picks up another's."""
+    if version == sample_name.TYPED:
+        return "summary-[0-9]*.json"
+    return f"summary-{version}-[0-9]*.json"
 
 
 async def _map_on(

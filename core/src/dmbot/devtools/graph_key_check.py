@@ -132,6 +132,10 @@ class Report:
     # "miss" is the key's wording and which a real reader miss. The sample's own words only.
     extra_list: list[tuple[str, str, str, str]] = field(default_factory=list)
     extra_ties: int = 0
+    # Key entries missed while a part of their name is stored ("Valley" for Dwarven Valley), the
+    # "found, wrong shape" count (docs/design/session_names.md, section 8). Still counted missed;
+    # this says how many misses are a name cut short rather than one never heard. Counts only.
+    wrong_shape: int = 0
     violations: list[str] = field(default_factory=list)
     inferred_confirmed: list[str] = field(default_factory=list)
     # `must_not_ties` rows kept as facts (#4636 part 3): a near-miss a list was over-applied to,
@@ -526,6 +530,7 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             continue  # (a clue tied to a thread is scored on the Clues line, #4624 6b)
         report.extra_entries[_kind_for(str(e["type"]))] += 1
         report.extra_list.append(listed)
+    report.wrong_shape = _wrong_shape(report.entries, names, report.extra_list)
     for name in key.get("must_not_names", ()):
         # (a must-not name is still found in a description too, as before; only one that is a
         # key `unnamed` entry's own description is right as a description, #3545)
@@ -1061,6 +1066,24 @@ def _kind_for(entry_type: str) -> str:
     return entry_type
 
 
+def _wrong_shape(
+    rows: Sequence[Row], names: Mapping[str, Sequence[str]], extras: Sequence[tuple[str, ...]]
+) -> int:
+    """How many missed key entries have an extra stored whose words are some, never all, of one of
+    the entry's names: "Valley" or "Dwarven" for "Dwarven Valley" (an article never counts).
+    Each key entry counts once, however many parts of it are stored."""
+    parts = [frozenset(_plain(extra[-1]).split()) for extra in extras]
+    parts = [p for p in parts if p]
+    out = 0
+    for r in rows:
+        if r.status != MISSING:
+            continue
+        wholes = [frozenset(_plain(n).split()) for n in names.get(r.id, ())]
+        if any(p < whole for whole in wholes for p in parts):
+            out += 1
+    return out
+
+
 def summarize(report: Report) -> dict[str, Any]:
     """Counts only: by kind of entry and group of tie, found, missing, wrong, waiting."""
 
@@ -1082,6 +1105,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "extra_entries": dict(report.extra_entries),
         "unnamed_extras": report.unnamed_extras,
         "extra_ties": report.extra_ties,
+        "wrong_shape": report.wrong_shape,
         "violations": len(report.violations),
         "inferred_confirmed": len(report.inferred_confirmed),
         "false_ties": len(report.false_ties),
@@ -1126,6 +1150,7 @@ def render(report: Report, counts_only: bool = False, list_extras: bool = False)
         f"{dict(report.extra_entries)}"
     )
     lines.append(f"Unnamed people not in the key: {report.unnamed_extras}")
+    lines.append(f"Missed, but part of the name stored (wrong shape): {report.wrong_shape}")
     if list_extras:
         lines.append("Extra entries, listed (kind | status | source | stored name):")
         for kind, status, source, name in sorted(report.extra_list):

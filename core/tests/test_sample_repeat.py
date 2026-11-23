@@ -109,6 +109,29 @@ class Repeat(unittest.TestCase):
             said,
         )
 
+    def test_each_version_of_the_session_is_its_own_series(self) -> None:
+        # docs/design/session_names.md, section 8: never compared across versions, and the typed
+        # series keeps its file names, so the last typed summary before this is still read.
+        with tempfile.TemporaryDirectory() as d:
+            typed = spread.summarize([{"backup and score (both, sure + AI): ties found": 30}] * 5)
+            spread.save(Path(d, "summary-20000101-000000.json"), typed, commit="typed1")
+            _, said, _, _ = self.go(d, [0.5], "--version", "no-capitals")
+            self.assertFalse(any(line.startswith("Since ") for line in said))
+            self.assertIn("no capitals session", next(x for x in said if x.startswith("Sample")))
+            [mine] = Path(d).glob("summary-no-capitals-*.json")
+            self.assertEqual(spread.version_of(mine), "no-capitals")
+            _, said, _, _ = self.go(d, [0.5], "--version", "no-capitals")
+            self.assertTrue(any(line.startswith("Since abc1234") for line in said))
+            _, said, _, _ = self.go(d, [0.5])
+            self.assertTrue(any(line.startswith("Since typed1") for line in said))
+
+    def test_compare_with_another_versions_summary_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            other = Path(d, "elsewhere.json")
+            spread.save(other, spread.summarize([{"x": 1}]), commit="c", version="no-capitals")
+            with self.assertRaisesRegex(Exception, "never mixed"):
+                self.go(d, [0.5], "--compare", str(other))
+
     def test_without_yes_it_is_one_run_that_spends_nothing(self) -> None:
         calls: list[Any] = []
 

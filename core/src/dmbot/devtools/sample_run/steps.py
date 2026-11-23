@@ -108,19 +108,26 @@ async def existing_samples(db: Database, campaigns: CampaignStore, guild: int) -
 
 
 async def check_existing(
-    db: Database, campaigns: CampaignStore, guild: int, dm: int, deploy: int | None = None
+    db: Database,
+    campaigns: CampaignStore,
+    guild: int,
+    dm: int,
+    deploy: int | None = None,
+    version: str = sample_name.TYPED,
 ) -> list[Existing]:
     """The earlier sample campaigns. Only this deploy's own (the same N, which the run replaces)
     must pass `plan.can_replace`: if it cannot be deleted, the run cannot make a second one with
     that name, so it stops here, before it spends and before anything is changed (#4538). Any
     other campaign the guard refuses is left alone later and counted, so a kept sample someone
-    played in never blocks a run."""
+    played in never blocks a run. `version`: only this deploy's campaigns of the same version of
+    the session are replaced (docs/design/session_names.md, section 8)."""
     found = await existing_samples(db, campaigns, guild)
     if deploy is not None:
         own = {
             c.id
             for c in await campaigns.list_campaigns(guild)
-            if sample_name.deploy_of(c.name) == deploy  # (any run of this deploy)
+            if sample_name.deploy_of(c.name) == deploy  # (any run of this deploy and version)
+            and sample_name.version_of(c.name) == version
         }
         for old in found:
             why = can_replace(old, dm) if old.campaign_id in own else None
@@ -192,6 +199,7 @@ async def clear_for_deploy(
     settle_s: float = SETTLE_WAIT_S,
     need: int | None = None,
     free: int | None = None,
+    version: str = sample_name.TYPED,
 ) -> tuple[sample_name.Kept, int]:
     """Make room for this deploy's sample campaign(s) (#4538, #4551): every campaign of the same N
     is deleted first (a re-run never leaves two of one number, runs of a parallel deploy
@@ -205,24 +213,30 @@ async def clear_for_deploy(
     deletions above, the oldest kept deploys go with all their runs (each through `can_replace`),
     never the newest kept deploy, and the counts line says which. Returns what is deleted and how
     many runs there is room for (`need`, or fewer); none is a `SampleError`, with nothing
-    deleted."""
-    found = found if found is not None else await check_existing(db, campaigns, guild, dm, deploy)
+    deleted. `version`: the session's version being made; this deploy's campaigns of another
+    version are kept."""
+    found = (
+        found
+        if found is not None
+        else await check_existing(db, campaigns, guild, dm, deploy, version)
+    )
     names = {c.id: c.name for c in await campaigns.list_campaigns(guild)}
     have = [(old.campaign_id, names[old.campaign_id]) for old in found if old.campaign_id in names]
     by_id = {old.campaign_id: old for old in found}
     # Only what the run would delete is checked: a kept sample is never touched. A refusal on
     # this deploy's own campaign stops the run (it cannot be made again); on any other it is
     # left alone and counted in the line.
-    first = sample_name.plan_keep(have, deploy)
+    first = sample_name.plan_keep(have, deploy, version=version)
     refused: set[str] = set()
     for campaign_id in first.delete:
         why = can_replace(by_id[campaign_id], dm)
         if why is None:
             continue
-        if sample_name.deploy_of(names.get(campaign_id, "")) == deploy:
+        name = names.get(campaign_id, "")
+        if sample_name.deploy_of(name) == deploy and sample_name.version_of(name) == version:
             raise SampleError(why)
         refused.add(campaign_id)
-    kept = sample_name.plan_keep(have, deploy, protected=refused)
+    kept = sample_name.plan_keep(have, deploy, protected=refused, version=version)
     allowed = need if need is not None else 1
     if need is not None:
         extra, dropped, allowed = sample_name.slot_drops(
@@ -292,12 +306,13 @@ async def make_campaign(
     say: Say,
     deleted: int = 0,
     of: int | None = None,
+    version: str = sample_name.TYPED,
 ) -> Campaign:
     """Make the sample campaign for this deploy, or for run k of it (#4551), paid because the DM
     owns it. A refusal (no free paid slot, or a campaign with a look-alike name) is one plain
     `SampleError`. `deleted`: how many old ones were deleted just before, for the stop line."""
     try:
-        made = await campaigns.create(guild, sample_name.name_for(deploy, run), dm)
+        made = await campaigns.create(guild, sample_name.name_for(deploy, run, version), dm)
     except CampaignError as exc:  # no free paid slot, or a name that differs only in capitals
         # Deleting comes first because it frees the paid slot: say how far it got (a count only).
         total = deleted if of is None else of
@@ -326,6 +341,7 @@ async def fresh_campaign(
     found: list[Existing] | None = None,
     sleep: Sleep | None = None,
     settle_s: float = SETTLE_WAIT_S,
+    version: str = sample_name.TYPED,
 ) -> Campaign:
     """Make this deploy's sample campaign, "test of the frostmaiden (sample N)" (#4538): room is
     made first (`clear_for_deploy`), then the campaign."""
@@ -339,9 +355,17 @@ async def fresh_campaign(
         found=found,
         sleep=sleep,
         settle_s=settle_s,
+        version=version,
     )
     return await make_campaign(
-        campaigns, guild, dm, deploy=deploy, say=say, deleted=len(kept.delete), of=len(kept.delete)
+        campaigns,
+        guild,
+        dm,
+        deploy=deploy,
+        say=say,
+        deleted=len(kept.delete),
+        of=len(kept.delete),
+        version=version,
     )
 
 
@@ -704,6 +728,7 @@ def score_numbers(path: Path, docs: str) -> dict[str, int]:
         })  # fmt: skip
     out["extra entries"] = sum(summary["extra_entries"].values())
     out["extra ties"] = int(summary["extra_ties"])
+    out["entries wrong shape"] = int(summary["wrong_shape"])  # (docs/design/session_names.md, 8)
     return out
 
 

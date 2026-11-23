@@ -14,26 +14,47 @@ from dataclasses import dataclass
 
 OLD_NAME = "test of the frostmaiden (sample)"  # before #4538: still accepted, counted as oldest
 PREFIX = "test of the frostmaiden (sample "
-# "(sample 31)" is the deploy's one campaign; "(sample 31.2)" is run 2 of a parallel deploy (#4551)
+# "(sample 31)" is the deploy's one campaign; "(sample 31.2)" is run 2 of a parallel deploy (#4551);
+# "(sample 31.2 no capitals)" is run 2 of the same deploy on another version of the session
+# (docs/design/session_names.md, section 8: typed, no capitals, spoken, each its own series).
 _NAMED = re.compile(
-    r"^test of the frostmaiden \(sample (?P<n>[0-9]{1,4})(?:\.(?P<k>[1-9][0-9]?))?\)$"
+    r"^test of the frostmaiden \(sample (?P<n>[0-9]{1,4})(?:\.(?P<k>[1-9][0-9]?))?"
+    r"(?: (?P<v>no capitals|spoken))?\)$"
 )
+# The session's versions (`sample_run --version`), and the words each adds to a campaign's name. The
+# typed one, the sample as it always was, adds none, so every name made before stays the same.
+TYPED = "typed"
+VERSIONS = {TYPED: "", "no-capitals": "no capitals", "spoken": "spoken"}
 RUN_MAX = 99
 KEEP = 3  # the newest campaigns kept alive, so the owner can compare their story graphs
 DEPLOY_MAX = 9999
 SAY_WHICH = "Say which deploy this is: --deploy N"
 
 
-def name_for(deploy: int, run: int | None = None) -> str:
+def name_for(deploy: int, run: int | None = None, version: str = TYPED) -> str:
     """The campaign's name for deploy N (a whole number, 1 to 9999), or for run k of it when the
-    deploy's runs go side by side ("sample 31.2", k from 1 to 99)."""
+    deploy's runs go side by side ("sample 31.2", k from 1 to 99), on one version of the session
+    ("sample 31.2 no capitals"; the typed one adds nothing)."""
     if not isinstance(deploy, int) or isinstance(deploy, bool) or not 1 <= deploy <= DEPLOY_MAX:
         raise ValueError(f"the deploy is a whole number from 1 to {DEPLOY_MAX}")
+    if version not in VERSIONS:
+        raise ValueError(f"the version is one of {', '.join(VERSIONS)}")
+    words = f" {VERSIONS[version]}" if VERSIONS[version] else ""
     if run is None:
-        return f"{PREFIX}{deploy})"
+        return f"{PREFIX}{deploy}{words})"
     if not isinstance(run, int) or isinstance(run, bool) or not 1 <= run <= RUN_MAX:
         raise ValueError(f"the run is a whole number from 1 to {RUN_MAX}")
-    return f"{PREFIX}{deploy}.{run})"
+    return f"{PREFIX}{deploy}.{run}{words})"
+
+
+def version_of(name: str) -> str | None:
+    """The session's version a numbered sample name was made for ("typed" when it says none);
+    None for any other name, the old unnumbered one included."""
+    found = _NAMED.fullmatch(name)
+    if not found:
+        return None
+    words = found["v"] or ""
+    return next(key for key, said in VERSIONS.items() if said == words)
 
 
 def deploy_of(name: str) -> int | None:
@@ -74,20 +95,28 @@ class Kept:
 
 
 def plan_keep(
-    existing: Iterable[tuple[str, str]], deploy: int, protected: Collection[str] = ()
+    existing: Iterable[tuple[str, str]],
+    deploy: int,
+    protected: Collection[str] = (),
+    version: str = TYPED,
 ) -> Kept:
     """From (campaign id, name) of this DM's sample campaigns, and the deploy being made now: the
     campaign for `deploy` itself is deleted first (a re-run makes it again, never two of one
     number), then the newest `KEEP - 1` others stay beside the new one and the rest go. An old
     unnumbered name counts as older than any number. `protected`: campaigns the guard refuses to
     delete: they are left alone and counted, never reported as deleted. Names that are not
-    samples are not here: callers pass only `is_sample` names."""
+    samples are not here: callers pass only `is_sample` names. `version`: the session's version
+    being made; this deploy's campaigns of another version are kept (their own series), and a
+    deploy counts once toward `KEEP` whatever its versions."""
     numbered: list[tuple[int, str]] = []
     old: list[str] = []
+    other_version: list[str] = []  # this deploy's campaigns of another version: kept, not re-made
     for campaign_id, name in existing:
         n = deploy_of(name)
         if n is None:
             old.append(campaign_id)
+        elif n == deploy and version_of(name) != version:
+            other_version.append(campaign_id)
         else:
             numbered.append((n, campaign_id))
     same = [cid for n, cid in numbered if n == deploy]  # (every run of this deploy, if re-run)
@@ -102,7 +131,7 @@ def plan_keep(
         1 for cid in old if cid in protected
     )
     return Kept(
-        keep=tuple(cid for _, cid in stay),
+        keep=(*other_version, *(cid for _, cid in stay)),
         delete=tuple([*same, *old_go, *(cid for _, cid in go)]),
         kept_numbers=tuple(sorted(stay_deploys | {deploy})),
         deleted_numbers=tuple(sorted({n for n, _ in go})),

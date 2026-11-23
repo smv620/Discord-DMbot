@@ -124,11 +124,26 @@ def sure_flags(stats: Mapping[str, Stat]) -> list[str]:
     return out
 
 
-def save(path: Path, stats: Mapping[str, Stat], *, commit: str) -> None:
-    """The deploy's summary, counts only, for the next deploy to compare with."""
+def save(path: Path, stats: Mapping[str, Stat], *, commit: str, version: str = "typed") -> None:
+    """The deploy's summary, counts only, for the next deploy to compare with. `version`: which
+    version of the sample session it scored (docs/design/session_names.md, section 8)."""
     path.write_text(
-        json.dumps({"commit": commit, "stats": {k: asdict(v) for k, v in stats.items()}}, indent=1)
+        json.dumps(
+            {
+                "commit": commit,
+                "version": version,
+                "stats": {k: asdict(v) for k, v in stats.items()},
+            },
+            indent=1,
+        )
     )
+
+
+def version_of(path: Path) -> str:
+    """The session version a saved summary scored: "typed" for every summary written before the
+    versions existed (they had no other)."""
+    data = json.loads(path.read_text())
+    return str(data.get("version") or "typed")
 
 
 def load(path: Path) -> tuple[str, dict[str, Stat]]:
