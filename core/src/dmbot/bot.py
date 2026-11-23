@@ -372,6 +372,7 @@ from dmbot.memory import (
 from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
+from dmbot.memory.card_summaries import CardSummaries
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
 from dmbot.memory.contradiction_grades import MAJOR, GradeStore
@@ -1179,6 +1180,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if recaps is not None
             else None
         )
+        # What the background job kept for each character's card (#5050), read when a card opens.
+        self.card_summaries = CardSummaries(recaps.db) if recaps is not None else None
         self.outbox_wake = asyncio.Event()
         # The lore DMs uploaded on the website, waiting to be read (#3022), and the reads running.
         self.lore_uploads = lore_queue.LoreQueue(recaps.db) if recaps is not None else None
@@ -13162,7 +13165,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         the log."""
         from dmbot.memory import card_job, card_mentions
         from dmbot.memory.card_runner import CardRunner, Pass
-        from dmbot.memory.card_summaries import CardSummaries
 
         if (
             not self.settings.card_summary_on
@@ -13173,7 +13175,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             or self.ai is None
         ):
             return
-        summaries = CardSummaries(self.recaps.db)
+        summaries = self.card_summaries
         runner = CardRunner()
         ai = self.ai
         await asyncio.sleep(90)
