@@ -7,6 +7,7 @@ import { useRef, useState } from "preact/hooks";
 
 import { shareWords as words } from "../content/recap-share";
 import { RECAP_SHARE_LIVE, RECAPS_LIVE } from "../content/recap-words";
+import SavingWait from "./SavingWait";
 import {
   ApiError,
   type AccountApi,
@@ -94,6 +95,7 @@ export default function RecapShareControls({
   return (
     <section class="panel" aria-labelledby="recap-share">
       <h3 id="recap-share">{words.heading}</h3>
+      <SavingWait active={busy !== null} stage={words.workingStage} whatToDo={words.workingQuiet} />
       <p class="muted small">
         {link
           ? words.onLead(words.audio)

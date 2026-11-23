@@ -4,6 +4,7 @@
 // the public page that anyone with the link reads, and the headers that keep the secret address
 // out of caches and referrers. It shows only while RECAP_SHARE_LIVE is true (false today).
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -378,3 +379,61 @@ describe("the headers and the page", () => {
     expect(page).toMatch(/\bnofollow\b/);
   });
 });
+
+// The wait while the share link is changed (#3347 row 7): shown while the request runs, a stalled line after a minute.
+describe("the working line while the share link is changed", () => {
+  it("shows the working line while the link is being changed, and removes it when the answer comes", async () => {
+    live.share = true;
+    const api = mockApi("table");
+    let release!: () => void;
+    const gate = new Promise<void>((go) => {
+      release = go;
+    });
+    const make = api.shareRecap!.bind(api);
+    api.shareRecap = async (ref, action) => {
+      await gate;
+      return make(ref, action);
+    };
+    render(<Recaps api={api} path={postedPath} />);
+    fireEvent.click(await screen.findByRole("button", { name: shareWords.make }));
+    expect(await screen.findByText(shareWords.workingStage)).toBeTruthy();
+    release();
+    await waitFor(() => expect(screen.queryByText(shareWords.workingStage)).toBeNull());
+  });
+
+  it("shows nothing when nothing is running", async () => {
+    live.share = true;
+    render(<Recaps api={mockApi("table")} path={postedPath} />);
+    await screen.findByRole("button", { name: shareWords.make });
+    expect(screen.queryByText(shareWords.workingStage)).toBeNull();
+    expect(screen.queryByText(shareWords.workingQuiet)).toBeNull();
+  });
+
+  it("says what to do when it is slow", async () => {
+    live.share = true;
+    // The fake clock is set before the page is drawn, as the approve test does, since the wait reads Date.now.
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    vi.setSystemTime(new Date(1_900_000_000 * 1000));
+    try {
+      const api = mockApi("table");
+      api.shareRecap = () => new Promise(() => undefined); // never answers
+      render(<Recaps api={api} path={postedPath} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      fireEvent.click(screen.getByRole("button", { name: shareWords.make }));
+      await act(async () => {
+        // A zero-length step first, so the page's effects start the quiet timer, then the minute.
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(61_000);
+      });
+      expect(screen.getByText(shareWords.workingQuiet)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
