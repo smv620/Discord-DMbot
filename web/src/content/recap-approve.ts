@@ -64,6 +64,9 @@ export const approveWords = {
   cuesUnlisted:
     "Nothing was approved. DMbot found a problem with a cue but can't say where. Press Edit at the bottom of the page and check each 《 》 and (( )), then save and approve again.",
   editEnds: "If you change the text, you approve it again.",
+  // The wait while a choice is being saved and the recap posted (#3347 row 7).
+  workingStage: "DMbot is saving your choice and posting the recap.",
+  workingQuiet: "DMbot is slow to answer. Your recap may still be posted: look at the Recaps page in a minute before you press again.",
 } as const;
 
 /** Said instead of the "not-allowed" line when the page has just read the recap again itself. */
