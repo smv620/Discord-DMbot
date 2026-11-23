@@ -62,6 +62,70 @@ class Names(unittest.TestCase):
         self.assertIsNone(sample_name.deploy_of(sample_name.OLD_NAME))
 
 
+class Versions(unittest.TestCase):
+    """docs/design/session_names.md, section 8: each version of the sample session (typed, no
+    capitals, spoken) is its own series, with its own campaigns."""
+
+    def test_the_typed_name_is_unchanged_and_another_version_says_which(self) -> None:
+        self.assertEqual(N(31, 2), "test of the frostmaiden (sample 31.2)")
+        self.assertEqual(N(31, 2, "typed"), N(31, 2))
+        self.assertEqual(
+            N(31, 2, "no-capitals"), "test of the frostmaiden (sample 31.2 no capitals)"
+        )
+        self.assertEqual(N(31, None, "spoken"), "test of the frostmaiden (sample 31 spoken)")
+        with self.assertRaises(ValueError):
+            N(31, 2, "shouted")
+
+    def test_a_version_name_is_a_sample_of_its_deploy_and_run(self) -> None:
+        name = N(31, 2, "no-capitals")
+        self.assertTrue(sample_name.is_sample(name))
+        self.assertEqual(
+            (sample_name.deploy_of(name), sample_name.run_of(name), sample_name.version_of(name)),
+            (sample_name.Label(31), 2, "no-capitals"),
+        )
+        lettered = N(sample_name.parse_label("41b"), 2, "no-capitals")
+        self.assertEqual(lettered, "test of the frostmaiden (sample 41b.2 no capitals)")
+        self.assertEqual(sample_name.deploy_of(lettered), sample_name.Label(41, "b"))
+        self.assertEqual(sample_name.version_of(lettered), "no-capitals")
+        self.assertEqual(sample_name.version_of(N(31)), "typed")
+        self.assertIsNone(sample_name.version_of(sample_name.OLD_NAME))
+        for bad in (
+            "test of the frostmaiden (sample 31 No capitals)",
+            "test of the frostmaiden (sample 31 no-capitals)",
+            "test of the frostmaiden (sample 31  no capitals)",
+            "test of the frostmaiden (sample 31 typed)",
+        ):
+            self.assertFalse(sample_name.is_sample(bad), bad)
+
+    def test_a_version_run_keeps_the_same_deploys_other_version(self) -> None:
+        have = [
+            ("t1", N(31, 1)), ("t2", N(31, 2)), ("n1", N(31, 1, "no-capitals")), ("old", N(30, 1)),
+        ]  # fmt: skip
+        kept = sample_name.plan_keep(have, 31, version="no-capitals")
+        self.assertEqual(kept.delete, ("n1",))  # (only its own version is re-made)
+        self.assertCountEqual(kept.keep, ["t1", "t2", "old"])
+        # (a deploy counts once, whatever its versions)
+        self.assertEqual(kept.kept_numbers, (sample_name.Label(30), sample_name.Label(31)))
+        typed = sample_name.plan_keep(have, 31)
+        self.assertCountEqual(typed.delete, ["t1", "t2"])
+        self.assertIn("n1", typed.keep)
+
+    def test_short_of_slots_an_older_deploys_rerun_never_drops_its_other_version(self) -> None:
+        # (the reviewer's case: typed 30 again with 3 runs and no free slot)
+        have = [("t33", N(33)), ("n30", N(30, None, "no-capitals")), ("t30", N(30))]
+        kept = sample_name.plan_keep(have, 30)
+        extra, _names, room = sample_name.slot_drops(have, kept, need=3, free=0)
+        self.assertNotIn("n30", extra)
+        self.assertEqual(extra, ())  # (33 is the newest other deploy: never touched)
+        self.assertEqual(room, 1)  # (only the typed 30 it replaces frees a slot)
+
+    def test_short_of_slots_the_newest_other_deploy_is_still_never_dropped(self) -> None:
+        have = [("t34", N(34)), ("n35", N(35, None, "no-capitals"))]
+        kept = sample_name.plan_keep(have, 35)
+        extra, _names, room = sample_name.slot_drops(have, kept, need=2, free=0)
+        self.assertEqual((extra, room), ((), 0))
+
+
 class Keeping(unittest.TestCase):
     def plan(self, numbers: list[int | None], deploy: int) -> sample_name.Kept:
         have = [
