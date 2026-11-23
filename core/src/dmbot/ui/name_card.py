@@ -811,7 +811,8 @@ async def _summary_lines(
 
         found = await store.get(campaign.guild_id, campaign.id, entity.id)
         numbers = await _session_numbers(interaction, campaign.id)
-        return card_view.view(found, entity.name, numbers).lines()
+        lore = await memory.lore_origin_at(campaign.guild_id, campaign.id, entity.id)
+        return card_view.view(found, entity.name, numbers, lore).lines()
     except Exception as exc:  # the type only
         log.warning("Card lines could not be read (%s)", type(exc).__name__)
         return None
