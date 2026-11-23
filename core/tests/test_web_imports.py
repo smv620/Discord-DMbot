@@ -1261,6 +1261,7 @@ class TheProgress(WithImports):
                     "stage": "cleaning",
                     "namesToAnswer": 0,
                     "namesUnchecked": False,
+                    "namesCut": 0,
                     "recap": None,
                     "story": None,  # (the story read has not started)
                     "clock": None,  # (no offer to set the clock for it, #3199)
@@ -1739,6 +1740,15 @@ class TheProgress(WithImports):
         got = await self.stage(imp)
         self.assertTrue(got["namesUnchecked"])
         self.assertEqual(got["stage"], "done")  # it moves on, but the DM is told it was skipped
+
+    async def test_the_names_the_scan_left_out_come_back_as_a_count_only(self) -> None:
+        from dmbot.transcript.import_job import ImportStore
+
+        imp, sid, _ = await self.one_import(False)
+        await self.set_import(state="done")
+        self.assertEqual((await self.stage(imp))["namesCut"], 0)
+        await ImportStore(self.db).set_scan_cut(THURSDAY.id, sid, 4)
+        self.assertEqual((await self.stage(imp))["namesCut"], 4)
 
     async def test_an_unknown_import_is_not_found(self) -> None:
         with self.assertRaises(RecapError):

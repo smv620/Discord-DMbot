@@ -224,6 +224,9 @@ export const importPage = {
   linkFor: (link: string, name: string): string => `${link} for ${name}`,
   namesUnchecked:
     "DMbot couldn't check every imported session for new names, so some may be missing. Add any with ➕ Add a name on the names panel.",
+  /** Names the scan left out past its 10 for each session (#5072), the same words as Discord. The count is summed over the sessions, so "as many as". */
+  namesCut: (n: number): string =>
+    `As many as ${n === 1 ? "1 more name was" : `${n} more names were`} left out. DMbot lists up to 10 new names from each session. Add any you know with ➕ Add a name on the names panel.`,
   doneCount: (done: number, n: number): string => `${done} of ${n} done.`,
   failedFallback: "Something went wrong with this one. Import this file again on its own.",
   allDone: "All done. The sessions are in your transcripts.",

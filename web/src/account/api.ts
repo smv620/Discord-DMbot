@@ -1384,6 +1384,8 @@ export interface LoreUpload {
   choice: "world" | "spoilers" | "smart";
   namesFound: number;
   linksFound: number;
+  /** Names past one document's limit that DMbot left out, a count only (#5072); missing from an older API. */
+  namesCut?: number;
   done: number;
   total: number;
   createdAt: number;
@@ -1589,6 +1591,8 @@ export interface ImportProgress {
     namesToAnswer?: number;
     /** True when the name check for this session was given up. */
     namesUnchecked?: boolean;
+    /** How many new names this session's name scan left out past its limit (#5072): a count, never a name. */
+    namesCut?: number;
     /** The read of this session's connections (#3307), in the shared shape: stage `reading_connections` (piece n of m),
      * `waiting_for_limit` (carries on by itself) or `connections_read`. Null until it starts; missing from an older API. */
     story?: JobProgress | null;

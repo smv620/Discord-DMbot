@@ -151,6 +151,22 @@ describe("Upload lore", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(words.problems["too-soon"]);
   });
 
+  it("says how many names the limit left out, with the count first, and nothing when none", async () => {
+    expect(words.cut(5)).toBe("5 more names were left out. DMbot lists up to 200 names from one document. To get them, split the document and upload each part.");
+    expect(words.cut(1)).toBe("1 more name was left out. DMbot lists up to 200 names from one document. To get it, split the document and upload each part.");
+    for (const [cut, shown] of [[5, true], [0, false]] as const) {
+      const api = mockApi("table");
+      api.loreAdd = async () => ({ id: "0".repeat(32), state: "done", stage: "done", error: "", source: "paste", choice: "smart", namesFound: 200, linksFound: 1, namesCut: cut, done: 0, total: 0, createdAt: 1, updatedAt: 2, serverNow: 3 });
+      render(<Lore api={api} path={PATH} />);
+      await fill();
+      fireEvent.click(screen.getByLabelText(words.rights));
+      fireEvent.click(screen.getByRole("button", { name: words.submit }));
+      expect(await screen.findByText(words.found(200, 1))).toBeTruthy();
+      expect(screen.queryByText(words.cut(5)) !== null).toBe(shown);
+      cleanup();
+    }
+  });
+
   it("follows the upload to done and points at Check the new names and the Story Graph", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockApi("table");
