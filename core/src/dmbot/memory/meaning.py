@@ -57,11 +57,15 @@ async def entry_texts(
     *,
     for_players: bool = False,
     viewer: gate.Viewer | None = None,
+    described_only: bool = True,
 ) -> dict[str, str]:
     """The text each of these confirmed entries was embedded from (`entity_text.compose`), by id.
     `for_players`: only entries a member of the campaign may see (see above), so a lead that ends in
     a player-facing answer (a sidebar reply can reach the raw transcript) never starts from a secret
-    or DM-only entry. The numbers themselves hold every entry; this is the filter."""
+    or DM-only entry. The numbers themselves hold every entry; this is the filter.
+    `described_only` False (a character's card, #5050): an entry with no description is answered
+    too, with "" as its text, so the caller can tell "may be shown, with nothing known yet" from
+    "may not be shown" (not in the answer)."""
     if not ids:
         return {}
     async with db.guild(guild_id) as conn:
@@ -75,7 +79,7 @@ async def entry_texts(
             " FROM memory_entities e"
             " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = ANY(%s)"
             " AND e.status = 'confirmed' AND e.merged_into IS NULL"
-            " AND char_length(btrim(e.description)) > 0"
+            " AND (NOT %s OR char_length(btrim(e.description)) > 0)"
             " AND (NOT %s OR (e.type <> 'person' AND e.id = ANY(%s)"
             "   AND NOT e.unnamed AND e.type <> ALL(%s)"
             "   AND NOT EXISTS (SELECT 1 FROM memory_aliases a"
@@ -83,9 +87,19 @@ async def entry_texts(
             "     AND a.entity_id = e.id AND a.secret AND a.status <> 'rejected'"
             "     AND regexp_replace(lower(a.text), '[^[:alnum:]]', '', 'g')"
             "       = regexp_replace(lower(e.name), '[^[:alnum:]]', '', 'g'))))",
-            (guild_id, campaign_id, list(ids), for_players, held, list(PLAYER_HIDDEN_TYPES)),
+            (
+                guild_id,
+                campaign_id,
+                list(ids),
+                described_only,
+                for_players,
+                held,
+                list(PLAYER_HIDDEN_TYPES),
+            ),
         )
-        return {str(r["id"]): compose(r["parts"]) for r in await cur.fetchall()}
+        return {
+            str(r["id"]): compose(r["parts"]) if r["parts"] else "" for r in await cur.fetchall()
+        }
 
 
 class MeaningSeeds:

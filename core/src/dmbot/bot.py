@@ -348,6 +348,8 @@ from dmbot.memory import (
     lore_context,
     lore_queue,
     meaning,
+    name_reader,
+    name_trace,
     plan_reader,
     report_make,
     role_match,
@@ -371,6 +373,7 @@ from dmbot.memory import (
 from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
+from dmbot.memory.card_summaries import CardSummaries
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
 from dmbot.memory.contradiction_grades import MAJOR, GradeStore
@@ -854,6 +857,7 @@ SUMMARY_PARTIAL = (
     "🤫 Some of the secrets in your after-session summary could not be shown to your players "
     "yet, so they are still secret. DMbot will try again after the next session."
 )
+CARD_ROUND_S = 300  # how often the card round looks for work (#5050)
 IMPORT_ROUND_S = 30
 IMPORT_SCAN_TRIES = 3  # an imported session's name scan is let go after this many failures
 # The AI feed's steps for an import's name scan and its story read (#3710): the import page's own
@@ -1177,6 +1181,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if recaps is not None
             else None
         )
+        # What the background job kept for each character's card (#5050), read when a card opens.
+        self.card_summaries = CardSummaries(recaps.db) if recaps is not None else None
         self.outbox_wake = asyncio.Event()
         # The lore DMs uploaded on the website, waiting to be read (#3022), and the reads running.
         self.lore_uploads = lore_queue.LoreQueue(recaps.db) if recaps is not None else None
@@ -2128,6 +2134,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
                 ]
                 if self.import_job is not None
+                else []
+            ),
+            *(
+                [self._watched(self._card_loop(), "card-sentences")]
+                if self.settings.card_summary_on and not self.settings.worker_on
                 else []
             ),
             self._watched(self._channel_sync_loop(), "channel-sync"),
@@ -11402,6 +11413,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ),
                 )
 
+    async def deeds_on(self, gid: int, cid: str) -> bool:
+        """Whether a campaign's deeds are asked about at all: the deeds switch is on and its plan
+        has story memory (the same rule as the after-session question and the deed card, #3175),
+        so a lapsed plan's leftover proposals are counted nowhere (#5105)."""
+        if not self.settings.story_deeds_on:
+            return False
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None:
+            return False
+        return await self.plan_allows("story", gid, campaign, fail_open=False)
+
     async def offer_deeds(self, table: Table) -> None:
         """After a session (#3175), only with DMBOT_STORY_DEEDS: one more question for the DM when
         the session reader noticed deeds the party did that mattered to someone and they wait to
@@ -12257,6 +12279,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # (#394). Which known name each sounds like is worked out when the DM looks,
         # never saved: names can change, or be made secret, before then.
         every = group_alike(find_new_names(lines, skip, unlimited=True))
+        # The name reader (docs/design/session_names.md, slice 2; DMBOT_SESSION_NAMES): names
+        # found from what is said about them, never from capitals, joined with the scan's before
+        # the cap. Only lines with a stored speaker can be read (consent is asked per line).
+        reader_kinds: dict[str, str] = {}
+        trace: list[name_trace.Row] = []
+        scan_keys = {name_key(f.name) for f in every}
+        if self.settings.session_names_on and heard_in:
+            # (exactly the lines the scan read: never a sidebar or off-topic line it left out,
+            # and on a put-back sweep only the lines put back, not the whole session again)
+            scanned = set(lines)
+            read_in = [x for x in heard_in if x.text in scanned]
+            people = await self._people_keys(gid, users, cid)
+            every, reader_kinds, trace = await self._read_session_names(
+                gid, cid, read_in, people, every
+            )
         found = every[:MAX_SUGGESTIONS]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
         asked = await self._take_name_asks(gid, cid, session_id) if session_id is not None else []
@@ -12273,13 +12310,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if import_scan and session_id is not None and self.import_job is not None:
             await self.import_job.store.set_scan_cut(gid, session_id, cut)
         added: list[str] = []
-        kinds = await self._scan_kinds(gid, cid, [f.name for f in found], lines)
+        kinds = await self._scan_kinds(
+            gid, cid, [f.name for f in found if f.name not in reader_kinds], lines
+        )
+        kinds.update({n: k for n, k in reader_kinds.items() if n not in kinds})
         # the session each name is made in, for the split-party check (#4043): never a guess
         session_at = await self._session_start(gid, session_id)
         log.info(  # counts only
             "Name scan: %d name(s) suggested, %d with a kind, %d without, %d past the limit",
             len(found), len(kinds), len(found) - len(kinds), cut,
         )  # fmt: skip
+        refused: set[str] = set()
         for suggestion in found:
             written = None
             # (a kind the campaign's ontology does not allow falls back to none: the card asks)
@@ -12298,6 +12339,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except MemoryRuleError as exc:
                     log.info("Skipped a suggested name: %s", exc)
             if written is None:
+                refused.add(name_key(suggestion.name))
                 continue
             added.append(suggestion.name)
             if heard_in and session_id is not None:
@@ -12318,7 +12360,136 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
+        if self.settings.name_trace_dir and self.settings.name_trace_guild == gid:  # (#5055 B)
+            await self._write_name_trace(
+                gid,
+                cid,
+                session_id,
+                every,
+                found,
+                offered,
+                refused,
+                scan_keys,
+                trace,
+                {name_key(n) for n in reader_kinds},
+                {name_key(n) for n, _times in asked},
+            )
         return added
+
+    async def _write_name_trace(
+        self,
+        gid: int,
+        cid: str,
+        session_id: str | None,
+        every: Sequence[Suggestion],
+        found: Sequence[Suggestion],
+        offered: Collection[str],
+        refused: Collection[str],
+        scan_keys: Collection[str],
+        trace: list[name_trace.Row],
+        reader_keys: Collection[str],
+        asked_keys: Collection[str],
+    ) -> None:
+        """The per-name trace of this step (#5055 B, dev tools): each name in the joined list ends
+        offered, over the number or refused by the store, with where it came from (the scan, the
+        reader or the name pass), beside the reader's own refusals. Written only for a sample
+        campaign (`name_trace.write`). Never raises."""
+        try:
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None:
+                return
+            shown = {name_key(f.name) for f in found}
+            rows = list(trace)
+            listed = {name_key(f.name) for f in every}
+            # (the joined list, then what was offered beside it: a word the name pass asked)
+            for f in [*every, *(f for f in found if name_key(f.name) not in listed)]:
+                key = name_key(f.name)
+                if key in asked_keys:
+                    source = name_trace.ASKED  # (offered because the name pass asked about it)
+                elif key in scan_keys:
+                    source = name_trace.SCAN
+                elif key in reader_keys:
+                    source = name_trace.READER
+                else:
+                    source = name_trace.ASKED
+                if key not in shown:  # (past the number: the only way into `every` but not shown)
+                    reason = name_trace.OVER_CAP
+                elif key in refused:
+                    reason = name_trace.STORE_REFUSED
+                else:
+                    reason = name_trace.OFFERED
+                rows.append(name_trace.Row(source, f.name, reason, times=f.times))
+            name_trace.write(
+                self.settings.name_trace_dir, campaign.name, cid, session_id, rows,
+                guild_id=gid, test_guild=self.settings.name_trace_guild,
+            )  # fmt: skip
+        except Exception as exc:  # (a dev tool: the step's own work is done)
+            log.warning("Name trace failed: %s", type(exc).__name__)
+
+    async def _read_session_names(
+        self,
+        gid: int,
+        cid: str,
+        heard_in: Sequence[Line],
+        people: Collection[str],
+        scan: list[Suggestion],
+    ) -> tuple[list[Suggestion], dict[str, str], list[name_trace.Row]]:
+        """The name reader over the session's lines (docs/design/session_names.md, slice 2),
+        joined with the scan's suggestions (`name_reader.join`). Never raises: no AI, a plan
+        without it, or a failure leave the scan's list as it was. Who is recorded is asked before
+        and after each call. Counts only in the log."""
+        ai = self.name_pass_ai
+        if ai is None or not heard_in or self.memory is None:
+            return scan, {}, []
+        try:
+            # Each name never to suggest, with why: a trace can tell "the DM said it isn't a
+            # name" from a known name or a person at the table (the Expert, on #5087).
+            known = await self.memory.known_keys(gid, cid)
+            rejected = await self.memory.rejected_keys(gid, cid)
+            skip = {k: name_reader.KNOWN_NAME for k in known}
+            skip.update({k: name_reader.NOT_A_NAME for k in rejected})
+            skip.update({k: name_reader.AT_TABLE for k in people})
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
+                return scan, {}, []
+            dms = set(campaign.dm_user_ids)
+            rows = [
+                name_reader.Row(str(i), x.user_id, x.user_id in dms, x.text)
+                for i, x in enumerate(heard_in, 1)
+            ]
+            # Metered: charged to the campaign as "names" unless a job around it (an import)
+            # already charges its calls (Supervisor, on #5090).
+            meter = (
+                credits.preparing(gid, cid, "names")
+                if credits.current() is None
+                else contextlib.nullcontext()
+            )
+            with meter:
+                read = await name_reader.read(
+                    ai,
+                    rows,
+                    skip,
+                    known=sorted(known - rejected),
+                    consenting=lambda: self.consent.consenting(gid),
+                    max_tokens=OUTPUT_FLOOR,  # (background calls never send less, #2596)
+                    rules=(campaign.target_ruleset, campaign.fallback_ruleset),
+                )
+            kept, dropped = name_reader.tally(read.heard, {r.number: r.text for r in rows})
+            joined, kinds = name_reader.join(scan, kept)
+            log.info(  # counts only (a stretch not read is never "no names")
+                "Name reader: %d name(s) kept, %d with too few hearings, %d new beside the scan,"
+                " %d stretch(es) not read",
+                len(kept), len(dropped), len(joined) - len(scan), read.unread,
+            )  # fmt: skip
+            # The trace (#5055 B): every candidate the reader ended, with its fixed reason. A kept
+            # name the scan also found is "joined"; the rest are traced with the joined list in
+            # `_propose_new_names` (offered, or over the number).
+            scanned = {name_key(x.name) for x in scan} | {name_key(a) for x in scan for a in x.also}
+            traced = name_trace.reader_rows(read.outcomes, dropped, kept, scanned)
+            return joined, kinds, traced
+        except Exception as exc:  # the reader adds names; the scan's list stands without it
+            log.warning("Name reader failed: %s", type(exc).__name__)
+            return scan, {}, []
 
     async def _scan_kinds(
         self, gid: int, cid: str, names: Sequence[str], lines: Sequence[str]
@@ -13072,6 +13243,111 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except Exception:
                     log.exception("Import: a round failed for a server")
             await asyncio.sleep(IMPORT_ROUND_S)
+
+    async def _card_loop(self) -> None:
+        """Every few minutes: the sentence and the first and last mention on each character's card
+        (#5050), for each campaign whose plan allows AI. Off unless `DMBOT_CARD_SUMMARY` is on.
+        The worker runs it when `DMBOT_WORKER` is on, the bot otherwise. What to skip, how many AI
+        calls a pass may make and when to wait after a failure is `CardRunner`'s. Counts only in
+        the log."""
+        from dmbot.memory import card_job, card_mentions
+        from dmbot.memory.card_runner import CardRunner, Pass
+
+        if (
+            not self.settings.card_summary_on
+            or self.memory is None
+            or self.recaps is None
+            or self.transcripts is None
+            or self.lookup is None
+            or self.ai is None
+        ):
+            return
+        summaries = self.card_summaries
+        runner = CardRunner()
+        ai = self.ai
+        await asyncio.sleep(90)
+        while True:
+            done = Pass()
+            try:
+                work: list[tuple[int, Any, int]] = []
+                for gid in await self.work_guild_ids():
+                    try:
+                        counts = await self.transcripts.session_counts(gid)
+                        work += [
+                            (gid, c, counts.get(c.id, 0))
+                            for c in await self.campaigns.list_campaigns(gid)
+                        ]
+                    except Exception as exc:
+                        log.warning("Card round: a server failed (%s)", type(exc).__name__)
+                for gid, campaign, sessions in runner.rotated(work):
+                    if done.budget.left <= 0:
+                        break  # (the rest are first in line next pass)
+                    try:
+                        with log_context(guild_id=gid, campaign_id=campaign.id):
+                            await self._card_campaign(
+                                runner, done, summaries, ai, gid, campaign, sessions,
+                                card_job, card_mentions,
+                            )  # fmt: skip
+                    except Exception as exc:
+                        log.warning("Card round: a campaign failed (%s)", type(exc).__name__)
+            except Exception as exc:
+                log.warning("Card round failed (%s)", type(exc).__name__)
+            if done.worked or done.failed:
+                log.info(
+                    "Card round: %d worked, %d skipped, %d AI call(s), %d failed; %s",
+                    done.worked, done.skipped, done.calls, done.failed, done.results,
+                )  # fmt: skip
+            await asyncio.sleep(CARD_ROUND_S)
+
+    async def _card_campaign(
+        self,
+        runner: Any,
+        done: Any,
+        summaries: Any,
+        ai: Any,
+        gid: int,
+        campaign: Any,
+        sessions: int,
+        card_job: Any,
+        card_mentions: Any,
+    ) -> None:
+        """One campaign of the card round: nothing is read beyond its version, its session count
+        and who agrees until the runner says there is work; then its confirmed characters."""
+        assert self.memory is not None and self.transcripts is not None and self.lookup is not None
+        assert self.recaps is not None
+        from dmbot.memory.models import CONFIRMED
+        from dmbot.recaps.card_beats import RecapBeats
+
+        cid = campaign.id
+        version = await self.memory.version(gid, cid)
+        agreed = hash(frozenset(await self.consent.consenting(gid)))
+        if runner.fresh(gid, cid, version, sessions, agreed):
+            done.skipped += 1
+            return
+        if not await self.plan_allows("ai", gid, campaign, fail_open=False):
+            return
+        onto = await self.memory.ontology(gid, cid)
+        ids = [
+            e.id
+            for e in await self.memory.entities(gid, cid, statuses=(CONFIRMED,))
+            if onto.is_a(e.type, "character")
+        ]
+        if not ids:
+            return
+        if self.headless:  # (the bot changed the story: this process's copy may be older)
+            self.lookup.mark_stale(gid, cid)
+
+        async def recorded() -> Any:
+            return await self.consent.consenting(gid)
+
+        await runner.work(
+            done, gid, cid, version=version, sessions=sessions, agreed=agreed, entity_ids=ids,
+            who=lambda i: card_job.refresh_who(summaries, ai, gid, cid, i),
+            mentions=lambda batch, budget: card_mentions.refresh_mentions(
+                summaries, self.transcripts, RecapBeats(self.recaps), self.lookup.get, recorded,
+                ai, gid, cid, list(batch), budget,
+            ),
+        )  # fmt: skip
 
     async def run_import_followups(self, gid: int, *, scan: bool = True, news: bool = True) -> int:
         """After an imported session is cleaned (#2106): in date order, one per campaign, its name
@@ -14486,6 +14762,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 join_choices=self._work_out_join_choices,
                                 reveals_ask=self._work_out_reveals,
                                 reveals_drop=self._drop_reveal,
+                                deeds=self._answer_deed,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -15207,6 +15484,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if words is not None and words.who and words.what and words.how:
                 shown.append((proposal.id, words))  # (a line with a word missing is not shown)
         return await RevealsStore(db).replace(guild_id, campaign_id, user_id, shown)
+
+    async def _answer_deed(
+        self, guild_id: int, campaign_id: str, proposal_id: str, record: bool
+    ) -> tuple[str, int | None]:
+        """A deed answered from the website (#3591): the one function Discord's Record and Not
+        this buttons use, so every rule and the consent re-check are the card's own."""
+        return await deed_card.apply_answer(self, guild_id, campaign_id, proposal_id, record=record)
 
     async def _drop_reveal(self, guild_id: int, campaign_id: str, proposal_id: str) -> None:
         """An answered proposal leaves the website's kept lists at once (#3863)."""
