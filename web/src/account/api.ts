@@ -1975,7 +1975,9 @@ export interface WebLink {
    * everyone at the table. Absent from an older API. */
   who?: "dm" | "some" | "all" | "common";
   /** The characters that know it, when `who` is "some". */
-  knownBy?: { id: string; name: string }[];
+  /** The characters that know it, when `who` is "some". `guess` is DMbot's guess of an NPC who knows it (#3940): the DM's
+   * view only, never a player's. */
+  knownBy?: { id: string; name: string; guess?: "sure" | "likely" }[];
   direction: "a-b" | "b-a" | "both";
   /** How a two-way connection reads with both names ("are rivals", "are friends or allies"), sent only when `direction` is
    * "both" (#4154, core #4166); the page writes "A ↔ B · <pairWords>". Absent from an older API. */
@@ -2145,7 +2147,9 @@ export type WebLinkChange =
   // "everyone" is the table's answer; the read side calls the same answer "all" (WebLink.who). The bot's door takes
   // these names with #3202, so this change is not sent while WHO_KNOWS_LIVE is off.
   // "common" is 🌍 Common knowledge (#4559): no characters, and the bot shows the names to the players first.
-  | { action: "who"; id: string; who: "dm" | "some" | "everyone" | "common"; characters?: string[] }
+  // `shown` is every character the picker's list showed while it was open (at most 50, the most recent): the bot never
+  // removes or confirms a guess the page did not show (#4968 ruling, core #4976). Omitted when the list showed nobody.
+  | { action: "who"; id: string; who: "dm" | "some" | "everyone" | "common"; characters?: string[]; shown?: string[] }
   | { action: "remove"; id: string; confirm: true }
   // Takes back an earlier edit by its `batch` (core #4156); `id` is any link of the pair, the route's path wants one.
   | { action: "undo"; id: string; batch: number };

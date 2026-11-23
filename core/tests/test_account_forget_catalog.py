@@ -35,6 +35,7 @@ ELSEWHERE: Rules = {
         "web_rule_takes",  # (a day-long undo handle for a website pick, swept within a day, #4841)
         "web_join_choices",  # (the choices worked out for a DM's page, swept within an hour, #4799)
         "web_reveals",  # (what they learned, for a DM's page, swept within an hour, #3863)
+        "continuity_hits",  # (the heads-ups' pointers, for a DM's page, swept within a day, #3695)
     )
 }  # fmt: skip
 BY_DESIGN: Rules = {  # kept on purpose: protects the person, or stops a second free trial (#4145)

@@ -1279,7 +1279,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let mapSeq = 5;
   const linkBatches = new Map<number, { id: string; a: string; b: string; words: string; secret: boolean; direction: "a-b" | "b-a" | "both"; pinned?: boolean }[]>();
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
-  const linkWho = new Map<string, { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string }[] }>();
+  const linkWho = new Map<string, { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string; guess?: "sure" | "likely" }[] }>();
   // Player character icons (#3621, #3622): in a campaign reference ending ".icons" the first three names are player
   // characters: the first has a Discord avatar and a dndbeyond.com portrait, the second only a portrait, the third none.
   const pcChoice = new Map<string, IconChoice>();
@@ -1389,10 +1389,15 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         return s !== undefined && (s.secret === true || s.revealed === false);
       })
       .map((l) => l.id);
-    const defaultWho: { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string }[] }[] = [
+    // The fourth held connection (#4970): DMbot's guesses, sure and likely, and one character it names with no guess.
+    const defaultWho: { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string; guess?: "sure" | "likely" }[] }[] = [
       { who: "dm", knownBy: [] },
       { who: "some", knownBy: [{ id: "pc-cerric", name: "Cerric" }, { id: "pc-mira", name: "Mira" }] },
       { who: "all", knownBy: [] },
+      {
+        who: "some",
+        knownBy: [{ id: "pc-cerric", name: "Cerric", guess: "sure" }, { id: "pc-mira", name: "Mira", guess: "likely" }, { id: "npc-tavin", name: "Tavin" }],
+      },
     ];
     const whoEdges =
       dm && all
