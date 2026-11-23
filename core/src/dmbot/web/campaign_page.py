@@ -49,6 +49,7 @@ async def read_campaign(
             "SELECT c.name, c.owner_user_id, c.dm_screen_visibility, c.dm_screen_level,"
             " c.transcript_keep_days, c.paused, c.story_mode, c.dndbeyond_invite,"
             " c.target_ruleset, c.fallback_ruleset, c.share_improve, c.map_checks,"
+            " c.rules_cards, c.ask_before_adding,"
             " (SELECT count(*) FROM campaign_dms m WHERE m.guild_id = c.guild_id"
             "    AND m.campaign_id = c.id) AS dm_count"
             " FROM campaigns c"
@@ -79,6 +80,10 @@ async def read_campaign(
                 # "Map checks" (#4687): the private note about a distance far off a kept map, on by
                 # default
                 "mapChecks": bool(mine["map_checks"]),
+                # Discord's other two switches (#5155): "Rules cards" (on by default) and "Ask me
+                # before adding" (off by default, #3878)
+                "rulesCards": bool(mine["rules_cards"]),
+                "askBeforeAdding": bool(mine["ask_before_adding"]),
             }
         else:
             settings = None

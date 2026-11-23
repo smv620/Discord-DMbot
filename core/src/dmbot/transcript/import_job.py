@@ -417,6 +417,23 @@ class ImportStore:
                 (session_id,),
             )
 
+    async def recap_waiting(self, guild_id: int, campaign_id: str) -> bool:
+        """Whether this campaign has a scanned import whose recap the DM asked for and that has not
+        started: the end-of-import news waits for it. The session must still be there, as in
+        `ready_for_recap` (an import whose session was deleted has no recap to wait for, and must
+        not hold the news back for ever). Asked of one campaign, so another campaign's
+        waiting recaps (`ready_for_recap` lists a few, oldest first, for the whole server) can
+        never hide this one."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM session_imports i JOIN transcript_sessions t"
+                " ON t.id = i.session_id AND t.guild_id = i.guild_id"
+                " WHERE i.campaign_id = %s AND i.scan_finished AND i.write_recap"
+                " AND NOT i.recap_started LIMIT 1",
+                (campaign_id,),
+            )
+            return await cur.fetchone() is not None
+
     async def ready_for_recap(self, guild_id: int, limit: int = PER_ROUND) -> list[Ready]:
         """Scanned imports whose recap the DM asked for and that has not been dealt with, in date
         order. Separate from the scan, so a recap that failed to start is tried again."""

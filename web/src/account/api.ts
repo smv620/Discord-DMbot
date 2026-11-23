@@ -2159,7 +2159,9 @@ export interface WorldPlaceNote {
   id: string;
   entityId: string;
   name: string;
-  layer: "terrain" | "climate" | "control";
+  layer: "terrain" | "climate" | "control" | "culture" | "population";
+  /** A named culture's name, for a culture row (#4412); absent or null otherwise. */
+  culture?: string | null;
   value: string;
   /** The table's own words, when the value is "other" (the same as Discord's card). */
   words: string;
@@ -4439,5 +4441,5 @@ export interface PlaceWorld {
 
 /** What the table may be told of a place's land, climate and ruler: words only, no DM-only mark and no group the reader may not know. */
 export interface PlaceWorldTable {
-  rows: { layer: "terrain" | "climate" | "control"; value: string; words: string; groupName: string | null; how: string; part: string }[];
+  rows: { layer: "terrain" | "climate" | "control" | "culture" | "population"; value: string; words: string; groupName: string | null; how: string; part: string; culture?: string | null }[];
 }

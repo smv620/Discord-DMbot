@@ -123,8 +123,13 @@ NOT_STAMPED: dict[str, str] = {
     "continuity_hits": "heads-ups worked out for a page and kept a day, pointers only, not story",
     # (#5133: what made a waiting name a name, how and one line's pointer; goes when answered)
     "name_found": "how a waiting name was found and a pointer to its line, not story",
+    # (#4905: the queue that hands a live session's slow reads to the worker: ids, a lease and a
+    # state; what the reads make carries the stamp)
+    "after_session_jobs": "a working queue of ids and a lease; what the reads make is stamped",
     # (#3843: what a worker wants the bot to say in Discord; ids and counts, swept in days)
     # (#4904: what an import's scans leave for the report at its end; counts, ids and names)
+    # (#5055 B: an import's names past the scan's 10, waiting for the DM's 📝 More names)
+    "import_more_names": "a name waiting for the DM's press; the name it becomes is stamped",
     "import_state": "a holding place for an import's report (names, spellings as heard), taken "
     "when the report is made; the names it leads to are stamped as entries",
     "outbox": "a message waiting to be said in Discord, ids and counts only, not story",
