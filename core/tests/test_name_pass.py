@@ -278,7 +278,7 @@ class WhatThePassTellsTheStep(unittest.TestCase):
         lines = [SimpleNamespace(text=t, sidebar="", typed=False, user_id=1, topic="game")
                  for t in TheReadersCandidates.LOWER]  # fmt: skip
 
-        async def read(*_a: object) -> list[object]:
+        async def read(*_a: object) -> list[SimpleNamespace]:
             return lines
 
         async def respell(*_a: object, **_k: object) -> object:
