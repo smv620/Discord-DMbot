@@ -217,8 +217,11 @@ def _not_stored_why(
     found = [pair for k in keys for pair in trace.get(k, ())]
     if not found:  # (the lore read's pass 1, the scan and the name reader all list what they saw)
         return "never stored: no reader listed it"
-    _place, last = max(found, key=lambda pair: pair[0])
-    if last.source == "lore" and last.reason == trace_note.LISTED:
+    # (a later read's pass 1 lists again what an earlier step ended, so a `listed` row only
+    # answers when nothing ended the name: the pictures' read lists names the text read ended)
+    ended = [pair for pair in found if pair[1].reason != trace_note.LISTED]
+    _place, last = max(ended or found, key=lambda pair: pair[0])
+    if last.reason == trace_note.LISTED:
         return "never stored: the lore read listed it in pass 1, but pass 2 gave no line for it"
     into = f" ({last.why})" if last.reason == trace_note.FOLDED and last.why else ""
     return f"never stored: {last.source} ended it as {last.reason}{into}"

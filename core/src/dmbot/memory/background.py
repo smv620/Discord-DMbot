@@ -657,7 +657,16 @@ def _spellings(
         ):
             skip.add(key)
             out.append(other)
+        elif other and key not in skip and key != name_key(name):
+            # (the trace, #5106: a name given only as this one's spelling, and not kept)
+            trace_note.note(other, trace_note.SPELLING_NOT_KEPT, name)
     return out
+
+
+def has_name_list(reply: str) -> bool:
+    """Whether a shaping answer holds a list of names at all (an unreadable one does not)."""
+    data = _json(reply)
+    return isinstance(data, dict) and isinstance(data.get("names"), list)
 
 
 def read_answer(reply: str, piece: str) -> list[Found]:
@@ -676,6 +685,8 @@ def read_answer(reply: str, piece: str) -> list[Found]:
         name = item.get("name")
         kind = KINDS.get(str(item.get("kind", "")).strip().lower())
         if not isinstance(name, str) or kind is None:
+            if isinstance(name, str):
+                trace_note.note(" ".join(name.split()), trace_note.UNKNOWN_KIND)
             continue
         # A name is never shortened (#2607): over the limits it is a sentence, not a name.
         name = " ".join(name.split())
@@ -709,6 +720,8 @@ def read_answer(reply: str, piece: str) -> list[Found]:
         about = " ".join(about.split()) if isinstance(about, str) else ""
         if not about.isprintable():  # (as the website's own box refuses one, all_names.py)
             about = ""
+        for other in (*also[MAX_ALSO:], *secret[MAX_ALSO:]):  # (past the spellings' limit)
+            trace_note.note(other, trace_note.SPELLING_NOT_KEPT, name)
         out.append(Found(name, kind, tuple(also[:MAX_ALSO]), tuple(secret[:MAX_ALSO]), kept, about))
     return out
 
@@ -795,9 +808,9 @@ def passes(
     item judge; a generic one is counted in `dropped` as `item_not_unique`, as `merge` does)."""
     key = name_key(item.name)
     if not key or key in {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS:
-        trace_note.note(
-            item.name, trace_note.COMMON if key in COMMON | GAME_TERMS else trace_note.KNOWN
-        )
+        if key:  # (an empty key, "The", is no name to trace)
+            common = key in COMMON | GAME_TERMS
+            trace_note.note(item.name, trace_note.COMMON if common else trace_note.KNOWN)
         return False
     if rules is not None and in_the_rules(item.name, item.kind, *rules):
         trace_note.note(item.name, trace_note.RULES)
@@ -834,8 +847,9 @@ def merge(
         for item in found:
             key = name_key(item.name)
             if not key or key in skip:
-                common = key in COMMON | GAME_TERMS
-                trace_note.note(item.name, trace_note.COMMON if common else trace_note.KNOWN)
+                if key:  # (an empty key, "The", is no name to trace)
+                    common = key in COMMON | GAME_TERMS
+                    trace_note.note(item.name, trace_note.COMMON if common else trace_note.KNOWN)
                 continue
             if rules is not None and in_the_rules(item.name, item.kind, *rules):
                 trace_note.note(item.name, trace_note.RULES)

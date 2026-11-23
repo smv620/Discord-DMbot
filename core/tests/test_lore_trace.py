@@ -5,6 +5,7 @@ only for a sample campaign on the test server, and read by why_missed. Invented 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import tempfile
 import unittest
@@ -38,18 +39,37 @@ class TheCollector(unittest.TestCase):
             tn.note("Aldric", tn.FOLDED, "Brother Aldric")
             tn.note("", tn.LISTED)  # (no name: nothing to trace)
         tn.note("Mira", tn.STORED)
-        self.assertEqual(rows, [("Mira", tn.LISTED, ""), ("Aldric", tn.FOLDED, "Brother Aldric")])
+        self.assertEqual(
+            rows,
+            [(tn.LORE, "Mira", tn.LISTED, ""), (tn.LORE, "Aldric", tn.FOLDED, "Brother Aldric")],
+        )
+
+    def test_a_picture_read_s_notes_say_so_and_two_reads_never_share_a_list(self) -> None:
+        async def read_one(name: str, picture: bool) -> list[tn.Note]:
+            with tn.collecting() as rows:
+                if picture:
+                    with tn.from_source(tn.LORE_PICTURE):
+                        await _note_later(name)
+                else:
+                    await _note_later(name)
+            return rows
+
+        async def both() -> list[list[tn.Note]]:
+            return list(await asyncio.gather(read_one("Mira", False), read_one("Tavin", True)))
+
+        first, second = asyncio.run(both())
+        self.assertEqual(first, [(tn.LORE, "Mira", tn.STORED, "")])
+        self.assertEqual(second, [(tn.LORE_PICTURE, "Tavin", tn.STORED, "")])
 
     def test_the_read_s_own_tasks_write_to_the_same_list(self) -> None:
         async def run() -> list[tn.Note]:
             with tn.collecting() as rows:
                 await asyncio.gather(
-                    asyncio.ensure_future(asyncio.sleep(0, tn.note("A", tn.STORED))),
-                    asyncio.create_task(_note_later("B")),
+                    asyncio.ensure_future(_note_later("A")), asyncio.create_task(_note_later("B"))
                 )
             return rows
 
-        self.assertEqual(sorted(n for n, _r, _w in asyncio.run(run())), ["A", "B"])
+        self.assertEqual(sorted(n for _s, n, _r, _w in asyncio.run(run())), ["A", "B"])
 
 
 async def _note_later(name: str) -> None:
@@ -74,7 +94,7 @@ class PassTwosChecks(unittest.TestCase):
             kept = bg.read_answer(reply, piece)
         self.assertEqual([f.name for f in kept], ["Mira"])
         self.assertEqual(
-            {(n, r) for n, r, _w in rows},
+            {(n, r) for _s, n, r, _w in rows},
             {
                 ("Vellos", tn.NOT_IN_TEXT),
                 ("them", tn.ORDINARY),
@@ -100,7 +120,7 @@ class TheMerge(unittest.TestCase):
         with tn.collecting() as rows:
             kept = bg.merge([names], ["Oskar Vane"], cap=3, rules=("2024", "2014"))
         self.assertEqual(len(kept), 3)
-        ends = {n: (r, w) for n, r, w in rows}
+        ends = {n: (r, w) for _s, n, r, w in rows}
         self.assertEqual(ends["Oskar Vane"], (tn.KNOWN, ""))
         self.assertEqual(ends["Yes"], (tn.COMMON, ""))
         self.assertEqual(ends["Goblin"], (tn.RULES, ""))
@@ -115,7 +135,7 @@ class TheMerge(unittest.TestCase):
             for f in (found("Oskar Vane"), found("Goblin"), found("dagger", "item")):
                 bg.passes(f, ["Oskar Vane"], rules=("2024", "2014"))
         self.assertEqual(
-            [(n, r) for n, r, _w in rows],
+            [(n, r) for _s, n, r, _w in rows],
             [("Oskar Vane", tn.KNOWN), ("Goblin", tn.RULES), ("dagger", tn.ITEM)],
         )
 
@@ -123,7 +143,7 @@ class TheMerge(unittest.TestCase):
         with tn.collecting() as rows:
             out = lr.fold_names([found("Mira", also=["the Fox"]), found("the Fox")])
         self.assertEqual([f.name for f in out], ["Mira"])
-        self.assertEqual(rows, [("the Fox", tn.FOLDED, "Mira")])
+        self.assertEqual(rows, [(tn.LORE, "the Fox", tn.FOLDED, "Mira")])
 
 
 class TheWholeRead(unittest.TestCase):
@@ -137,9 +157,54 @@ class TheWholeRead(unittest.TestCase):
             return rows
 
         rows = asyncio.run(run())
-        listed = [n for n, r, _w in rows if r == tn.LISTED]
+        listed = [n for _s, n, r, _w in rows if r == tn.LISTED]
         self.assertEqual(listed, [r["name"] for r in NAME_ROWS])
-        self.assertIn(("Greyfen Abbey", tn.KNOWN, ""), rows)
+        self.assertIn((tn.LORE, "Greyfen Abbey", tn.KNOWN, ""), rows)
+
+    def test_a_read_stopped_mid_shaping_ends_its_slices_at_the_time_limit(self) -> None:
+        started = asyncio.Event()
+
+        async def hang(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
+            started.set()
+            await asyncio.sleep(60)
+            raise AssertionError("never answered")
+
+        async def run() -> list[tn.Note]:
+            with tn.collecting() as rows:
+                read = asyncio.ensure_future(
+                    lr.read_lore(
+                        ai([Reply(LIST, False)]),
+                        SimpleNamespace(complete=AsyncMock(side_effect=hang), model="m"),
+                        TEXT,
+                        {},
+                        Gate(),
+                    )
+                )
+                await started.wait()
+                read.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await read
+            return rows
+
+        stopped = {n for _s, n, r, _w in asyncio.run(run()) if r == tn.TIME_LIMIT}
+        self.assertEqual(stopped, {r["name"] for r in NAME_ROWS})
+
+    def test_an_unreadable_answer_or_an_unknown_kind_is_not_silent(self) -> None:
+        async def garbled(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
+            return Reply("not json at all", False)
+
+        async def run(shaper: Any) -> list[tn.Note]:
+            with tn.collecting() as rows:
+                await lr.read_lore(ai([Reply(LIST, False)]), shaper, TEXT, {}, Gate())
+            return rows
+
+        rows = asyncio.run(run(SimpleNamespace(complete=AsyncMock(side_effect=garbled), model="m")))
+        self.assertEqual(
+            {n for _s, n, r, _w in rows if r == tn.SLICE_UNREAD}, {r["name"] for r in NAME_ROWS}
+        )
+        with tn.collecting() as kinds:
+            bg.read_answer(json.dumps({"names": [{"name": "Mira", "kind": "dragon"}]}), "Mira")
+        self.assertEqual(kinds, [(tn.LORE, "Mira", tn.UNKNOWN_KIND, "")])
 
     def test_a_slice_that_failed_says_its_names_went_unread(self) -> None:
         async def fail(system: str, text: str, *, max_tokens: int, schema: Any = None) -> Reply:
@@ -155,7 +220,7 @@ class TheWholeRead(unittest.TestCase):
             return rows
 
         rows = asyncio.run(run())
-        unread = {n for n, r, _w in rows if r == tn.SLICE_UNREAD}
+        unread = {n for _s, n, r, _w in rows if r == tn.SLICE_UNREAD}
         self.assertEqual(unread, {r["name"] for r in NAME_ROWS})
 
 
@@ -176,7 +241,11 @@ class TheWrite(unittest.TestCase):
             campaign: Any = SimpleNamespace(guild_id=5, id="c1", name=SAMPLE)
             bot = self.bot(d, {"hope"})
             self.assertTrue(nb._tracing(bot, campaign))
-            noted = [("Mira", tn.LISTED, ""), ("Hope", tn.KNOWN, ""), ("Oskar", tn.KNOWN, "")]
+            noted = [
+                (tn.LORE, "Mira", tn.LISTED, ""),
+                (tn.LORE, "Hope", tn.KNOWN, ""),
+                (tn.LORE_PICTURE, "Oskar", tn.KNOWN, ""),
+            ]
             asyncio.run(nb._write_lore_trace(bot, campaign, noted))
             rows = nt.read(Path(d, "trace-c1.jsonl"))
         self.assertEqual(
@@ -184,9 +253,24 @@ class TheWrite(unittest.TestCase):
             [
                 (nt.LORE, "Mira", tn.LISTED),
                 (nt.LORE, "Hope", name_reader.NOT_A_NAME),
-                (nt.LORE, "Oskar", tn.KNOWN),
+                (tn.LORE_PICTURE, "Oskar", tn.KNOWN),
             ],
         )
+
+    def test_a_read_that_stopped_ends_what_was_only_listed(self) -> None:
+        from dmbot.ui import name_background as nb
+
+        with tempfile.TemporaryDirectory() as d:
+            campaign: Any = SimpleNamespace(guild_id=5, id="c1", name=SAMPLE)
+            noted = [
+                (tn.LORE, "Mira", tn.LISTED, ""),
+                (tn.LORE, "Tavin", tn.LISTED, ""),
+                (tn.LORE, "Tavin", tn.STORED, ""),
+            ]
+            asyncio.run(nb._write_lore_trace(self.bot(d, set()), campaign, noted, stopped=True))
+            rows = nt.read(Path(d, "trace-c1.jsonl"))
+        self.assertEqual([(r.name, r.reason) for r in rows][-1], ("Mira", tn.READ_STOPPED))
+        self.assertEqual(sum(r.reason == tn.READ_STOPPED for r in rows), 1)
 
     def test_a_real_campaign_or_another_server_is_never_traced(self) -> None:
         from dmbot.ui import name_background as nb
@@ -225,6 +309,14 @@ class WhyMissed(unittest.TestCase):
         )
         self.assertEqual(self.why(["gemstone mine"], rows), "never stored: no reader listed it")
 
+    def test_a_later_read_listing_it_again_never_hides_how_it_ended(self) -> None:
+        rows = [
+            nt.Row(nt.LORE, "Auril", tn.LISTED),
+            nt.Row(nt.LORE, "Auril", tn.NOT_IN_TEXT),
+            nt.Row(tn.LORE_PICTURE, "Auril", tn.LISTED),  # (the pictures' read, afterwards)
+        ]
+        self.assertEqual(self.why(["auril"], rows), "never stored: lore ended it as not_in_text")
+
 
 class TheStore(unittest.TestCase):
     def test_a_stored_name_and_a_refused_one_each_end_so(self) -> None:
@@ -242,6 +334,6 @@ class TheStore(unittest.TestCase):
             return rows
 
         self.assertEqual(
-            [(n, r) for n, r, _w in asyncio.run(run())],
+            [(n, r) for _s, n, r, _w in asyncio.run(run())],
             [("Mira", tn.STORED), ("Tavin", tn.STORE_REFUSED)],
         )

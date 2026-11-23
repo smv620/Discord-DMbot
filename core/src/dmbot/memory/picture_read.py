@@ -27,6 +27,7 @@ from dataclasses import dataclass, field, replace
 
 from dmbot.memory import background as bg
 from dmbot.memory import trace_note
+from dmbot.memory.models import name_key
 from dmbot.memory.picture_names import Corrected, Known, Matched, ToCheck, check, written_in
 
 MAX_PICTURES = 200  # pictures read from one upload; past it, the first ones in page order
@@ -99,7 +100,7 @@ def sort(
         if isinstance(verdict, Matched):
             # (the name only: nothing else a picture read gave is checked)
             out.kept.append(replace(f, name=verdict.name, also=(), secret=(), quote="", about=""))
-            if verdict.name != f.name:
+            if name_key(verdict.name) != name_key(f.name):
                 trace_note.note(f.name, trace_note.FOLDED, verdict.name)
         elif isinstance(verdict, Corrected):
             out.corrected[verdict.how] += 1

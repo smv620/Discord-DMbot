@@ -1015,11 +1015,15 @@ async def _shape(
         return await _halves(ai, text, names, links, own, gate, stats, depth, aliases, defer)
     stats.shape_calls += 1
     if not reply.cut:
+        shaped = bg.read_answer(reply.text, text)
+        if not shaped and names and not bg.has_name_list(reply.text):
+            for n in names:  # (an answer with no list of names: the slice was not read)
+                trace_note.note(line_name(n), trace_note.SLICE_UNREAD)
         if defer is not None:
             defer.append(reply.text)
-            return bg.read_answer(reply.text, text), [], False
+            return shaped, [], False
         return (
-            bg.read_answer(reply.text, text),
+            shaped,
             bg.read_connections(
                 reply.text, text, set(own), stats.dropped, aliases, stats.unsettled
             ),
@@ -1256,6 +1260,9 @@ async def _read_lore(
     listed, cut = await read_list(read_ai, text, own, gate, stats, tick, look)
     for n in listed.names:
         trace_note.note(line_name(n), trace_note.LISTED)
+    for n in listed.left_out:  # (NOT INCLUDED: a name pass 1 saw and chose not to give)
+        if "—" not in n:  # (a relationship left out is not a name)
+            trace_note.note(line_name(n), trace_note.LEFT_OUT)
     words_read[0] = len(text.split())
     _counts()
     known_named: tuple[str, ...] = ()
@@ -1318,15 +1325,16 @@ async def _read_lore(
         if tasks:
             _, pending = await asyncio.wait(tasks, timeout=left)
     finally:  # also when the caller is cancelled: no shaping call is left running
-        for task in tasks:
+        for task, (slice_names, _slice_links) in zip(tasks, slices, strict=True):
             if not task.done():
                 task.cancel()
+                # (the trace, #5106: cut at the time limit, or the whole read was stopped)
+                for n in slice_names:
+                    trace_note.note(line_name(n), trace_note.TIME_LIMIT)
         await asyncio.gather(*tasks, return_exceptions=True)
     cut = cut or bool(pending)
-    for task, (slice_names, _slice_links) in zip(tasks, slices, strict=True):
-        if task.cancelled():
-            for n in slice_names:
-                trace_note.note(line_name(n), trace_note.TIME_LIMIT)
+    for task in tasks:
+        if task.cancelled():  # (noted above, when it was cancelled)
             continue
         found, joined, shape_cut = task.result()
         names += found

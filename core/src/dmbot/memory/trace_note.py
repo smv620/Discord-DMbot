@@ -18,10 +18,16 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
-# (name, reason, why): `why` is the name it folded into, when it folded
-Note = tuple[str, str, str]
+# (source, name, reason, why): `why` is the name it folded into, when it folded
+Note = tuple[str, str, str, str]
 
 _ROWS: ContextVar[list[Note] | None] = ContextVar("dmbot_lore_trace", default=None)
+_SOURCE: ContextVar[str] = ContextVar("dmbot_lore_trace_source", default="lore")
+
+# Where a note comes from: the document's own read, or the second read of its pictures' words
+# (its pass 1 lists names the text read has already ended, so its rows are told apart)
+LORE = "lore"
+LORE_PICTURE = "lore_picture"
 
 # How a lore name ended: fixed words (the session reasons with the same meaning share their word)
 LISTED = "listed"  # pass 1 listed it (a later row says what happened next, if anything did)
@@ -43,13 +49,27 @@ PICTURE_CORRECTED = "picture_corrected"  # a picture's misspelling the document 
 PICTURE_HELD = "picture_held"  # a name only a picture gives, held for the DM
 STORE_REFUSED = "store_refused"  # the memory store would not take it (a rule; the log says which)
 STORED = "stored"
+UNKNOWN_KIND = "unknown_kind"  # pass 2 gave it a kind off the list
+LEFT_OUT = "left_out_by_pass_1"  # pass 1 saw it and left it out on purpose (NOT INCLUDED)
+SPELLING_NOT_KEPT = "spelling_not_kept"  # given as another name's spelling, then dropped
+READ_STOPPED = "read_stopped"  # the read stopped (cancelled or failed) before this name ended
 
 
 def note(name: str, reason: str, why: str = "") -> None:
     """Record where `name` ended, when a trace is being collected."""
     rows = _ROWS.get()
     if rows is not None and name:
-        rows.append((name, reason, why))
+        rows.append((_SOURCE.get(), name, reason, why))
+
+
+@contextmanager
+def from_source(source: str) -> Iterator[None]:
+    """Mark the notes made inside as coming from `source` (the pictures' read)."""
+    token = _SOURCE.set(source)
+    try:
+        yield
+    finally:
+        _SOURCE.reset(token)
 
 
 @contextmanager

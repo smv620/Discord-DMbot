@@ -885,6 +885,7 @@ async def read_background(
         secret_questions.evidence(upload_label(upload.label, time.time())) as asked,
         trace_note.collecting() if tracing else contextlib.nullcontext() as noted,
     ):
+        ended = False
         try:
             done = await _read_background(
                 bot,
@@ -898,11 +899,12 @@ async def read_background(
                 choice=choice,
                 seeing=seeing,
             )
+            ended = True
         finally:
             if seeing is not None and seeing.task is not None:
                 seeing.task.cancel()  # (a no-op once it is done; else no call is left running)
             if noted is not None:  # (also when the read failed: how far it got is the point)
-                await _write_lore_trace(bot, campaign, noted)
+                await _write_lore_trace(bot, campaign, noted, stopped=not ended)
     # (its 🤫 questions are counted on its note and open from its button: slice 2)
     memory = bot.memory
     if asked and memory is not None:
@@ -987,25 +989,38 @@ def _tracing(bot: Any, campaign: Campaign) -> bool:
     return bool(folder) and guild == campaign.guild_id and name_trace.is_sample(campaign.name)
 
 
-async def _write_lore_trace(bot: Any, campaign: Campaign, noted: Sequence[trace_note.Note]) -> None:
+async def _write_lore_trace(
+    bot: Any, campaign: Campaign, noted: Sequence[trace_note.Note], *, stopped: bool = False
+) -> None:
     """The lore read's rows of the per-name trace (#5106): where each name the read listed ended,
     in order, so `why_missed` takes the last one. A name the campaign has is told apart from one
-    the DM said isn't a name. Never raises: the read is done without it."""
+    the DM said isn't a name. `stopped`: the read raised or was cancelled, so a name whose last
+    row is still `listed` ends as `read_stopped`, never as "pass 2 gave no line". Never raises:
+    the read is done without it."""
     try:
         rejected: Collection[str] = set()
-        if bot.memory is not None and any(r == trace_note.KNOWN for _n, r, _w in noted):
+        if bot.memory is not None and any(r == trace_note.KNOWN for _s, _n, r, _w in noted):
             rejected = await bot.memory.rejected_keys(campaign.guild_id, campaign.id)
         rows = [
             name_trace.Row(
-                name_trace.LORE,
+                source,
                 name,
                 name_reader.NOT_A_NAME
                 if reason == trace_note.KNOWN and name_key(name) in rejected
                 else reason,
                 why,
             )
-            for name, reason, why in noted
+            for source, name, reason, why in noted
         ]
+        if stopped:
+            last: dict[str, name_trace.Row] = {}
+            for row in rows:
+                last[row.key] = row
+            rows += [
+                name_trace.Row(row.source, row.name, trace_note.READ_STOPPED)
+                for row in last.values()
+                if row.reason == trace_note.LISTED
+            ]
         name_trace.write(
             bot.settings.name_trace_dir, campaign.name, campaign.id, "lore", rows,
             guild_id=campaign.guild_id, test_guild=bot.settings.name_trace_guild,
@@ -1139,13 +1154,14 @@ async def _read_background(
     before = {name_key(f.name): f.name for f in found}
     found, folded = place_spellings_mod.fold_in_read(found)
     in_read = {name_key(f.name) for f in found}
+    into = {name_key(a): f.name for f in found for a in f.also}  # (where a folded place went)
     place_spellings, place_names, found = await _near_places(memory, campaign, found)
     # (the trace, #5106: a place written two ways in the read folds; one the campaign has written
     # another way becomes that place's other name, a suggestion)
     left = {name_key(f.name) for f in found}
     for key, name in before.items():
         if key not in in_read:
-            trace_note.note(name, trace_note.FOLDED)
+            trace_note.note(name, trace_note.FOLDED, into.get(key, ""))
         elif key not in left:
             trace_note.note(name, trace_note.PLACE_SPELLING)
     if folded or place_spellings:
@@ -1573,12 +1589,16 @@ async def _store_held(
     if pictures is None or not pictures.held:
         return set()
     taken = set(known) | {name_key(n) for f in found for n in (f.name, *f.also, *f.secret)}
+    # (for the trace: which of this read's names already holds a key)
+    held_by = {name_key(n): f.name for f in found for n in (f.name, *f.also, *f.secret)}
     held: list[bg.Found] = []
     notes: dict[str, str] = {}
     for h in pictures.held:
         key = name_key(h.found.name)
         if not key or key in taken or key in notes:
-            if key in taken:  # (a name the campaign or this read has: the trace says so, #5106)
+            if key in held_by:  # (this read has it: the trace says which name, #5106)
+                trace_note.note(h.found.name, trace_note.FOLDED, held_by[key])
+            elif key in taken:  # (the campaign has it)
                 trace_note.note(h.found.name, trace_note.KNOWN)
             continue
         held.append(bg.Found(h.found.name, h.found.kind, (), (), "", ""))
@@ -1762,23 +1782,26 @@ async def _read_pictures(
         return None
     read_ai, ai = models
     try:
-        async with asyncio.timeout(left):
-            seen = await lore_read.read_lore(
-                read_ai,
-                ai,
-                words,
-                own,
-                AI_AT_ONCE,
-                skip_name=lambda name: name_key(name) in known,
-                progress=progress,
-                aliases=aliases,
-                known_keys=known,
-                players=player_keys,
-            )
+        # (its rows are the pictures' read's: its pass 1 lists names the text read already ended)
+        with trace_note.from_source(trace_note.LORE_PICTURE):
+            async with asyncio.timeout(left):
+                seen = await lore_read.read_lore(
+                    read_ai,
+                    ai,
+                    words,
+                    own,
+                    AI_AT_ONCE,
+                    skip_name=lambda name: name_key(name) in known,
+                    progress=progress,
+                    aliases=aliases,
+                    known_keys=known,
+                    players=player_keys,
+                )
     except TimeoutError:
         log.info("Picture names: out of time, %d pictures not read", len(upload.pictures))
         return None
-    sorted_names = picture_read.sort(seen.names, read.names, upload.text, upload.pictures)
+    with trace_note.from_source(trace_note.LORE_PICTURE):
+        sorted_names = picture_read.sort(seen.names, read.names, upload.text, upload.pictures)
     read.names.extend(sorted_names.kept)
     # (a picture slice that failed loses its names too: counted with the text's, #5056 point 3)
     if lost := seen.stats.dropped.get(bg.NAMES_UNREAD, 0):
