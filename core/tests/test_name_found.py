@@ -76,6 +76,16 @@ class TheTable(MemoryTest):
             other: Found("addressed", OTHER)
         })  # fmt: skip
 
+    async def test_it_keeps_how_many_times_it_was_heard_and_typed(self) -> None:
+        # (0611, for the card's "Typed once in chat, and heard 3 times, …", #5133 3c)
+        await self.found.keep(GUILD_A, self.c, self.e, "typed", REF, times=4, typed=1)
+        self.assertEqual(
+            await self.found.of(GUILD_A, self.c, [self.e]), {self.e: Found("typed", REF, 1, 4)}
+        )
+        await self.found.keep(GUILD_A, self.c, self.e, "typed", REF, times=1, typed=3)
+        got = (await self.found.of(GUILD_A, self.c, [self.e]))[self.e]
+        self.assertEqual((got.times, got.typed), (1, 1))  # (never more typed than heard)
+
     async def test_a_name_already_answered_gets_no_row(self) -> None:
         # (the website lists a name as soon as it is made; answered before its row is written)
         await self.memory.confirm_entity(GUILD_A, self.c, self.e, "npc", source=DM_SOURCE)
@@ -108,7 +118,17 @@ class TheTable(MemoryTest):
             )
             got: Any = [r["column_name"] for r in await cur.fetchall()]
         self.assertEqual(
-            got, ["guild_id", "campaign_id", "entity_id", "how", "line_ref", "found_at"]
+            got,
+            [
+                "guild_id",
+                "campaign_id",
+                "entity_id",
+                "how",
+                "line_ref",
+                "found_at",
+                "times",
+                "typed",
+            ],
         )
 
 
@@ -125,7 +145,9 @@ class TheStepsChoice(MemoryTest):
             line("hrothgar, I typed it", 4000, 9, typed=True),
         ]
 
-    async def keep(self, group: Any, read: Any = (), spellings: Any = ("Hrothgar",)) -> Found:
+    async def keep(
+        self, group: Any, read: Any = (), spellings: Any = ("Hrothgar",), *, counts: bool = False
+    ) -> Found:
         from types import SimpleNamespace
 
         from dmbot.bot import DMBot
@@ -134,7 +156,8 @@ class TheStepsChoice(MemoryTest):
         await DMBot._keep_found(
             bot, GUILD_A, self.c, "s1", self.e, group, list(spellings), self.lines, self.lines, read
         )
-        return (await NameFound(self.db).of(GUILD_A, self.c, [self.e]))[self.e]
+        got = (await NameFound(self.db).of(GUILD_A, self.c, [self.e]))[self.e]
+        return got if counts else Found(got.how, got.line_ref)  # (how and the line, by default)
 
     async def test_typed_points_at_a_typed_line(self) -> None:
         got = await self.keep(group("scan", typed=True))
@@ -172,6 +195,12 @@ class TheStepsChoice(MemoryTest):
         await DMBot._keep_found(
             bot, GUILD_A, self.c, "s1", self.e, None, ["Hrothgar"], self.lines, self.lines, ()
         )
+
+    async def test_it_keeps_the_group_s_counts(self) -> None:
+        from dmbot.memory.name_groups import Group
+
+        got = await self.keep(Group("Hrothgar", (), 5, "scan", True, "", None, 2), counts=True)
+        self.assertEqual((got.times, got.typed), (5, 2))
 
     async def test_the_scan_alone_points_at_the_first_line_holding_it(self) -> None:
         self.assertEqual(await self.keep(group("scan")), Found("scan", line_ref("s1", 2000, 7)))

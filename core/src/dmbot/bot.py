@@ -417,6 +417,7 @@ from dmbot.memory.models import (
     lookup_key,
     name_key,
 )
+from dmbot.memory.more_names import PROGRESS_EVERY, HeldName, MoreNames
 from dmbot.memory.name_documents import MAX_PDF_BYTES
 from dmbot.memory.name_found import NameFound
 from dmbot.memory.ontology import Tally
@@ -698,6 +699,7 @@ from dmbot.ui.live_heads_up import LiveHeadsUpButton, heads_up_text, heads_up_vi
 from dmbot.ui.map_checks import StopMapChecksButton
 from dmbot.ui.map_layers_note import UndoMapLayersButton
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
+from dmbot.ui.more_names import MoreNamesButton
 from dmbot.ui.name_background import _reading_pictures as reading_pictures
 from dmbot.ui.name_card import (
     FinishPastButton,
@@ -2107,6 +2109,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             questions_board.QuestionsButton,
             FamilyTiesButton,
             TraitQuestionsButton,  # 🧬 Character details (#3926)
+            MoreNamesButton,  # 📝 More names, an import's names past the scan's 10 (#5055 B)
             WorldNotesButton,  # 🌍 World notes (#4285)
             ThreadQuestionsButton,  # 📜 Story threads (#4453)
             SecretQuestionsButton,  # 🤫 Known or secret? (#4524)
@@ -12797,7 +12800,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         cut = sum(1 for f in every[MAX_SUGGESTIONS:] if name_key(f.name) not in offered)
         if import_scan and session_id is not None and self.import_job is not None:
             await self.import_job.store.set_scan_cut(gid, session_id, cut)
-        added: list[str] = []
+            # (#5055 B: an import is read once, so what is past the 10 waits behind "📝 More names"
+            # instead of being lost; a live session keeps its short list and only counts)
+            past = [
+                HeldName(f.name, f.times, f.also)
+                for f in every[MAX_SUGGESTIONS:]
+                if name_key(f.name) not in offered
+            ]
+            if past:
+                try:  # (a count must never stop the scan: the 10 are offered either way)
+                    await MoreNames(self.memory._db).hold(gid, cid, session_id, past)
+                except Exception as exc:
+                    log.warning("More names: not kept (%s)", type(exc).__name__)
         kinds = await self._scan_kinds(
             gid, cid, [f.name for f in found if f.name not in reader_kinds], lines
         )
@@ -12812,6 +12826,51 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             sum(1 for g in settled.offered if g.heard_wrong), settled.near_secret,
         )  # fmt: skip
         refused: set[str] = set()
+        added = await self._add_scan_names(
+            gid, cid, found, kinds,
+            session_id=session_id, heard_in=heard_in, session_at=session_at, refused=refused,
+            found_how=found_how, read_in=read_in, read=read,
+        )  # fmt: skip
+        if tracing:  # (#5055 B)
+            await self._write_name_trace(
+                gid,
+                cid,
+                session_id,
+                every,
+                found,
+                offered,
+                refused,
+                scan_keys,
+                trace,
+                read_keys,
+                {name_key(n) for n, _times in asked},
+            )
+        return added
+
+    async def _add_scan_names(
+        self,
+        gid: int,
+        cid: str,
+        found: Sequence[Suggestion],
+        kinds: Mapping[str, str],
+        *,
+        session_id: str | None,
+        heard_in: Sequence[Line],
+        session_at: int | None,
+        refused: set[str] | None = None,
+        found_how: Mapping[str, name_groups.Group] | None = None,
+        read_in: Sequence[Line] = (),
+        read: Sequence[name_reader.Found] = (),
+    ) -> list[str]:
+        """Make each suggestion a name to check, as the scan does: proposed, source scan, "Heard N
+        times", its other spellings as aliases, and where it was said when the lines are given.
+        Shared by the scan and "📝 More names" (#5055 B). Returns the names made; `refused`, when
+        given, gets the key of each the store refused (for the scan's trace). `found_how`,
+        `read_in` and `read` are the scan's own (what made each a name, for the 3b card); "More
+        names" gives none, so its names are found by the scan (#5168: they were the scan's locals,
+        out of reach here once the two were split)."""
+        assert self.memory is not None
+        added: list[str] = []
         for suggestion in found:
             written = None
             # (a kind the campaign's ontology does not allow falls back to none: the card asks)
@@ -12830,13 +12889,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except MemoryRuleError as exc:
                     log.info("Skipped a suggested name: %s", exc)
             if written is None:
-                refused.add(name_key(suggestion.name))
+                if refused is not None:
+                    refused.add(name_key(suggestion.name))
                 continue
             added.append(suggestion.name)
             if self.settings.session_names_on:  # (what made it a name: for the 3c card, 3b)
                 await self._keep_found(
                     gid, cid, session_id, written.value.id,
-                    found_how.get(name_key(suggestion.name)),
+                    (found_how or {}).get(name_key(suggestion.name)),
                     [suggestion.name, *suggestion.also], heard_in, read_in, read,
                 )  # fmt: skip
             if heard_in and session_id is not None:
@@ -12857,21 +12917,66 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
-        if tracing:  # (#5055 B)
-            await self._write_name_trace(
-                gid,
-                cid,
-                session_id,
-                every,
-                found,
-                offered,
-                refused,
-                scan_keys,
-                trace,
-                read_keys,
-                {name_key(n) for n, _times in asked},
-            )
         return added
+
+    async def add_more_names(
+        self,
+        gid: int,
+        cid: str,
+        progress: Callable[[int, int], Awaitable[None]] | None = None,
+    ) -> tuple[int, int]:
+        """The DM pressed "📝 More names" (#5055 B): every name an imported session's scan held past
+        its 10 becomes a name to check, as the scan makes them, and leaves the waiting list. A name
+        DMbot has meanwhile learned, or that the DM said isn't one, is let go; one held from two
+        sessions is one name (its times added, its other spellings joined, the earliest session
+        kept). If making them fails part way, the names not made yet are put back, so none is lost.
+        `progress(done, of)` is awaited every few names (the wait rule). Returns (made, still
+        waiting): one press makes at most `more_names.TAKE_MAX`. No AI call: what each is, the card
+        asks. Counts only in the log."""
+        assert self.memory is not None
+        held = MoreNames(self.memory._db)
+        taken = await held.take(gid, cid)
+        known = set(await self.memory.known_keys(gid, cid))
+        merged: dict[str, HeldName] = {}
+        for h in taken:  # (most heard first, so the first session seen is kept for ties)
+            key = name_key(h.name)
+            if key in known:
+                continue
+            old = merged.get(key)
+            if old is None:
+                merged[key] = h
+                continue
+            also = tuple(dict.fromkeys((*old.also, *h.also)))
+            merged[key] = HeldName(old.name, old.times + h.times, also, old.session_id)
+        waiting = list(merged.values())
+        made = 0
+        starts: dict[str, int | None] = {}
+        try:
+            for done, h in enumerate(waiting):
+                if progress is not None and done % PROGRESS_EVERY == 0:
+                    await progress(done, len(waiting))
+                if h.session_id not in starts:
+                    starts[h.session_id] = await self._session_start(gid, h.session_id)
+                one = [Suggestion(h.name, h.times, h.also)]
+                made += len(
+                    await self._add_scan_names(
+                        gid, cid, one, {},
+                        session_id=h.session_id, heard_in=(), session_at=starts[h.session_id],
+                    )
+                )  # fmt: skip
+                waiting[done] = HeldName("", 0)  # (made, or refused by a rule: not put back)
+        except BaseException:
+            # (nothing is lost: what was not made yet waits again, under its own session)
+            back: dict[str, list[HeldName]] = {}
+            for h in waiting:
+                if h.name:
+                    back.setdefault(h.session_id, []).append(h)
+            for sid, names in back.items():
+                await held.hold(gid, cid, sid, names)
+            raise
+        left = await held.count(gid, cid)
+        log.info("More names: %d taken, %d made, %d still waiting", len(taken), made, left)
+        return made, left
 
     async def _write_name_trace(
         self,
@@ -13135,7 +13240,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     line = next((x for f in mine if f.why == how for x in cited(f)), None)
                 line = line or holding(heard_in)
             ref = line_ref(session_id, line.started_ms, line.user_id) if line else None
-            await NameFound(db).keep(gid, cid, entity_id, how, ref)
+            times, typed = (group.times, group.typed_times) if group is not None else (0, 0)
+            await NameFound(db).keep(gid, cid, entity_id, how, ref, times=times, typed=typed)
         except Exception as exc:  # (the card simply has no quote)
             log.warning("Couldn't keep what made a name a name (%s)", type(exc).__name__)
 

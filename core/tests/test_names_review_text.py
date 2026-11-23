@@ -1,6 +1,7 @@
 """The after-session name review's wording (#394), without Discord or a database."""
 
 import unittest
+from typing import Any
 
 from dmbot.memory.models import PROPOSED, Entity
 from dmbot.memory.scan import Match
@@ -160,6 +161,104 @@ class FoundNoteTest(unittest.TestCase):
         text = interaction.edit_original_response.await_args.kwargs["content"]
         self.assertIn("found no new names", text)
         self.assertIn("Found 4 connections: 4 not read in time", text)
+
+
+class TheHeardLine(unittest.TestCase):
+    """#5133 slice 3c: one name heard several ways, in the words Supervisor ruled."""
+
+    def test_spoken_once_and_several_ways(self) -> None:
+        self.assertEqual(ui.heard_line(1, 0, []), "Heard once.")
+        self.assertEqual(ui.heard_line(0, 0, []), "Heard once.")
+        self.assertEqual(
+            ui.heard_line(5, 0, ["Rothgar", "hroth gar"]),
+            "Heard 5 times, sometimes as *Rothgar* or *hroth gar*.",
+        )
+
+    def test_at_most_three_other_spellings_then_how_many_more(self) -> None:
+        got = ui.heard_line(9, 0, ["A1", "B1", "C1", "D1", "E1"])
+        self.assertEqual(got, "Heard 9 times, sometimes as *A1*, *B1* or *C1* and 2 more.")
+
+    def test_typed_says_how_often_it_was_typed_and_heard(self) -> None:
+        self.assertEqual(
+            ui.heard_line(4, 1, ["Rothgar"]),
+            "Typed once in chat, and heard 3 times, sometimes as *Rothgar*.",
+        )
+        self.assertEqual(ui.heard_line(1, 1, []), "Typed once in chat.")
+
+    def test_typed_never_loses_the_hearings_or_a_spelling(self) -> None:
+        self.assertEqual(ui.heard_line(4, 1, []), "Typed once in chat, and heard 3 times.")
+        self.assertEqual(
+            ui.heard_line(2, 2, ["Rothgar"]), "Typed 2 times in chat, sometimes as *Rothgar*."
+        )
+        self.assertEqual(ui.heard_line(1, 3, []), "Typed once in chat.")  # (never more than heard)
+
+    def test_the_dm_s_own_text_is_found_not_heard(self) -> None:
+        self.assertEqual(ui.heard_line(1, 0, [], written=True), "Found once in your text.")
+        self.assertEqual(
+            ui.heard_line(2, 0, ["Rothgar"], written=True),
+            "Found 2 times in your text, sometimes as *Rothgar*.",
+        )
+
+    def test_a_spelling_with_markdown_is_escaped(self) -> None:
+        self.assertIn(r"*Roth\*gar*", ui.heard_line(2, 0, ["Roth*gar"]))
+
+    def test_the_card_asks_on_its_title_line_when_what_made_it_a_name_was_kept(self) -> None:
+        kept = ui.suggestion_text(
+            suggested("Hrothgar", "Heard 5 times"), 1, also=["Rothgar"], counts=(5, 0)
+        )
+        self.assertTrue(
+            kept.startswith("📝 **Hrothgar**: a new name? Heard 5 times, sometimes as *Rothgar*.")
+        )
+        self.assertNotIn("Also heard as", kept)
+        self.assertNotIn("Is this a name in your game?", kept)
+        self.assertIn("Pick what it is to add it, or press 🚫 Not a name.", kept)  # (no guess)
+        today = ui.suggestion_text(suggested("Hrothgar"), 1, also=["Rothgar"])
+        self.assertIn("Also heard as **Rothgar**: saved with it.", today)
+        self.assertIn("Is this a name in your game?", today)
+
+    def test_a_card_with_its_own_question_keeps_it_under_the_heard_line(self) -> None:
+        got = ui.suggestion_text(
+            suggested("Hrothgar"), 1, match=Match("e1", "Hrothgard"), counts=(2, 0)
+        )
+        self.assertIn("**Hrothgar**\nHeard 2 times.", got)
+        self.assertIn("Sounds like **Hrothgard**. The same, or new?", got)
+        spelled = ui.suggestion_text(suggested("Hrothgar"), 1, fix_to="Hrothgarr", counts=(3, 1))
+        self.assertIn("\nTyped once in chat, and heard 2 times.", spelled)
+        self.assertIn("Someone spelled it out: **Hrothgarr**.", spelled)
+
+
+class TheOrder(unittest.TestCase):
+    def found(self, how: str, times: int = 0) -> Any:
+        from dmbot.memory.name_found import Found
+
+        return Found(how, None, 0, times)
+
+    def test_introduced_or_typed_first_then_most_heard_then_the_rest_as_made(self) -> None:
+        a, b = suggested("Vorna", "Heard 9 times"), suggested("Ostrin", "Heard 2 times")
+        c, d = suggested("Tamsin", "Heard 4 times"), suggested("Garreth", "Heard 7 times")
+        found = {
+            "a": self.found("spoken_of"),
+            "b": self.found("introduced"),
+            "c": self.found("scan"),
+        }
+        keyed = [(a, "a"), (b, "b"), (c, "c"), (d, "d")]
+        ordered = sorted(keyed, key=lambda p: ui._surest(p[0], found.get(p[1])))
+        self.assertEqual([e.name for e, _k in ordered], ["Ostrin", "Vorna", "Tamsin", "Garreth"])
+
+    def test_the_kept_count_wins_over_the_note(self) -> None:
+        a, b = suggested("Vorna", "Heard 9 times"), suggested("Ostrin", "Heard 2 times")
+        found = {"a": self.found("scan", 3), "b": self.found("scan", 6)}
+        ordered = sorted([(a, "a"), (b, "b")], key=lambda p: ui._surest(p[0], found.get(p[1])))
+        self.assertEqual([e.name for e, _k in ordered], ["Ostrin", "Vorna"])
+
+    def test_a_tie_is_in_the_order_made(self) -> None:
+        import dataclasses
+
+        a = dataclasses.replace(suggested("Vorna", "Heard 2 times"), created_at=20)
+        b = dataclasses.replace(suggested("Ostrin", "Heard 2 times"), created_at=10)
+        found = self.found("scan")
+        ordered = sorted([a, b], key=lambda e: ui._surest(e, found))
+        self.assertEqual([e.name for e in ordered], ["Ostrin", "Vorna"])
 
 
 if __name__ == "__main__":

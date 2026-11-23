@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Final
 
 NAMES: Final = "names"
+MORE_NAMES: Final = "more_names"  # an import's names past the scan's 10, waiting (#5055 B)
 HEARD: Final = "heard"
 LOOKALIKES: Final = "lookalikes"
 CONNECTIONS: Final = "connections"
@@ -33,6 +34,7 @@ DEEDS: Final = (
 # In the order the list shows them (the ones people answer most first).
 ORDER: Final[tuple[str, ...]] = (
     NAMES,
+    MORE_NAMES,
     HEARD,
     LOOKALIKES,
     CONNECTIONS,
@@ -56,6 +58,7 @@ ORDER: Final[tuple[str, ...]] = (
 
 LABELS: Final[dict[str, str]] = {
     NAMES: "New names to check",
+    MORE_NAMES: "More names from your sessions",
     HEARD: "Did they mean…?",
     LOOKALIKES: "Names that look alike",
     CONNECTIONS: "Connections waiting",

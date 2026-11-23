@@ -75,6 +75,7 @@ from dmbot.memory import isolated as isolated_mod
 from dmbot.memory import join_questions as join_questions_mod
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import map_facts as mf
+from dmbot.memory import name_found as name_found_mod
 from dmbot.memory import party as party_mod
 from dmbot.memory import same_person as same_person_mod
 from dmbot.memory import secret_questions as secret_questions_mod
@@ -1148,6 +1149,13 @@ class MemoryStore:
                 if row := await cur.fetchone():
                     return str(row["name"])
         return None
+
+    async def name_found(
+        self, guild_id: int, campaign_id: str, entity_ids: Collection[str]
+    ) -> dict[str, name_found_mod.Found]:
+        """What made each of these waiting names a name (#5133 slice 3b, `memory.name_found`):
+        how it was found, the pointer to its line, and its counts, for the card."""
+        return await name_found_mod.NameFound(self._db).of(guild_id, campaign_id, entity_ids)
 
     async def sound_alikes(
         self, guild_id: int, campaign_id: str, codes: Sequence[str], *, limit: int = 500

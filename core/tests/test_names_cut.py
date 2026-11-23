@@ -96,9 +96,9 @@ class TheWords(unittest.TestCase):
 
     def test_the_import_line_is_a_count_and_says_what_to_do(self) -> None:
         self.assertIn("up to 10 new names from each session", names_cut_note(3))
-        self.assertIn("As many as 1 more name was left out", names_cut_note(1))
-        self.assertIn("As many as 3 more names were left out", names_cut_note(3))
-        self.assertIn("➕ Add a name", names_cut_note(3))
+        self.assertIn("As many as 1 more name is waiting", names_cut_note(1))
+        self.assertIn("As many as 3 more names are waiting", names_cut_note(3))
+        self.assertIn("📝 More names in ❓ Questions for you", names_cut_note(3))
 
 
 if __name__ == "__main__":
