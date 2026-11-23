@@ -3612,8 +3612,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except Exception:
                     log.exception("After the session: %s failed", name)
         finally:
-            if getattr(table, "after_card", None) is not None:  # (the reads are over)
-                await table.after_card.finish()
+            card = getattr(table, "after_card", None)
+            if isinstance(card, after_session.AfterSessionCard):  # (the reads are over)
+                await card.finish()
                 table.after_card = None
             leftover, table.asks = table.asks or [], None
             if leftover:  # the sending step itself failed: still ask, so nothing is lost
@@ -10369,12 +10370,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     def _after_card(self, table: Table) -> after_session.AfterSessionCard:
         """The one message that shows this session's after-session reads while they run (#5124):
         made the first time a read asks for it, ended once by `_after_session`."""
-        if getattr(table, "after_card", None) is None:
-            channel = table.screen_channel_id
-            table.after_card = after_session.AfterSessionCard(
-                lambda text: self.post_message(channel, text)
-            )
-        return cast(after_session.AfterSessionCard, table.after_card)
+        card = getattr(table, "after_card", None)
+        if not isinstance(card, after_session.AfterSessionCard):
+            channel = getattr(table, "screen_channel_id", None)
+
+            async def post(text: str) -> Any:
+                return None if channel is None else await self.post_message(channel, text)
+
+            card = after_session.AfterSessionCard(post)
+            table.after_card = card
+        return card
 
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a live session: see `_extract_session`."""
