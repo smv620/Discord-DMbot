@@ -855,7 +855,6 @@ SUMMARY_PARTIAL = (
     "🤫 Some of the secrets in your after-session summary could not be shown to your players "
     "yet, so they are still secret. DMbot will try again after the next session."
 )
-CARD_ROUND_S = 300  # how often the card round looks for work (#5050)
 IMPORT_ROUND_S = 30
 IMPORT_SCAN_TRIES = 3  # an imported session's name scan is let go after this many failures
 # The AI feed's steps for an import's name scan and its story read (#3710): the import page's own
@@ -2132,11 +2131,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
                 ]
                 if self.import_job is not None
-                else []
-            ),
-            *(
-                [self._watched(self._card_loop(), "card-sentences")]
-                if self.settings.card_summary_on and not self.settings.worker_on
                 else []
             ),
             self._watched(self._channel_sync_loop(), "channel-sync"),
@@ -13081,111 +13075,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except Exception:
                     log.exception("Import: a round failed for a server")
             await asyncio.sleep(IMPORT_ROUND_S)
-
-    async def _card_loop(self) -> None:
-        """Every few minutes: the sentence and the first and last mention on each character's card
-        (#5050), for each campaign whose plan allows AI. Off unless `DMBOT_CARD_SUMMARY` is on.
-        The worker runs it when `DMBOT_WORKER` is on, the bot otherwise. What to skip, how many AI
-        calls a pass may make and when to wait after a failure is `CardRunner`'s. Counts only in
-        the log."""
-        from dmbot.memory import card_job, card_mentions
-        from dmbot.memory.card_runner import CardRunner, Pass
-
-        if (
-            not self.settings.card_summary_on
-            or self.memory is None
-            or self.recaps is None
-            or self.transcripts is None
-            or self.lookup is None
-            or self.ai is None
-        ):
-            return
-        summaries = self.card_summaries
-        runner = CardRunner()
-        ai = self.ai
-        await asyncio.sleep(90)
-        while True:
-            done = Pass()
-            try:
-                work: list[tuple[int, Any, int]] = []
-                for gid in await self.work_guild_ids():
-                    try:
-                        counts = await self.transcripts.session_counts(gid)
-                        work += [
-                            (gid, c, counts.get(c.id, 0))
-                            for c in await self.campaigns.list_campaigns(gid)
-                        ]
-                    except Exception as exc:
-                        log.warning("Card round: a server failed (%s)", type(exc).__name__)
-                for gid, campaign, sessions in runner.rotated(work):
-                    if done.budget.left <= 0:
-                        break  # (the rest are first in line next pass)
-                    try:
-                        with log_context(guild_id=gid, campaign_id=campaign.id):
-                            await self._card_campaign(
-                                runner, done, summaries, ai, gid, campaign, sessions,
-                                card_job, card_mentions,
-                            )  # fmt: skip
-                    except Exception as exc:
-                        log.warning("Card round: a campaign failed (%s)", type(exc).__name__)
-            except Exception as exc:
-                log.warning("Card round failed (%s)", type(exc).__name__)
-            if done.worked or done.failed:
-                log.info(
-                    "Card round: %d worked, %d skipped, %d AI call(s), %d failed; %s",
-                    done.worked, done.skipped, done.calls, done.failed, done.results,
-                )  # fmt: skip
-            await asyncio.sleep(CARD_ROUND_S)
-
-    async def _card_campaign(
-        self,
-        runner: Any,
-        done: Any,
-        summaries: Any,
-        ai: Any,
-        gid: int,
-        campaign: Any,
-        sessions: int,
-        card_job: Any,
-        card_mentions: Any,
-    ) -> None:
-        """One campaign of the card round: nothing is read beyond its version, its session count
-        and who agrees until the runner says there is work; then its confirmed characters."""
-        assert self.memory is not None and self.transcripts is not None and self.lookup is not None
-        assert self.recaps is not None
-        from dmbot.memory.models import CONFIRMED
-        from dmbot.recaps.card_beats import RecapBeats
-
-        cid = campaign.id
-        version = await self.memory.version(gid, cid)
-        agreed = hash(frozenset(await self.consent.consenting(gid)))
-        if runner.fresh(gid, cid, version, sessions, agreed):
-            done.skipped += 1
-            return
-        if not await self.plan_allows("ai", gid, campaign, fail_open=False):
-            return
-        onto = await self.memory.ontology(gid, cid)
-        ids = [
-            e.id
-            for e in await self.memory.entities(gid, cid, statuses=(CONFIRMED,))
-            if onto.is_a(e.type, "character")
-        ]
-        if not ids:
-            return
-        if self.headless:  # (the bot changed the story: this process's copy may be older)
-            self.lookup.mark_stale(gid, cid)
-
-        async def recorded() -> Any:
-            return await self.consent.consenting(gid)
-
-        await runner.work(
-            done, gid, cid, version=version, sessions=sessions, agreed=agreed, entity_ids=ids,
-            who=lambda i: card_job.refresh_who(summaries, ai, gid, cid, i),
-            mentions=lambda batch, budget: card_mentions.refresh_mentions(
-                summaries, self.transcripts, RecapBeats(self.recaps), self.lookup.get, recorded,
-                ai, gid, cid, list(batch), budget,
-            ),
-        )  # fmt: skip
 
     async def run_import_followups(self, gid: int, *, scan: bool = True, news: bool = True) -> int:
         """After an imported session is cleaned (#2106): in date order, one per campaign, its name
