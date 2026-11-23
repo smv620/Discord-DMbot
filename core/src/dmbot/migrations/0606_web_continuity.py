@@ -33,7 +33,10 @@ from __future__ import annotations
 # the database cannot know them), and for a death kind whose entry no longer has that ending (a
 # fresh check would not raise it). The pause (off the record for the moment) lives in the bot's
 # memory and a door cannot see it, the gap Supervisor accepted on #3464. Never returned: line
-# numbers, speakers, the session of a line, or any transcript line. Reading changes nothing.
+# numbers, speakers, the session of a line, or any transcript line. Reading changes nothing. The
+# earlier fact must still be open (`to_session_at` empty), as the card's check reads it; one the DM
+# has since marked secret may still show, to the DM alone, until the page asks again (it asks before
+# every read).
 SQL = r"""
     CREATE FUNCTION dmbot_web_continuity_read(g BIGINT, c TEXT, terms INTEGER, outside TEXT)
     RETURNS JSONB
@@ -94,6 +97,7 @@ SQL = r"""
             LEFT JOIN memory_relations er
               ON er.guild_id = h.guild_id AND er.campaign_id = h.campaign_id
              AND er.id = h.earlier_id AND er.status = 'confirmed'
+             AND er.to_session_at IS NULL
             LEFT JOIN memory_entities rs
               ON rs.guild_id = er.guild_id AND rs.campaign_id = er.campaign_id
              AND rs.id = er.subject_id
