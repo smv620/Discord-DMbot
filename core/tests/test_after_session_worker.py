@@ -155,7 +155,7 @@ class WithTheWorkerOn(unittest.IsolatedAsyncioTestCase):
         async def worker_finishes(_: float) -> None:
             queue.rows[jobs.READS] = jobs.DONE
 
-        with mock.patch.object(botmod.asyncio, "sleep", worker_finishes):
+        with mock.patch("asyncio.sleep", worker_finishes):
             await hand()
         self.assertEqual(queue.added, [(jobs.READS, (3, 7))])
         self.assertEqual(me.calls, [])
@@ -208,7 +208,7 @@ class WithAWorkerThatDiesOrASlowOne(unittest.IsolatedAsyncioTestCase):
 
         with (
             mock.patch.object(botmod, "WORKER_TAKE_S", 0),
-            mock.patch.object(botmod.asyncio, "sleep", tick),
+            mock.patch("asyncio.sleep", tick),
         ):
             await hand()
         self.assertEqual(me.calls, [])  # (the worker's lease was live: the bot never ran it)
@@ -237,7 +237,7 @@ class WithAWorkerThatDiesOrASlowOne(unittest.IsolatedAsyncioTestCase):
             return None
 
         with (
-            mock.patch.object(botmod.asyncio, "sleep", quick),
+            mock.patch("asyncio.sleep", quick),
             self.assertLogs("dmbot.bot", level="WARNING") as logs,
         ):
             await hand()
