@@ -214,8 +214,8 @@ def _not_stored_why(
     if trace is None:
         return "never stored (no name trace for this run)"
     found = [pair for k in keys for pair in trace.get(k, ())]
-    if not found:
-        return "never stored: no reader listed it"
+    if not found:  # (the scan's own refusals are not traced yet: it may have seen and dropped it)
+        return "never stored: not offered by any reader (the scan's own refusals aren't traced)"
     _place, last = max(found, key=lambda pair: pair[0])
     return f"never stored: {last.source} ended it as {last.reason}"
 

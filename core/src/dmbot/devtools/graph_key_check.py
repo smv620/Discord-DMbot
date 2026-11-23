@@ -145,6 +145,10 @@ class Report:
     # "found, wrong shape" count (docs/design/session_names.md, section 8). Still counted missed;
     # this says how many misses are a name cut short rather than one never heard. Counts only.
     wrong_shape: int = 0
+    # Which reader stored the key entries that were found, by the stored entry's own `source`
+    # (scan, extractor for the story reader, lore, dm...): "which reader found what is left"
+    # (the Expert, on session_names slice 2c). Counts only.
+    found_by: Counter[str] = field(default_factory=Counter)
     violations: list[str] = field(default_factory=list)
     inferred_confirmed: list[str] = field(default_factory=list)
     # `must_not_ties` rows kept as facts (#4636 part 3): a near-miss a list was over-applied to,
@@ -504,6 +508,12 @@ def check(
             status = BY_DESIGN if n.get("by_design") else MISSING
         elif any(kinds[i] in ENTRY_TYPES.get(n["kind"], frozenset()) for i in ids):
             status = FOUND
+            sources = {
+                str(graph.entities[i].get("source") or "unknown")
+                for i in ids
+                if kinds[i] in ENTRY_TYPES.get(n["kind"], frozenset())
+            }
+            report.found_by.update(sorted(sources)[:1])  # (one per key entry: the first source)
         else:
             status = WRONG
         report.entries.append(
@@ -1149,6 +1159,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "described": dict(Counter(r.status for r in report.described), total=len(report.described)),
         "extra_ties": report.extra_ties,
         "wrong_shape": report.wrong_shape,
+        "found_by": dict(report.found_by),
         "violations": len(report.violations),
         "inferred_confirmed": len(report.inferred_confirmed),
         "false_ties": len(report.false_ties),
@@ -1194,6 +1205,8 @@ def render(report: Report, counts_only: bool = False, list_extras: bool = False)
     )
     lines.append(f"Unnamed people not in the key: {report.unnamed_extras}")
     lines.append(f"Missed, but part of the name stored (wrong shape): {report.wrong_shape}")
+    found_by = ", ".join(f"{s} {n}" for s, n in sorted(report.found_by.items()))
+    lines.append(f"Found, by the stored entry's source: {found_by or 'none'}")
     if report.described:  # (#5055 D: not name misses; the series broke here)
         d = Counter(r.status for r in report.described)
         lines.append(

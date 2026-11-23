@@ -12398,7 +12398,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     source = name_trace.READER
                 else:
                     source = name_trace.ASKED
-                if key not in shown or key not in offered:
+                if key not in shown:  # (past the number: the only way into `every` but not shown)
                     reason = name_trace.OVER_CAP
                 elif key in refused:
                     reason = name_trace.STORE_REFUSED

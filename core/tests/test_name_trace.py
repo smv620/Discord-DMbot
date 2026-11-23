@@ -82,7 +82,10 @@ class WhyMissed(unittest.TestCase):
         self.assertEqual(
             self.why(["thornwatch"], rows), "never stored: reader ended it as too_few_hearings"
         )
-        self.assertEqual(self.why(["mira"], rows), "never stored: no reader listed it")
+        self.assertEqual(
+            self.why(["mira"], rows),
+            "never stored: not offered by any reader (the scan's own refusals aren't traced)",
+        )
         self.assertEqual(self.why(["mira"], None), "never stored (no name trace for this run)")
 
     def test_several_spellings_give_the_same_answer_every_run(self) -> None:
