@@ -8,6 +8,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { NOTE_LIMIT, npcPage as words } from "../content/npc-words";
 import { type AccountApi, ApiError, type MyNpcNote, type NpcPage } from "./api";
 import CampaignNav from "./CampaignNav";
+import LazyPanel from "./LazyPanel";
+import { CARD_SUMMARY_LIVE } from "../content/card-summary-switch";
 
 /** The campaign and NPC in the address: `/account/npc/<server>.<campaign>/<entry>` (the one Discord links to). */
 export function npcFromPath(path: string): { ref: string; entry: string } | null {
@@ -92,6 +94,7 @@ export default function Npc({ api, path }: { api: AccountApi; path: string }) {
       <CampaignNav api={api} campaignRef={where.ref} page="names" label={page.name} />
       <section class="stack" aria-labelledby="npc-name">
         <h2 id="npc-name">{page.name}</h2>
+        {CARD_SUMMARY_LIVE && <LazyPanel load={() => import("./CardSummary")} what="the card summary" props={{ card: page }} />}
         <p class="muted">{words.kindOf(page.kind)}</p>
         {page.alsoCalled.length > 0 && (
           <p>

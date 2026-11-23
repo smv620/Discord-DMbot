@@ -290,6 +290,9 @@ class Proposed:
     # About how names were said (#3634), counts only:
     rules_dropped: int = 0  # a claim about a kind of creature the rules hold: not kept
     tidied: int = 0  # claims with a name that lost a leading "a"/"an" or a bracketed note
+    # New names said in this read that were past the session's limit (#5055 A), each once and not
+    # those already held from an earlier read: they wait for a later session. Counts only.
+    names_over_cap: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1381,6 +1384,10 @@ class ClaimStore:
             chosen_new, left_new = link.most_mentioned(
                 others, max(0, new_names - len(chosen_old) - len(for_players))
             )
+            # (#5055 A) the new names left past the limit, each once: a name already held from an
+            # earlier read is not counted again
+            held_before = set(old_mentions)
+            over_cap = len({m for m in others if m not in chosen_new and m not in held_before})
             chosen_new = [*for_players, *chosen_new]
             chosen = [*chosen_old, *chosen_new]
             left = bool(left_old or left_new)
@@ -1544,6 +1551,7 @@ class ClaimStore:
             described_dropped,
             rules_dropped,
             tidied,
+            over_cap,
         )
 
     @staticmethod

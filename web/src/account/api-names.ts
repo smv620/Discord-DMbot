@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, CharacterLanguages, HeardQuestions, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, NodeTrait, PlotThreads, RevealProposal, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes, LeaveGroup } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, DeedQuestions, HeardQuestions, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, NodeTrait, PlotThreads, RevealProposal, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes, LeaveGroup } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 /** The revealed list of an upload notice (#4661): plain lines of at most 200 characters, at most ten; anything else is dropped. */
@@ -667,6 +667,18 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { batch: typeof got.batch === "number" ? got.batch : null };
     },
+    // The deeds the party did, waiting to be recorded (#3591): DM only; the door answers anyone else with nothing.
+    deedQuestions: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/deeds`)) as DeedQuestions,
+    // Queued for the bot (202 {answer}), then waited for: a record gives its batch, for Undo; an undo gives null.
+    answerDeed: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const body = "undo" in change ? { choice: "undo", batch: change.undo } : { choice: change.answer, deed: change.deed };
+      const queued = (await call("POST", `${base}/deeds/answer`, body)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      // A deed answer can fail with "refused" (the bot does not know a name in it): the card shows its own words for that (#3591).
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`, undefined, undefined, { refused: "refused" });
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
     // What the characters learned (#3863 step 2): the bot is asked first and waited for, then the list is read. DM only.
     revealQuestions: async (ref) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
@@ -830,6 +842,18 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       const queued = (await call("POST", `${base}/route-length/${batch}/undo`, {})) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
       await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    // A route's stated length (#4392): queued for the bot and waited for. A set or a keep gives its batch; null means nothing changed.
+    changeRouteLength: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await (change.action === "set"
+        ? call("POST", `${base}/route-length`, { on: change.on, id: change.id, words: change.words })
+        : change.action === "keep"
+          ? call("POST", `${base}/route-length/keep`, { on: change.on, id: change.id })
+          : call("POST", `${base}/route-length/${change.batch}/undo`, {}))) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
     },
     // A character's lineage and class (#3925): DM only; the door answers anyone else with nothing.
     nodeTraits: async (ref, node) =>

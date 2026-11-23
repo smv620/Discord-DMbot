@@ -93,6 +93,9 @@ export const text = {
   uncheckedMark: "Check:",
   uncheckedUse: "Approve it as it is",
   uncheckedUsing: "Approving…",
+  // The wait while the recap is approved as it is (#3347 row 7): the page's wait line, beside the button.
+  uncheckedWorking: "DMbot is approving your recap.",
+  uncheckedSlow: "DMbot is slow to answer. It may still go through: look at this recap in a minute before you press again.",
   uncheckedAfter: "You can approve it as it is. Once DMbot has finished it, you can edit it.",
   uncheckedKeepTrying: "DMbot keeps trying to finish the check.",
   uncheckedOpened: "Approved as it is.",

@@ -82,6 +82,8 @@ class Table:
     hint_parts: HintParts | None = None
     # What the ontology steward decided this session (#1303), for one line in the server log.
     steward_tally: Tally = field(default_factory=Tally)
+    # The one message that shows the after-session reads while they run (#5124).
+    after_card: Any | None = None
     # Spell, feature and item names from the players' D&D Beyond sheets (#723).
     sheet_hints: tuple[str, ...] = ()
     # Names someone spelled out at the table this session (#2168): watched for in every cleaned

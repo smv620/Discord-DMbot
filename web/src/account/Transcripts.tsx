@@ -28,6 +28,7 @@ import { FIX_LINE_LIVE } from "../content/fix-line-switch";
 import { SCRIPT_MAKE_LIVE } from "../content/make-script-switch";
 import { SESSION_NOTES_LIVE } from "../content/session-notes-switch";
 import { THEATRE_DOWNLOAD_LIVE } from "../content/theatre-download-switch";
+import SavingWait from "./SavingWait";
 
 /** Where in the pages the address points: `/account/transcripts`, `/<campaign>`, `/<campaign>/<n>`. */
 export function placeFromPath(path: string): { ref: string; number: number | null } | null {
@@ -170,7 +171,6 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
             <a href="/account/transcripts">{text.allCampaigns}</a>
           </p>
           <CampaignNav api={api} campaignRef={campaignRef} page="transcripts" name={found.name} />
-          <h2>{found.name}</h2>
           <p class="small">{text.shareLine}</p>
           {IMPORT_LIVE && api.importPreview && (
             <p>
@@ -484,6 +484,7 @@ function Download({
     }
   }
   return (
+    <>
     <p>
       <button type="button" class="button secondary" onClick={() => void save()}>
         {state === "busy" ? text.downloading : text.download}
@@ -493,6 +494,8 @@ function Download({
         {state === "failed" ? text.downloadFailed : ""}
       </span>
     </p>
+    <SavingWait active={state === "busy"} stage={text.buildingFile} whatToDo={text.buildingSlow} />
+    </>
   );
 }
 
@@ -536,6 +539,7 @@ function ScriptDownload({
   }
   const said = { idle: "", busy: "", failed: text.scriptFailed, none: text.scriptNone, big: text.scriptTooBig }[state];
   return (
+    <>
     <p>
       <button type="button" class="button secondary" onClick={() => void save()}>
         {state === "busy" ? text.scriptSaving : text.scriptDownload}
@@ -548,6 +552,8 @@ function ScriptDownload({
         <p>{text.scriptAbout}</p>
       </details>
     </p>
+    <SavingWait active={state === "busy"} stage={text.buildingFile} whatToDo={text.buildingSlow} />
+    </>
   );
 }
 

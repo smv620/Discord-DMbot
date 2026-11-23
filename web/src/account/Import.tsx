@@ -741,6 +741,7 @@ export default function Import({
     const done = progress.sessions.every(isFinal);
     const failed = progress.sessions.some(isFailed);
     const unchecked = progress.sessions.some((s) => s.namesUnchecked === true);
+    const cut = progress.sessions.reduce((n, s) => n + (s.namesCut ?? 0), 0);
     return (
       <div class="stack">
         <h2>{words.progressHeading}</h2>
@@ -860,6 +861,7 @@ export default function Import({
           ))}
         </ul>
         {unchecked && <p class="small muted">{words.namesUnchecked}</p>}
+        {done && cut > 0 && <p class="small muted">{words.namesCut(cut)}</p>}
         {AUTO_ADD_LIVE && done && importId && api.uploadNotice && (
           <LazyPanel load={() => import("./UploadNotice")} what="what DMbot added" props={{ api, campaignRef: ref, source: { kind: "import" as const, id: importId } }} />
         )}

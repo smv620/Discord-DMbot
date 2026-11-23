@@ -48,6 +48,17 @@ class Finding(unittest.TestCase):
         near_a_public = ["Drenwik nodded.", "Then Drenwik left.", "Drenwik sat."]
         self.assertEqual([c.heard for c in np.candidates(near_a_public, make())], ["Drenwik"])
 
+    def test_the_secret_test_agrees_with_the_pass_s_own(self) -> None:
+        # (the after-session name step drops a name close to a secret whole, #5133: same test)
+        from dmbot.transcript.name_pass import _near, secret_test
+
+        for lookup in (make(), make(secret=False)):
+            close = secret_test(lookup)
+            for word in ("Silas Vain", "Silas Vane", "Drenwik", "Kethrandil", "Brannoch"):
+                self.assertEqual(close(word), _near(lookup, word)[1], (word, lookup.secret_lengths))
+        self.assertTrue(secret_test(make())("Silas Vain"))
+        self.assertFalse(secret_test(make(secret=False))("Silas Vain"))
+
     def test_a_word_for_a_person_at_the_table_is_left_alone(self) -> None:
         lines = ["Keirandal rolled.", "Then Keirandal rolled again.", "Keirandal won."]
         self.assertEqual(np.candidates(lines, make(), people=["keirandal"]), [])
