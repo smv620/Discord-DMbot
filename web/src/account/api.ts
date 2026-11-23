@@ -1596,6 +1596,11 @@ export interface ImportProgress {
     /** The read of this session's connections (#3307), in the shared shape: stage `reading_connections` (piece n of m),
      * `waiting_for_limit` (carries on by itself) or `connections_read`. Null until it starts; missing from an older API. */
     story?: JobProgress | null;
+    /** The name reader's stage for this session (#5127, the web half of #5091): `reading_names` (part n of m), `names_read` or
+     * `names_stopped`. Null when the reader is off; missing from an older API. */
+    names?: JobProgress | null;
+    /** How many stretches of this session could not be read for names (0 when none; #5127). */
+    namesUnread?: number;
   }[];
 }
 

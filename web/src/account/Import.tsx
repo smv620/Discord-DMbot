@@ -87,13 +87,18 @@ function storyShown(s: Session): boolean {
 function storyWaiting(s: Session): boolean {
   return s.story?.stage === "waiting_for_limit";
 }
+/** The name reader of a session that is still going (#5127): its stage shows with the shared wait, and the page keeps looking. */
+function namesOpen(s: Session): boolean {
+  const st = s.names;
+  return st != null && (st.state === "running" || st.state === "stalled") && st.stage === "reading_names";
+}
 
 /** The whole import's progress as the shared wait shows it. The server says `failed` as soon as one session
  * has, but the others go on: while any can still move it is shown as running (or stalled, when the server
  * says so); once none can, as failed only if every session failed, else done. */
 function shownState(imp: JobProgress, sessions: Session[]): "running" | "stalled" | "failed" | "done" {
   // (the connections read goes on after a session is imported, and the whole import is still working until it stops)
-  if (sessions.some((s) => !isFinal(s) || storyOpen(s))) return imp.state === "stalled" ? "stalled" : "running";
+  if (sessions.some((s) => !isFinal(s) || storyOpen(s) || namesOpen(s))) return imp.state === "stalled" ? "stalled" : "running";
   return sessions.length > 0 && sessions.every(isFailed) ? "failed" : "done";
 }
 
@@ -326,7 +331,7 @@ export default function Import({
         if (!live) return;
         const stamp = next.import?.updatedAt;
         const older = typeof stamp === "number" && stamp < lastUpdated.current;
-        const storyStamp = Math.max(0, ...next.sessions.map((x) => x.story?.updatedAt ?? 0));
+        const storyStamp = Math.max(0, ...next.sessions.map((x) => Math.max(x.story?.updatedAt ?? 0, x.names?.updatedAt ?? 0)));
         const storyMoved = storyStamp > lastStory.current;
         if (storyStamp > lastStory.current) lastStory.current = storyStamp;
         const moved = (typeof stamp === "number" ? stamp > lastUpdated.current : true) || storyMoved;
@@ -334,7 +339,7 @@ export default function Import({
         if (!older) setProgress(next); // (an older answer: keep what is shown, ask again)
         idleLooks.current = moved && !older ? 0 : idleLooks.current + 1;
         // A session's connections are read after it is imported, so the page keeps looking until that is done or waiting.
-        const open = next.sessions.filter((s) => !isFinal(s) || storyOpen(s));
+        const open = next.sessions.filter((s) => !isFinal(s) || storyOpen(s) || namesOpen(s));
         if (open.length > 0) {
           // Waiting for the daily limit can take hours and carries on by itself, so it never trips the limit; the page just looks slowly.
           const onlyLimit = open.every((x) => storyWaiting(x) && isFinal(x));
@@ -844,6 +849,22 @@ export default function Import({
                 />
               )}
               {s.story?.stage === "connections_read" && s.story.state !== "failed" && <p class="small">{words.story.connections_read}</p>}
+              {namesOpen(s) && s.names && (
+                <WorkProgress
+                  stage={stageWords(words.names, s.names.stage)}
+                  done={s.names.done}
+                  total={s.names.total}
+                  unit={s.names.unit ? words.unit[s.names.unit] : undefined}
+                  startedAt={s.names.startedAt}
+                  updatedAt={s.names.updatedAt}
+                  serverNow={s.names.serverNow}
+                  state={s.names.state}
+                  frozen={problem !== null}
+                  whatToDo={words.stalledDo}
+                />
+              )}
+              {s.names?.stage === "names_read" && (s.namesUnread ?? 0) > 0 && <p class="small">{words.namesUnread(s.namesUnread ?? 0)}</p>}
+              {s.names?.stage === "names_stopped" && <p class="small">{words.namesStopped}</p>}
               {importId && isFinal(s) && s.clock && (
                 <ClockOffer api={api} campaignRef={ref} importId={importId} file={s.file} clock={s.clock} />
               )}
