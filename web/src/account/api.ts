@@ -4021,6 +4021,7 @@ export const fixErrorKinds: Record<string, ApiErrorKind> = {
 };
 
 export const errorKinds: Record<string, ApiErrorKind> = {
+  refused: "refused", // the bot refused an answer, e.g. a name it does not know (the deed card's words, #3591)
   plan: "plan-needed",
   no_clock: "no-clock", // a date asked for with no game clock (#4503)
   no_rules: "no-rules",
