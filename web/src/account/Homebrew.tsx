@@ -15,6 +15,7 @@ import {
   type HomebrewPage,
 } from "./api";
 import CampaignNav from "./CampaignNav";
+import SavingWait from "./SavingWait";
 
 /** The campaign in the address: `/account/homebrew/<server>.<campaign>`, or null for the list. */
 export function refFromPath(path: string): string | null {
@@ -319,6 +320,7 @@ function Download({
     }
   }
   return (
+    <>
     <p>
       <button
         type="button"
@@ -334,5 +336,7 @@ function Download({
         {state === "failed" ? text.downloadFailed : ""}
       </span>
     </p>
+    <SavingWait active={state === "busy"} stage={text.buildingFile} whatToDo={text.buildingSlow} />
+    </>
   );
 }
