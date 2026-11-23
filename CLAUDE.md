@@ -251,7 +251,22 @@ dev1 as a note on the issue.
   consulted for **major design changes**: architecture-level decisions where a wrong choice means
   rework (the MapBot map layers, graph and data modelling, ML pipelines). **Never** for debugging,
   reviews, management or smaller issues: those stay with the leads and Supervisor. **It has no
-  schedule and is woken only by Supervisor's message**; no other session messages it.
+  schedule.**
+  - **Messages** (owner, 2026-11-23, after the Expert and GraphEngineer settled #5087's facts by
+    message in minutes): the Expert and any other session may message each other directly, to ask
+    and answer questions about a design and the code it rests on. That saves a relay through
+    Supervisor.
+    - **The Expert recommends only.** It never opens a code PR and never asks a developer to build
+      one; it may propose a PR or a slice to Supervisor. **Only Supervisor directs new PRs**, and a
+      developer takes work only from its issues and Supervisor's rulings. (Its design basis
+      documents still come as docs-only PRs, below.)
+    - **A PR built on the Expert's input is checked with the Expert first:** before opening it, the
+      session sends the Expert what it built and how it reads the advice, and says in the PR body
+      that it did and what the Expert answered.
+    - What a message settles goes into the design note or the design basis, where Supervisor rules
+      on it.
+    - Every message wakes the Expert on the most expensive model, so a session messages it only with
+      a design question it can't answer from the design basis or the code, or for the check above.
   - **Design notes:** it answers a question with one note on the issue Supervisor names
     ("Expert design note: …"); Supervisor rules on it as for any design note.
   - **Design basis documents:** it writes the guidance the developers then follow, as Markdown in

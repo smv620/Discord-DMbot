@@ -248,6 +248,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,
     ),
     Feature(
+        "character card lines",
+        "Who a character is",
+        "",
+        lambda s: s.card_summary_on,
+        ("card_summary_on",),
+        for_dms=False,  # off until dev1 reads ten cards on the sample campaign (#5050)
+    ),
+    Feature(
         "ai helpers",
         "AI helpers",
         "",
