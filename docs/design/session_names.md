@@ -263,8 +263,36 @@ The same session and the same answer key, read three ways.
 - **found, wrong shape:** a part of the name ("Valley"), or a name with a piece missing;
 - **missed;**
 - **extra:** suggested and not in the key;
-- **for the spoken version only:** how many of the key's names were heard under more than one
-  spelling, and how many of those were grouped as one.
+- **for the spoken version only:** how each key name was heard (below).
+
+**A description of the input, printed beside every score** (GraphEngineer's count): for each key
+name, how the transcript writes it: with a capital in the middle of a sentence, with a capital only
+at the start of a sentence, or in lower case. This describes the transcript, not the reader. In
+the no-capitals version every key name should show as lower case or sentence-start only; if one
+still has a capital mid-sentence, the baseline is not what it claims to be.
+
+**How the spoken version is measured: by lining it up with the script** (worked out with
+GraphEngineer, 2026-11-23). The spoken version is a reading of a text DMbot already holds, the
+typed sample session, so where each key name is said is known.
+
+- **The speech-to-text output is aligned to the script,** turn by turn, word against word, with
+  capitals ignored. For each place the script has a key name, what speech-to-text wrote there is
+  read off.
+- **Each occurrence of a key name is then one of:** as written; heard another way (with the
+  spelling heard); dropped; or not aligned (the reader left the script in that turn). Whether it
+  carried a capital is noted beside it.
+- **"Not aligned" is never counted as missed,** and a name the recording never says is known from
+  the alignment, not guessed.
+- **From that come the spoken counts:** how many key names were heard under more than one
+  spelling, how many of those the product grouped as one, and how many it found at all.
+- **The measurement shares no threshold with the code it measures.** The alignment needs none.
+  Where a turn can't be aligned, a likeness-and-sound match may be used as a fallback, with its own
+  looser thresholds, never the scan's `NEAR` values.
+- **The list of (key name, spelling heard) pairs is checked by hand.** It is short, it holds public
+  sample names only and never a transcript line, and it is the measurement's own margin of error.
+- **This needs the recording to follow the script** (section 13, question 2).
+- **None of this is needed for the typed or the no-capitals versions:** each has one typed spelling
+  for each name, so "heard another way" is nil by construction.
 
 **The bar:**
 
@@ -358,8 +386,10 @@ Slice 1 is first because it costs almost nothing and turns the owner's point int
 
 1. **A list of ordinary words for the Cleaner** (section 7). It must be one DMbot may bundle in a
    public repository, with its licence stated. For Supervisor, before slice 7.
-2. **Who records the spoken version, and how.** One reader or the table's own voices, and whether
-   it is read naturally (with table talk) or straight. For the owner.
+2. **Who records the spoken version, and how.** Proposed: the table's own voices, reading the
+   sample session's script as written, with no ad-libbing, so the recording can be lined up with
+   the script (section 8). One reader would do, but several voices test what a real table sounds
+   like. For the owner.
 3. **The cost of one more call a batch.** The measured figure for a comparable call is about $0.36
    to $0.73 for a four-hour session (`docs/costs.md`). If slice 1 of the tagger design shows the
    name reader and the tagger could share one read safely, that is a later saving, not a reason to
