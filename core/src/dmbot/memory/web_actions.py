@@ -43,6 +43,7 @@ from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, MAP_PICTURE_GONE, Chan
 from dmbot.memory._changes import NOT_FOUND as STORE_NOT_FOUND
 from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
 from dmbot.memory.claims import WAITING_NAME_REASON, ClaimStore
+from dmbot.memory.deed_proposals import GONE as DEED_PROPOSALS_GONE
 from dmbot.memory.link_words import predicate_for_either
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.map_fact_store import GONE as MAP_GONE
@@ -122,6 +123,9 @@ CANNOT_SHOW = "cannot_show"  # 🌍 Common knowledge asked for what the players 
 NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
 FAILED = "failed"  # anything unexpected; the action can be sent again
 GONE = "gone"  # a waiting question that is not waiting any more
+# a heads-up whose answer the rules refused: nothing changed and it is still waiting, as on the
+# card, which shows the rule's message and keeps the heads-up (#3695)
+REFUSED = "refused"
 NO_CLOCK = "no_clock"  # a time limit's date asked for with no game clock to count on (#4503)
 CHANGED = "changed"  # an Undo refused: something done since is in the way (#4156)
 TOO_LATE = "too_late"  # an Undo past the store's limit (#4156)
@@ -182,7 +186,9 @@ THREAD_INVOLVE_ACTION = "thread-involve"  # who is involved in a thread (#3696 s
 THREAD_NEW_ACTIONS = ("thread-new", "thread-due", "thread-party")  # (#3696 slice 2c)
 THREAD_LINK_ACTIONS = ("thread-link", "thread-led-to")  # an event, what led to what (slice 2d)
 REVEALS_ACTIONS = ("reveals-ask", "reveals-keep", "reveals-not")  # what they learned (#3863)
+CONTINUITY_ACTIONS = ("continuity-ask", "continuity-answer")  # the heads-ups (#3695 half 1)
 LEAVE_ACTIONS = ("leave-yes", "leave-no")  # "Still in the party?" (#4895, party knowledge slice 6a)
+DEED_ACTIONS = ("deed-record", "deed-not", "deed-undo")  # deeds the party did (#3591)
 JOIN_ACTIONS = (  # the DM's join question (#4778) and "Let me choose" (#4799)
     "join-everyone", "join-party", "join-undo", "join-choices", "join-choose",
 )  # fmt: skip
@@ -546,6 +552,20 @@ class ActionStore:
             row = await cur.fetchone()
         return None if row is None else (str(row["action"]), str(row["text"]))
 
+    async def deed_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done `deed-record` made from the website
+        (#3591), so the page's Undo can only take back what they recorded themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = 'deed-record'"
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
     async def join_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int
     ) -> bool:
@@ -802,6 +822,9 @@ async def apply(
     join_choices: JoinChoicesFn | None = None,
     reveals_ask: RevealsAskFn | None = None,
     reveals_drop: RevealsDropFn | None = None,
+    deeds: DeedAnswerFn | None = None,
+    continuity_ask: ContinuityAskFn | None = None,
+    continuity_answer: ContinuityAnswerFn | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
@@ -860,8 +883,14 @@ async def apply(
         return await _join(memory, actions, guild_id, cid, action, join_choices)
     if action.action in REVEALS_ACTIONS:
         return await _reveals(memory, waiting, guild_id, cid, action, reveals_ask, reveals_drop)
+    if action.action in CONTINUITY_ACTIONS:
+        return await _continuity(guild_id, cid, action, continuity_ask, continuity_answer)
     if action.action in LEAVE_ACTIONS:
         return await _leave(memory, guild_id, cid, action)
+    if action.action in DEED_ACTIONS:
+        if actions is None and action.action == "deed-undo":
+            return _failed(FAILED)
+        return await _deed(memory, actions, deeds, guild_id, cid, action)
     if action.action in THREAD_STATE_ACTIONS:
         return await _thread_state(memory, guild_id, cid, action)
     if action.action == THREAD_INVOLVE_ACTION:
@@ -1649,6 +1678,13 @@ JoinChoicesFn = Callable[[int, str, str, int], Awaitable[bool]]
 # campaign, DM) -> how many; and take an answered proposal out of every DM's kept set.
 RevealsAskFn = Callable[[int, str, int], Awaitable[int]]
 RevealsDropFn = Callable[[int, str, str], Awaitable[None]]
+# (#3695 half 1) work out the campaign's continuity heads-ups and keep their pointers for the page:
+# (server, campaign, DM) -> how many; and answer one as the card's button does: (server, campaign,
+# claim id, "c" or "n") -> APPLIED, GONE (not waiting any more, or someone who said it stopped) or
+# REFUSED (a rule refused it; still waiting).
+ContinuityAskFn = Callable[[int, str, int], Awaitable[int]]
+ContinuityAnswerFn = Callable[[int, str, str, str], Awaitable[str]]
+APPLIED = "applied"
 CHOSE_MAX = 10  # characters named in one pick's answer (the answer is 200 characters at most)
 
 
@@ -1670,6 +1706,65 @@ async def _leave(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Out
     ):  # (AlreadyAnswered is one, and so is a character no longer in the party:
         return _failed(GONE)  # `gone` for both, as Discord answers both with "already answered")
     return _changed(done.batch)
+
+
+# A deed answered from the page (#3591): the bot's own function (`deed_card.apply_answer`, the one
+# place Discord's Record and Not this buttons go through), given the guild, the campaign, the
+# deed's id and whether to record it. It returns (words, change batch), which the page never gets:
+# only a short code and the batch. It raises `MemoryRuleError` (`deed_proposals.GONE` when the deed
+# is no longer waiting).
+DeedAnswerFn = Callable[[int, str, str, bool], Awaitable[tuple[str, int | None]]]
+# The store said no to a record (a name in the deed DMbot does not know yet, or another of its
+# rules): one neutral code, since the store's own words quote the deed and the page never gets them.
+DEED_REFUSED = "refused"
+
+
+async def _deed(
+    memory: MemoryStore,
+    actions: ActionStore | None,
+    answer: DeedAnswerFn | None,
+    guild_id: int,
+    cid: str,
+    a: Action,
+) -> Outcome:
+    """The DM's answer to one deed from the page (#3591), the same function as Discord's card
+    (consent is asked again inside it). A recorded deed is `deed:recorded` with its change for the
+    page's Undo, a turned-down one `deed:not`; one already answered, or whose speaker stopped being
+    recorded, is `gone`; a name DMbot does not know (or any other rule of the store) is
+    `refused`, a code only, never the store's words (they quote the deed). `deed-undo` takes
+    back only a change this DM's own done `deed-record` made, read again here (a made-up number
+    must never reach `undo`), as the card's own Undo does (`source` DM); past the store's limit it
+    is `too_late`. Nothing here logs a word of the deed."""
+    if a.action == "deed-undo":
+        if actions is None or not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+            return _failed(GONE)
+        batch = int(a.text)
+        if not await actions.deed_batch_made(guild_id, cid, a.user_id, batch):
+            return _failed(GONE)
+        try:
+            await memory.undo(guild_id, cid, batch, source=DM)
+        except TooLateToUndo:
+            return _failed(TOO_LATE)
+        except MemoryRuleError as exc:
+            if str(exc) == ALREADY_UNDONE:
+                return Outcome()  # (taken back already: a retried Undo)
+            return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
+        return Outcome()
+    if answer is None:
+        return _failed(FAILED)
+    if not re.fullmatch(r"[0-9a-f]{32}", a.text):
+        return _failed(GONE)
+    record = a.action == "deed-record"
+    try:
+        _words, batch_made = await answer(guild_id, cid, a.text, record)
+    except MemoryRuleError as exc:
+        return _failed(GONE if str(exc) == DEED_PROPOSALS_GONE else DEED_REFUSED)
+    except Exception:
+        log.exception("A website answer to a deed failed")  # (the traceback, never the deed)
+        return _failed(FAILED)
+    if not record:
+        return Outcome(counts="deed:not")
+    return Outcome(counts="deed:recorded", batches=(batch_made,) if batch_made is not None else ())
 
 
 async def _thread_state(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Outcome:
@@ -1877,6 +1972,44 @@ async def _reveals(
     if a.action == "reveals-keep" and batch is None:
         return _failed(NOTHING_LEFT)
     return Outcome(batches=(batch,) if batch is not None else ())
+
+
+async def _continuity(
+    guild_id: int,
+    cid: str,
+    a: Action,
+    ask: ContinuityAskFn | None,
+    answer: ContinuityAnswerFn | None,
+) -> Outcome:
+    """The continuity heads-ups from the page (#3695 half 1), through the bot's own check and the
+    card's own answer (`ContinuityStore.check` / `answer`, consent read at that moment). The sender
+    is a DM of the campaign (checked above; the ask checks again). `continuity-ask` works the list
+    out (no AI call) and keeps its pointers for the page, replacing the earlier set; the answer is
+    `n:<how many>`. `continuity-answer` is "<claim id> c" (the story changed) or "<claim id> n" (it
+    wasn't real), and only for a claim the last ask listed (the card answers only its own lines); a
+    claim no longer listed or waiting (answered in Discord, say) is `gone`, and one whose answer a
+    rule refused stays waiting and is `refused`, as on the card. There is no Undo,
+    as on the card: "the story changed" is one change in the change log, which the fact's own Undo
+    can take back. "Ignore" never reaches the queue: it writes nothing, on Discord too."""
+    if a.action == "continuity-ask":
+        if ask is None:
+            return _failed(FAILED)
+        try:
+            return Outcome(counts=f"n:{await ask(guild_id, cid, a.user_id)}")
+        except Exception as exc:  # (the type only: a database error can quote a row's words)
+            log.warning("The continuity heads-ups could not be worked out (%s)", type(exc).__name__)
+            return _failed(FAILED)
+    claim_id, _, choice = a.text.partition(" ")
+    if answer is None or not re.fullmatch(r"[0-9a-f]{32}", claim_id) or choice not in ("c", "n"):
+        return _failed(FAILED)
+    try:
+        said = await answer(guild_id, cid, claim_id, choice)
+    except Exception as exc:  # (the type only)
+        log.warning("A continuity heads-up could not be answered (%s)", type(exc).__name__)
+        return _failed(FAILED)
+    if said == APPLIED:
+        return Outcome(result_id=claim_id)
+    return _failed(REFUSED if said == REFUSED else GONE)
 
 
 async def _route_length(

@@ -8,6 +8,8 @@
 import { plotThreadsWords } from "../content/plot-threads-words";
 import type { PlanId } from "../content/pricing";
 import type {
+  DeedQuestions,
+  DeedWaiting,
   AccountApi,
   BackupFile,
   Campaign,
@@ -706,6 +708,13 @@ function pretendReveals(): RevealProposal[] {
 }
 
 // The "Still in the party?" questions waiting in a pretend campaign (#4895): one death, one goodbye with two in it.
+/** Two deeds the party did in the pretend campaign (#3591): ids are 32 hex characters, as the page sends them. */
+function pretendDeeds(): (DeedWaiting & { done: boolean })[] {
+  return [
+    { id: "a1".repeat(16), doer: "Mira Voss", text: "pulled Tavin out of the river", viewers: ["Tavin"], effect: "Helped them", kind: "rescue", done: false },
+    { id: "b2".repeat(16), doer: "Captain Brask", text: "turned away the ferrymen at dusk", viewers: ["Old Pell", "Tamsin Reed"], effect: "Annoyed them", kind: "", done: false },
+  ];
+}
 function pretendLeaveGroups(): LeaveGroup[] {
   return [
     { group: "dead-okthandom", kind: "died", characters: [{ id: "lv-okthandom", name: "Okthandom" }] },
@@ -1255,7 +1264,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let mapSeq = 5;
   const linkBatches = new Map<number, { id: string; a: string; b: string; words: string; secret: boolean; direction: "a-b" | "b-a" | "both"; pinned?: boolean }[]>();
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
-  const linkWho = new Map<string, { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string }[] }>();
+  const linkWho = new Map<string, { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string; guess?: "sure" | "likely" }[] }>();
   // Player character icons (#3621, #3622): in a campaign reference ending ".icons" the first three names are player
   // characters: the first has a Discord avatar and a dndbeyond.com portrait, the second only a portrait, the third none.
   const pcChoice = new Map<string, IconChoice>();
@@ -1365,10 +1374,15 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         return s !== undefined && (s.secret === true || s.revealed === false);
       })
       .map((l) => l.id);
-    const defaultWho: { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string }[] }[] = [
+    // The fourth held connection (#4970): DMbot's guesses, sure and likely, and one character it names with no guess.
+    const defaultWho: { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string; guess?: "sure" | "likely" }[] }[] = [
       { who: "dm", knownBy: [] },
       { who: "some", knownBy: [{ id: "pc-cerric", name: "Cerric" }, { id: "pc-mira", name: "Mira" }] },
       { who: "all", knownBy: [] },
+      {
+        who: "some",
+        knownBy: [{ id: "pc-cerric", name: "Cerric", guess: "sure" }, { id: "pc-mira", name: "Mira", guess: "likely" }, { id: "npc-tavin", name: "Tavin" }],
+      },
     ];
     const whoEdges =
       dm && all
@@ -1420,6 +1434,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const joinState: Record<string, { group: string; answer: "waiting" | "everyone"; names: string[] }[]> = {};
   // The "Still in the party?" questions waiting, by campaign (#4895). An answer takes its character out of the list.
   const leaveState: Record<string, LeaveGroup[]> = {};
+  // The deeds the party did, per campaign (#3591): one still waiting, one already recorded (its change can be taken back).
+  const deedState: Record<string, { deeds: (DeedWaiting & { done: boolean })[]; undo: Map<number, string>; batch: number }> = {};
+  const deedsOf = (ref: string) => (deedState[ref] ??= { deeds: pretendDeeds(), undo: new Map(), batch: 0 });
   // What the characters learned, waiting, by campaign (#3863 step 2). A keep or a not takes its proposal out of the list.
   const revealState: Record<string, RevealProposal[]> = {};
   // The open plot threads by campaign (#3696): a state change is kept here, so the next read shows it.
@@ -4049,6 +4066,37 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-allowed");
       return structuredClone((leaveState[ref] ??= pretendLeaveGroups()));
+    },
+    async deedQuestions(ref): Promise<DeedQuestions> {
+      calls.push(`deedQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      // The door answers only the DM of the campaign, with nothing to anyone else (#3591).
+      if (webView(ref) !== "dm") return { total: 0, deeds: [] };
+      const open = deedsOf(ref).deeds.filter((d) => !d.done).map(({ done: _done, ...d }) => d);
+      return { total: open.length, deeds: open.slice(0, 50) };
+    },
+    async answerDeed(ref, change): Promise<{ batch: number | null }> {
+      calls.push(`answerDeed:${ref}:${"undo" in change ? `undo:${change.undo}` : `${change.deed}:${change.answer}`}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const state = deedsOf(ref);
+      if ("undo" in change) {
+        const id = state.undo.get(change.undo);
+        if (id === undefined) throw new ApiError("undo-late");
+        state.undo.delete(change.undo);
+        const deed = state.deeds.find((d) => d.id === id);
+        if (deed) deed.done = false;
+        return { batch: null };
+      }
+      const deed = state.deeds.find((d) => d.id === change.deed);
+      if (!deed || deed.done) throw new ApiError("gone");
+      deed.done = true;
+      if (change.answer === "not") return { batch: null };
+      const batch = ++state.batch;
+      state.undo.set(batch, deed.id);
+      return { batch };
     },
     async answerLeave(ref, change): Promise<{ batch: number | null }> {
       calls.push(`answerLeave:${ref}:${change.character}:${change.answer}`);

@@ -122,9 +122,16 @@ export function WhoKnows({
   const [already, setAlready] = useState("");
   const [busy, setBusy] = useState(false); // a change is with the bot: no second press until it is answered
   const latest = useRef(0);
+  // Every character the picker's list showed while it was open, the most recently shown last (#4970, #4968 ruling). Reset
+  // when the picker opens or closes and when the link changes; a save sends the last 50 (the door's SHOWN_MAX).
+  const shownIds = useRef<string[]>([]);
+  useEffect(() => {
+    shownIds.current = [];
+  }, [link.id]);
   // Undefined from an older API: no answer is pressed, and nothing is said about one (#3214).
   const current = link.who;
   const holders = link.knownBy ?? [];
+  const guessOf = (id: string) => holders.find((h) => h.id === id)?.guess;
 
   // The character search: the same wait and list as the See as… picker.
   useEffect(() => {
@@ -138,6 +145,9 @@ export function WhoKnows({
             if (mine !== latest.current) return;
             setList(got.viewers);
             setTotal(got.total);
+            for (const v of got.viewers) {
+              shownIds.current = [...shownIds.current.filter((x) => x !== v.id), v.id];
+            }
             setFailed(false);
           })
           .catch(() => {
@@ -158,7 +168,7 @@ export function WhoKnows({
       : current === "dm"
         ? words.whoStateDm
         : current === "some" && holders.length > 0
-          ? words.whoStateSome(words.whoNames(holders.map((h) => h.name)))
+          ? words.whoStateSome(words.whoNames(holders.map((h) => (h.guess ? words.guessNamed(h.name, h.guess) : h.name))))
           : current === "all"
             ? words.whoStateAll
             : current === "common"
@@ -205,9 +215,16 @@ export function WhoKnows({
     setBusy(true);
     try {
       const said = words.whoDoneSome(words.whoNames(named));
-      const problemNow = await act({ action: "who", id: link.id, who: "some", characters: ids }, current === "common" ? `${words.whoNoLongerCommon} ${said}` : said);
+      const shown = shownIds.current.slice(-50);
+      const problemNow = await act(
+        { action: "who", id: link.id, who: "some", characters: ids, ...(shown.length > 0 ? { shown } : {}) },
+        current === "common" ? `${words.whoNoLongerCommon} ${said}` : said,
+      );
       setProblem(problemNow);
-      if (problemNow === null) setPicking(false); // a failure keeps the picker and the ticks
+      if (problemNow === null) {
+        setPicking(false); // a failure keeps the picker and the ticks
+        shownIds.current = [];
+      }
     } finally {
       setBusy(false);
     }
@@ -229,6 +246,7 @@ export function WhoKnows({
           aria-pressed={current === "some"}
           disabled={busy}
           onClick={() => {
+            shownIds.current = [];
             setChosen(new Set(holders.map((h) => h.id)));
             setNames(new Map(holders.map((h) => [h.id, h.name])));
             setPicking(true);
@@ -266,12 +284,14 @@ export function WhoKnows({
                 <label class="choice">
                   <input type="checkbox" checked={chosen.has(v.id)} onChange={() => toggle(v)} />
                   <span>{v.name}</span>
+                  {guessOf(v.id) && <span class="small muted"> {words.guessMark(guessOf(v.id)!)}</span>}
                   {v.note && <span class="small muted"> ({v.note})</span>}
                 </label>
               </li>
             ))}
           </ul>
           {total > list.length && <p class="small muted">{words.seeAsMore(list.length, total)}</p>}
+          {[...chosen].some((id) => guessOf(id)) && <p role="status" class="small">{words.whoKeepsGuesses}</p>}
           <div class="row">
             <button type="button" class="button" disabled={chosen.size === 0 || busy} onClick={() => void save()}>
               {words.whoSave}

@@ -349,6 +349,7 @@ from dmbot.memory import (
     lore_queue,
     meaning,
     name_reader,
+    name_trace,
     plan_reader,
     report_make,
     role_match,
@@ -373,8 +374,15 @@ from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.card_summaries import CardSummaries
+from dmbot.memory.claims import GONE as CLAIM_GONE
+from dmbot.memory.claims import ODD_NOW as CLAIM_ODD_NOW
+from dmbot.memory.claims import STOPPED_NOW as CLAIM_STOPPED_NOW
 from dmbot.memory.claims import ClaimStore
+from dmbot.memory.continuity import CHANGED as CONTINUITY_CHANGED
+from dmbot.memory.continuity import NOT_TRUE as CONTINUITY_NOT_TRUE
 from dmbot.memory.continuity import ContinuityStore
+from dmbot.memory.continuity_hits import ContinuityHits
+from dmbot.memory.continuity_hits import hit_of as continuity_hit_of
 from dmbot.memory.contradiction_grades import MAJOR, GradeStore
 from dmbot.memory.deed_proposals import DeedProposals
 from dmbot.memory.deed_proposals_backup import DeedProposalsSection
@@ -12290,13 +12298,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # found from what is said about them, never from capitals, joined with the scan's before
         # the cap. Only lines with a stored speaker can be read (consent is asked per line).
         reader_kinds: dict[str, str] = {}
+        trace: list[name_trace.Row] = []
+        scan_keys = {name_key(f.name) for f in every}
         if self.settings.session_names_on and heard_in:
             # (exactly the lines the scan read: never a sidebar or off-topic line it left out,
             # and on a put-back sweep only the lines put back, not the whole session again)
             scanned = set(lines)
             read_in = [x for x in heard_in if x.text in scanned]
             people = await self._people_keys(gid, users, cid)
-            every, reader_kinds = await self._read_session_names(gid, cid, read_in, people, every)
+            every, reader_kinds, trace = await self._read_session_names(
+                gid, cid, read_in, people, every
+            )
         found = every[:MAX_SUGGESTIONS]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
         asked = await self._take_name_asks(gid, cid, session_id) if session_id is not None else []
@@ -12323,6 +12335,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             "Name scan: %d name(s) suggested, %d with a kind, %d without, %d past the limit",
             len(found), len(kinds), len(found) - len(kinds), cut,
         )  # fmt: skip
+        refused: set[str] = set()
         for suggestion in found:
             written = None
             # (a kind the campaign's ontology does not allow falls back to none: the card asks)
@@ -12341,6 +12354,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except MemoryRuleError as exc:
                     log.info("Skipped a suggested name: %s", exc)
             if written is None:
+                refused.add(name_key(suggestion.name))
                 continue
             added.append(suggestion.name)
             if heard_in and session_id is not None:
@@ -12361,7 +12375,71 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
+        if self.settings.name_trace_dir and self.settings.name_trace_guild == gid:  # (#5055 B)
+            await self._write_name_trace(
+                gid,
+                cid,
+                session_id,
+                every,
+                found,
+                offered,
+                refused,
+                scan_keys,
+                trace,
+                {name_key(n) for n in reader_kinds},
+                {name_key(n) for n, _times in asked},
+            )
         return added
+
+    async def _write_name_trace(
+        self,
+        gid: int,
+        cid: str,
+        session_id: str | None,
+        every: Sequence[Suggestion],
+        found: Sequence[Suggestion],
+        offered: Collection[str],
+        refused: Collection[str],
+        scan_keys: Collection[str],
+        trace: list[name_trace.Row],
+        reader_keys: Collection[str],
+        asked_keys: Collection[str],
+    ) -> None:
+        """The per-name trace of this step (#5055 B, dev tools): each name in the joined list ends
+        offered, over the number or refused by the store, with where it came from (the scan, the
+        reader or the name pass), beside the reader's own refusals. Written only for a sample
+        campaign (`name_trace.write`). Never raises."""
+        try:
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None:
+                return
+            shown = {name_key(f.name) for f in found}
+            rows = list(trace)
+            listed = {name_key(f.name) for f in every}
+            # (the joined list, then what was offered beside it: a word the name pass asked)
+            for f in [*every, *(f for f in found if name_key(f.name) not in listed)]:
+                key = name_key(f.name)
+                if key in asked_keys:
+                    source = name_trace.ASKED  # (offered because the name pass asked about it)
+                elif key in scan_keys:
+                    source = name_trace.SCAN
+                elif key in reader_keys:
+                    source = name_trace.READER
+                else:
+                    source = name_trace.ASKED
+                if key not in shown:  # (past the number: the only way into `every` but not shown)
+                    reason = name_trace.OVER_CAP
+                elif key in refused:
+                    reason = name_trace.STORE_REFUSED
+                else:
+                    reason = name_trace.OFFERED
+                rows.append(name_trace.Row(source, f.name, reason, times=f.times))
+            name_trace.write(
+                self.settings.name_trace_dir, campaign.name, cid, session_id, rows,
+                guild_id=gid, test_guild=self.settings.name_trace_guild,
+            )  # fmt: skip
+        except Exception as exc:  # (a dev tool: the step's own work is done)
+            log.warning("Name trace failed: %s", type(exc).__name__)
 
     async def _read_session_names(
         self,
@@ -12370,14 +12448,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         heard_in: Sequence[Line],
         people: Collection[str],
         scan: list[Suggestion],
-    ) -> tuple[list[Suggestion], dict[str, str]]:
+    ) -> tuple[list[Suggestion], dict[str, str], list[name_trace.Row]]:
         """The name reader over the session's lines (docs/design/session_names.md, slice 2),
         joined with the scan's suggestions (`name_reader.join`). Never raises: no AI, a plan
         without it, or a failure leave the scan's list as it was. Who is recorded is asked before
         and after each call. Counts only in the log."""
         ai = self.name_pass_ai
         if ai is None or not heard_in or self.memory is None:
-            return scan, {}
+            return scan, {}, []
         try:
             # Each name never to suggest, with why: a trace can tell "the DM said it isn't a
             # name" from a known name or a person at the table (the Expert, on #5087).
@@ -12388,7 +12466,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             skip.update({k: name_reader.AT_TABLE for k in people})
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
-                return scan, {}
+                return scan, {}, []
             dms = set(campaign.dm_user_ids)
             rows = [
                 name_reader.Row(str(i), x.user_id, x.user_id in dms, x.text)
@@ -12418,10 +12496,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 " %d stretch(es) not read",
                 len(kept), len(dropped), len(joined) - len(scan), read.unread,
             )  # fmt: skip
-            return joined, kinds
+            # The trace (#5055 B): every candidate the reader ended, with its fixed reason. A kept
+            # name the scan also found is "joined"; the rest are traced with the joined list in
+            # `_propose_new_names` (offered, or over the number).
+            scanned = {name_key(x.name) for x in scan} | {name_key(a) for x in scan for a in x.also}
+            traced = name_trace.reader_rows(read.outcomes, dropped, kept, scanned)
+            return joined, kinds, traced
         except Exception as exc:  # the reader adds names; the scan's list stands without it
             log.warning("Name reader failed: %s", type(exc).__name__)
-            return scan, {}
+            return scan, {}, []
 
     async def _scan_kinds(
         self, gid: int, cid: str, names: Sequence[str], lines: Sequence[str]
@@ -14694,6 +14777,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 join_choices=self._work_out_join_choices,
                                 reveals_ask=self._work_out_reveals,
                                 reveals_drop=self._drop_reveal,
+                                deeds=self._answer_deed,
+                                continuity_ask=self._work_out_continuity,
+                                continuity_answer=self._answer_continuity,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -15416,6 +15502,83 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 shown.append((proposal.id, words))  # (a line with a word missing is not shown)
         return await RevealsStore(db).replace(guild_id, campaign_id, user_id, shown)
 
+    async def _answer_deed(
+        self, guild_id: int, campaign_id: str, proposal_id: str, record: bool
+    ) -> tuple[str, int | None]:
+        """A deed answered from the website (#3591): the one function Discord's Record and Not
+        this buttons use, so every rule and the consent re-check are the card's own."""
+        return await deed_card.apply_answer(self, guild_id, campaign_id, proposal_id, record=record)
+
+    async def _work_out_continuity(self, guild_id: int, campaign_id: str, user_id: int) -> int:
+        """The continuity heads-ups for the website (#3695 half 1): the same check Discord's card
+        runs when it opens (`ContinuityStore.check`, no AI call, the same levels), with who is
+        recorded read now, kept as pointers for the page (`continuity_hits`), replacing the
+        campaign's earlier set. Only a DM of the campaign (checked again here)."""
+        db, memory = self._picture_db, self.memory
+        if db is None or memory is None:
+            raise RuntimeError("the heads-ups cannot be kept yet")
+        campaign = await self.campaigns.get(guild_id, campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            raise RuntimeError("only a DM of the campaign")
+        report = await ContinuityStore(memory).check(
+            guild_id,
+            campaign_id,
+            opted_in=await self.consent.consenting(guild_id),
+            levels=self.settings.continuity,
+        )
+        hits = [h for h in map(continuity_hit_of, report.conflicts) if h is not None]
+        return await ContinuityHits(db).replace(guild_id, campaign_id, hits)
+
+    async def _answer_continuity(
+        self, guild_id: int, campaign_id: str, claim_id: str, choice: str
+    ) -> str:
+        """A heads-up answered from the website (#3695 half 1), through the card's own answer
+        (`ContinuityStore.answer`), with who is recorded asked again now. "c": the story changed
+        (the claim becomes a fact, in one change; the story watch then looks, as after the card's
+        button); "n": it wasn't real. Only a claim the last ask listed (the card answers only its
+        own lines). As on the card, a claim not waiting any more, or one someone who stopped
+        being recorded said, ends the heads-up (`GONE`); any other refusal leaves it waiting and on
+        the page (`REFUSED`)."""
+        db, memory = self._picture_db, self.memory
+        if db is None or memory is None:
+            raise RuntimeError("the heads-ups cannot be answered yet")
+        hits = ContinuityHits(db)
+        if not await hits.has(guild_id, campaign_id, claim_id):
+            return web_actions.GONE
+        action = CONTINUITY_CHANGED if choice == "c" else CONTINUITY_NOT_TRUE
+        try:
+            await ContinuityStore(memory).answer(
+                guild_id,
+                campaign_id,
+                claim_id,
+                action,
+                opted_in=await self.consent.consenting(guild_id),
+                levels=self.settings.continuity,
+            )
+        except MemoryRuleError as exc:
+            if (str(exc) or CLAIM_GONE) not in (CLAIM_GONE, CLAIM_STOPPED_NOW, CLAIM_ODD_NOW):
+                return web_actions.REFUSED  # (the card shows the rule and keeps the heads-up)
+            await hits.drop(guild_id, campaign_id, claim_id)
+            return web_actions.GONE
+        await hits.drop(guild_id, campaign_id, claim_id)
+        if action == CONTINUITY_CHANGED:
+            # (in the background, as after the card's button: the answer never waits on it)
+            self._track(self._watch_after_answer(guild_id, campaign_id), "continuity-watch")
+        log.info("Continuity heads-up answered from the website: %s", choice)  # a word only
+        return web_actions.APPLIED
+
+    async def _watch_after_answer(self, guild_id: int, campaign_id: str) -> None:
+        """A condition the DM just confirmed may have left their adventure behind (#1729): the
+        story watch looks, as after the card's button. It never makes the answer fail, and a
+        worker with no Discord skips it."""
+        campaign = await self.campaigns.get(guild_id, campaign_id)
+        if campaign is None or getattr(self, "headless", False):
+            return
+        try:
+            await self.watch_story(guild_id, campaign_id, campaign.dm_screen_channel_id)
+        except Exception:
+            log.exception("Story watch after a heads-up answered on the website failed")
+
     async def _drop_reveal(self, guild_id: int, campaign_id: str, proposal_id: str) -> None:
         """An answered proposal leaves the website's kept lists at once (#3863)."""
         if self._picture_db is not None:
@@ -15444,6 +15607,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.info("%s kept join choices were cleared", kept)
         except Exception as exc:
             log.warning("The kept join choices could not be swept: %s", type(exc).__name__)
+        try:
+            hits = await ContinuityHits(db).sweep(guild_id)  # (the heads-ups' pointers, #3695)
+            if hits:
+                log.info("%s kept continuity heads-ups were cleared", hits)
+        except Exception as exc:
+            log.warning("The kept continuity heads-ups could not be swept: %s", type(exc).__name__)
 
     def _lore_pdfs(self) -> LorePdfs:
         """What `lore-pdf-estimate` needs (#4762): the staging bucket, the staged-file table and the

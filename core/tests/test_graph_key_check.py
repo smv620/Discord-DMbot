@@ -1314,3 +1314,25 @@ class WrongShape(unittest.TestCase):
         unnamed = backup([("e2", "Dead", "person")], [])
         unnamed["sections"]["memory"][0]["unnamed"] = True
         self.assertEqual(gkc.check(unnamed, key).wrong_shape, 0)
+
+
+class FoundBySource(unittest.TestCase):
+    """Which reader stored each found key entry (the Expert, on session_names slice 2c)."""
+
+    def test_found_entries_are_counted_by_their_stored_source(self) -> None:
+        key = {
+            "nodes": [
+                {"name": "Targos", "kind": "place"},
+                {"name": "Hrothgar", "kind": "person"},
+                {"name": "Bryn Shander", "kind": "place"},
+            ],
+            "pairs": [],
+        }
+        data = backup([("e1", "Targos", "place"), ("e2", "Hrothgar", "npc")], [])
+        rows = data["sections"]["memory"]
+        rows[0]["source"], rows[1]["source"] = "scan", "extractor"
+        report = gkc.check(data, key)
+        self.assertEqual(dict(report.found_by), {"scan": 1, "extractor": 1})
+        self.assertIn(
+            "Found, by the stored entry's source: extractor 1, scan 1", gkc.render(report)
+        )
