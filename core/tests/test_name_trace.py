@@ -140,3 +140,41 @@ class TheBotStep(unittest.TestCase):
                 (nt.ASKED, "Brin", nt.OFFERED),
             ],
         )
+
+
+class Consent(unittest.TestCase):
+    """Supervisor, on #5107: consent has no exception, even in a dev tool's trace."""
+
+    def test_a_stopped_speakers_name_is_written_nowhere_only_a_count(self) -> None:
+        from dmbot.memory import name_reader as nr
+
+        outcomes = [
+            nr.Outcome("Quillsong", nr.STOPPED),
+            nr.Outcome("Vessaline", nr.STOPPED),
+            nr.Outcome("Mia", nr.AT_TABLE),
+            nr.Outcome("zed", nr.NOT_IN_LINES),
+        ]
+        rows = nt.reader_rows(outcomes, [], [], set())
+        with tempfile.TemporaryDirectory() as d:
+            path = nt.write(d, SAMPLE, "c1", "s1", rows, guild_id=7, test_guild=7)
+            assert path is not None
+            text = path.read_text(encoding="utf-8")
+            back = nt.read(path)
+        for name in ("Quillsong", "Vessaline", "Mia"):
+            self.assertNotIn(name, text)
+        self.assertIn(
+            (nt.READER, "", nr.STOPPED, 2), [(r.source, r.name, r.reason, r.times) for r in back]
+        )
+        self.assertIn("zed", text)  # (a name from people still recorded is traced as before)
+
+    def test_kept_names_the_scan_also_had_are_joined(self) -> None:
+        from dmbot.memory import name_reader as nr
+
+        kept = [
+            nr.Found("hrothgar", "person", nr.INTRODUCED, 1, ("1",)),
+            nr.Found("Vell", "person", nr.PLACE, 2, ("2", "3")),
+        ]
+        rows = nt.reader_rows([], [], kept, {"hrothgar"})
+        self.assertEqual(
+            [(r.name, r.reason, r.why) for r in rows], [("hrothgar", nt.JOINED, nr.INTRODUCED)]
+        )

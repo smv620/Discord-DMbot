@@ -12471,18 +12471,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # name the scan also found is "joined"; the rest are traced with the joined list in
             # `_propose_new_names` (offered, or over the number).
             scanned = {name_key(x.name) for x in scan} | {name_key(a) for x in scan for a in x.also}
-            # (never the people at the table: their names are not story names to trace)
-            traced = [
-                name_trace.Row(name_trace.READER, o.name, o.reason)
-                for o in read.outcomes
-                if o.reason != name_reader.AT_TABLE
-            ]
-            traced += [name_trace.Row(name_trace.READER, o.name, o.reason) for o in dropped]
-            traced += [
-                name_trace.Row(name_trace.READER, f.name, name_trace.JOINED, f.why, f.times)
-                for f in kept
-                if name_key(f.name) in scanned
-            ]
+            traced = name_trace.reader_rows(read.outcomes, dropped, kept, scanned)
             return joined, kinds, traced
         except Exception as exc:  # the reader adds names; the scan's list stands without it
             log.warning("Name reader failed: %s", type(exc).__name__)

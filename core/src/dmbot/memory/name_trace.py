@@ -16,11 +16,12 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from dmbot.devtools import sample_name
+from dmbot.memory import name_reader
 from dmbot.memory.models import name_key
 
 log = logging.getLogger(__name__)
@@ -104,3 +105,29 @@ def by_key(rows: Iterable[Row]) -> dict[str, list[Row]]:
 def counts(rows: Iterable[Row]) -> Mapping[tuple[str, str], int]:
     """(source, reason) -> how many: the summary sample_run prints, counts only."""
     return Counter((r.source, r.reason) for r in rows)
+
+
+def reader_rows(
+    outcomes: Iterable[name_reader.Outcome],
+    dropped: Iterable[name_reader.Outcome],
+    kept: Iterable[name_reader.Found],
+    scan_keys: Collection[str],
+) -> list[Row]:
+    """The name reader's rows: each refusal and each name with too few hearings, with its reason,
+    and a kept name the scan also had as `joined_scan` (the rest are traced with the joined list).
+    Consent has no exception, even here (Supervisor, on #5107): a name only the lines of someone
+    who stopped being recorded hold is never written, only one count row for all of them
+    (`speaker_stopped`, no name). The people at the table are never written either."""
+    out: list[Row] = []
+    stopped = 0
+    for o in [*outcomes, *dropped]:
+        if o.reason == name_reader.STOPPED:
+            stopped += 1
+        elif o.reason != name_reader.AT_TABLE:
+            out.append(Row(READER, o.name, o.reason))
+    if stopped:
+        out.append(Row(READER, "", name_reader.STOPPED, times=stopped))
+    out += [
+        Row(READER, f.name, JOINED, f.why, f.times) for f in kept if name_key(f.name) in scan_keys
+    ]
+    return out
