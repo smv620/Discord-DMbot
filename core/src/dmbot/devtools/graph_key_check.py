@@ -128,6 +128,9 @@ class Report:
     ties: list[Row] = field(default_factory=list)
     extra_entries: Counter[str] = field(default_factory=Counter)
     unnamed_extras: int = 0  # people the story never named that the key does not list (#3736)
+    # Each extra entry as (kind, status, source, stored name), for `--list-extras` (#5055): which
+    # "miss" is the key's wording and which a real reader miss. The sample's own words only.
+    extra_list: list[tuple[str, str, str, str]] = field(default_factory=list)
     extra_ties: int = 0
     violations: list[str] = field(default_factory=list)
     inferred_confirmed: list[str] = field(default_factory=list)
@@ -509,14 +512,20 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         if PLACEHOLDER.fullmatch(str(e["name"])) and i not in linked:
             report.placeholders += 1  # (the who-plays stand-in, #1559: not an extra entry)
             continue
+        listed = (
+            _kind_for(str(e["type"])), str(e.get("status", "")), str(e.get("source", "")),
+            str(e["name"]),
+        )  # fmt: skip
         if e.get("unnamed"):
             report.unnamed_extras += 1  # (their own line: a description, not an extra name)
+            report.extra_list.append(listed)
             continue
         if str(e["type"]) in THREAD_TYPES:
             continue  # (a story thread is scored on its own line, #4453, never as an extra name)
         if i in tied_clues:
             continue  # (a clue tied to a thread is scored on the Clues line, #4624 6b)
         report.extra_entries[_kind_for(str(e["type"]))] += 1
+        report.extra_list.append(listed)
     for name in key.get("must_not_names", ()):
         # (a must-not name is still found in a description too, as before; only one that is a
         # key `unnamed` entry's own description is right as a description, #3545)
@@ -1095,7 +1104,10 @@ def _row(label: str, c: Mapping[str, int]) -> str:
     return f"  {label:<13}" + "".join(f"{n:>{w}}" for n, w in zip(cells, WIDTHS, strict=True))
 
 
-def render(report: Report, counts_only: bool = False) -> str:
+def render(report: Report, counts_only: bool = False, list_extras: bool = False) -> str:
+    """The report as text. `counts_only`: ids and counts, no names. `list_extras` (#5055): each
+    entry the key does not match, by kind, status, source and stored name, for the public sample
+    only (its words may go on #3545); it lists names even with `counts_only`."""
     s = summarize(report)
     lines = ["Story graph check", ""]
     for title, key in (("Entries", "entries"), ("Ties", "ties")):
@@ -1114,6 +1126,10 @@ def render(report: Report, counts_only: bool = False) -> str:
         f"{dict(report.extra_entries)}"
     )
     lines.append(f"Unnamed people not in the key: {report.unnamed_extras}")
+    if list_extras:
+        lines.append("Extra entries, listed (kind | status | source | stored name):")
+        for kind, status, source, name in sorted(report.extra_list):
+            lines.append(f"  {kind} | {status} | {source} | {name}")
     lines.append(f"Player placeholders left out (not extras): {report.placeholders}")
     lines.append(f"Extra ties between key entries: {report.extra_ties}")
     lines.append(
@@ -1231,6 +1247,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--json", type=Path, help="also write the counts and rows as json")
     parser.add_argument("--i-know-this-is-the-test-campaign", action="store_true", dest="force")
     parser.add_argument(
+        "--list-extras",
+        action="store_true",
+        help="list each entry the key does not match by name (the public sample only, #5055)",
+    )
+    parser.add_argument(
         "--why-missed",
         action="store_true",
         help="also say, for each key name not found and kept, where it stopped and why (#5055)",
@@ -1256,7 +1277,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         key = json.loads(args.key.read_text())
         campaign = backup.get("campaign") if isinstance(backup, dict) else None
         name = campaign.get("name") if isinstance(campaign, dict) else None
-        if not (isinstance(name, str) and sample_name.is_sample(name)) and not args.force:
+        sample = isinstance(name, str) and sample_name.is_sample(name)
+        if args.list_extras and not sample:  # (names go on a public issue: the sample's only)
+            raise ValueError("--list-extras is only for the public sample campaign.")
+        if not sample and not args.force:
             raise ValueError(
                 'This campaign is not "test of the frostmaiden (sample N)"; the check is only '
                 "for the sample."
@@ -1265,7 +1289,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (ValueError, OSError) as exc:
         sys.stderr.write(f"{exc}\n")
         return 2
-    sys.stdout.write(f"Documents scored: {args.docs}\n" + render(report, args.counts_only))
+    sys.stdout.write(
+        f"Documents scored: {args.docs}\n"
+        + render(report, args.counts_only, list_extras=args.list_extras)
+    )
     if args.why_missed:
         # (here, not at the top: `why_missed` reads this module's lookups)
         from dmbot.devtools import why_missed
