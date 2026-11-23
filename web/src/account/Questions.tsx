@@ -4,6 +4,7 @@
 // oldest first, and for each kind either the page that answers it or how to answer it in Discord, never a dead
 // button. Counts and campaign names only: the cards come from each kind's own page. The counts are the bot's
 // (`question_counts`); older than five minutes, the page says it is catching up.
+import { DEED_QUESTIONS_LIVE } from "../content/deed-questions-switch";
 import { matchWords } from "../content/name-matches-words";
 import { NAME_MATCHES_LIVE } from "../content/name-matches-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
@@ -80,6 +81,8 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
   if (kind === "party_joins") return PARTY_JOIN_LIVE && api.joinQuestions !== undefined ? "here" : "discord";
   // The "Still in the party?" question (#4895): answered here once its switch is on, else in Discord.
   if (kind === "party_leaves") return PARTY_LEAVES_LIVE && api.leaveQuestions !== undefined ? "here" : "discord";
+  // The "Deeds to record" card (#3591): answered here once its switch is on, else in Discord.
+  if (kind === "deeds") return DEED_QUESTIONS_LIVE && api.deedQuestions !== undefined ? "here" : "discord";
   // What the characters learned (#3863 step 2): answered here once its switch is on, else in Discord.
   if (kind === "reveals") return REVEALS_LIVE && api.revealQuestions !== undefined ? "here" : "discord";
   // The "Did they mean…?" question (#4841 B1): answered here once its switch is on, else in Discord.

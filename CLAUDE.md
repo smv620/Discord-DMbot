@@ -103,6 +103,11 @@ CI runs all of the above on every pull request. Never merge red CI.
   no new design review; Supervisor records the approval again as a review on the new head so the
   rule above ("its commit is the PR's head") still holds. Any application-code line, PLAN wording
   included, needs a fresh review.
+  **A PR with another stacked on it merges with the merge method** (Supervisor, 2026-11-23, after
+  #5096, #5098 and #5107 each needed a restack when the PR under them was squashed): squashing the
+  bottom of a stack leaves the PR above carrying commits that are no longer on `development`, so it
+  conflicts. RepoManager merges any PR that another open PR is built on with the merge method; a PR
+  with nothing above it may be squashed.
   **A stacked PR whose base has merged** (2026-10-13, Supervisor, after #1139 merged under
   #1152/#1166/#1168): its patch-id against `development` changes only because the merged
   PR's commits drop out of its diff. The approval still carries over when `git range-diff`
