@@ -103,23 +103,33 @@ class SpendCap(AIOutOfFunds):
     fails the job at once and cleanly (no retry, no waiting) instead of trying again."""
 
 
+EXPECTED_OUT = 4000  # tokens a call is expected to write before this run has seen what one writes
+
+
 @dataclass(slots=True)
 class Budget:
-    """A dollar cap shared by every client of one run (`--max-usd`, #4859). Before each call the
-    worst it could cost (its text at about 3 characters a token in, `max_tokens` out, at that
-    model's price) is added to what was spent; a call that would pass the cap is not made."""
+    """A dollar cap shared by every client of one run (`--max-usd`, #4859). Before each call, what
+    it is expected to cost (its text at about 3 characters a token in, and the output it is
+    expected to write, at that model's price) is added to what was spent; a call that would pass the
+    cap is not made. The output is not the call's `max_tokens`: background calls send the tier's
+    floor of about 16,000 (the service charges for what is written, not the limit), so counting the
+    limit stopped a run at about $0.03 of real spend against a $1 cap (#4879). It is the larger of
+    `EXPECTED_OUT` and twice the most this model has written so far in the run, never above the
+    limit. What was really spent is added exactly after each call."""
 
     limit: float
     prices: dict[str, tuple[float, float]]
     spent: float = 0.0
     stopped: bool = False
+    most_out: dict[str, int] = field(default_factory=dict)  # per model: the longest answer so far
 
     def before(self, model: str, system: str, text: str, max_tokens: int) -> None:
         price = self.prices.get(model)
         if price is None:  # (the run refuses to start without every price, but never guess)
             raise SpendCap("no price on file for a model")
-        worst = ((len(system) + len(text)) / 3 * price[0] + max_tokens * price[1]) / 1_000_000
-        if self.spent + worst > self.limit:
+        expected_out = min(max_tokens, max(EXPECTED_OUT, 2 * self.most_out.get(model, 0)))
+        expected = ((len(system) + len(text)) / 3 * price[0] + expected_out * price[1]) / 1_000_000
+        if self.spent + expected > self.limit:
             self.stopped = True
             raise SpendCap("the dollar cap would be passed")
 
@@ -127,6 +137,7 @@ class Budget:
         price = self.prices.get(model)
         if price is not None:
             self.spent += (tokens_in * price[0] + tokens_out * price[1]) / 1_000_000
+        self.most_out[model] = max(self.most_out.get(model, 0), tokens_out)
 
 
 @dataclass(slots=True)
@@ -946,9 +957,9 @@ async def run_golden(
             rows.append(f"{session.name:<18} STOPPED: the dollar cap was reached")
             clean = False
             rows.append(
-                f"stopped before a call that would pass ${budget.limit:.2f}: {done} of "
-                f"{len(sessions)} sessions finished, {out.fast.calls + out.careful.calls} calls "
-                "in the last"
+                f"stopped before a call that would pass ${budget.limit:.2f} (about "
+                f"${budget.spent:.2f} spent): {done} of {len(sessions)} sessions finished, "
+                f"{out.fast.calls + out.careful.calls} calls in the last"
             )
             break
         if names_a_secret_anywhere(job, inputs):

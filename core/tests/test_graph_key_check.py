@@ -513,6 +513,12 @@ class ThePlaceholders(unittest.TestCase):
         self.assertEqual(sum(report.extra_entries.values()), 0)
         self.assertIn("Player placeholders left out (not extras): 2", gkc.render(report))
 
+    def test_a_player_without_discord_is_a_placeholder_too(self) -> None:
+        # (#5055: dev1's unmatched list had these four as extra names in every run)
+        data = backup([("p1", "Player 3 (no Discord)", "person")], [])
+        report = gkc.check(data, self.key(), "lore")
+        self.assertEqual((report.placeholders, sum(report.extra_entries.values())), (1, 0))
+
     def test_a_placeholder_that_only_plays_a_character_is_left_out(self) -> None:
         plays = {
             "table": "relation", "id": "r1", "subject_id": "p1", "predicate": "plays",

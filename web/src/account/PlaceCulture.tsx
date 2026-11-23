@@ -7,28 +7,7 @@ import { useState } from "preact/hooks";
 import { placeWorldWords as w } from "../content/place-world-words";
 import type { NameChange, PlaceWorld, PlaceWorldRow } from "./api";
 
-const LINEAGES = ["dwarf", "elf", "dragonborn", "gnome", "goliath", "halfling", "human", "orc", "tiefling"] as const;
-
-/** The name a culture row reads as: a named culture's name, the DM's own words, or the lineage's adjective. */
-function cultureName(r: PlaceWorldRow): string {
-  return r.culture ?? (r.value === "other" ? r.words : (w.culture.adjective[r.value] ?? r.value));
-}
-/** The name a who-lives-here row reads as: a named culture's name, the DM's own words, or the lineage's plural. */
-function peopleName(r: PlaceWorldRow): string {
-  return r.culture ?? (r.value === "other" ? r.words : (w.culture.plural[r.value] ?? r.value));
-}
-
-/** The culture line: each row with its strength in brackets, joined by commas. Empty when there are no rows. */
-export function cultureLine(rows: PlaceWorldRow[]): string | null {
-  if (rows.length === 0) return null;
-  return w.cultureLine(rows.map((r) => `${cultureName(r)}${r.how ? ` (${w.culture.strengths[r.how] ?? r.how})` : ""}${r.read ? w.readMark : ""}`).join(", "));
-}
-
-/** The who-lives-here line: each row with its share in front, joined by commas. Empty when there are no rows. */
-export function populationLine(rows: PlaceWorldRow[]): string | null {
-  if (rows.length === 0) return null;
-  return w.populationLine(rows.map((r) => `${r.how ? `${w.population.shares[r.how] ?? r.how} ` : ""}${peopleName(r)}${r.read ? w.readMark : ""}`).join(", "));
-}
+import { LINEAGES, cultureLine, populationLine } from "../content/place-culture-lines";
 
 export default function PlaceCulture({
   data,

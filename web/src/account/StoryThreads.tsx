@@ -132,7 +132,7 @@ export default function StoryThreads({ api, refId, onSignedOut }: { api: Account
               <ul class="stack small">
                 {s.people.map((p) => (
                   <li key={p.index}>
-                    <label class="row">
+                    <label class="choice">
                       <input type="checkbox" checked={!ticks(s).people.includes(p.index)} disabled={busy} onChange={() => toggle(s, "people", p.index)} />
                       {`${p.name} · ${p.role}`}
                     </label>
@@ -148,7 +148,7 @@ export default function StoryThreads({ api, refId, onSignedOut }: { api: Account
               <ul class="stack small">
                 {s.lines.map((l, i) => (
                   <li key={i}>
-                    <label class="row">
+                    <label class="choice">
                       <input type="checkbox" checked={!ticks(s).lines.includes(i)} disabled={busy} onChange={() => toggle(s, "lines", i)} />
                       {`${l.words} · ${l.what}`}
                     </label>

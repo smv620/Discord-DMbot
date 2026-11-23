@@ -113,6 +113,14 @@ class FakeBot:
         self.calls.append(("map_checks", f"{on}"))
         await self.store.set_map_checks(campaign.guild_id, campaign.id, on)
 
+    async def apply_rules_cards(self, campaign: Campaign, on: bool) -> None:
+        self.calls.append(("rules_cards", f"{on}"))
+        await self.store.set_rules_cards(campaign.guild_id, campaign.id, on)
+
+    async def apply_ask_before_adding(self, campaign: Campaign, on: bool) -> None:
+        self.calls.append(("ask_before_adding", f"{on}"))
+        await self.store.set_ask_before_adding(campaign.guild_id, campaign.id, on)
+
     async def apply_share_improve(self, campaign: Campaign, on: bool) -> None:
         self.calls.append(("share_improve", f"{on}"))
         await self.store.set_share_improve(campaign.guild_id, campaign.id, on)
@@ -249,6 +257,55 @@ class MapChecks(Settings):
     async def test_a_player_cannot_change_it(self) -> None:
         bob = await self.signed(BOB, THURSDAY)  # DMs Two, not One
         self.assertEqual(await self.refused(bob, setting="map_checks", value="off"), "not_allowed")
+
+
+class TheTwoOtherSwitches(Settings):
+    """Rules cards and Ask me before adding (#5155): the website's switches for Discord's last two
+    on/off buttons, queued like every setting and applied by the same calls."""
+
+    async def page(self) -> dict[str, bool]:
+        from dmbot.web import campaign_page
+
+        got = await campaign_page.read_campaign(self.web, self.session, self.cref)
+        mine = got["settings"]
+        return {
+            "rulesCards": bool(mine["rulesCards"]),
+            "askBeforeAdding": bool(mine["askBeforeAdding"]),
+        }
+
+    async def test_each_is_changed_from_the_website_and_the_page_and_the_store_agree(self) -> None:
+        before = await self.page()
+        campaign = await self.campaign()
+        self.assertEqual(
+            (before["rulesCards"], before["askBeforeAdding"]),
+            (campaign.rules_cards, campaign.ask_before_adding),
+        )
+        for setting, field in (
+            ("rules_cards", "rules_cards"),
+            ("ask_before_adding", "ask_before_adding"),
+        ):
+            was = bool(getattr(campaign, field))
+            await self.queue(setting=setting, value="off" if was else "on")
+            self.assertEqual([o.error for o in await self.run_bot()], [""])
+            self.assertEqual(bool(getattr(await self.campaign(), field)), not was)
+        after = await self.page()
+        self.assertEqual(after["rulesCards"], not before["rulesCards"])
+        self.assertEqual(after["askBeforeAdding"], not before["askBeforeAdding"])
+        self.assertEqual([c[0] for c in self.bot.calls], ["rules_cards", "ask_before_adding"])
+
+    async def test_only_on_or_off(self) -> None:
+        for setting in ("rules_cards", "ask_before_adding"):
+            self.assertEqual(await self.refused(setting=setting, value="maybe"), "bad_value")
+
+    async def test_a_game_master_of_another_campaign_cannot_change_them(self) -> None:
+        bob = await self.signed(BOB, THURSDAY)  # DMs Two, not One
+        for setting in ("rules_cards", "ask_before_adding"):
+            self.assertEqual(await self.refused(bob, setting=setting, value="off"), "not_allowed")
+
+    async def test_a_campaign_deleted_meanwhile_is_a_word_not_a_crash(self) -> None:
+        for setting in ("rules_cards", "ask_before_adding"):
+            item = ws.Setting("a" * 32, "0" * 32, ALICE.id, setting, "on")
+            self.assertEqual((await ws.apply(self.bot, self.g, item)).error, ws.NOT_FOUND)
 
 
 class TheChoices(Settings):
@@ -778,6 +835,9 @@ class TheDoor(Settings):
                 "story_mode": STORY_MODES,
                 "share_improve": ("on", "off"),
                 "map_checks": ("on", "off"),  # (#4687: the website's switch for Discord's button)
+                # (#5155: the two other on/off switches of Discord's Manage DMbot card)
+                "rules_cards": ("on", "off"),
+                "ask_before_adding": ("on", "off"),
             },
         )
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
