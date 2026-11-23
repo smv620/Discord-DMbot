@@ -6,6 +6,8 @@
 // consent, secrets and Undo hold the same. Only a DM of the campaign gets the list from the API; a player
 // never sees this part. One answer at a time per item: its buttons wait while it is sent, and the list
 // is read again after, so what shows is always the API's own.
+import { FIRST_FEELING_LIVE } from "../content/first-feeling-switch";
+import { feelingParts } from "./starting-feeling";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { handBracket, handKeeps } from "../content/hand-over-words";
@@ -555,6 +557,11 @@ export default function WebWaiting({
           {list.claims.filter((c) => !c.choices?.length).map((c) => (
             <div key={c.id} class="panel" id={itemDomId(c.id)} tabIndex={-1}>
               <p id={`wc-${c.id}`}>{c.statement}</p>
+              {FIRST_FEELING_LIVE && c.startingFeeling && (
+                <p class="small">
+                  {feelingParts(c.startingFeeling).map((part, i) => (part.bold ? <strong key={i}>{part.text}</strong> : part.text))}
+                </p>
+              )}
               {typeof c.at === "number" && c.at > 0 && <p class="muted small">{w.saidAt(sessionDay(c.at))}</p>}
               <div class="row">
                 <button

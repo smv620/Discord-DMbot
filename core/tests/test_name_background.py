@@ -675,6 +675,21 @@ class ThePath(NamesTest):
         (entity,) = await self.entities()
         self.assertEqual(entity.description, "From your background")
 
+    async def test_one_refused_name_leaves_out_only_itself_counted(self) -> None:  # (#5056)
+        bad = bg.Found("Brannoch", "npc", ("x" * 300,), (), "")  # (an other name too long to keep)
+        spell = bg.Found("Fireball", "spell", (), (), "")  # (a spell is never kept as an entry)
+        good = [bg.Found("Mirelle", "npc", (), (), ""), bg.Found("Oakmere", "place", (), (), "")]
+        refused: Counter[str] = Counter()
+        with self.assertLogs("dmbot.ui.name_background", "INFO") as logs:
+            stored = await ui_bg.store(
+                self.memory, self.campaign, [bad, spell, *good], refused=refused
+            )
+        self.assertEqual((len(stored["npc"]), len(stored["place"])), (1, 1))
+        self.assertEqual({e.name for e in await self.entities()}, {"Mirelle", "Oakmere"})
+        self.assertEqual(refused, Counter({"spelling": 1, "kind": 1}))
+        self.assertIn("kind=1, spelling=1", "".join(logs.output))
+        self.assertNotIn("Brannoch", "".join(logs.output))  # (counts only, never the name)
+
     async def test_a_name_read_from_a_picture_keeps_its_own_note(self) -> None:  # (#4003)
         from dmbot.memory.models import name_key
 

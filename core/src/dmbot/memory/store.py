@@ -10562,6 +10562,43 @@ async def _sync_plays(w: Changes, character_id: str) -> None:
         await w.insert(RELATIONS, _relation_row(link))
 
 
+# Why `add_names` would refuse one name, by a fixed label (#5056): the lore read checks each name
+# with `name_refusal` first and leaves out only the one that fails, counted, where one refused
+# name used to make the whole call raise and lose every name of the upload.
+REFUSED_SPELLING, REFUSED_NAME, REFUSED_KIND, REFUSED_ROLE = "spelling", "name", "kind", "role"
+
+
+def name_refusal(onto: Ontology, n: NewName) -> str:
+    """ "" when `add_names` takes this name, else the fixed label of the rule it breaks: the same
+    checks, in the same order, as `_add_names` makes for each name (its spellings cleaned, the
+    name rule, its kind active in the campaign, its role, a player character still waiting).
+    Pure: no database. A name `add_names` would only leave out (its key in use) passes here; one
+    whose key is in use *and* has a bad other spelling is counted here as "spelling" though
+    `add_names` would have skipped it quietly (nothing is stored either way). Not covered, as the
+    lore read never sends them: the batch's own checks (source, status, `more`'s spellings)."""
+    try:
+        for t in (n.name, *n.others, *n.secrets):
+            lookup_key(clean_text(t))
+    except MemoryRuleError:
+        return REFUSED_SPELLING
+    try:
+        check_named(n.type, n.name)
+    except MemoryRuleError:
+        return REFUSED_NAME
+    try:
+        kind, role = resolve_kind(n.type, n.role)
+        onto.active_type(kind)
+    except MemoryRuleError:
+        return REFUSED_KIND
+    try:
+        _check_role(onto, kind, role, None)
+    except MemoryRuleError:
+        return REFUSED_ROLE
+    if role == PLAYER_CHARACTER and n.status != PROPOSED:
+        return REFUSED_ROLE
+    return ""
+
+
 def _check_role(onto: Ontology, type_key: str, role: str | None, played_by: int | None) -> None:
     """A role belongs to a character, one at a time; only a player character is played by
     someone (#1034)."""

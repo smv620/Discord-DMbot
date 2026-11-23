@@ -831,6 +831,18 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       if (!queued?.answer) throw new ApiError("server");
       await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
     },
+    // A route's stated length (#4392): queued for the bot and waited for. A set or a keep gives its batch; null means nothing changed.
+    changeRouteLength: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await (change.action === "set"
+        ? call("POST", `${base}/route-length`, { on: change.on, id: change.id, words: change.words })
+        : change.action === "keep"
+          ? call("POST", `${base}/route-length/keep`, { on: change.on, id: change.id })
+          : call("POST", `${base}/route-length/${change.batch}/undo`, {}))) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
     // A character's lineage and class (#3925): DM only; the door answers anyone else with nothing.
     nodeTraits: async (ref, node) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/nodes/${encodeURIComponent(node)}/traits`)) as { traits: NodeTrait[] }).traits,

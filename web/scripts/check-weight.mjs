@@ -31,9 +31,12 @@ import { checkBuild, table } from "./weight.mjs";
 // 0.3 KB) are in the first download; the page was 185.9 KB. Nothing else on the page changed, so nothing was trimmed.
 // Raised on 2026-11-19 (#4798) to 188 KB: the party record's API methods must be named in `NAMES_METHODS` in the first download
 // (about 1 KB with their types); the page was 187.1 KB after trimming, and the card itself is in a lazy file.
+// Raised on 2026-11-22 (#5038) to 190 KB: the campaign's name heading (about 0.7 KB, in CampaignNav, which the Story Graph page loads)
+// and the route length and road condition panels' API names, now all in the first download; the page was 189.2 KB. The panels
+// themselves are in lazy files.
 export const budgets = {
   htmlKB: 52,
-  totalKB: 188,
+  totalKB: 190,
   onDemandKB: 45, // the most one chunk loaded on demand may weigh (#2690)
   imageKB: 150, // no picture bigger than this: resize or recompress it, don't drop it
 };
