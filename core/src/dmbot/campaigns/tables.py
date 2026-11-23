@@ -151,6 +151,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "provenance of working data: the upload's label and, for the DM's Why, the reader's quote "
     "of up to 240 characters (kept only for an upload the DM confirmed the right to use, shown to "
     "the DM alone); a restored campaign's connections read as added by hand (#2946, #3606)",
+    "after_session_jobs": "a live session's slow after-session reads handed to the worker: ids, "
+    "times, a lease and a state, never a word of the session; a working queue made again for "
+    "each session (#4905)",
     "memory_card_summaries": "a character's one sentence and where and when they were first met "
     "and last mentioned (#5050): made by a background job from the entry's player-safe facts and "
     "the transcripts, DMbot's own words and ids only, never a quote; a restored campaign's cards "
