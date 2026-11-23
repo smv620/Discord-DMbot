@@ -1712,6 +1712,9 @@ async def _read_pictures(
         return None
     sorted_names = picture_read.sort(seen.names, read.names, upload.text, upload.pictures)
     read.names.extend(sorted_names.kept)
+    # (a picture slice that failed loses its names too: counted with the text's, #5056 point 3)
+    if lost := seen.stats.dropped.get(bg.NAMES_UNREAD, 0):
+        read.stats.dropped[bg.NAMES_UNREAD] += lost
     # (a held one never joins the text's names: the caller stores it on its own, see
     # `_store_held`, so no list split, place fold or connection end can carry it off)
     log.info(

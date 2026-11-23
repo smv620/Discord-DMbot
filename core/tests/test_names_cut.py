@@ -73,6 +73,16 @@ class TheUnreadSlice(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1 name couldn't be read in full, so it was left out", line)
         self.assertIn("Upload the document again", line)
 
+    async def test_a_two_line_slice_that_always_fails_counts_each_name_once(self) -> None:
+        # (halved and tried again first: the two halves each count their one name, no more)
+        ai = SimpleNamespace(complete=AsyncMock(side_effect=AIError("down")), model="m")
+        stats = lr.Stats()
+        await lr._shape(
+            ai, "Korvath and Belmira.", ["Korvath", "Belmira"], [], {},
+            contextlib.nullcontext(), stats,
+        )  # fmt: skip
+        self.assertEqual(stats.dropped[bg.NAMES_UNREAD], 2)
+
 
 class TheWords(unittest.TestCase):
     def test_the_upload_line_says_how_many_and_what_to_do(self) -> None:
