@@ -119,6 +119,39 @@ class TheStore(WithImports):
         await self.store.finish_scan(GUILD, other, int(time.time()))
         self.assertEqual(await self.store.ready_for_recap(GUILD), [])
 
+    async def test_another_campaigns_waiting_recaps_never_hide_this_ones(self) -> None:
+        # (`ready_for_recap` lists the oldest few for the whole server: asked of one campaign, a
+        # recap that is still to start must still count, #4904 3b-4c)
+        other = await self.campaigns.create(GUILD, "Two", DM)
+        for day in (1, 2, 3, 4):  # (more than `ready_for_recap` lists at once)
+            sid = await self.transcripts.open_session(GUILD, other.id, START + day * DAY)
+            async with self.db.guild(GUILD) as conn:
+                await conn.execute(
+                    "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
+                    " file_name, imported_by, imported_at, state, write_recap, scan_finished)"
+                    " VALUES (%s, %s, %s, %s, 'b.txt', %s, 1, 'done', TRUE, TRUE)",
+                    (GUILD, other.id, sid, "b" * 32, DM),
+                )
+        mine = await self.imported(9, recap=True)  # (a later date than all four of the other's)
+        await self.store.claim_scan(GUILD, mine, int(time.time()))
+        await self.store.finish_scan(GUILD, mine, int(time.time()))
+        self.assertTrue(await self.store.recap_waiting(GUILD, self.campaign.id))
+        self.assertTrue(await self.store.recap_waiting(GUILD, other.id))
+        await self.store.mark_recap_started(GUILD, mine)
+        self.assertFalse(await self.store.recap_waiting(GUILD, self.campaign.id))
+        self.assertTrue(await self.store.recap_waiting(GUILD, other.id))
+
+    async def test_an_import_whose_session_was_deleted_is_not_waited_for(self) -> None:
+        # (as `ready_for_recap` leaves it out: nothing is left to write a recap of)
+        sid = await self.imported(1, recap=True)
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.finish_scan(GUILD, sid, int(time.time()))
+        self.assertTrue(await self.store.recap_waiting(GUILD, self.campaign.id))
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM transcript_sessions WHERE id = %s", (sid,))
+        self.assertEqual(await self.store.ready_for_recap(GUILD), [])
+        self.assertFalse(await self.store.recap_waiting(GUILD, self.campaign.id))
+
     async def test_the_choice_travels_with_the_session(self) -> None:
         await self.imported(1, recap=True)
         (ready,) = await self.store.ready_for_scan(GUILD)

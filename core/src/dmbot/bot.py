@@ -13984,7 +13984,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         while the worker has its recaps to start (#4904 3b-4c)."""
         if await store.pending_scans(gid, cid):
             return True
-        return any(r.campaign_id == cid for r in await store.ready_for_recap(gid))
+        return await store.recap_waiting(gid, cid)
 
     async def _import_news(
         self, gid: int, store: ImportStore, left: dict[str, int] | None = None
