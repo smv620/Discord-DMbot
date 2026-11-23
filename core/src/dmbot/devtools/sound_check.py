@@ -33,6 +33,23 @@ def kind_of(raw: bytes) -> str:
     return "not an mp3"
 
 
+REASON_MAX = 300
+
+
+def reason_of(raw: bytes) -> str:
+    """The company's own reason for a refusal, on one line and cut to `REASON_MAX` characters.
+    The only text sent is this tool's fixed line, so nothing of a campaign can come back in it."""
+    try:
+        found = json.loads(raw)
+        detail = found.get("detail", found) if isinstance(found, dict) else found
+        text = detail.get("message", detail) if isinstance(detail, dict) else detail
+        words = text if isinstance(text, str) else json.dumps(text)
+    except ValueError:
+        words = raw.decode("utf-8", "replace")
+    one = " ".join(words.split())
+    return one if len(one) <= REASON_MAX else one[: REASON_MAX - 1] + "…"
+
+
 def used(raw: bytes) -> int | None:
     """The account's credits used so far, from the subscription answer; None if it can't be read."""
     try:
@@ -43,7 +60,7 @@ def used(raw: bytes) -> int | None:
 
 
 async def check(api_key: str, model: str, seconds: float, loop: bool) -> list[str]:
-    transport = HttpTransport(api_key)
+    transport = HttpTransport(api_key, keep_errors=True)
     try:
         status, raw = await transport("GET", "/v1/user/subscription", None)
         before = used(raw) if status == 200 else None
@@ -59,7 +76,7 @@ async def check(api_key: str, model: str, seconds: float, loop: bool) -> list[st
     if status == 200:
         lines.append(f"answer: {len(sound)} bytes, {kind_of(sound)}")
     else:
-        lines.append("refused: the company's reason is not kept (it could echo the text)")
+        lines.append(f"refused: {reason_of(sound) or 'no reason given'}")
     if before is not None and after is not None:
         lines.append(
             f"credits used by this call: {after - before} (the code assumes {CREDITS_PER_SOUND})"

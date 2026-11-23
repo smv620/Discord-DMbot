@@ -29,7 +29,7 @@ class _Transport:
 
 class TheCheck(unittest.IsolatedAsyncioTestCase):
     async def run_with(self, transport: _Transport, model: str = sc.DEFAULT_MODEL) -> list[str]:
-        with mock.patch.object(sc, "HttpTransport", lambda key: transport):
+        with mock.patch.object(sc, "HttpTransport", lambda key, **kw: transport):
             return await sc.check("key", model, 5.0, True)
 
     async def test_it_asks_with_loop_and_the_model_and_reads_the_credits_difference(self) -> None:
@@ -49,10 +49,30 @@ class TheCheck(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(lines[1], "answer: 43 bytes, mp3")
         self.assertIn("credits used by this call: 200", lines[2])
 
-    async def test_a_refusal_says_so_without_the_companys_words(self) -> None:
-        lines = await self.run_with(_Transport(422, b"loop is not allowed", (5, 5)))
+    async def test_a_refusal_prints_the_companys_reason_on_one_line(self) -> None:
+        body = json.dumps({"detail": {"status": "invalid", "message": "loop is not\nsupported"}})
+        lines = await self.run_with(_Transport(422, body.encode(), (5, 5)))
         self.assertEqual(lines[0], f"model {sc.DEFAULT_MODEL}, loop on, 5 s: HTTP 422")
-        self.assertNotIn("loop is not allowed", " ".join(lines))
+        self.assertEqual(lines[1], "refused: loop is not supported")
+
+    def test_a_reason_is_read_from_json_or_text_and_cut(self) -> None:
+        self.assertEqual(sc.reason_of(b'{"detail": "model is retired"}'), "model is retired")
+        self.assertEqual(sc.reason_of(b"plain  words"), "plain words")
+        self.assertEqual(sc.reason_of(b""), "")
+        long = sc.reason_of(b"x" * 1000)
+        self.assertEqual(len(long), sc.REASON_MAX)
+        self.assertTrue(long.endswith("…"))
+
+    async def test_the_tool_asks_the_transport_to_keep_a_refusals_reason(self) -> None:
+        kept: list[bool] = []
+
+        def make(key: str, *, keep_errors: bool = False) -> _Transport:
+            kept.append(keep_errors)
+            return _Transport(200, b"ID3x", (1, 2))
+
+        with mock.patch.object(sc, "HttpTransport", make):
+            await sc.check("key", sc.DEFAULT_MODEL, 5.0, True)
+        self.assertEqual(kept, [True])
 
     async def test_an_unreadable_account_count_is_said_not_guessed(self) -> None:
         class NoCount(_Transport):
