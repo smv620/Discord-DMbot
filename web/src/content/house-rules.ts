@@ -32,6 +32,9 @@ export const text = {
   download: "Save as a text file",
   downloadNote: "The file has your table's own rules only, not the sets below.",
   downloading: "Saving…",
+  // The wait while a file is built (#3347 row 8): the page's wait line, under the button.
+  buildingFile: "DMbot is building your file.",
+  buildingSlow: "DMbot is slow to build it. Wait a minute. If it still hasn't saved, reload the page, then press the button again.",
   downloadFailed: "That didn't save. Try again.",
   notFound: "We can't find those rules. Go back to All campaigns and pick again.",
   failed: "That didn't load. Try again in a moment.",
