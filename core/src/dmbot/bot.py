@@ -12666,15 +12666,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             seen: set[tuple[str, str]] = set()
             candidates: list[tuple[str, str, str]] = []
             for code in name_scan.sound_keys(spelling):
-                for e in lookup.by_sound.get(code, ()):
+                for known in lookup.by_sound.get(code, ()):
                     if (
-                        e.confirmed and not e.secret and not e.person
-                        and e.entity_id not in lookup.hidden
-                        and e.entity_id in lookup.entities
-                        and (e.entity_id, e.text) not in seen
+                        known.confirmed and not known.secret and not known.person
+                        and known.entity_id not in lookup.hidden
+                        and known.entity_id in lookup.entities
+                        and (known.entity_id, known.text) not in seen
                     ):  # fmt: skip
-                        seen.add((e.entity_id, e.text))
-                        candidates.append((e.entity_id, e.text, lookup.entities[e.entity_id].name))
+                        seen.add((known.entity_id, known.text))
+                        candidates.append(
+                            (known.entity_id, known.text, lookup.entities[known.entity_id].name)
+                        )
             return name_scan.near_match_in(spelling, candidates)
 
         def near_secret(spelling: str) -> bool:
