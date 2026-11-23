@@ -266,6 +266,7 @@ def stand_in(
         _people_keys=AsyncMock(return_value=set()),
         _read_session_names=read,
         _name_closeness=AsyncMock(return_value=(lambda _s: None, lambda _s: False)),
+        _keep_found=AsyncMock(),
         _take_name_asks=AsyncMock(return_value=[]),
         _scan_kinds=AsyncMock(return_value={}),
         _session_start=AsyncMock(return_value=None),
@@ -340,6 +341,16 @@ class TheBotStep(unittest.TestCase):
             self.assertEqual(self.run_step(bot, texts), ["Hrothgar"])
             self.assertEqual([c.args[3] for c in bot.memory.add_alias.await_args_list], ["Rothgar"])
             self.assertIn((nt.SCAN, "Rothgar", ng.GROUPED), self.ends(d))
+
+    def test_each_suggestion_keeps_what_made_it_a_name(self) -> None:
+        texts = ["Then we met Hrothgar at the gate.", "Later Rothgar drank alone."]
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, on=False, texts=texts)
+            self.run_step(bot, texts)
+            (call,) = bot._keep_found.await_args_list
+            self.assertEqual(
+                (call.args[4].name, call.args[5]), ("Hrothgar", ["Hrothgar", "Rothgar"])
+            )
 
     def test_a_name_close_to_a_secret_is_never_suggested(self) -> None:
         texts = ["Then we met Hrothgar at the gate.", "Later Rothgar drank alone."]

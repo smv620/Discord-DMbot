@@ -62,6 +62,9 @@ TRANSCRIPTS: Rules = {
         "thread_progress",  # (a session's progress on threads: `thread_progress.forget`, #4522)
         "memory_trait_offers",  # (who said a heard language: `trait_offers.forget_speaker`, #4745)
         "memory_join_questions",  # (who said a goodbye: `join_questions.forget_speaker`, 0574)
+        # (a waiting name's line pointer, which names its speaker: gone with the line, and by
+        # speaker in a person's forget, #5133; listed though no column names a person)
+        "name_found",
     )
 }  # fmt: skip
 TRANSCRIPTS.update(

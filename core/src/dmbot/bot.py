@@ -417,6 +417,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.name_documents import MAX_PDF_BYTES
+from dmbot.memory.name_found import NameFound
 from dmbot.memory.ontology import Tally
 from dmbot.memory.party import party_notice
 from dmbot.memory.pc_icons_backup import PcIconsSection
@@ -12441,6 +12442,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             name_groups.settle, spellings, heard_wrong=heard_wrong, near_secret=near_secret
         )
         every = [g.suggestion() for g in settled.offered]
+        found_how = {name_key(g.name): g for g in settled.offered}  # (what made each a name, 3b)
         reader_kinds = {g.name: LORE_KINDS[g.kind] for g in settled.offered if g.kind in LORE_KINDS}
         split: list[Suggestion] = []
         if loose:  # "Wulfgar of Icewind Dale" is two names when the reader named a part of it
@@ -12523,6 +12525,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 refused.add(name_key(suggestion.name))
                 continue
             added.append(suggestion.name)
+            await self._keep_found(
+                gid, cid, session_id, written.value.id, found_how.get(name_key(suggestion.name)),
+                [suggestion.name, *suggestion.also], heard_in, read_in, read,
+            )  # fmt: skip
             if heard_in and session_id is not None:
                 await self._keep_places(
                     gid, cid, session_id, written.value.id, heard_in,
@@ -12768,6 +12774,58 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception as exc:  # the kinds are a nicety: the suggestions are made without them
             log.warning("Couldn't ask for the kinds of suggested names: %s", type(exc).__name__)
             return {}
+
+    async def _keep_found(
+        self,
+        gid: int,
+        cid: str,
+        session_id: str | None,
+        entity_id: str,
+        group: name_groups.Group | None,
+        spellings: Sequence[str],
+        heard_in: Sequence[Line],
+        read_in: Sequence[Line],
+        read: Sequence[name_reader.Found],
+    ) -> None:
+        """What made a suggested name a name (#5133 slice 3b): how it was found, and a pointer to
+        the one line that did it, for the card to quote (read then, with consent asked then).
+        Typed: a typed line holding it. Found by the name reader: the first line it cited for its
+        strongest reason. Otherwise the first line holding one of its spellings. A name split from
+        a joined one, or asked by the name pass, has no group: found by the scan. Never raises."""
+        db = self._picture_db
+        if db is None or session_id is None:
+            return
+        try:
+            how = "typed" if group is not None and group.typed else group.why if group else "scan"
+            keys = {name_key(t) for t in spellings}
+
+            def holding(lines: Iterable[Line]) -> Line | None:
+                return next(
+                    (x for x in lines if any(name_reader.holds(x.text, t) for t in spellings)),
+                    None,
+                )
+
+            def cited(f: name_reader.Found) -> list[Line]:
+                # (the reader numbers the lines it read from 1, in `read_in`'s order)
+                numbers = [int(n) for n in f.lines if n.isdigit()]
+                return [read_in[n - 1] for n in numbers if 0 < n <= len(read_in)]
+
+            mine = [f for f in read if name_key(f.name) in keys]
+            line: Line | None = None
+            if how == "typed":
+                # a typed line only, never speech quoted as typed: one holding a spelling, else
+                # one the reader cited, else no line at all
+                line = holding(x for x in heard_in if x.typed) or next(
+                    (x for f in mine for x in cited(f) if x.typed), None
+                )
+            else:
+                if how != "scan":
+                    line = next((x for f in mine if f.why == how for x in cited(f)), None)
+                line = line or holding(heard_in)
+            ref = line_ref(session_id, line.started_ms, line.user_id) if line else None
+            await NameFound(db).keep(gid, cid, entity_id, how, ref)
+        except Exception as exc:  # (the card simply has no quote)
+            log.warning("Couldn't keep what made a name a name (%s)", type(exc).__name__)
 
     async def _keep_places(
         self,

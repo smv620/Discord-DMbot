@@ -121,6 +121,8 @@ NOT_STAMPED: dict[str, str] = {
     "web_reveals": "what the characters learned, in words for a page and kept an hour, not story",
     # (#3695: the continuity heads-ups worked out on the DM's ask; pointers only, kept a day)
     "continuity_hits": "heads-ups worked out for a page and kept a day, pointers only, not story",
+    # (#5133: what made a waiting name a name, how and one line's pointer; goes when answered)
+    "name_found": "how a waiting name was found and a pointer to its line, not story",
     # (#3843: what a worker wants the bot to say in Discord; ids and counts, swept in days)
     # (#4904: what an import's scans leave for the report at its end; counts, ids and names)
     "import_state": "a holding place for an import's report (names, spellings as heard), taken "
