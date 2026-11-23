@@ -27,7 +27,7 @@ from dmbot.transcript.models import Line
 
 log = logging.getLogger(__name__)
 
-SESSIONS_MAX = 2000  # more sessions than any campaign has: the list is complete in practice
+SESSIONS_READ = 2000  # more sessions than any campaign has: the list is complete in practice
 WINDOW = 20  # lines either side of a mention the scene is written from
 LINE_MAX = 300  # a line's characters sent for a scene (a long line is cut: it is context)
 FIRST_FALLBACK = "when they were first named"
@@ -122,7 +122,9 @@ async def refresh_mentions(
     wanted = set(entity_ids)
     if not wanted:
         return {}
-    sessions = list(reversed(await transcripts.sessions(guild_id, campaign_id, limit=SESSIONS_MAX)))
+    sessions = list(
+        reversed(await transcripts.sessions(guild_id, campaign_id, limit=SESSIONS_READ))
+    )
     agreed = await recorded()
     named_in = partial(mentions, await lookup(guild_id, campaign_id))
     loaded: dict[int, list[Line]] = {}
