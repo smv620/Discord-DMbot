@@ -45,7 +45,8 @@ log = logging.getLogger(__name__)
 PROMPT_VERSION = "names-1"
 BATCH_LINES = 60  # lines a call reads; a few before it go with it for context, never cited
 CONTEXT_LINES = 4
-MIN_SPLIT = 8  # a cut answer is asked again in halves, down to this many lines
+MIN_SPLIT = 8  # a cut or overfull answer is asked again in halves, down to this many lines
+CALLS_PER_BATCH = 3  # the session's calls are capped at this many per batch, retries included
 MAX_PER_ANSWER = 40  # names read from one batch's answer; any more are counted as refused
 NAME_WORDS = 6  # "Caer Dineval", "the Spine of the World"; a sentence is not a name
 KNOWN_SENT = 300  # known names sent with each batch so it can leave them out (the rest: by code)
@@ -61,7 +62,9 @@ HEARINGS = {INTRODUCED: 1, ADDRESSED: 2, PLACE: 2, SPOKEN_OF: 2}
 # The fixed reasons a candidate ends with (design section 8; the trace's words)
 LISTED = "listed"  # kept: becomes a suggestion (after the joining and the DM's own lists)
 NOT_IN_LINES = "not_in_lines"
-KNOWN_NAME = "known_name"
+KNOWN_NAME = "known_name"  # a name DMbot has, or a "keep as heard" / "change to" word
+AT_TABLE = "at_the_table"  # a person playing, or a word of their name
+NOT_A_NAME = "dm_said_not_a_name"  # the DM pressed "Not a name" for it
 ORDINARY_WORD = "ordinary_word"
 RULES_WORD = "rules_word"
 BAD_KIND = "bad_kind"
@@ -147,10 +150,22 @@ def _text(value: object) -> str:
     return " ".join(str(value).split()) if ok else ""
 
 
-def _spelled(name: str) -> re.Pattern[str]:
-    """The name as whole words, any case, any spacing between its words."""
-    words = [re.escape(w) for w in name.split()]
-    return re.compile(r"(?<![\w'’-])" + r"\s+".join(words) + r"(?![\w'’-])", re.IGNORECASE)
+_APOSTROPHES = str.maketrans({"’": "'", "‘": "'", "`": "'"})
+
+
+def _words(text: str) -> list[str]:
+    # (capitals, curly or straight apostrophes, hyphens and spacing never matter: "Kelvin's
+    # Cairn" with a curly apostrophe holds "kelvin's cairn", "Caer-Dineval" holds "caer dineval")
+    return re.findall(r"[^\W_]+(?:'[^\W_]+)*", text.translate(_APOSTROPHES).casefold())
+
+
+def holds(line: str, name: str) -> bool:
+    """Does the line hold the name as whole words, letter for letter apart from capitals,
+    apostrophes, hyphens and spacing? (The guard: design section 11, rule 1.)"""
+    want, words = _words(name), _words(line)
+    if not want:
+        return False
+    return any(words[i : i + len(want)] == want for i in range(len(words) - len(want) + 1))
 
 
 def _whole_items(text: str) -> list[object]:
@@ -174,13 +189,13 @@ def _whole_items(text: str) -> list[object]:
 def check(
     item: Any,
     lines: Mapping[str, str],
-    skip: Collection[str],
+    skip: Mapping[str, str],
     rules: tuple[str, str] | None = None,
 ) -> tuple[Heard | None, str]:
     """One item of an answer, checked: (the name heard, LISTED) or (None, the reason it was
-    refused). `lines`: this batch's citable lines, by number; `skip`: name keys DMbot already has
-    or must never suggest (known names, the people at the table, names the DM said aren't
-    names); `rules`: the campaign's (target, fallback) rulesets, whose spells and kinds of monster
+    refused). `lines`: this batch's citable lines, by number; `skip`: name keys never to suggest,
+    each with its own reason (`KNOWN_NAME`, `AT_TABLE`, `NOT_A_NAME`), so a trace can tell them
+    apart; `rules`: the campaign's (target, fallback) rulesets, whose spells and kinds of monster
     are not the campaign's names."""
     if not isinstance(item, dict):
         return None, BAD_LINES
@@ -202,13 +217,14 @@ def check(
     numbers = [n for n in dict.fromkeys(numbers) if n]
     if not numbers or len(numbers) > LINES_MAX or any(n not in lines for n in numbers):
         return None, BAD_LINES
-    pattern = _spelled(name)
-    holding = tuple(n for n in numbers if pattern.search(lines[n]))
+    holding = tuple(n for n in numbers if holds(lines[n], name))
     if not holding:
         return None, NOT_IN_LINES  # (the guard: never a name the lines don't hold)
     key = name_key(name)
-    if not key or key in skip:
-        return None, KNOWN_NAME
+    if not key:
+        return None, NOT_IN_LINES
+    if key in skip:
+        return None, skip[key]
     if key in GAME_TERMS or (rules is not None and in_the_rules(name, KINDS[kind], *rules)):
         return None, RULES_WORD
     if key in COMMON or not_names.is_not_name(name) or not_names.shape_of(name) is not None:
@@ -219,7 +235,7 @@ def check(
 def parse(
     text: str,
     lines: Mapping[str, str],
-    skip: Collection[str],
+    skip: Mapping[str, str],
     *,
     cut: bool = False,
     rules: tuple[str, str] | None = None,
@@ -269,18 +285,25 @@ class Found:
     lines: tuple[str, ...]
 
 
-def tally(heard: Iterable[Heard]) -> tuple[list[Found], list[Outcome]]:
+def tally(
+    heard: Iterable[Heard], texts: Mapping[str, str] | None = None
+) -> tuple[list[Found], list[Outcome]]:
     """The session's names from every batch's checked answers, by name key: hearings are distinct
     lines (a line cited twice is one hearing), the reason is the strongest given (introduced
     first), and a name needs the hearings its reason asks for (`HEARINGS`); the rest end as
-    `too_few_hearings`. Most heard first."""
+    `too_few_hearings`. `texts`: every line the reader read, by number; a line that holds one of
+    the name's spellings is a hearing even when the reader cited another (it cites at most
+    `LINES_MAX`). Most heard first."""
     by_key: dict[str, list[Heard]] = {}
     for h in heard:
         by_key.setdefault(h.key, []).append(h)
     kept: list[Found] = []
     dropped: list[Outcome] = []
     for group in by_key.values():
-        lines = tuple(dict.fromkeys(n for h in group for n in h.lines))
+        cited = [n for h in group for n in h.lines]
+        spellings = {h.name for h in group}
+        also = [n for n, t in (texts or {}).items() if any(holds(t, sp) for sp in spellings)]
+        lines = tuple(dict.fromkeys([*cited, *also]))
         why = min((h.why for h in group), key=WHYS.index)
         spelled = Counter(h.name for h in group).most_common(1)[0][0]
         kind = Counter(h.kind for h in group).most_common(1)[0][0]
@@ -323,6 +346,7 @@ class Read:
     outcomes: list[Outcome] = field(default_factory=list)
     refused: Counter[str] = field(default_factory=Counter)
     calls: int = 0
+    budget: int = 0  # the calls this session may make (`CALLS_PER_BATCH` per batch)
     unread: int = 0
     stopped_speaking: int = 0  # names dropped: a speaker of their lines stopped meanwhile
 
@@ -341,7 +365,7 @@ def _ask(rows: Sequence[Row], context: Sequence[Row], known: Iterable[str]) -> s
 async def read(
     client: Client,
     rows: Sequence[Row],
-    skip: Collection[str],
+    skip: Mapping[str, str],
     *,
     known: Iterable[str],
     consenting: Callable[[], Awaitable[Collection[int]]],
@@ -352,12 +376,16 @@ async def read(
     """Read the session's `rows` batch by batch (design section 4). Who is recorded is asked
     before each batch (a line of someone who stopped is never sent) and again after its answer (a
     name only their lines hold is dropped). The lines before a batch go with it for context and
-    are never cited. A cut answer is asked again in halves; a batch that still fails is counted
-    `unread`, never as "no names". `progress` is awaited with (batch n, of m) before each one.
-    Counts only in the log."""
+    are never cited. A cut answer, or one past `MAX_PER_ANSWER` names, is asked again in halves
+    (nothing is dropped for being over a number); an unreadable one is asked once more; a batch
+    that still fails is counted `unread`, never as "no names". The calls are capped at
+    `CALLS_PER_BATCH` per batch for the whole session, so no answer can make the read loop; what
+    the cap leaves is counted `unread`. `progress` is awaited with (batch n, of m) before each
+    one. Counts only in the log."""
     out = Read()
     known = list(known)
     starts = list(range(0, len(rows), BATCH_LINES))
+    out.budget = CALLS_PER_BATCH * len(starts)
     for n, start in enumerate(starts, 1):
         if progress is not None:
             try:
@@ -378,7 +406,7 @@ async def _read_part(
     rows: Sequence[Row],
     start: int,
     end: int,
-    skip: Collection[str],
+    skip: Mapping[str, str],
     known: Sequence[str],
     consenting: Callable[[], Awaitable[Collection[int]]],
     max_tokens: int,
@@ -391,22 +419,31 @@ async def _read_part(
     if not part:
         return
     context = [r for r in rows[max(0, start - CONTEXT_LINES) : start] if r.user_id in agreed]
-    out.calls += 1
-    try:
-        reply = await client.complete(SYSTEM, _ask(part, context, known), max_tokens=max_tokens)
-    except Exception as exc:  # (never fatal: the batch is reported as not read)
-        log.warning("Name reader: a call failed (%s)", type(exc).__name__)
-        out.unread += 1
-        return
-    if reply.cut and end - start > MIN_SPLIT:
+    got: Parsed | None = None
+    cut = False
+    for _attempt in range(2):  # (an unreadable answer is asked once more, design section 4)
+        if out.calls >= out.budget:
+            out.unread += 1  # (the session's calls are spent: not read, never "no names")
+            return
+        out.calls += 1
+        try:
+            reply = await client.complete(SYSTEM, _ask(part, context, known), max_tokens=max_tokens)
+        except Exception as exc:  # (never fatal: the batch is reported as not read)
+            log.warning("Name reader: a call failed (%s)", type(exc).__name__)
+            continue
+        cut = reply.cut
+        got = parse(reply.text, {r.number: r.text for r in part}, skip, cut=cut, rules=rules)
+        if cut or not got.unreadable:
+            break  # (a cut answer is halved below, never asked again whole)
+    halve = cut or (got is not None and got.refused[OVER_ANSWER] > 0)
+    if halve and end - start > MIN_SPLIT:
         middle = start + (end - start) // 2
         await _read_part(client, rows, start, middle, skip, known, consenting, max_tokens, rules,
                          out)  # fmt: skip
         await _read_part(client, rows, middle, end, skip, known, consenting, max_tokens, rules,
                          out)  # fmt: skip
         return
-    got = parse(reply.text, {r.number: r.text for r in part}, skip, cut=reply.cut, rules=rules)
-    if got.unreadable:
+    if got is None or got.unreadable:
         out.unread += 1
         return
     still = set(await consenting())
@@ -432,10 +469,13 @@ def join(
     kind for each name it found, as the lore read's kind word (`background.KINDS`), so the scan's
     own kind question is not asked for it."""
     by_key = {name_key(s.name): s for s in scan}
+    # (a reader's name that is one of a scan entry's other spellings is that entry, never a
+    # second question for the same name)
+    home = {name_key(other): name_key(s.name) for s in scan for other in s.also}
     introduced: set[str] = set()
     kinds: dict[str, str] = {}
     for f in found:
-        key = name_key(f.name)
+        key = home.get(name_key(f.name), name_key(f.name))
         if f.why == INTRODUCED:
             introduced.add(key)
         mine = by_key.get(key)

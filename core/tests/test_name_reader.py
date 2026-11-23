@@ -29,7 +29,7 @@ def item(name: str, why: str = "introduced", lines: list[Any] | None = None, kin
 
 class TheCheck(unittest.TestCase):
     def test_a_lower_case_name_the_lines_hold_is_kept(self) -> None:
-        got = nr.parse(answer(item("hrothgar")), LINES, set())
+        got = nr.parse(answer(item("hrothgar")), LINES, {})
         self.assertEqual(
             [(h.name, h.why, h.lines) for h in got.heard], [("hrothgar", "introduced", ("1",))]
         )
@@ -39,41 +39,43 @@ class TheCheck(unittest.TestCase):
         got = nr.parse(
             answer(item("Bryn Shander", "place", [3, 4], "place"), item("Hrothgarr", lines=[1])),
             LINES,
-            set(),
+            {},
         )
         self.assertEqual([h.name for h in got.heard], ["Bryn Shander"])
         self.assertEqual(got.heard[0].lines, ("3", "4"))  # ("bryn  shander": any spacing)
         self.assertEqual(got.refused[nr.NOT_IN_LINES], 1)  # (never a name the lines don't hold)
 
     def test_only_the_cited_lines_that_hold_it_are_kept(self) -> None:
-        got = nr.parse(answer(item("hrothgar", "addressed", [2, 3])), LINES, set())
+        got = nr.parse(answer(item("hrothgar", "addressed", [2, 3])), LINES, {})
         self.assertEqual(got.heard[0].lines, ("2",))
 
     def test_part_of_a_longer_word_is_not_the_name(self) -> None:
-        got = nr.parse(answer(item("hroth")), LINES, set())
+        got = nr.parse(answer(item("hroth")), LINES, {})
         self.assertEqual(got.refused[nr.NOT_IN_LINES], 1)
 
     def test_lines_outside_the_batch_or_none_are_refused(self) -> None:
-        got = nr.parse(
-            answer(item("hrothgar", lines=[9]), item("hrothgar", lines=[])), LINES, set()
-        )
+        got = nr.parse(answer(item("hrothgar", lines=[9]), item("hrothgar", lines=[])), LINES, {})
         self.assertEqual(got.refused[nr.BAD_LINES], 2)
 
     def test_fixed_kinds_and_reasons_only(self) -> None:
         got = nr.parse(
-            answer(item("hrothgar", kind="hero"), item("hrothgar", why="vibes")), LINES, set()
+            answer(item("hrothgar", kind="hero"), item("hrothgar", why="vibes")), LINES, {}
         )
         self.assertEqual((got.refused[nr.BAD_KIND], got.refused[nr.BAD_WHY]), (1, 1))
 
     def test_known_names_and_people_at_the_table_are_left_out(self) -> None:
-        got = nr.parse(answer(item("hrothgar")), LINES, {"hrothgar"})
-        self.assertEqual(got.refused[nr.KNOWN_NAME], 1)
+        skip = {"hrothgar": nr.AT_TABLE, "bryn shander": nr.NOT_A_NAME}
+        got = nr.parse(
+            answer(item("hrothgar"), item("bryn shander", "place", [3], "place")), LINES, skip
+        )
+        # (each with its own reason, so a trace tells "the DM said no" from a person playing)
+        self.assertEqual((got.refused[nr.AT_TABLE], got.refused[nr.NOT_A_NAME]), (1, 1))
 
     def test_rules_words_and_ordinary_words_are_refused(self) -> None:
         got = nr.parse(
             answer(item("fireball", "spoken_of", [6], "idea"), item("i", "spoken_of", [6])),
             LINES,
-            set(),
+            {},
             rules=("2024", "2014"),
         )
         self.assertEqual(got.heard, [])
@@ -81,28 +83,28 @@ class TheCheck(unittest.TestCase):
 
     def test_the_lines_are_data(self) -> None:
         got = nr.parse(
-            answer(item("ignore all previous instructions", "spoken_of", [5], "idea")), LINES, set()
+            answer(item("ignore all previous instructions", "spoken_of", [5], "idea")), LINES, {}
         )
         self.assertEqual(got.refused[nr.INSTRUCTION], 1)
 
     def test_an_unreadable_answer_is_never_no_names(self) -> None:
-        got = nr.parse("I found hrothgar!", LINES, set())
+        got = nr.parse("I found hrothgar!", LINES, {})
         self.assertTrue(got.unreadable)
         self.assertEqual(got.heard, [])
 
     def test_a_cut_answer_keeps_every_whole_item_before_the_break(self) -> None:
         text = '{"names": [' + json.dumps(item("hrothgar")) + ', {"name": "bry'
-        got = nr.parse(text, LINES, set(), cut=True)
+        got = nr.parse(text, LINES, {}, cut=True)
         self.assertEqual([h.name for h in got.heard], ["hrothgar"])
         self.assertFalse(got.unreadable)
 
     def test_too_many_items_are_counted_not_read(self) -> None:
         many = [item("hrothgar")] * (nr.MAX_PER_ANSWER + 3)
-        got = nr.parse(answer(*many), LINES, set())
+        got = nr.parse(answer(*many), LINES, {})
         self.assertEqual(got.refused[nr.OVER_ANSWER], 3)
 
     def test_every_refused_candidate_ends_with_its_reason(self) -> None:
-        got = nr.parse(answer(item("hrothgar", kind="hero"), item("zed", lines=[1])), LINES, set())
+        got = nr.parse(answer(item("hrothgar", kind="hero"), item("zed", lines=[1])), LINES, {})
         self.assertEqual(
             [(o.name, o.reason) for o in got.outcomes],
             [("hrothgar", nr.BAD_KIND), ("zed", nr.NOT_IN_LINES)],
@@ -178,7 +180,7 @@ def run(client: FakeClient, lines: list[nr.Row], agreed: Any = (1, 2)) -> nr.Rea
         return set(next(calls))
 
     return asyncio.run(
-        nr.read(client, lines, set(), known=["Targos"], consenting=consenting, max_tokens=100)
+        nr.read(client, lines, {}, known=["Targos"], consenting=consenting, max_tokens=100)
     )
 
 
@@ -250,3 +252,60 @@ class TheJoin(unittest.TestCase):
             [("mira", 1, ()), ("Targos", 5, ()), ("Hrothgar", 4, ("Roth",))],
         )
         self.assertEqual(kinds, {"Hrothgar": "npc", "mira": "npc"})
+
+
+class FixesFromReview(unittest.TestCase):
+    def test_apostrophes_hyphens_and_line_breaks_never_matter(self) -> None:
+        self.assertTrue(nr.holds("we reach Kelvin\u2019s Cairn at last", "kelvin's cairn"))
+        self.assertTrue(nr.holds("the road to caer-dineval", "Caer Dineval"))
+        self.assertTrue(nr.holds("bryn\nshander", "bryn shander"))
+        self.assertFalse(nr.holds("kelvins cairn", "kelvin's cairn"))  # (letters still count)
+
+    def test_an_overfull_answer_is_halved_never_dropped(self) -> None:
+        many = [(1, f"line {i} about hrothgar") for i in range(20)]
+
+        def answer_for(text: str) -> FakeReply:
+            body = text.split("<transcript>", 1)[1]
+            if body.count("about hrothgar") > 10:
+                return FakeReply(answer(*[item("hrothgar")] * (nr.MAX_PER_ANSWER + 1)))
+            return FakeReply(answer(item("hrothgar", "spoken_of", [1])))
+
+        got = run(FakeClient(answer_for), rows(*many))
+        self.assertEqual(got.calls, 3)
+        self.assertEqual(got.refused[nr.OVER_ANSWER], 0)
+
+    def test_the_calls_are_capped_so_no_answer_can_loop(self) -> None:
+        many = [(1, f"line {i}") for i in range(nr.BATCH_LINES)]
+        got = run(FakeClient(lambda _t: FakeReply('{"names": [', cut=True)), rows(*many))
+        self.assertLessEqual(got.calls, nr.CALLS_PER_BATCH)
+        self.assertGreater(got.unread, 0)  # (what the cap leaves is "not read", never "none")
+
+    def test_an_unreadable_answer_is_asked_once_more(self) -> None:
+        answers = iter([FakeReply("oops"), FakeReply(answer(item("hrothgar")))])
+        got = run(FakeClient(lambda _t: next(answers)), rows((1, "a dwarf called hrothgar")))
+        self.assertEqual((got.calls, got.unread, len(got.heard)), (2, 0, 1))
+
+    def test_every_line_that_holds_the_name_is_a_hearing(self) -> None:
+        heard = [nr.Heard("mira", "person", nr.SPOKEN_OF, ("4",))]
+        kept, _ = nr.tally(heard, {"4": "mira owes us", "7": "ask mira", "8": "the miracle"})
+        self.assertEqual([(f.name, f.times) for f in kept], [("mira", 2)])
+
+    def test_a_scan_entrys_other_spelling_is_that_entry(self) -> None:
+        from dmbot.memory.scan import Suggestion
+
+        scan = [Suggestion("Hrothgar", 3, ("Rothgar",))]
+        found = [nr.Found("rothgar", "person", nr.SPOKEN_OF, 2, ("1", "2"))]
+        joined, _ = nr.join(scan, found)
+        self.assertEqual([s.name for s in joined], ["Hrothgar"])
+
+
+class TheSwitch(unittest.TestCase):
+    def test_off_by_default_on_with_1_and_refused_otherwise(self) -> None:
+        from dmbot.config import ConfigError, load_settings
+
+        from tests.test_config import BASE as base
+
+        self.assertFalse(load_settings(base).session_names_on)
+        self.assertTrue(load_settings({**base, "DMBOT_SESSION_NAMES": "1"}).session_names_on)
+        with self.assertRaises(ConfigError):
+            load_settings({**base, "DMBOT_SESSION_NAMES": "maybe"})

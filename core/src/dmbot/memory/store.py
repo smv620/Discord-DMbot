@@ -6111,6 +6111,19 @@ class MemoryStore:
             await ClaimStore(self).keep_dm_claims_in(w, [str(i) for i in ids])
             return Written(len(ids), w.batch, split_counts=(heard, not_told))
 
+    async def rejected_keys(self, guild_id: int, campaign_id: str) -> set[str]:
+        """The names the DM said are not names ("Not a name"), as keys: a subset of `known_keys`,
+        so a reader can say why it left a name out (docs/design/session_names.md, slice 2)."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT a.key FROM memory_aliases a JOIN memory_entities e"
+                " ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id"
+                " AND e.id = a.entity_id"
+                " WHERE a.guild_id = %s AND a.campaign_id = %s AND e.status = 'rejected'",
+                scope.ids,
+            )
+            return {str(r["key"]) for r in await cur.fetchall()}
+
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
         """Every name and word DMbot already has an answer for in this campaign, whatever
         the answer: names (rejected ones too, so "Not a name" sticks) and "keep as heard"

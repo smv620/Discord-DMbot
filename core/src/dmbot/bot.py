@@ -12263,7 +12263,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # the cap. Only lines with a stored speaker can be read (consent is asked per line).
         reader_kinds: dict[str, str] = {}
         if self.settings.session_names_on and heard_in:
-            every, reader_kinds = await self._read_session_names(gid, cid, heard_in, skip, every)
+            # (exactly the lines the scan read: never a sidebar or off-topic line it left out,
+            # and on a put-back sweep only the lines put back, not the whole session again)
+            scanned = set(lines)
+            read_in = [x for x in heard_in if x.text in scanned]
+            people = await self._people_keys(gid, users, cid)
+            every, reader_kinds = await self._read_session_names(gid, cid, read_in, people, every)
         found = every[:MAX_SUGGESTIONS]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
         asked = await self._take_name_asks(gid, cid, session_id) if session_id is not None else []
@@ -12335,7 +12340,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         gid: int,
         cid: str,
         heard_in: Sequence[Line],
-        skip: Collection[str],
+        people: Collection[str],
         scan: list[Suggestion],
     ) -> tuple[list[Suggestion], dict[str, str]]:
         """The name reader over the session's lines (docs/design/session_names.md, slice 2),
@@ -12343,9 +12348,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         without it, or a failure leave the scan's list as it was. Who is recorded is asked before
         and after each call. Counts only in the log."""
         ai = self.name_pass_ai
-        if ai is None:
+        if ai is None or not heard_in or self.memory is None:
             return scan, {}
         try:
+            # Each name never to suggest, with why: a trace can tell "the DM said it isn't a
+            # name" from a known name or a person at the table (the Expert, on #5087).
+            known = await self.memory.known_keys(gid, cid)
+            rejected = await self.memory.rejected_keys(gid, cid)
+            skip = {k: name_reader.KNOWN_NAME for k in known}
+            skip.update({k: name_reader.NOT_A_NAME for k in rejected})
+            skip.update({k: name_reader.AT_TABLE for k in people})
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
                 return scan, {}
@@ -12358,16 +12370,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ai,
                 rows,
                 skip,
-                known=sorted(skip),
+                known=sorted(known - rejected),
                 consenting=lambda: self.consent.consenting(gid),
                 max_tokens=OUTPUT_FLOOR,  # (background calls never send less, #2596)
                 rules=(campaign.target_ruleset, campaign.fallback_ruleset),
             )
-            kept, dropped = name_reader.tally(read.heard)
+            kept, dropped = name_reader.tally(read.heard, {r.number: r.text for r in rows})
             joined, kinds = name_reader.join(scan, kept)
-            log.info(  # counts only
-                "Name reader: %d name(s) kept, %d with too few hearings, %d new beside the scan",
-                len(kept), len(dropped), len(joined) - len(scan),
+            log.info(  # counts only (a stretch not read is never "no names")
+                "Name reader: %d name(s) kept, %d with too few hearings, %d new beside the scan,"
+                " %d stretch(es) not read",
+                len(kept), len(dropped), len(joined) - len(scan), read.unread,
             )  # fmt: skip
             return joined, kinds
         except Exception as exc:  # the reader adds names; the scan's list stands without it
