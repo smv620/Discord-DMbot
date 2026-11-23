@@ -73,6 +73,8 @@ def loops(bot: Any) -> list[tuple[str, Coroutine[Any, Any, None]]]:
         out.append(("import-scan", bot._import_loop(clean=False, scan=True, followups=False)))
     if bot.audio_worker is not None:
         out.append(("recap-audio", bot._recap_audio_loop(job=True, notices=False)))
+    if bot.after_jobs is not None:
+        out.append(("after-session", bot._after_session_loop()))
     if bot.settings.card_summary_on:
         out.append(("card-sentences", bot._card_loop()))
     return out
