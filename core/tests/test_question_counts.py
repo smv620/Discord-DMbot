@@ -628,7 +628,20 @@ class TheCounts(Base):
             return {7}  # (speaker 8 has stopped being recorded)
 
         self.src.agreed = agreed
+
+        async def switched_on(_g: int, _c: str) -> bool:
+            return True
+
+        async def lapsed(_g: int, _c: str) -> bool:
+            return False  # (the switch is off, or the plan has no story memory)
+
+        self.src.deeds_on = switched_on
         self.assertEqual((await self.count(kinds.DEEDS)).n, 1)
+        self.src.deeds_on = lapsed
+        self.assertEqual((await self.count(kinds.DEEDS)).n, 0)  # a lapsed plan offers none
+        self.src.deeds_on = None
+        self.assertEqual((await self.count(kinds.DEEDS)).n, 0)  # a gate not wired counts nothing
+        self.src.deeds_on = switched_on
         bare = Sources(db=self.db)  # (no memory store: the bot without the feature)
         found = await counts.count_kinds(bare, self.g, self.c, only={kinds.DEEDS})
         self.assertEqual(found[kinds.DEEDS].n, 0)

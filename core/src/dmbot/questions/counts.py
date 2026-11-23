@@ -49,6 +49,9 @@ class Sources:
     agreed: Callable[[int], Awaitable[Collection[int]]] | None = None  # who agreed to be recorded
     # who counts as recorded in one campaign's stored sessions (`ConsentStore.recorded_in`)
     recorded: Callable[[int, str], Awaitable[Collection[int]]] | None = None
+    # the story-deeds switch and the plan's story memory, for one campaign (#5105): a lapsed plan
+    # is offered no deeds, as the deed card and the after-session question already say
+    deeds_on: Callable[[int, str], Awaitable[bool]] | None = None
 
 
 async def count_kinds(
@@ -262,8 +265,10 @@ async def _deeds(src: Sources, g: int, c: str) -> Counted:
     """
     from dmbot.memory.deed_proposals import DeedProposals
 
-    if src.memory is None or src.agreed is None:
+    if src.memory is None or src.agreed is None or src.deeds_on is None:
         return Counted(0)
+    if not await src.deeds_on(g, c):
+        return Counted(0)  # the switch is off, or the plan has no story memory
     return Counted(
         int(await DeedProposals(src.memory).count_waiting(g, c, opted_in=await src.agreed(g)))
     )
