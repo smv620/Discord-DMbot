@@ -15535,6 +15535,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """ "Share this campaign's story to improve DMbot" chosen on the website (#3741)."""
         await self.campaigns.set_share_improve(campaign.guild_id, campaign.id, on)
 
+    async def apply_rules_cards(self, campaign: Campaign, on: bool) -> None:
+        """ "Rules cards" chosen on the website (#5155): `set_rules_cards` itself, as Discord's
+        button calls it, so a session of this campaign follows from now on."""
+        await self.set_rules_cards(campaign.guild_id, campaign.id, on)
+
+    async def apply_ask_before_adding(self, campaign: Campaign, on: bool) -> None:
+        """ "Ask me before adding" chosen on the website (#5155): Discord's button's call."""
+        await self.campaigns.set_ask_before_adding(campaign.guild_id, campaign.id, on)
+
     async def apply_map_checks(self, campaign: Campaign, on: bool) -> None:
         """ "Map checks" chosen on the website (#4687): the call Discord's button makes."""
         await self.campaigns.set_map_checks(campaign.guild_id, campaign.id, on)
