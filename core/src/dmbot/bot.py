@@ -12346,7 +12346,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
-        if self.settings.name_trace_dir:  # (dev tools: the sample campaign only, #5055 B)
+        if self.settings.name_trace_dir and self.settings.name_trace_guild == gid:  # (#5055 B)
             await self._write_name_trace(
                 gid,
                 cid,
@@ -12358,6 +12358,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 scan_keys,
                 trace,
                 {name_key(n) for n in reader_kinds},
+                {name_key(n) for n, _times in asked},
             )
         return added
 
@@ -12373,6 +12374,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         scan_keys: Collection[str],
         trace: list[name_trace.Row],
         reader_keys: Collection[str],
+        asked_keys: Collection[str],
     ) -> None:
         """The per-name trace of this step (#5055 B, dev tools): each name in the joined list ends
         offered, over the number or refused by the store, with where it came from (the scan, the
@@ -12388,12 +12390,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # (the joined list, then what was offered beside it: a word the name pass asked)
             for f in [*every, *(f for f in found if name_key(f.name) not in listed)]:
                 key = name_key(f.name)
-                if key in scan_keys:
+                if key in asked_keys:
+                    source = name_trace.ASKED  # (offered because the name pass asked about it)
+                elif key in scan_keys:
                     source = name_trace.SCAN
                 elif key in reader_keys:
                     source = name_trace.READER
                 else:
-                    source = name_trace.ASKED  # (a word PlotBot's name pass was not sure of)
+                    source = name_trace.ASKED
                 if key not in shown or key not in offered:
                     reason = name_trace.OVER_CAP
                 elif key in refused:
@@ -12401,7 +12405,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 else:
                     reason = name_trace.OFFERED
                 rows.append(name_trace.Row(source, f.name, reason, times=f.times))
-            name_trace.write(self.settings.name_trace_dir, campaign.name, cid, session_id, rows)
+            name_trace.write(
+                self.settings.name_trace_dir, campaign.name, cid, session_id, rows,
+                guild_id=gid, test_guild=self.settings.name_trace_guild,
+            )  # fmt: skip
         except Exception as exc:  # (a dev tool: the step's own work is done)
             log.warning("Name trace failed: %s", type(exc).__name__)
 
@@ -12464,7 +12471,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # name the scan also found is "joined"; the rest are traced with the joined list in
             # `_propose_new_names` (offered, or over the number).
             scanned = {name_key(x.name) for x in scan} | {name_key(a) for x in scan for a in x.also}
-            traced = [name_trace.Row(name_trace.READER, o.name, o.reason) for o in read.outcomes]
+            # (never the people at the table: their names are not story names to trace)
+            traced = [
+                name_trace.Row(name_trace.READER, o.name, o.reason)
+                for o in read.outcomes
+                if o.reason != name_reader.AT_TABLE
+            ]
             traced += [name_trace.Row(name_trace.READER, o.name, o.reason) for o in dropped]
             traced += [
                 name_trace.Row(name_trace.READER, f.name, name_trace.JOINED, f.why, f.times)

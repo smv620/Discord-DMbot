@@ -3,10 +3,12 @@ section 8 and rule 6): every candidate a reader found ends with one fixed reason
 sample run missed can be named and explained ("the reader never listed it", "too few hearings",
 "over the number", "the DM said it isn't a name").
 
-Dev tools only. Rows are written only when `DMBOT_NAME_TRACE_DIR` names a folder (server only,
-never in production use) and only for a sample campaign (`sample_name.is_sample`): the public
-sample's names, never a real campaign's. Production keeps counts (the log); this file is where the
-names go, on the server, never on GitHub. `why_missed` and `sample_run` read it.
+Dev tools only. Rows are written only when `DMBOT_NAME_TRACE_DIR` names a folder and
+`DMBOT_NAME_TRACE_GUILD` names the test server (server only, never in production use), and only
+for a sample campaign there (`sample_name.is_sample`): a real DM who gives a campaign the sample's
+name elsewhere is never traced. The people at the table are never traced either (the caller
+leaves their refusals out). Production keeps counts (the log); this file is where the public
+sample's names go, on the server, never on GitHub. `why_missed` reads it.
 """
 
 from __future__ import annotations
@@ -49,12 +51,21 @@ class Row:
 
 
 def write(
-    folder: str, campaign_name: str, campaign_id: str, session_id: str | None, rows: Iterable[Row]
+    folder: str,
+    campaign_name: str,
+    campaign_id: str,
+    session_id: str | None,
+    rows: Iterable[Row],
+    *,
+    guild_id: int,
+    test_guild: int,
 ) -> Path | None:
-    """Append the rows to `trace-<campaign>.jsonl` in `folder`, only for a sample campaign and
-    only when `folder` is set. Never raises: the trace is a dev tool, the step goes on without it.
-    Returns the file written, or None."""
-    if not folder or not sample_name.is_sample(campaign_name):
+    """Append the rows to `trace-<campaign>.jsonl` in `folder`, only for a sample campaign on the
+    test server (`test_guild`) and only when `folder` is set. Never raises: the trace is a dev
+    tool, the step goes on without it. Returns the file written, or None."""
+    if not folder or not test_guild or guild_id != test_guild:
+        return None
+    if not sample_name.is_sample(campaign_name):
         return None
     try:
         path = Path(folder) / f"trace-{campaign_id}.jsonl"

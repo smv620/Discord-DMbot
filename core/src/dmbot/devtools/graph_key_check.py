@@ -1402,8 +1402,11 @@ def main(argv: Sequence[str] | None = None, *, met: Sequence[str] = ()) -> int:
         if args.trace:
             from dmbot.memory import name_trace
 
-            trace_rows = [r for path in args.trace for r in name_trace.read(path)]
-            traced = name_trace.by_key(trace_rows)
+            try:
+                traced = [r for path in args.trace for r in name_trace.read(path)]
+            except (OSError, ValueError) as exc:  # (a missing file: one plain line, exit 2)
+                sys.stderr.write(f"{exc}\n")
+                return 2
         whys = why_missed.explain(
             backup, key, args.docs, decided, reasons=args.reasons, trace=traced
         )

@@ -151,6 +151,7 @@ class Settings:
     # #5055 slice B (dev tools, server only): a folder where the after-session name step writes,
     # for a sample campaign only, each candidate with the fixed reason it ended with (empty: off)
     name_trace_dir: str = ""
+    name_trace_guild: int = 0  # the test server: the trace is written there only (#5055 B)
     # #4537 slice 6b: the session reader also hears a player character saying goodbye to the
     # party, each an after-session question for the DM, never a closed stretch
     # (DMBOT_PARTY_LEAVES, off until the sample's counts show no false goodbye questions)
@@ -873,6 +874,7 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
         session_languages_on=languages_raw in ("1", "true", "on"),
         session_names_on=names_raw in ("1", "true", "on"),
         name_trace_dir=(get("DMBOT_NAME_TRACE_DIR") or "").strip(),
+        name_trace_guild=_trace_guild(get("DMBOT_NAME_TRACE_GUILD")),
         party_leaves_on=leaves_raw in ("1", "true", "on"),
         party_join_on=party_join_raw in ("1", "true", "on"),
         weather_notes_on=weather_raw in ("1", "true", "on"),
@@ -1148,3 +1150,13 @@ def _continuity_levels(get: Callable[[str], str]) -> Levels:
             "smallest first."
         )
     return levels
+
+
+def _trace_guild(raw: str | None) -> int:
+    """DMBOT_NAME_TRACE_GUILD: the test server's number, or 0 (the trace is off)."""
+    text = (raw or "").strip()
+    if not text:
+        return 0
+    if not text.isdigit():
+        raise ConfigError('DMBOT_NAME_TRACE_GUILD must be a server number, got "' + text + '".')
+    return int(text)

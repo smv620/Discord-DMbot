@@ -20,10 +20,11 @@ class Writing(unittest.TestCase):
             nt.Row(nt.SCAN, "Targos", nt.OFFERED, times=3),
         ]
         with tempfile.TemporaryDirectory() as d:
-            path = nt.write(d, SAMPLE, "c1", "s1", rows)
+            path = nt.write(d, SAMPLE, "c1", "s1", rows, guild_id=7, test_guild=7)
             assert path is not None
             self.assertEqual(path.name, "trace-c1.jsonl")
-            nt.write(d, SAMPLE, "c1", "s2", [nt.Row(nt.READER, "Mira", nt.OVER_CAP)])
+            nt.write(d, SAMPLE, "c1", "s2", [nt.Row(nt.READER, "Mira", nt.OVER_CAP)],
+                     guild_id=7, test_guild=7)  # fmt: skip
             back = nt.read(path)
         self.assertEqual([r.name for r in back], ["hrothgar", "Targos", "Mira"])
         self.assertEqual(back[1].times, 3)
@@ -36,15 +37,22 @@ class Writing(unittest.TestCase):
             },
         )
 
-    def test_a_real_campaign_or_no_folder_is_never_traced(self) -> None:
+    def test_a_real_campaign_another_server_or_no_folder_is_never_traced(self) -> None:
         rows = [nt.Row(nt.SCAN, "Targos", nt.OFFERED)]
         with tempfile.TemporaryDirectory() as d:
-            self.assertIsNone(nt.write(d, "Rime of the Frostmaiden", "c1", "s1", rows))
+            # (a real campaign, a sample-named campaign on another server, no test server set)
+            self.assertIsNone(
+                nt.write(d, "Rime of the Frostmaiden", "c1", "s1", rows, guild_id=7, test_guild=7)
+            )
+            self.assertIsNone(nt.write(d, SAMPLE, "c1", "s1", rows, guild_id=8, test_guild=7))
+            self.assertIsNone(nt.write(d, SAMPLE, "c1", "s1", rows, guild_id=7, test_guild=0))
             self.assertEqual(list(Path(d).iterdir()), [])
-        self.assertIsNone(nt.write("", SAMPLE, "c1", "s1", rows))
+        self.assertIsNone(nt.write("", SAMPLE, "c1", "s1", rows, guild_id=7, test_guild=7))
 
     def test_a_folder_that_cannot_be_written_never_raises(self) -> None:
-        self.assertIsNone(nt.write("/nonexistent/folder", SAMPLE, "c1", None, []))
+        self.assertIsNone(
+            nt.write("/nonexistent/folder", SAMPLE, "c1", None, [], guild_id=7, test_guild=7)
+        )
 
     def test_a_broken_line_is_passed_over(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -61,20 +69,32 @@ class Writing(unittest.TestCase):
 
 
 class WhyMissed(unittest.TestCase):
-    def test_a_name_never_stored_says_what_the_trace_says(self) -> None:
+    def why(self, keys: list[str], rows: list[nt.Row] | None) -> str:
         from dmbot.devtools import why_missed as wm
 
-        trace = nt.by_key([
+        return wm._not_stored_why(keys, wm._trace_index(rows) if rows is not None else None)
+
+    def test_a_name_never_stored_says_what_the_trace_wrote_last(self) -> None:
+        rows = [
             nt.Row(nt.SCAN, "Thornwatch", nt.OVER_CAP),
             nt.Row(nt.READER, "thornwatch", "too_few_hearings"),
-        ])  # fmt: skip
+        ]
         self.assertEqual(
-            wm._not_stored_why(["thornwatch"], trace),
-            "never stored: reader ended it as too_few_hearings",
+            self.why(["thornwatch"], rows), "never stored: reader ended it as too_few_hearings"
         )
-        self.assertEqual(wm._not_stored_why(["mira"], trace), "never stored: no reader listed it")
+        self.assertEqual(self.why(["mira"], rows), "never stored: no reader listed it")
+        self.assertEqual(self.why(["mira"], None), "never stored (no name trace for this run)")
+
+    def test_several_spellings_give_the_same_answer_every_run(self) -> None:
+        # (the reviewer's case: the last row in the file wins, never a set's order)
+        rows = [nt.Row(nt.READER, "Hrothgar", nt.OVER_CAP), nt.Row(nt.SCAN, "Roth", nt.OFFERED)]
+        for keys in (["hrothgar", "roth"], ["roth", "hrothgar"]):
+            self.assertEqual(self.why(keys, rows), "never stored: scan ended it as offered")
+
+    def test_a_leading_article_is_found_both_ways(self) -> None:
+        rows = [nt.Row(nt.READER, "The Hook", "too_few_hearings")]
         self.assertEqual(
-            wm._not_stored_why(["mira"], None), "never stored (no name trace for this run)"
+            self.why(["hook"], rows), "never stored: reader ended it as too_few_hearings"
         )
 
 
@@ -93,7 +113,8 @@ class TheBotStep(unittest.TestCase):
                 return SimpleNamespace(name=SAMPLE)
 
             bot: Any = SimpleNamespace(
-                campaigns=SimpleNamespace(get=get), settings=SimpleNamespace(name_trace_dir=d)
+                campaigns=SimpleNamespace(get=get),
+                settings=SimpleNamespace(name_trace_dir=d, name_trace_guild=5),
             )
             every = [Suggestion("Targos", 4), Suggestion("hrothgar", 2), Suggestion("Vell", 2)]
             found = [*every[:2], Suggestion("Brin", 1)]  # (Vell is past the number; Brin asked)
@@ -102,7 +123,7 @@ class TheBotStep(unittest.TestCase):
                 DMBot._write_name_trace(
                     bot, 5, "c1", "s1", every, found,
                     {"targos", "hrothgar", "brin"}, {"hrothgar"}, {"targos", "vell"}, earlier,
-                    {"hrothgar"},
+                    {"hrothgar"}, {"brin"},
                 )
             )  # fmt: skip
             rows = nt.read(Path(d, "trace-c1.jsonl"))

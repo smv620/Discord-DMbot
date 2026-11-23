@@ -89,13 +89,14 @@ def explain(
     decisions: Mapping[str, Mapping[str, Any]] | None = None,
     *,
     reasons: bool = False,
-    trace: Mapping[str, Sequence[Any]] | None = None,
+    trace: Sequence[Any] | None = None,
 ) -> list[Why]:
     """One `Why` for each key entry (of `docs`) that the run did not find and keep: see the
     module's note for the stages. An entry the key marks `by_design` (never expected) is left
     out, as the score leaves it out, and so is one the story never names (`unnamed`: the unnamed
     checks score those by description). `reasons`: add the careful AI's own words (server only).
-    `trace`: the run's name trace by name key (`name_trace.by_key`), for "not stored"."""
+    `trace`: the run's name trace rows in file order (`name_trace.read`), for "not stored"."""
+    traced = _trace_index(trace) if trace is not None else None
     tables = _tables(backup)
     decided = decisions or {}
     wanted = {"lore", "session"} if docs == "both" else {docs}
@@ -191,19 +192,31 @@ def explain(
         if any(k in turned_down for k in mine):
             out.append(Why(name, kind, DECIDED_NO, "turned down as another name of an entry"))
             continue
-        out.append(Why(name, kind, NOT_STORED, _not_stored_why(mine, trace)))
+        out.append(Why(name, kind, NOT_STORED, _not_stored_why(mine, traced)))
     return out
 
 
-def _not_stored_why(keys: Iterable[str], trace: Mapping[str, Sequence[Any]] | None) -> str:
-    """For a key entry never stored: the last thing the name trace says of any of its spellings
+def _trace_index(rows: Sequence[Any]) -> dict[str, list[tuple[int, Any]]]:
+    """The trace's rows by every key a name is looked up by here (`_keys`: with and without a
+    leading article), each with its place in the file, so "the last" is the same every run."""
+    out: dict[str, list[tuple[int, Any]]] = {}
+    for place, row in enumerate(rows):
+        for key in _keys(str(row.name)):
+            out.setdefault(key, []).append((place, row))
+    return out
+
+
+def _not_stored_why(
+    keys: Iterable[str], trace: Mapping[str, Sequence[tuple[int, Any]]] | None
+) -> str:
+    """For a key entry never stored: what the name trace wrote last of any of its spellings
     (`source: reason`), or that no reader listed it. Fixed words only."""
     if trace is None:
         return "never stored (no name trace for this run)"
-    rows = [row for k in keys for row in trace.get(k, ())]
-    if not rows:
+    found = [pair for k in keys for pair in trace.get(k, ())]
+    if not found:
         return "never stored: no reader listed it"
-    last = rows[-1]
+    _place, last = max(found, key=lambda pair: pair[0])
     return f"never stored: {last.source} ended it as {last.reason}"
 
 
