@@ -257,7 +257,8 @@ async def _reveals(src: Sources, g: int, c: str) -> Counted:
 async def _deeds(src: Sources, g: int, c: str) -> Counted:
     """Deeds the party did that mattered to someone, waiting for the DM to record them (#3591):
     what the deed card counts (`DeedProposals.count_waiting`), leaving out a proposal whose
-    speaker is no longer recorded. Like readings, the count is the store's own.
+    speaker is no longer recorded. The speakers are the guild-wide `agreed` set, as the deed card's
+    `consenting(guild_id)` uses (not the campaign's `recorded`, which reveals use).
     """
     from dmbot.memory.deed_proposals import DeedProposals
 

@@ -632,6 +632,9 @@ class TheCounts(Base):
         bare = Sources(db=self.db)  # (no memory store: the bot without the feature)
         found = await counts.count_kinds(bare, self.g, self.c, only={kinds.DEEDS})
         self.assertEqual(found[kinds.DEEDS].n, 0)
+        no_agreed = Sources(db=self.db, memory=self.memory)  # (no agreed set: counts nothing)
+        found = await counts.count_kinds(no_agreed, self.g, self.c, only={kinds.DEEDS})
+        self.assertEqual(found[kinds.DEEDS].n, 0)
 
 
 class TheStoredCounts(Base):
