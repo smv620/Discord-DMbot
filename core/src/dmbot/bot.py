@@ -11745,6 +11745,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         so a lapsed plan's leftover proposals are counted nowhere (#5105)."""
         return await self._story_asked(self.settings.story_deeds_on, gid, cid)
 
+    async def heads_up_count(self, gid: int, cid: str) -> int:
+        """How many continuity heads-ups wait for the DM now (#5147): what `ContinuityStore.check`
+        would list, with who agrees read now and the settings' levels; no AI call. Only with the
+        story extractor on and a plan with story memory (the same gate as the after-session check).
+        Any error counts 0 and logs the type only."""
+        try:
+            if self.memory is None or not await self._story_asked(
+                self.settings.story_extractor_on, gid, cid
+            ):
+                return 0
+            report = await ContinuityStore(self.memory).check(
+                gid,
+                cid,
+                opted_in=await self.consent.consenting(gid),
+                levels=self.settings.continuity,
+            )
+            return len(report.conflicts)
+        except Exception as exc:
+            log.warning("Heads-ups count failed (%s)", type(exc).__name__)
+            return 0
+
     async def reveals_on(self, gid: int, cid: str) -> bool:
         """The same for what the characters learned (#2996, #5109): its switch and the plan's
         story memory, so a lapsed plan's leftover proposals are counted nowhere."""
