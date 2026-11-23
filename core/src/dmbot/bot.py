@@ -13085,20 +13085,30 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await asyncio.sleep(90)
         while True:
             done = Pass()
-            for gid in await self.work_guild_ids():
-                try:
-                    counts = await self.transcripts.session_counts(gid)
-                    for campaign in await self.campaigns.list_campaigns(gid):
-                        if not await self.plan_allows("ai", gid, campaign, fail_open=False):
-                            continue
+            try:
+                work: list[tuple[int, Any, int]] = []
+                for gid in await self.work_guild_ids():
+                    try:
+                        counts = await self.transcripts.session_counts(gid)
+                        work += [
+                            (gid, c, counts.get(c.id, 0))
+                            for c in await self.campaigns.list_campaigns(gid)
+                        ]
+                    except Exception as exc:
+                        log.warning("Card round: a server failed (%s)", type(exc).__name__)
+                for gid, campaign, sessions in runner.rotated(work):
+                    if done.budget.left <= 0:
+                        break  # (the rest are first in line next pass)
+                    try:
                         with log_context(guild_id=gid, campaign_id=campaign.id):
                             await self._card_campaign(
-                                runner, done, summaries, ai, gid, campaign.id,
-                                counts.get(campaign.id, 0),
+                                runner, done, summaries, ai, gid, campaign, sessions,
                                 card_job, card_mentions,
                             )  # fmt: skip
-                except Exception as exc:
-                    log.warning("Card round: a server failed (%s)", type(exc).__name__)
+                    except Exception as exc:
+                        log.warning("Card round: a campaign failed (%s)", type(exc).__name__)
+            except Exception as exc:
+                log.warning("Card round failed (%s)", type(exc).__name__)
             if done.worked or done.failed:
                 log.info(
                     "Card round: %d worked, %d skipped, %d AI call(s), %d failed; %s",
@@ -13113,17 +13123,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         summaries: Any,
         ai: Any,
         gid: int,
-        cid: str,
+        campaign: Any,
         sessions: int,
         card_job: Any,
         card_mentions: Any,
     ) -> None:
-        """One campaign of the card round: its confirmed characters, then the runner."""
+        """One campaign of the card round: nothing is read beyond its version, its session count
+        and who agrees until the runner says there is work; then its confirmed characters."""
         assert self.memory is not None and self.transcripts is not None and self.lookup is not None
         assert self.recaps is not None
         from dmbot.memory.models import CONFIRMED
 
+        cid = campaign.id
         version = await self.memory.version(gid, cid)
+        agreed = hash(frozenset(await self.consent.consenting(gid)))
+        if runner.fresh(gid, cid, version, sessions, agreed):
+            done.skipped += 1
+            return
+        if not await self.plan_allows("ai", gid, campaign, fail_open=False):
+            return
         onto = await self.memory.ontology(gid, cid)
         ids = [
             e.id
@@ -13139,11 +13157,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return await self.consent.consenting(gid)
 
         await runner.work(
-            done, gid, cid, version=version, sessions=sessions, entity_ids=ids,
+            done, gid, cid, version=version, sessions=sessions, agreed=agreed, entity_ids=ids,
             who=lambda i: card_job.refresh_who(summaries, ai, gid, cid, i),
-            mentions=lambda batch: card_mentions.refresh_mentions(
+            mentions=lambda batch, budget: card_mentions.refresh_mentions(
                 summaries, self.transcripts, self.recaps, self.lookup.get, recorded,
-                ai, gid, cid, list(batch),
+                ai, gid, cid, list(batch), budget,
             ),
         )  # fmt: skip
 

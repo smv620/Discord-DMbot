@@ -191,3 +191,28 @@ class TheMentions(NamesTest):
         self.assertEqual(len(near), 41)
         self.assertIn("filler 10", near[0])
         self.assertIn("filler 50", near[-1])
+
+    async def test_the_scenes_stop_when_the_rounds_calls_are_spent(self) -> None:
+        client = ai()
+        budget = card_mentions.Budget(1)
+        got = await card_mentions.refresh_mentions(
+            self.rows, self.store, None, self.lookup_get,
+            lambda: self.consent.recorded_in(GUILD, self.campaign.id),
+            client, GUILD, self.campaign.id, [self.shafina], budget,
+        )  # fmt: skip
+        self.assertEqual(client.complete.await_count, 1)  # (first and last: only one was allowed)
+        self.assertEqual(got, {self.shafina: "scene-later"})
+        self.assertEqual(budget.used, 1)
+
+    async def test_a_player_who_stops_during_the_call_keeps_their_lines_off_the_card(self) -> None:
+        async def revoke(*args: Any, **kw: Any) -> Any:
+            await self.consent.revoke(GUILD, PLAYER)
+            return Reply(text="when the party reached the inn", cut=False)
+
+        client = ai()
+        client.complete = AsyncMock(side_effect=revoke)
+        got = await self.go(client, [self.shafina])
+        self.assertEqual(got, {self.shafina: "scene-later"})
+        row = await self.rows.get(GUILD, self.campaign.id, self.shafina)
+        assert row is not None and row.first
+        self.assertEqual(row.first.scene, "")  # (nothing made from their line is kept)

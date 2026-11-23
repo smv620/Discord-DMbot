@@ -60,6 +60,25 @@ class Recaps(Protocol):
     async def get(self, guild_id: int, campaign_id: str, session_at: int) -> Any: ...
 
 
+class Budget:
+    """How many more AI calls a round may make (shared by the sentences and the scenes, so the cap
+    is the real number of calls). `take` spends one and says whether there was one to spend."""
+
+    def __init__(self, calls: int) -> None:
+        self.left = calls
+        self.total = calls
+
+    @property
+    def used(self) -> int:
+        return self.total - self.left
+
+    def take(self) -> bool:
+        if self.left <= 0:
+            return False
+        self.left -= 1
+        return True
+
+
 def window_request(lines: Sequence[str]) -> str:
     """The user's message: the lines around a mention, one to a line, marked as data."""
     text = "\n".join(" ".join(x.split())[:LINE_MAX] for x in lines)
@@ -96,6 +115,7 @@ async def refresh_mentions(
     guild_id: int,
     campaign_id: str,
     entity_ids: Sequence[str],
+    budget: Budget | None = None,
 ) -> dict[str, str]:
     """First and last mention for a batch of characters of one campaign, and a scene for each that
     lacks one. Returns each character's result in a word: "kept" (a mention and its scene), "never"
@@ -141,7 +161,7 @@ async def refresh_mentions(
                 continue
             clause = await _scene(
                 recaps, ai, guild_id, campaign_id, mention,
-                await lines_of(where.session_index), agreed, which,
+                await lines_of(where.session_index), agreed, which, recorded, budget,
             )  # fmt: skip
             if clause is None:
                 result[entity_id] = "scene-later"
@@ -171,6 +191,8 @@ async def _scene(
     lines: Sequence[Line],
     agreed: Collection[int],
     which: str,
+    recorded: Callable[[], Awaitable[Collection[int]]],
+    budget: Budget | None = None,
 ) -> str | None:
     """The scene of one mention: the recap beat nearest the line when the session has a recap,
     else the AI's clause from the lines around it. None when the AI could not be asked or gave
@@ -188,6 +210,8 @@ async def _scene(
     window = around(lines, agreed, mention.line)
     if not window:
         return fallback
+    if budget is not None and not budget.take():
+        return None  # (the round's calls are spent: tried again next round)
     try:
         with credits.preparing(guild_id, campaign_id, "card"):
             # (the client raises max_tokens to the tier's floor: a background call is never short)
@@ -196,5 +220,14 @@ async def _scene(
         log.warning("Card scene: the AI call failed (%s)", type(exc).__name__)
         return None
     if reply.refused or reply.cut or not reply.text.strip():
+        return None
+    # Consent again after the slow step (CLAUDE.md): someone whose line was in the prompt may have
+    # stopped meanwhile, and then nothing made from it is kept.
+    now = set(await recorded())
+    if {
+        line.user_id
+        for n, line in heard.countable(lines, agreed)
+        if abs(n - mention.line) <= WINDOW
+    } - now:
         return None
     return read_clause(reply.text) or fallback
