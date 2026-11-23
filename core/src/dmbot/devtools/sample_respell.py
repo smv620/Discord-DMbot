@@ -28,20 +28,34 @@ RESPELLINGS: Mapping[str, tuple[str, ...]] = {
 }
 
 
+# What starts a transcript line before the words said: a time, the speaker and a character tag
+# (`[0:00:02] (Mia) {Jebidiah}:`, `Jebidiah:`). Never respelled: one speaker or character must stay
+# one, and every label must still match its --players entry.
+_PREFIX = re.compile(r"^(?:\[[^\]\n]*\]\s*)?[^:\n]{1,80}?:\s")
+
+
 def respell(text: str, table: Mapping[str, tuple[str, ...]] = RESPELLINGS) -> str:
-    """`text` with each name in `table` written by its spellings in turn: the first time as the
-    first spelling, the second as the second, and round again. Whole words only, as written ("Bryn
-    Shandering" is left alone), so every other word of the session stays exactly as it was."""
-    for name, spellings in table.items():
-        if not spellings:
-            continue
-        seen = 0
+    """`text` with each name in `table`, where it is said, written by its spellings in turn: the
+    first time as the first spelling, the second as the second, and round again. Only the words
+    said are touched, never a line's speaker or character tag, and whole words only, as written
+    ("Bryn Shandering" is left alone), so every other word of the session stays exactly as it was.
+    (`sample_run` checks the respelled file reads with the same speakers and lines as the typed.)"""
+    turns = {name: 0 for name in table}
+    out: list[str] = []
+    for line in text.splitlines(keepends=True):
+        found = _PREFIX.match(line)
+        head, said = (line[: found.end()], line[found.end() :]) if found else ("", line)
+        for name, spellings in table.items():
+            if not spellings:
+                continue
 
-        def turn(_found: re.Match[str], spellings: tuple[str, ...] = spellings) -> str:
-            nonlocal seen
-            out = spellings[seen % len(spellings)]
-            seen += 1
-            return out
+            def turn(
+                _m: re.Match[str], name: str = name, spellings: tuple[str, ...] = spellings
+            ) -> str:
+                out_ = spellings[turns[name] % len(spellings)]
+                turns[name] += 1
+                return out_
 
-        text = re.sub(rf"(?<!\w){re.escape(name)}(?!\w)", turn, text)
-    return text
+            said = re.sub(rf"(?<!\w){re.escape(name)}(?!\w)", turn, said)
+        out.append(head + said)
+    return "".join(out)

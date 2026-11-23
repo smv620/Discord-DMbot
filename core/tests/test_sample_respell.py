@@ -6,6 +6,8 @@ from __future__ import annotations
 import unittest
 
 from dmbot.devtools import sample_respell as sr
+
+# (the scan's own fold, private on purpose: a canary for the grouping rule's reach, #5133)
 from dmbot.memory.scan import _same_thing as same_thing
 
 
@@ -21,6 +23,25 @@ class TheRespelling(unittest.TestCase):
         self.assertEqual(sr.respell(text), text)  # (the first whole Bryn Shander is itself)
         two = "Bryn Shander, then Bryn Shander again."
         self.assertEqual(sr.respell(two), "Bryn Shander, then Brin Shandar again.")
+
+    def test_a_speaker_or_character_tag_is_never_respelled(self) -> None:
+        text = "[0:00:02] (Mia) {Jebidiah}: Jebidiah waves.\nJebidiah: then Jebidiah sits.\n"
+        self.assertEqual(
+            sr.respell(text),
+            "[0:00:02] (Mia) {Jebidiah}: Jebidiah waves.\nJebidiah: then Jebediah sits.\n",
+        )
+
+    def test_the_run_refuses_a_respelling_that_changes_who_spoke(self) -> None:
+        from unittest import mock
+
+        from dmbot.devtools.sample_run.__main__ import respelled
+        from dmbot.devtools.sample_run.plan import SampleError
+
+        typed = "DM: Termalaine is cold.\nIst: Termalaine again.\n"
+        self.assertEqual(respelled(typed), "DM: Termalaine is cold.\nIst: Termalane again.\n")
+        renamed = "DM: Termalaine is cold.\nIsst: Termalaine again.\n"
+        with mock.patch.object(sr, "respell", return_value=renamed), self.assertRaises(SampleError):
+            respelled(typed)
 
     def test_the_same_text_is_respelled_the_same_way_every_time(self) -> None:
         text = "Jebidiah and Termalaine. " * 5

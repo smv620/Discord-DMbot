@@ -250,7 +250,7 @@ async def run(
         plan.require_character_players(players)
     lore_text, session_text = read_text(args.lore, "lore"), read_text(args.session, "session")
     if args.version == "respelled":  # (the typed session, a few key names heard several ways)
-        session_text = sample_respell.respell(session_text)
+        session_text = respelled(session_text)
     steps.check_lore(lore_text, args.lore_choice)
     started = session_start(args.date, now)
     from dmbot.transcript import importer
@@ -931,7 +931,9 @@ def describe_input(transcript: Any, version: str) -> list[str]:
         return [f"Session file: the session key could not be read ({type(exc).__name__})"]
     got = input_shape.shape((u.text for u in transcript.utterances), input_shape.key_names(key))
     lines = [got.line()]
-    if version != sample_name.TYPED and got.capitalized:
+    # (only the versions meant to have no capitals: the respelled one is the typed file, capitals
+    # and all)
+    if version in ("no-capitals", "spoken") and got.capitalized:
         lines.append(
             "Still capitalized mid-sentence in this version (check the file): "
             + ", ".join(got.capitalized)
@@ -957,8 +959,29 @@ def check_compare(args: argparse.Namespace) -> None:
         )
 
 
+def respelled(typed: str) -> str:
+    """The typed session with its key names heard several ways (`sample_respell`), refused unless
+    it reads with exactly the typed one's speakers, characters and number of lines: a respelling
+    must only change words said, never who said them."""
+    from dmbot.transcript import importer
+
+    out = sample_respell.respell(typed)
+    try:
+        before, after = importer.parse(typed), importer.parse(out)
+    except importer.TranscriptError as exc:
+        raise SampleError(f"the session file cannot be read ({exc.code})") from exc
+    same = (
+        before.speakers == after.speakers
+        and before.characters == after.characters
+        and len(before.utterances) == len(after.utterances)
+    )
+    if not same:
+        raise SampleError("the respelled session changed who spoke; give the typed session file")
+    return out
+
+
 def summary_version(args: argparse.Namespace) -> str:
-    """The version's words for the summary line: "typed", "no capitals", "spoken"."""
+    """The version's words for the summary line: "typed", "no capitals", "spoken", "respelled"."""
     return sample_name.VERSIONS[args.version] or sample_name.TYPED
 
 
