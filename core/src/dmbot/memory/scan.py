@@ -547,6 +547,9 @@ def _same_thing(a: str, b: str) -> bool:
     return bool(set(sound_keys(a)) & set(sound_keys(b))) and _alike(a, b, need) >= need
 
 
+same_thing = _same_thing  # (public: the fold `name_groups` groups spellings by, section 5)
+
+
 def group_alike(found: list[Suggestion]) -> list[Suggestion]:
     """One suggestion per thing: a near-duplicate heard this session is folded into the
     longest one it matches ("Oskar Vane", also "Vane"), with their times added up, but

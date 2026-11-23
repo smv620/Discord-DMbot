@@ -82,7 +82,7 @@ class TheStep(unittest.TestCase):
             if progress is not None and moves:
                 await progress(1, 2)
                 await progress(2, 2)
-            return every, {}, [], unread
+            return [], [], unread
 
         bot._read_session_names = read
         bot.given = given
