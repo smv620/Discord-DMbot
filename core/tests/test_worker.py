@@ -45,6 +45,7 @@ class TheLoops(unittest.IsolatedAsyncioTestCase):
             _recap_jobs_loop=lambda: loop(),
             _import_loop=loop,
             _card_loop=lambda: loop(),
+            after_jobs=None,
             settings=SimpleNamespace(card_summary_on=False),
         )
         got = worker.loops(bot)
@@ -56,6 +57,25 @@ class TheLoops(unittest.IsolatedAsyncioTestCase):
         bot.audio_worker = bot.recap_worker = bot.import_job = None
         self.assertEqual(worker.loops(bot), [])
 
+    def test_the_worker_runs_the_after_session_loop_only_with_its_queue(self) -> None:
+        async def loop(**kw: Any) -> None:
+            return None
+
+        bot = SimpleNamespace(
+            audio_worker=None,
+            recap_worker=None,
+            import_job=None,
+            after_jobs=object(),
+            _after_session_loop=lambda: loop(),
+            settings=SimpleNamespace(card_summary_on=False),
+        )
+        got = worker.loops(bot)
+        self.assertEqual([name for name, _ in got], ["after-session"])
+        for _, coro in got:
+            coro.close()
+        bot.after_jobs = None
+        self.assertEqual(worker.loops(bot), [])
+
     def test_the_worker_runs_the_card_round_only_when_it_is_on(self) -> None:
         async def loop(**kw: Any) -> None:
             return None
@@ -65,6 +85,7 @@ class TheLoops(unittest.IsolatedAsyncioTestCase):
             recap_worker=None,
             import_job=None,
             _card_loop=lambda: loop(),
+            after_jobs=None,
             settings=SimpleNamespace(card_summary_on=True),
         )
         got = worker.loops(bot)
