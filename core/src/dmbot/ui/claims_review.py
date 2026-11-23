@@ -24,7 +24,9 @@ from dmbot.memory.claims import (
     Claim,
     ClaimStore,
     is_condition,
+    says_travels_with,
 )
+from dmbot.memory.link_words import TRAVELS_WITH_MEANS
 from dmbot.memory.models import (
     CONFIRMED,
     DM,
@@ -34,6 +36,7 @@ from dmbot.memory.models import (
     TooLateToUndo,
     name_key,
 )
+from dmbot.memory.store import companion_refusal
 from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.name_card import FLAG_WHY
@@ -141,9 +144,15 @@ def statement(claim: Claim) -> str:
 
 
 def question_text(claim: Claim) -> str:
-    """The statement as a question, and who said it."""
+    """The statement as a question, and who said it; a companion link also says what it means
+    (#5164), since "travels with" alone leaves the DM guessing."""
     by = "you said" if claim.how == HOW_DM else "a player said"
-    return f"{statement(claim)}? _({by})_"
+    means = (
+        f"\n   _{TRAVELS_WITH_MEANS[0].upper()}{TRAVELS_WITH_MEANS[1:]}._"
+        if says_travels_with(claim.relationship)
+        else ""
+    )
+    return f"{statement(claim)}? _({by})_{means}"
 
 
 def knows(count: int) -> str:
@@ -589,7 +598,10 @@ class ClaimsReview(_Menu):
                 await claims.reject(self.guild_id, self.campaign_id, claim_id)
                 done = f"{NO} Not remembered: {saying}. DMbot won't ask again."
         except MemoryRuleError as exc:
-            message = str(exc) or GONE
+            why = companion_refusal(str(exc))  # (and what to press, #5164)
+            message = (
+                f"{why} Press {NO} with its number to leave it out." if why else str(exc) or GONE
+            )
             if message not in _FINAL:
                 await _tell(interaction, message)  # the question stays; nothing changed
                 return

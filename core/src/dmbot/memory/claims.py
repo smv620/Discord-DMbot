@@ -20,6 +20,7 @@ import re
 from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import psycopg
@@ -78,6 +79,7 @@ from dmbot.memory.models import (
     new_id,
 )
 from dmbot.memory.ontology import (
+    CORE_PREDICATES,
     FALLBACK_PREDICATE,
     REASON_BETWEEN,
     SYNONYMS,
@@ -97,9 +99,9 @@ from dmbot.memory.ontology import (
 from dmbot.memory.store import (
     TRAVELS_WITH,
     MemoryStore,
-    _companion_problem,
     _load_ontology,
     _new_alias,
+    companion_order,
     learnable_in_scene,
     live_between,
     record_name_session,
@@ -724,6 +726,40 @@ def _entry_of(names: Names, words: str, picked: str | None) -> tuple[str, str] |
     return names.one(words)
 
 
+def _ends(names: Names, end: tuple[str, str]) -> dict[str, Any]:
+    """One end of a companion link as the store's check reads it (#3176, #5164)."""
+    return {
+        "type": end[1],
+        "role": names.roles.get(end[0], (None, None))[0],
+        "party": end[0] in names.parties,
+    }
+
+
+def turned_companion(
+    claim: Extracted, reason: str, judged: Callable[[Extracted], str]
+) -> tuple[Extracted, str]:
+    """A companion link said the wrong way round ("Cerric travels with Rook", Cerric the player
+    character) is asked the right way round, when that way passes every rule (#5164); any other
+    claim is as it was, with its reason."""
+    if reason != TRAVELS_REASON:
+        return claim, reason
+    turned = replace(claim, subject=claim.object, object=claim.subject)
+    return (turned, "") if judged(turned) == "" else (claim, reason)
+
+
+def says_travels_with(text: str) -> bool:
+    """Whether a claim's words are a companion link, either way round ("travels with", "is
+    joined by"), so its card can say what that means (#5164)."""
+    phrase = _phrase(text)
+    if not phrase:
+        return False
+    if phrase == TRAVELS_WITH or SYNONYMS.get(phrase) == TRAVELS_WITH:
+        return True
+    term = next(p for p in CORE_PREDICATES if p.key == TRAVELS_WITH)
+    words = {_phrase(term.label), *(_phrase(s) for s in term.synonyms)}
+    return phrase in words or (bool(term.inverse_label) and phrase == _phrase(term.inverse_label))
+
+
 def judge(    claim: Extracted, onto: Ontology, names: Names, speakers: Sequence[int | None],
     opted_in: Collection[int], tally: Tally | None = None, dms: Collection[int] = (),
 ) -> str:  # fmt: skip
@@ -780,19 +816,10 @@ def judge(    claim: Extracted, onto: Ontology, names: Names, speakers: Sequence
     s_kind, o_kind = (other[1], who[1]) if said_from_object else (who[1], other[1])
     if term.key == TRAVELS_WITH:
         # The store refuses a companion link whose ends are wrong (#3176), so the DM is never
-        # asked a question whose "yes" it would turn down. The reader is a session reader.
+        # asked a question whose "yes" it would turn down (#5164: the one shared check). A pair
+        # said the wrong way round is turned by the caller (`turned_companion`), never here.
         first, second = (other, who) if said_from_object else (who, other)
-        problem = _companion_problem(
-            {"type": first[1], "role": names.roles.get(first[0], (None, None))[0]},
-            {
-                "type": second[1],
-                "role": names.roles.get(second[0], (None, None))[0],
-                "source": names.sources.get(second[0], ""),
-                "party": second[0] in names.parties,
-            },
-            EXTRACTOR,
-        )
-        if problem is not None:
+        if companion_order(_ends(names, first), _ends(names, second), EXTRACTOR) is not False:
             return TRAVELS_REASON
     if term.subject_types and not onto.is_any(s_kind, term.subject_types):
         return f"{term.label} doesn't fit those two"
@@ -1259,6 +1286,7 @@ class ClaimStore:
                 logger.info("name lists split: %d", lists)  # a count, never a name
             for claim in claims:  # (the limit was applied once, before the lists were split)
                 reason = judged(claim)
+                claim, reason = turned_companion(claim, reason, judged)
                 unknown: list[str] = []
                 # A pronoun is a name only where a cited line plainly says so ("My name is We").
                 cued = not_names.cued_in("\n".join((said or {}).get(r, "") for r in claim.lines))
@@ -1406,6 +1434,13 @@ class ClaimStore:
                     continue
                 holders = [int(x) for x in r["speaker_ids"]]
                 reason = judge(kept, onto, names, holders, opted_in, tally, dms)
+                turned, reason = turned_companion(
+                    kept, reason, partial(judge, onto=onto, names=names, speakers=holders,
+                                          opted_in=opted_in, tally=None, dms=dms),
+                )  # fmt: skip
+                if turned is not kept:  # (named the wrong way round, asked turned: #5164)
+                    swap = {"subject": turned.subject, "object": turned.object}
+                    await w.update(CLAIMS, r["id"], swap)
                 if described_left and reason == UNKNOWN_NAME_REASON:
                     # its new name is made and the rest is described: asked now, and Keep makes
                     # the person (#3736), under the same per-session cap as this session's own
@@ -1455,6 +1490,8 @@ class ClaimStore:
                             ))  # fmt: skip
                         continue
                     reason = judged(claim)
+                    # (a hireling is often a new name: the turn waits until it is made, #5164)
+                    claim, reason = turned_companion(claim, reason, judged)
                     if reason == UNKNOWN_NAME_REASON and _only_described_unknown(claim, names):
                         reason = DESCRIBED_REASON  # (its new name is made: the rest is described)
                 key = _repeat_key(
