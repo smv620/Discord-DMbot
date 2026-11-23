@@ -12368,9 +12368,32 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             scanned = set(lines)
             read_in = [x for x in heard_in if x.text in scanned]
             people = await self._people_keys(gid, users, cid)
+            # (an import's card shows the reader's stage, part n of m, #5091; a live session's
+            # after-session card shows it through `card`, #5124)
+            stage = self.import_job.store if import_scan and self.import_job is not None else None
+
+            started = False  # a "reading" was written: a reader that then fails says "stopped"
+
+            async def moved(part: int, parts: int) -> None:
+                nonlocal started
+                if stage is not None and session_id is not None:
+                    started = True
+                    await stage.set_names(
+                        gid, session_id, "reading", int(time.time()), part=part, parts=parts
+                    )
+
             every, reader_kinds, trace, unread = await self._read_session_names(
-                gid, cid, read_in, people, every, card=card
-            )
+                gid, cid, read_in, people, every,
+                card=card, progress=moved if stage is not None else None,
+            )  # fmt: skip
+            # A reader that failed after it started leaves "stopped", never a "reading" that
+            # looks as if it still runs; one that never started leaves the stage empty.
+            ended = "read" if unread is not None else "stopped" if started else ""
+            if stage is not None and session_id is not None and ended:
+                try:
+                    await stage.set_names(gid, session_id, ended, int(time.time()), unread=unread)
+                except Exception as exc:  # (the card is a nicety: the names are suggested)
+                    log.warning("The import card's names stage failed (%s)", type(exc).__name__)
         if loose and unread is None:
             # The reader did not read (nothing to read, a plan without it, a failure): the scan
             # alone never decides with the loosened rule, so its usual list stands.
@@ -12541,6 +12564,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         scan: list[Suggestion],
         *,
         card: after_session.AfterSessionCard | None = None,
+        progress: Callable[[int, int], Awaitable[None]] | None = None,
     ) -> tuple[list[Suggestion], dict[str, str], list[name_trace.Row], int | None]:
         """The name reader over the session's lines (docs/design/session_names.md, slice 2),
         joined with the scan's suggestions (`name_reader.join`). Never raises: no AI, a plan
@@ -12572,6 +12596,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if credits.current() is None
                 else contextlib.nullcontext()
             )
+
+            async def moved(part: int, parts: int) -> None:
+                # the reader's batch n of m: the live session's card (#5124) and an import's
+                # card (#5091) each follow it
+                if card is not None:
+                    await card.stage(after_session.NAMES, part, parts)
+                if progress is not None:
+                    await progress(part, parts)
+
             with meter:
                 read = await name_reader.read(
                     ai,
@@ -12581,9 +12614,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     consenting=lambda: self.consent.consenting(gid),
                     max_tokens=OUTPUT_FLOOR,  # (background calls never send less, #2596)
                     rules=(campaign.target_ruleset, campaign.fallback_ruleset),
-                    progress=(
-                        (lambda n, of: card.stage(after_session.NAMES, n, of)) if card else None
-                    ),
+                    progress=moved if card is not None or progress is not None else None,
                 )
             if card is not None and read.unread:  # (a stretch not read is said, never "no names")
                 card.note(after_session.not_read(read.unread))

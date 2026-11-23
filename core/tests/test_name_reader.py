@@ -390,3 +390,42 @@ class TheBotStep(unittest.TestCase):
         bot.memory.known_keys = broken
         scan = [Suggestion("Targos", 3)]
         self.assertEqual(self.step(bot, scan), (scan, {}))
+
+    def test_the_readers_progress_reaches_the_given_hook_batch_by_batch(self) -> None:
+        import asyncio
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        bot = self.bot(FakeClient(lambda _t: FakeReply(answer(item("hrothgar")))))
+        moves: list[tuple[int, int]] = []
+
+        async def moved(part: int, parts: int) -> None:
+            moves.append((part, parts))
+
+        lines: Any = [SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out")]
+        asyncio.run(DMBot._read_session_names(bot, 5, "c1", lines, set(), [], progress=moved))
+        self.assertEqual(moves, [(1, 1)])
+
+    def test_the_live_card_and_an_import_s_card_both_follow_the_reader(self) -> None:
+        # (#5124's after-session card and #5091's import card share the reader's progress)
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.bot import DMBot
+        from dmbot.ui import after_session
+
+        bot = self.bot(FakeClient(lambda _t: FakeReply(answer(item("hrothgar")))))
+        moves: list[tuple[int, int]] = []
+
+        async def moved(part: int, parts: int) -> None:
+            moves.append((part, parts))
+
+        card: Any = SimpleNamespace(stage=AsyncMock(), note=lambda *_: None)
+        lines: Any = [SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out")]
+        asyncio.run(
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), [], card=card, progress=moved)
+        )
+        self.assertEqual(moves, [(1, 1)])
+        card.stage.assert_awaited_once_with(after_session.NAMES, 1, 1)
