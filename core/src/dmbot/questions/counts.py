@@ -185,6 +185,16 @@ async def _rules(src: Sources, g: int, c: str) -> Counted:
     return Counted(n)
 
 
+async def _more_names(src: Sources, g: int, c: str) -> Counted:
+    """The names an imported session's scan held past its 10, waiting behind 📝 More names
+    (#5055 B: `MoreNames.count`)."""
+    from dmbot.memory.more_names import MoreNames
+
+    if src.memory is None:
+        return Counted(0)
+    return Counted(await MoreNames(src.db).count(g, c))
+
+
 async def _traits(src: Sources, g: int, c: str) -> Counted:
     """A lineage or class the lore gives a character the campaign has (#3926): the rows the
     🧬 card shows (`TraitOfferStore.waiting`)."""
@@ -287,6 +297,7 @@ async def _maps(src: Sources, g: int, c: str) -> Counted:
 
 _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.NAMES: _names,
+    kinds.MORE_NAMES: _more_names,
     kinds.HEARD: _heard,
     kinds.LOOKALIKES: _lookalikes,
     kinds.CONNECTIONS: _connections,

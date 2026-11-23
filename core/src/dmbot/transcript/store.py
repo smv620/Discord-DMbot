@@ -24,6 +24,7 @@ from dmbot.memory import (
     forget_readings,
     join_questions,
     met_store,
+    more_names,
     private_scene_store,
     secret_questions,
     thread_progress,
@@ -1337,6 +1338,7 @@ class TranscriptStore:
             await theatre_store.forget_session(conn, guild_id, session_id)
             await rel_store.forget_session(conn, guild_id, session_id)
             await met_store.forget_session(conn, guild_id, session_id)  # (the DM's words, #3172)
+            await more_names.forget_session(conn, guild_id, session_id)  # (heard there, #5055)
             await trait_offers.forget_session(conn, guild_id, session_id)  # (heard there, #4745)
             await join_questions.forget_session(conn, guild_id, session_id)  # (a goodbye, 0574)
             # (the private scenes found in its lines, #2996 rule 5: the DM's marks stay)
@@ -1462,6 +1464,13 @@ async def _forget_mentions(
         for mention in await cur.fetchall():
             mentions.setdefault(str(mention["campaign_id"]), []).append(str(mention["id"]))
     await _drop_log_rows(conn, guild_id, "memory_mentions", mentions)
+    # what made a waiting name a name points at its line too (#5133): the line is gone, so its
+    # pointer goes, even while the name still waits (the card then simply has no quote)
+    for batch in (refs[i : i + 1000] for i in range(0, len(refs), 1000)):
+        await conn.execute(
+            "DELETE FROM name_found WHERE guild_id = %s AND line_ref = ANY(%s)",
+            (guild_id, list(batch)),
+        )
     # and every evidence link to one of these lines keeps its kind and session and loses the line
     # (its reference names the speaker): "a line from session 12, no longer available" (#2662)
     await evidence.placeholder_lines(conn, guild_id, refs)
@@ -1492,6 +1501,13 @@ async def _forget_memory_traces(
     await _drop_log_rows(conn, guild_id, "memory_claims", claims)
     await evidence.placeholder_claims(conn, guild_id, [i for ids in claims.values() for i in ids])
     await _forget_mentions(conn, guild_id, refs)
+    # what made a waiting name a name, by speaker too (#5133): a pointer whose line is already gone
+    # (taken back, cut while saving) still names this person, so it goes with them
+    await conn.execute(
+        "DELETE FROM name_found WHERE guild_id = %s AND split_part(line_ref, ':', 3) = %s::text"
+        " AND (%s::text IS NULL OR campaign_id = %s)",
+        (guild_id, user_id, campaign_id, campaign_id),
+    )
     # whatever else names them (a reference to a line that was not in the list): by speaker; the
     # claims the DM confirmed stay, without their line references and their id (#2676, #2679)
     await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id, campaign_id=campaign_id)

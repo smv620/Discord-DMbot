@@ -75,6 +75,7 @@ from dmbot.memory import isolated as isolated_mod
 from dmbot.memory import join_questions as join_questions_mod
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import map_facts as mf
+from dmbot.memory import name_found as name_found_mod
 from dmbot.memory import party as party_mod
 from dmbot.memory import same_person as same_person_mod
 from dmbot.memory import secret_questions as secret_questions_mod
@@ -425,7 +426,7 @@ ASSUMED_FIRST = (
 SAY_WHO_PLAYS = "Say who plays a character on the character itself."
 DESCRIBED_AS = "Say who they are described as."
 WORD_TOO_LONG = "That relationship word is too long."
-COMPANION_NOT_NPC = "Only a character who is not a player character travels with the party."
+COMPANION_NOT_NPC = "Only a character who isn't a player character can be a companion."  # (#5164)
 COMPANION_PARTY_SOURCE = "Only the DM or a session can say who travels with the party."
 COMPANION_TARGET = "A companion travels with a player character or with the party."
 LED_TO_KINDS = "A clue, an event or a thread can lead to a thread or an event."
@@ -1148,6 +1149,13 @@ class MemoryStore:
                 if row := await cur.fetchone():
                     return str(row["name"])
         return None
+
+    async def name_found(
+        self, guild_id: int, campaign_id: str, entity_ids: Collection[str]
+    ) -> dict[str, name_found_mod.Found]:
+        """What made each of these waiting names a name (#5133 slice 3b, `memory.name_found`):
+        how it was found, the pointer to its line, and its counts, for the card."""
+        return await name_found_mod.NameFound(self._db).of(guild_id, campaign_id, entity_ids)
 
     async def sound_alikes(
         self, guild_id: int, campaign_id: str, codes: Sequence[str], *, limit: int = 500
@@ -11240,6 +11248,37 @@ def _companion_problem(subject: dict[str, Any], target: dict[str, Any], source: 
             return None
         return COMPANION_PARTY_SOURCE
     return COMPANION_TARGET
+
+
+def companion_refusal(message: str) -> str | None:
+    """A companion refusal, which the card shows with what to press, or None for any other
+    refusal (#5164: "couldn't keep that one" alone left the DM guessing; the ux-critic kept it to
+    the rule's one sentence, since the card above already says what "travels with" means)."""
+    return (
+        message
+        if message in (COMPANION_NOT_NPC, COMPANION_PARTY_SOURCE, COMPANION_TARGET)
+        else None
+    )
+
+
+def companion_end(entity: Entity) -> dict[str, Any]:
+    """An entry as the companion check reads it (#5164)."""
+    return {"type": entity.type, "role": entity.role, "party": entity.party}
+
+
+def companion_order(
+    first: Mapping[str, Any], second: Mapping[str, Any], source: str
+) -> bool | None:
+    """Which way round a companion link (`travels_with`) between these two may be kept, the one
+    check every path that offers one runs before asking the DM (#5164), so nothing the store would
+    refuse is ever asked: False as given, True turned round (the player character was named first),
+    None neither way (two player characters are both in the party: no companion link at all).
+    Each end is a row's `type`, `role` and `party`; `source` is who would write it."""
+    if _companion_problem(dict(first), dict(second), source) is None:
+        return False
+    if _companion_problem(dict(second), dict(first), source) is None:
+        return True
+    return None
 
 
 async def _check_travels_with(w: Changes, source: str, subject_id: str, object_id: str) -> None:

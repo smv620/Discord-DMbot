@@ -22,9 +22,10 @@ from psycopg.types.json import Jsonb
 
 from dmbot.db import Database
 from dmbot.memory import reputation_words, route_words
+from dmbot.memory.models import BACKGROUND_SOURCE, is_id
 from dmbot.memory.models import END_REASONS as HAND_OVERS
-from dmbot.memory.models import is_id
 from dmbot.memory.pronouns import is_pronoun
+from dmbot.memory.store import TRAVELS_WITH, companion_order
 
 MAX_WAITING = 300  # per campaign: a hostile text cannot grow the table
 MAX_WHICH = 50  # "Which Mara?" questions waiting per campaign
@@ -468,7 +469,7 @@ class BackstoryLinks:
                 return GONE
             if entity_id is not None:
                 entities = await self._entities(
-                    conn, guild_id, campaign_id, {entity_id, *row["candidates"]}
+                    conn, guild_id, campaign_id, {entity_id, row["other_id"], *row["candidates"]}
                 )
                 ends = {self._end(entities, c) for c in row["candidates"]}
                 end = self._end(entities, entity_id)
@@ -497,6 +498,21 @@ class BackstoryLinks:
                         if row["other_is_subject"]
                         else (end, row["other_id"])
                     )
+                    if row["predicate"] == TRAVELS_WITH:
+                        # The DM picked one end; the link is still DMbot's offer, so it goes
+                        # through the store's one check (#5164): turned when named the wrong way
+                        # round, dropped (the question answered) when it can never be kept.
+                        x, y = self._end(entities, a), self._end(entities, b)
+                        order = (
+                            companion_order(entities[x], entities[y], BACKGROUND_SOURCE)
+                            if x is not None and y is not None
+                            else None
+                        )
+                        if order is None:
+                            a = b = ""
+                        elif order:
+                            a, b = b, a
+                if end != row["other_id"] and a:
                     # The note says who decided now: after the DM's pick, "DMbot wasn't sure" would
                     # read as if it were still open (only a connection DMbot checked has a note).
                     decided = (DECIDED_ELSE if outside else DECIDED_BY_DM) if row["decided"] else ""
@@ -797,8 +813,8 @@ class BackstoryLinks:
             if not want:
                 break
             cur = await conn.execute(
-                "SELECT id, name, status, merged_into, hidden_from_players, audience_limited"
-                " FROM memory_entities"
+                "SELECT id, name, status, merged_into, hidden_from_players, audience_limited,"
+                " type, role, party FROM memory_entities"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)",
                 (guild_id, campaign_id, list(want)),
             )

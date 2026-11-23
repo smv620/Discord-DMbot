@@ -19,6 +19,7 @@ from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen.settings import RuleLookupButton, settings_view
 from dmbot.rules import index, rule_card
+from dmbot.rules import lookup as rules_lookup
 from dmbot.rules.homebrew import FULL, SAME_NAME, Homebrew, HomebrewError
 from dmbot.rules.house import HouseRule
 from dmbot.ui import rule_lookup as ui
@@ -1021,12 +1022,12 @@ class FeatureLookup(LookupTest):
             if e.edition == "2014" and e.details["class"] in newer:
                 continue  # never offered while the newer version of that class is the target
             value = rule_card.choice_value(srd, e)
-            found = ui._features(srd, value, "2024", "2014")
+            found = rules_lookup._features(srd, value, "2024", "2014")
             with self.subTest(value=value):
                 self.assertTrue(any(h.entry is e for h in found), value)
                 self.assertEqual(found[0].entry.details["class"], e.details["class"])
         # the level breaks a tie inside one class: Improved Brutal Strike at 13 and at 17
-        both = ui._features(srd, "Barbarian Improved Brutal Strike 17", "2024", "2014")
+        both = rules_lookup._features(srd, "Barbarian Improved Brutal Strike 17", "2024", "2014")
         self.assertEqual([h.entry.details["level"] for h in both], [17])
         text = self.sent(await self.command("Barbarian Improved Brutal Strike 17"))[0]
         self.assertIn("(feature: Barbarian 17)", text)

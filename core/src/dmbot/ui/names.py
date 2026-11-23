@@ -68,6 +68,7 @@ from dmbot.ui.remembered_players import add_remembered
 from dmbot.walk import Walk
 
 if TYPE_CHECKING:
+    from dmbot.memory.name_found import Found
     from dmbot.memory.store import MemoryStore
     from dmbot.ui.more_lists import Counts as MoreCounts
     from dmbot.ui.name_lists import Upload
@@ -1132,6 +1133,47 @@ def _heard(entity: Entity) -> str:
     return f" · {_md(text[:1].lower() + text[1:])}" if text else ""
 
 
+HEARD_AS_SHOWN = 3  # other spellings named on the card; the rest are "and N more" (#5133)
+
+
+def _times(n: int) -> str:
+    return "once" if n == 1 else f"{n} times"
+
+
+def heard_line(times: int, typed: int, also: Sequence[str], *, written: bool = False) -> str:
+    """How a waiting name was found, in the words Supervisor ruled for slice 3c (#5133): "Heard 5
+    times, sometimes as *Rothgar* or *hroth gar*.", "Heard once.", "Typed once in chat, and heard 3
+    times, sometimes as *Rothgar*.", or for the DM's own text "Found 2 times in your text, …". At
+    most three other spellings are named, then "and N more": the reply to a yes names every one
+    it keeps (slice 3c-2). Counts and the spellings only."""
+    shown = [f"*{_md(a)}*" for a in also[:HEARD_AS_SHOWN]]
+    named = ""
+    if shown:
+        named = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + f" or {shown[-1]}"
+    rest = len(also) - len(shown)
+    spelled = f", sometimes as {named}" + (f" and {rest} more" if rest > 0 else "") if also else ""
+    times = max(times, 1)
+    typed = min(max(typed, 0), times)
+    if written:
+        return f"Found {_times(times)} in your text{spelled}."
+    if not typed:
+        return f"Heard {_times(times)}{spelled}."
+    # (heard: the hearings that weren't typed; "sometimes as", since which spelling each one was
+    # isn't kept, so "heard 3 times as *Rothgar*" could say more than DMbot knows)
+    heard = times - typed
+    also_heard = f", and heard {_times(heard)}" if heard else ""
+    return f"Typed {_times(typed)} in chat{also_heard}{spelled}."
+
+
+def heard_times(entity: Entity, found: Found | None = None) -> int:
+    """How many times a waiting name was heard: the count kept with what made it a name (0611),
+    else the one the after-session step wrote in its note ("Heard 5 times"), else 1."""
+    if found is not None and found.times > 0:
+        return found.times
+    said = re.search(r"\b(\d+)\b", entity.description)
+    return max(int(said.group(1)), 1) if said else 1
+
+
 def background_kind(entity: Entity) -> str:
     """The kind a suggestion was given when it was read (npc, place…), or "" when it has none to
     confirm as (an idea, or nothing guessed). From the DM's background (#2167) or from the name
@@ -1189,6 +1231,7 @@ def suggestion_text(
     tagged: str = "",
     scene: str = "",
     players: str = "",  # the DM's card only: the caller checks the DM (SuggestionReview.prepare)
+    counts: tuple[int, int] | None = None,  # (times heard, typed) when kept (#5133 3b): 3c's line
 ) -> str:
     # A name read from the DM's writing was read, not heard.
     verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
@@ -1210,6 +1253,10 @@ def suggestion_text(
         )
     elif match is not None:
         question = f"Sounds like **{_md(match.name)}**. The same, or new?"
+    elif counts is not None:
+        # (#5133 slice 3c: the question is on the title line, with how it was heard; what to press
+        # is said only when there is no guess to say yes to)
+        question = "" if kind else "Pick what it is to add it, or press 🚫 Not a name."
     else:
         question = (
             "Is this a name in your game?"
@@ -1219,6 +1266,12 @@ def suggestion_text(
     heard = (
         "" if fix_to else _heard(entity)
     )  # the note is the spelling: shown once, in the question
+    if counts is not None:
+        # (#5133 slice 3c: one name heard several ways is one line, its other spellings in it; a
+        # card with its own question, "Sounds like" or spelled out, keeps it, under this line)
+        line = heard_line(*counts, also or [], written=verb == "written")
+        heard = f": a new name? {line}" if match is None and not fix_to else f"\n{line}"
+        others = ""
     read = f"\nDMbot's guess: {_bold_kind(kind)}." if kind else ""
     where = f"\n{places}" if places else ""  # where it was said (#2329), under the count
     # The sentence around a name read from the DM's text, held in memory since the reading (#2561).
@@ -1232,11 +1285,16 @@ def suggestion_text(
     # holds at most 120 characters), so confirming the name is confirming this line too. Nothing
     # extra for a name with no line: DMbot never makes one up.
     told = f"\nPlayers know: {_md(players)}" if players else ""
-    text = f"📝 **{title}**{told}{heard}{seen}{where}{around}{others}{read}\n{question}{more}"
+    if counts is not None and heard.startswith(":"):  # (the title line asks, then what's known)
+        head = f"📝 **{title}**{heard}{told}"
+    else:
+        head = f"📝 **{title}**{told}{heard}"
+    ask = f"\n{question}" if question else ""
+    text = f"{head}{seen}{where}{around}{others}{read}{ask}{more}"
     if seen and len(text) > SUGGESTION_MAX:  # the scene is the part left out of a long card
-        text = f"📝 **{title}**{told}{heard}{where}{around}{others}{read}\n{question}{more}"
+        text = f"{head}{where}{around}{others}{read}{ask}{more}"
     if around and len(text) > SUGGESTION_MAX:  # then the sentence around it, never the line itself
-        text = f"📝 **{title}**{told}{heard}{where}{others}{read}\n{question}{more}"
+        text = f"{head}{where}{others}{read}{ask}{more}"
     return text
 
 
@@ -1322,6 +1380,24 @@ async def start_review(
     await _review(interaction, memory, campaign, bulk=bulk, walk=walk)
 
 
+def _surest(entity: Entity, found: Found | None) -> tuple[int, int, int, str]:
+    """The waiting list's order (#5133 slice 3c; design section 6)."""
+    if found is None:
+        return (2, 0, entity.created_at, entity.name)
+    sure = found.how in ("introduced", "typed")
+    return (0 if sure else 1, -heard_times(entity, found), entity.created_at, entity.name)
+
+
+async def _found(memory: MemoryStore, campaign: Campaign, entity: Entity) -> Found | None:
+    """What made this waiting name a name (#5133 3b), or None. Never raises: a card without it is
+    today's card."""
+    try:
+        return (await memory.name_found(campaign.guild_id, campaign.id, [entity.id])).get(entity.id)
+    except Exception:
+        log.exception("Couldn't read what made a name a name")
+        return None
+
+
 async def _review(
     interaction: discord.Interaction,
     memory: MemoryStore,
@@ -1340,7 +1416,14 @@ async def _review(
 
         await offer_ready(interaction, campaign.id)  # a backstory's connections, if ready
         return
-    waiting.sort(key=lambda e: (e.created_at, e.name))
+    # Surest first (#5133 slice 3c): introduced or typed, then the most heard; a name with nothing
+    # kept of what made it a name (the switch off, or from before) after them, as made
+    try:
+        found = await memory.name_found(campaign.guild_id, campaign.id, [e.id for e in waiting])
+    except Exception:
+        log.exception("Couldn't read what made the waiting names names")
+        found = {}
+    waiting.sort(key=lambda e: _surest(e, found.get(e.id)))
     if bulk and await _offer_add_all(interaction, memory, campaign, waiting, walk=walk):
         return
     view = SuggestionReview(campaign.id, [e.id for e in waiting], walk=walk)
@@ -1533,6 +1616,7 @@ class SuggestionReview(_Menu):
         self.refs: list[tuple[str, int | None]] = []  # its pointers, for "Where was it said?"
         self.lore_kept = False  # the sentence from the DM's upload is held for it (#4227)
         self.spellings: list[str] = []
+        self.found: Found | None = None  # what made the current one a name (#5133 3b), or None
         self._buttons()
 
     def _added(self, entity: Entity) -> str:
@@ -1561,6 +1645,7 @@ class SuggestionReview(_Menu):
             if a.key != own
         ]
         self.spellings = [entity.name, *self.also]
+        self.found = await _found(memory, campaign, entity)
         self.refs = []
         self.places = await self._places(interaction, campaign, memory, entity)
         self.entity_id = entity.id
@@ -1583,6 +1668,11 @@ class SuggestionReview(_Menu):
             scene=await scene_of(interaction, campaign, entity),
             players=(
                 (entity.players_text or "") if sees_secrets(campaign, interaction.user.id) else ""
+            ),
+            counts=(
+                (heard_times(entity, self.found), self.found.typed)
+                if self.found is not None
+                else None
             ),
         )
         if self.group is not None:  # say which group, so "Yes, that group" has a "that"
@@ -1634,6 +1724,7 @@ class SuggestionReview(_Menu):
                 campaign.guild_id
             ),  # who agrees now
             site if isinstance(site, str) else "",
+            first=self.found.line_ref if self.found is not None else None,
         )
 
     async def _where(self, interaction: discord.Interaction) -> None:
@@ -2605,13 +2696,13 @@ def after_session_text(names: list[str], where: str = "this session") -> str:
 
 
 def names_cut_note(count: int) -> str:
-    """The import notice's line for names the name scan left out past its limit (#5055 A;
-    Supervisor's ruling): DMbot says how many it did not list rather than dropping them silently.
-    The count is summed over the import's sessions, so a name said in several of them can count
-    more than once: hence "as many as". A count, never a name: the notice may be in the DM Bot
+    """The import notice's line for names the name scan heard past its limit (#5055 A and B;
+    Supervisor's rulings): they wait behind 📝 More names in ❓ Questions for you, never dropped
+    silently. The count is summed over the import's sessions, so a name said in several of them can
+    count more than once: hence "as many as". A count, never a name: the notice may be in the DM Bot
     channel."""
-    more = "1 more name was" if count == 1 else f"{count} more names were"
+    more = "1 more name is" if count == 1 else f"{count} more names are"
     return (
-        f"As many as {more} left out. DMbot lists up to {MAX_SUGGESTIONS} new names from each "
-        "session. Add any you know with ➕ Add a name on the names panel."
+        f"As many as {more} waiting. DMbot lists up to {MAX_SUGGESTIONS} new names from each "
+        "session: press 📝 More names in ❓ Questions for you to check the rest."
     )

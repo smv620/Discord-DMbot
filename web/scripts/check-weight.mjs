@@ -34,12 +34,11 @@ import { checkBuild, table } from "./weight.mjs";
 // Raised on 2026-11-22 (#5038) to 190 KB: the campaign's name heading (about 0.7 KB, in CampaignNav, which the Story Graph page loads)
 // and the route length and road condition panels' API names, now all in the first download; the page was 189.2 KB. The panels
 // themselves are in lazy files. (#4970's guess marks, about 0.2 KB, are in that first download too: the 190 covers both.)
-// Raised on 2026-11-23 (#5129) to 191 KB: the name reader's stage and its lines on the import page (the words and the
-// stage, about 0.2 KB) are in the first download. The recaps page (its heaviest) was 189.9 KB on development and
-// is 190.1 KB with them (+0.2 KB, measured on the build); nothing was trimmed.
+// Raised on 2026-11-23 (#5166) to 192 KB: turning the Questions page's switches on stops the bundler dropping their cards' code,
+// so the recaps page (190.8 KB) and the web page (190.3 KB) grow by under 1 KB each. The cards themselves are in lazy files.
 export const budgets = {
   htmlKB: 52,
-  totalKB: 191,
+  totalKB: 192,
   onDemandKB: 45, // the most one chunk loaded on demand may weigh (#2690)
   imageKB: 150, // no picture bigger than this: resize or recompress it, don't drop it
 };
