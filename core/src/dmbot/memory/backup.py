@@ -9,7 +9,9 @@ file are untrusted and fully checked before anything is written.
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
+import traceback
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
@@ -551,7 +553,9 @@ def damaged_tags(rows: list[Any]) -> list[str]:
         if len(rest) == len(rows):
             continue
         try:
-            _check_rows(rest)
+            # (a copy: a pass fills in and tidies rows in place, which would hide the next pass's
+            # refusal and make a table look guilty that is not)
+            _check_rows(copy.deepcopy(rest))
         except CampaignError:
             continue
         out.append(tag)
@@ -607,12 +611,16 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     on (names only, #4858) before the refusal goes on."""
     try:
         return _check_rows(rows)
-    except CampaignError:
+    except CampaignError as exc:
         try:
+            # where the refusal was raised (function and line of the check, never a value)
+            site = traceback.extract_tb(exc.__traceback__)[-1]
             log.warning(
-                "Backup memory check refused the file: columns %s; tables %s",
-                ", ".join(refusing_columns(rows)) or "none by column",
-                ", ".join(damaged_tags(rows)) or "none alone",
+                "Backup memory check refused the file: columns %s; tables %s; raised in %s line %d",
+                ", ".join(refusing_columns(copy.deepcopy(rows))) or "none by column",
+                ", ".join(damaged_tags(copy.deepcopy(rows))) or "none alone",
+                site.name,
+                site.lineno,
             )
         except Exception:  # (a diagnosis never changes the refusal)
             log.warning("Backup memory check refused the file")

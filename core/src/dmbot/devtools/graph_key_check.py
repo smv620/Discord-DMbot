@@ -143,6 +143,10 @@ class Report:
     # "miss" is the key's wording and which a real reader miss. The sample's own words only.
     extra_list: list[tuple[str, str, str, str]] = field(default_factory=list)
     extra_ties: int = 0
+    # Key entries missed while a part of their name is stored ("Valley" for Dwarven Valley), the
+    # "found, wrong shape" count (docs/design/session_names.md, section 8). Still counted missed;
+    # this says how many misses are a name cut short rather than one never heard. Counts only.
+    wrong_shape: int = 0
     violations: list[str] = field(default_factory=list)
     inferred_confirmed: list[str] = field(default_factory=list)
     # `must_not_ties` rows kept as facts (#4636 part 3): a near-miss a list was over-applied to,
@@ -544,6 +548,7 @@ def check(
     others = [r for r in graph.relations if str(r["predicate"]) != "plays"]
     linked = {str(r["subject_id"]) for r in others} | {str(r["object_id"]) for r in others}
     tied_clues = {str(r["subject_id"]) for r in graph.relations if r["predicate"] == "clue_to"}
+    named_extras: list[str] = []  # (stored names only, never a description: the wrong-shape count)
     for i, e in graph.entities.items():
         if i in matched_ids:
             continue
@@ -564,6 +569,8 @@ def check(
             continue  # (a clue tied to a thread is scored on the Clues line, #4624 6b)
         report.extra_entries[_kind_for(str(e["type"]))] += 1
         report.extra_list.append(listed)
+        named_extras.append(str(e["name"]))
+    report.wrong_shape = _wrong_shape(report.entries, names, named_extras)
     for name in key.get("must_not_names", ()):
         # (a must-not name is still found in a description too, as before; only one that is a
         # key `unnamed` entry's own description is right as a description, #3545)
@@ -1099,6 +1106,28 @@ def _kind_for(entry_type: str) -> str:
     return entry_type
 
 
+_ARTICLES = frozenset({"a", "an", "the"})
+
+
+def _wrong_shape(
+    rows: Sequence[Row], names: Mapping[str, Sequence[str]], extras: Sequence[str]
+) -> int:
+    """How many missed key entries have an extra stored name whose words are some, never all, of
+    one of the entry's names: "Valley" or "Dwarven" for "Dwarven Valley". An article never counts,
+    so "The" alone is no part of "Valley of the Dead". Each key entry counts once, however many
+    parts of it are stored."""
+    parts = [frozenset(_plain(extra).split()) - _ARTICLES for extra in extras]
+    parts = [p for p in parts if p]
+    out = 0
+    for r in rows:
+        if r.status != MISSING:
+            continue
+        wholes = [frozenset(_plain(n).split()) for n in names.get(r.id, ())]
+        if any(p < whole for whole in wholes for p in parts):
+            out += 1
+    return out
+
+
 def summarize(report: Report) -> dict[str, Any]:
     """Counts only: by kind of entry and group of tie, found, missing, wrong, waiting."""
 
@@ -1121,6 +1150,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "unnamed_extras": report.unnamed_extras,
         "described": dict(Counter(r.status for r in report.described), total=len(report.described)),
         "extra_ties": report.extra_ties,
+        "wrong_shape": report.wrong_shape,
         "violations": len(report.violations),
         "inferred_confirmed": len(report.inferred_confirmed),
         "false_ties": len(report.false_ties),
@@ -1165,6 +1195,7 @@ def render(report: Report, counts_only: bool = False, list_extras: bool = False)
         f"{dict(report.extra_entries)}"
     )
     lines.append(f"Unnamed people not in the key: {report.unnamed_extras}")
+    lines.append(f"Missed, but part of the name stored (wrong shape): {report.wrong_shape}")
     if report.described:  # (#5055 D: not name misses; the series broke here)
         d = Counter(r.status for r in report.described)
         lines.append(

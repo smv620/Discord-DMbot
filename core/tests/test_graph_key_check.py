@@ -1274,3 +1274,49 @@ class StoryThreads(unittest.TestCase):
         report = gkc.check(backup([("p", "Old Pell", "npc"), *threads], []), key)
         self.assertEqual(report.threads["false"], 1)
         self.assertEqual(report.threads["missed"], 5)
+
+
+class WrongShape(unittest.TestCase):
+    """docs/design/session_names.md, section 8: a key name missed while a part of it is stored
+    ("Valley" for Dwarven Valley) is counted as a wrong shape, beside the miss."""
+
+    def key(self) -> dict[str, Any]:
+        return {
+            "nodes": [
+                {"name": "Dwarven Valley", "kind": "place"},
+                {"name": "Kelvin's Cairn", "kind": "place", "aliases": ["Kelvin Cairn"]},
+                {"name": "Targos", "kind": "place"},
+            ],
+            "pairs": [],
+        }
+
+    def test_a_part_of_a_missed_name_is_a_wrong_shape(self) -> None:
+        data = backup([("e1", "Valley", "place"), ("e2", "the Kelvin", "place")], [])
+        report = gkc.check(data, self.key())
+        self.assertEqual(report.wrong_shape, 2)  # (each key entry once; "the" never counts)
+        self.assertEqual(gkc.summarize(report)["wrong_shape"], 2)
+        self.assertIn("Missed, but part of the name stored (wrong shape): 2", gkc.render(report))
+
+    def test_a_found_name_or_an_unrelated_extra_is_no_wrong_shape(self) -> None:
+        data = backup(
+            [
+                ("e1", "Dwarven Valley", "place"),
+                ("e2", "Valley", "place"),
+                ("e3", "Bremen", "place"),
+            ],
+            [],
+        )
+        report = gkc.check(data, self.key())
+        self.assertEqual(report.wrong_shape, 0)  # (Dwarven Valley is found; Bremen is no part)
+
+    def test_two_parts_of_one_name_count_it_once(self) -> None:
+        data = backup([("e1", "Dwarven", "place"), ("e2", "Valley", "place")], [])
+        self.assertEqual(gkc.check(data, self.key()).wrong_shape, 1)
+
+    def test_an_article_alone_or_a_description_is_no_part(self) -> None:
+        key = {"nodes": [{"name": "Valley of the Dead", "kind": "place"}], "pairs": []}
+        data = backup([("e1", "The", "place")], [])
+        self.assertEqual(gkc.check(data, key).wrong_shape, 0)
+        unnamed = backup([("e2", "Dead", "person")], [])
+        unnamed["sections"]["memory"][0]["unnamed"] = True
+        self.assertEqual(gkc.check(unnamed, key).wrong_shape, 0)

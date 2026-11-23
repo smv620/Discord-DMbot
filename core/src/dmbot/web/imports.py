@@ -1057,6 +1057,8 @@ async def progress(
                 "stage": s["stage"],
                 "namesToAnswer": int(s["namesToAnswer"]),
                 "namesUnchecked": bool(s["namesUnchecked"]),
+                # Names the name scan left out past its limit (a count, never a name; #5072).
+                "namesCut": int(s.get("namesCut") or 0),
                 "progress": part,
                 # The offer to set the game clock where this session ended (#3199), or None.
                 "clock": import_clock.shown(clocks.get(s["file"])),
