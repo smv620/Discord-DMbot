@@ -44,6 +44,8 @@ class TheLoops(unittest.IsolatedAsyncioTestCase):
             _recap_audio_loop=loop,
             _recap_jobs_loop=lambda: loop(),
             _import_loop=loop,
+            _card_loop=lambda: loop(),
+            settings=SimpleNamespace(card_summary_on=False),
         )
         got = worker.loops(bot)
         self.assertEqual(
@@ -53,6 +55,22 @@ class TheLoops(unittest.IsolatedAsyncioTestCase):
             coro.close()
         bot.audio_worker = bot.recap_worker = bot.import_job = None
         self.assertEqual(worker.loops(bot), [])
+
+    def test_the_worker_runs_the_card_round_only_when_it_is_on(self) -> None:
+        async def loop(**kw: Any) -> None:
+            return None
+
+        bot = SimpleNamespace(
+            audio_worker=None,
+            recap_worker=None,
+            import_job=None,
+            _card_loop=lambda: loop(),
+            settings=SimpleNamespace(card_summary_on=True),
+        )
+        got = worker.loops(bot)
+        self.assertEqual([name for name, _ in got], ["card-sentences"])
+        for _, coro in got:
+            coro.close()
 
     def stub(self, *, worker_on: bool) -> Any:
         seen: list[dict[str, bool]] = []
