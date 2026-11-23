@@ -1348,6 +1348,15 @@ def main(argv: Sequence[str] | None = None, *, met: Sequence[str] = ()) -> int:
         "the careful AI decided; give it once for each file",
     )
     parser.add_argument(
+        "--trace",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="FILE",
+        help="with --why-missed: the run's name trace (trace-<campaign>.jsonl, #5055 B), so a name "
+        "never stored says which reader ended it and why",
+    )
+    parser.add_argument(
         "--reasons",
         action="store_true",
         help="with --why-missed: add the careful AI's own words from the decision record; for "
@@ -1389,7 +1398,15 @@ def main(argv: Sequence[str] | None = None, *, met: Sequence[str] = ()) -> int:
         except (OSError, ValueError) as exc:  # (ValueError: a file that is not text)
             sys.stderr.write(f"{exc}\n")
             return 2
-        whys = why_missed.explain(backup, key, args.docs, decided, reasons=args.reasons)
+        traced = None
+        if args.trace:
+            from dmbot.memory import name_trace
+
+            trace_rows = [r for path in args.trace for r in name_trace.read(path)]
+            traced = name_trace.by_key(trace_rows)
+        whys = why_missed.explain(
+            backup, key, args.docs, decided, reasons=args.reasons, trace=traced
+        )
         if args.counts_only:  # (the stages alone: no key names)
             counts = why_missed.tally(whys)
             sys.stdout.write(

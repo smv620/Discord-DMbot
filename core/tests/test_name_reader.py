@@ -347,7 +347,10 @@ class TheBotStep(unittest.TestCase):
         from dmbot.bot import DMBot
 
         lines: Any = [SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out")]
-        return asyncio.run(DMBot._read_session_names(bot, 5, "c1", lines, set(), scan))
+        joined, kinds, _trace = asyncio.run(
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), scan)
+        )
+        return joined, kinds
 
     def test_its_calls_are_charged_to_the_campaign_as_names(self) -> None:
         from dmbot import credits

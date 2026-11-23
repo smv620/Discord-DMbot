@@ -148,6 +148,9 @@ class Settings:
     # judged by what is said about them, never by capitals; joined with the scan's suggestions
     # (DMBOT_SESSION_NAMES, off until dev1's typed, no-capitals and spoken counts)
     session_names_on: bool = False
+    # #5055 slice B (dev tools, server only): a folder where the after-session name step writes,
+    # for a sample campaign only, each candidate with the fixed reason it ended with (empty: off)
+    name_trace_dir: str = ""
     # #4537 slice 6b: the session reader also hears a player character saying goodbye to the
     # party, each an after-session question for the DM, never a closed stretch
     # (DMBOT_PARTY_LEAVES, off until the sample's counts show no false goodbye questions)
@@ -869,6 +872,7 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
         card_summary_on=card_raw in ("1", "true", "on"),
         session_languages_on=languages_raw in ("1", "true", "on"),
         session_names_on=names_raw in ("1", "true", "on"),
+        name_trace_dir=(get("DMBOT_NAME_TRACE_DIR") or "").strip(),
         party_leaves_on=leaves_raw in ("1", "true", "on"),
         party_join_on=party_join_raw in ("1", "true", "on"),
         weather_notes_on=weather_raw in ("1", "true", "on"),

@@ -9,8 +9,10 @@ For every key entry that is not found and kept, one line: the stage it stopped a
 - **decided no**: stored, then turned down, with the careful AI's reason when the record has it.
 - **merged**: joined into another entry (named only when that entry is in the key).
 - **wrong kind**: kept under another kind of thing.
-- **not stored**: the reader never made it. Which step dropped it, and why, is the reader trace's
-  (#5055 slice B); until then this says only that.
+- **not stored**: the reader never made it. With the run's name trace (`memory/name_trace.py`,
+  #5055 slice B) it says which reader saw it last and the fixed reason it ended with ("too few
+  hearings", "over the number", "the DM said it isn't a name"); without it, or when no reader
+  saw it at all, it says "no reader listed it".
 
 It runs on the public sample alone (`graph_key_check` refuses any other campaign). By default
 each line is a key entry's name, its stage and a fixed phrase: it names only key entries, never a
@@ -87,11 +89,13 @@ def explain(
     decisions: Mapping[str, Mapping[str, Any]] | None = None,
     *,
     reasons: bool = False,
+    trace: Mapping[str, Sequence[Any]] | None = None,
 ) -> list[Why]:
     """One `Why` for each key entry (of `docs`) that the run did not find and keep: see the
     module's note for the stages. An entry the key marks `by_design` (never expected) is left
     out, as the score leaves it out, and so is one the story never names (`unnamed`: the unnamed
-    checks score those by description). `reasons`: add the careful AI's own words (server only)."""
+    checks score those by description). `reasons`: add the careful AI's own words (server only).
+    `trace`: the run's name trace by name key (`name_trace.by_key`), for "not stored"."""
     tables = _tables(backup)
     decided = decisions or {}
     wanted = {"lore", "session"} if docs == "both" else {docs}
@@ -187,15 +191,20 @@ def explain(
         if any(k in turned_down for k in mine):
             out.append(Why(name, kind, DECIDED_NO, "turned down as another name of an entry"))
             continue
-        out.append(
-            Why(
-                name,
-                kind,
-                NOT_STORED,
-                "never stored (which reader step dropped it, and why, is #5055 slice B)",
-            )
-        )
+        out.append(Why(name, kind, NOT_STORED, _not_stored_why(mine, trace)))
     return out
+
+
+def _not_stored_why(keys: Iterable[str], trace: Mapping[str, Sequence[Any]] | None) -> str:
+    """For a key entry never stored: the last thing the name trace says of any of its spellings
+    (`source: reason`), or that no reader listed it. Fixed words only."""
+    if trace is None:
+        return "never stored (no name trace for this run)"
+    rows = [row for k in keys for row in trace.get(k, ())]
+    if not rows:
+        return "never stored: no reader listed it"
+    last = rows[-1]
+    return f"never stored: {last.source} ended it as {last.reason}"
 
 
 def _latest(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:
