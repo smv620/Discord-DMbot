@@ -254,6 +254,20 @@ async def _reveals(src: Sources, g: int, c: str) -> Counted:
     return Counted(await RevealProposals(src.memory).count_waiting(g, c, opted_in=opted_in))
 
 
+async def _deeds(src: Sources, g: int, c: str) -> Counted:
+    """Deeds the party did that mattered to someone, waiting for the DM to record them (#3591):
+    what the deed card counts (`DeedProposals.count_waiting`), leaving out a proposal whose
+    speaker is no longer recorded. Like readings, the count is the store's own.
+    """
+    from dmbot.memory.deed_proposals import DeedProposals
+
+    if src.memory is None or src.agreed is None:
+        return Counted(0)
+    return Counted(
+        int(await DeedProposals(src.memory).count_waiting(g, c, opted_in=await src.agreed(g)))
+    )
+
+
 async def _maps(src: Sources, g: int, c: str) -> Counted:
     """Maps a player kept that no DM has answered yet (`MapStore.waiting_for_a_dm`)."""
     if src.maps is None:
@@ -279,6 +293,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.MAPS: _maps,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,
+    kinds.DEEDS: _deeds,
     kinds.PLOT: _plot,
     kinds.RECAP_APPROVE: _recap_approve,
     kinds.RULES: _rules,

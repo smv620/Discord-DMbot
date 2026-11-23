@@ -71,6 +71,7 @@ class TheKinds(unittest.TestCase):
                 "Known or secret?",  # (#4524)
                 "New in the party",  # (#4537)
                 "Still in the party?",  # (#4537 slice 6)
+                "Deeds to record",  # (#3591)
                 "Things the characters learned",  # (#3863)
                 "Maps waiting for your yes",
                 "Facts to check",
@@ -597,6 +598,40 @@ class TheCounts(Base):
         self.assertNotIn("down", line)  # the error type only
         # ... and counted again once it works
         self.assertEqual((await self.count(kinds.LOOKALIKES)).n, 1)
+
+    async def test_deeds_waiting_are_counted_and_a_speaker_who_stopped_is_not(self) -> None:
+        # (#5105: the deed card's own count, as readings are; a deed whose speaker is no longer
+        # recorded is left out, and a bot with no memory store counts nothing)
+        from dmbot.memory.deed_proposals import DeedProposals
+        from dmbot.memory.deed_reading import DeedProposal
+
+        deeds = DeedProposals(self.memory)
+        await deeds.store(
+            self.g, self.c,
+            [
+                (
+                    DeedProposal(
+                        "Cerric", "Saved the mill", ("Brindle",), "Helped them", ("1", "2")
+                    ),
+                    (7,),
+                )
+            ],
+            opted_in={7, 8}, session_started_at=500, prompt_version="deeds-1", model="m",
+        )  # fmt: skip
+        await deeds.store(
+            self.g, self.c,
+            [(DeedProposal("Brindle", "Lit the beacon", ("Cerric",), "Hurt them", ("3",)), (8,))],
+            opted_in={7, 8}, session_started_at=600, prompt_version="deeds-1", model="m",
+        )  # fmt: skip
+
+        async def agreed(_g: int) -> set[int]:
+            return {7}  # (speaker 8 has stopped being recorded)
+
+        self.src.agreed = agreed
+        self.assertEqual((await self.count(kinds.DEEDS)).n, 1)
+        bare = Sources(db=self.db)  # (no memory store: the bot without the feature)
+        found = await counts.count_kinds(bare, self.g, self.c, only={kinds.DEEDS})
+        self.assertEqual(found[kinds.DEEDS].n, 0)
 
 
 class TheStoredCounts(Base):
