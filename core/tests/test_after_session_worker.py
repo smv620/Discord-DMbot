@@ -288,7 +288,7 @@ class TheCardFollowsTheWorker(unittest.IsolatedAsyncioTestCase):
                 queue.rows[jobs.READS] = jobs.DONE
 
         with (
-            mock.patch.object(botmod.asyncio, "sleep", tick),
+            mock.patch("asyncio.sleep", tick),
             mock.patch.object(DMBot, "_after_card", lambda self, table: Card()),
         ):
             await hand()
