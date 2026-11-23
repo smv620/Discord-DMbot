@@ -3736,7 +3736,7 @@ async def queue_links(
         for ka, how, kb in world_links
         if (x := entry(ka)) is not None and (y := entry(kb)) is not None
     }
-    rows = []
+    rows: list[NewLink] = []
     for c in kept:
         if (a := entry(c.a)) is None or (b := entry(c.b)) is None:
             continue
@@ -3744,8 +3744,11 @@ async def queue_links(
         if c.how == TRAVELS_WITH:
             # The store's one check, before the DM is asked (#5164): a pair named the wrong way
             # round is asked the right way round, and two player characters are never asked.
-            ends = companion_end(lookup.entities[a]), companion_end(lookup.entities[b])
-            turned = companion_order(*ends, BACKGROUND_SOURCE)
+            turned = companion_order(
+                companion_end(lookup.entities[a]),
+                companion_end(lookup.entities[b]),
+                BACKGROUND_SOURCE,
+            )
             if turned is None:
                 if dropped is not None:
                     dropped["bad_kind"] += 1
@@ -3932,8 +3935,9 @@ def _companions_fit(
         if u.how == TRAVELS_WITH and named is not None and named in entities:
             kind = "faction" if descriptions.is_described_group(u.what) else "character"
             unnamed = {"type": kind, "role": None, "party": False}
-            ends = (companion_end(entities[named]), unnamed)
-            order = companion_order(*(ends if u.fixed_is_a else ends[::-1]), BACKGROUND_SOURCE)
+            named_end = companion_end(entities[named])
+            first, second = (named_end, unnamed) if u.fixed_is_a else (unnamed, named_end)
+            order = companion_order(first, second, BACKGROUND_SOURCE)
             if order is None:
                 if dropped is not None:
                     dropped["bad_kind"] += 1

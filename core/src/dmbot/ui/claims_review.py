@@ -598,9 +598,9 @@ class ClaimsReview(_Menu):
                 await claims.reject(self.guild_id, self.campaign_id, claim_id)
                 done = f"{NO} Not remembered: {saying}. DMbot won't ask again."
         except MemoryRuleError as exc:
-            why = companion_refusal(str(exc))  # (and what to press, #5164)
+            rule = companion_refusal(str(exc))  # (and what to press, #5164)
             message = (
-                f"{why} Press {NO} with its number to leave it out." if why else str(exc) or GONE
+                f"{rule} Press {NO} with its number to leave it out." if rule else str(exc) or GONE
             )
             if message not in _FINAL:
                 await _tell(interaction, message)  # the question stays; nothing changed
