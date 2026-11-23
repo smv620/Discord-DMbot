@@ -35,7 +35,8 @@ import { checkBuild, table } from "./weight.mjs";
 // and the route length and road condition panels' API names, now all in the first download; the page was 189.2 KB. The panels
 // themselves are in lazy files. (#4970's guess marks, about 0.2 KB, are in that first download too: the 190 covers both.)
 // Raised on 2026-11-23 (#5129) to 191 KB: the name reader's stage and its lines on the import page (the words and the
-// stage, about 0.2 KB) are in the first download; the recaps page was 190.1 KB, and nothing was trimmed.
+// stage, about 0.2 KB) are in the first download. The recaps page (its heaviest) was 189.9 KB on development and
+// is 190.1 KB with them (+0.2 KB, measured on the build); nothing was trimmed.
 export const budgets = {
   htmlKB: 52,
   totalKB: 191,

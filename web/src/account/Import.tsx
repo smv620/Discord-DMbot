@@ -238,7 +238,7 @@ export default function Import({
   const [pollTries, setPollTries] = useState(0);
   // The newest `updatedAt` shown: a late reply that is older never moves the page backwards (#2564).
   const lastUpdated = useRef(0);
-  const lastStory = useRef(0); // the latest move of any session's connections read, so a read that moves keeps the page looking quickly
+  const lastRead = useRef(0); // the latest move of any session's connections or names read, so a read that moves keeps the page looking quickly
   const idleLooks = useRef(0); // looks in a row where nothing moved forward
   const watchStart = useRef(0);
 
@@ -331,10 +331,10 @@ export default function Import({
         if (!live) return;
         const stamp = next.import?.updatedAt;
         const older = typeof stamp === "number" && stamp < lastUpdated.current;
-        const storyStamp = Math.max(0, ...next.sessions.map((x) => Math.max(x.story?.updatedAt ?? 0, x.names?.updatedAt ?? 0)));
-        const storyMoved = storyStamp > lastStory.current;
-        if (storyStamp > lastStory.current) lastStory.current = storyStamp;
-        const moved = (typeof stamp === "number" ? stamp > lastUpdated.current : true) || storyMoved;
+        const readStamp = Math.max(0, ...next.sessions.map((x) => Math.max(x.story?.updatedAt ?? 0, x.names?.updatedAt ?? 0)));
+        const readMoved = readStamp > lastRead.current;
+        if (readStamp > lastRead.current) lastRead.current = readStamp;
+        const moved = (typeof stamp === "number" ? stamp > lastUpdated.current : true) || readMoved;
         if (typeof stamp === "number" && !older) lastUpdated.current = stamp;
         if (!older) setProgress(next); // (an older answer: keep what is shown, ask again)
         idleLooks.current = moved && !older ? 0 : idleLooks.current + 1;

@@ -138,6 +138,8 @@ describe("the name reader of each session", () => {
   it("none of these lines holds a name from the transcript", async () => {
     await importing([answer(names({ stage: "names_read", state: "done" }), 2)]);
     await screen.findByText(w.namesUnread(2));
-    expect(document.body.textContent).not.toContain("Brynwater");
+    // The transcript fixture holds "Cerric" and "hello": neither may reach the page.
+    expect(document.body.textContent).not.toContain("Cerric");
+    expect(document.body.textContent).not.toContain("hello");
   });
 });
