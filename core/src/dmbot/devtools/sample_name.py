@@ -17,15 +17,22 @@ from dataclasses import dataclass
 
 OLD_NAME = "test of the frostmaiden (sample)"  # before #4538: still accepted, counted as oldest
 PREFIX = "test of the frostmaiden (sample "
-# "(sample 31)" is the deploy's one campaign; "(sample 31b.2)" is run 2 of deploy 31b (#4551, #5057)
+# "(sample 31)" is the deploy's one campaign; "(sample 31b.2)" is run 2 of deploy 31b (#4551,
+# #5057); "(sample 31b.2 no capitals)" is run 2 of that deploy on another version of the session
+# (docs/design/session_names.md, section 8: typed, no capitals, spoken, each its own series).
 _NAMED = re.compile(
-    r"^test of the frostmaiden \(sample (?P<n>[0-9]{1,4})(?P<l>[a-z])?(?:\.(?P<k>[1-9][0-9]?))?\)$"
+    r"^test of the frostmaiden \(sample (?P<n>[0-9]{1,4})(?P<l>[a-z])?(?:\.(?P<k>[1-9][0-9]?))?"
+    r"(?: (?P<v>no capitals|spoken))?\)$"
 )
 _LABEL = re.compile(r"^(?P<n>[1-9][0-9]{0,3})(?P<l>[a-z])?$")  # no leading zero: "40", not "040"
 RUN_MAX = 99
 KEEP = 3  # the newest campaigns kept alive, so the owner can compare their story graphs
 DEPLOY_MAX = 9999
 SAY_WHICH = "Say which deploy this is: --deploy N"
+# The session's versions (`sample_run --version`), and the words each adds to a campaign's name. The
+# typed one, the sample as it always was, adds none, so every name made before stays the same.
+TYPED = "typed"
+VERSIONS = {TYPED: "", "no-capitals": "no capitals", "spoken": "spoken"}
 BAD_LABEL = (
     "the deploy is a number from 1 to 9999, with one lowercase letter after it if you like: "
     "40 or 40b"
@@ -62,17 +69,31 @@ def as_label(deploy: Label | int) -> Label:
     return Label(deploy)
 
 
-def name_for(deploy: Label | int, run: int | None = None) -> str:
+def name_for(deploy: Label | int, run: int | None = None, version: str = TYPED) -> str:
     """The campaign's name for deploy N (a whole number, 1 to 9999, with an optional letter), or for
-    run k of it when the deploy's runs go side by side ("sample 31b.2", k from 1 to 99)."""
+    run k of it when the deploy's runs go side by side ("sample 31b.2", k from 1 to 99), on one
+    version of the session ("sample 31b.2 no capitals"; the typed one adds nothing)."""
     label = as_label(deploy)
     if not 1 <= label.number <= DEPLOY_MAX:
         raise ValueError(f"the deploy is a whole number from 1 to {DEPLOY_MAX}")
+    if version not in VERSIONS:
+        raise ValueError(f"the version is one of {', '.join(VERSIONS)}")
+    words = f" {VERSIONS[version]}" if VERSIONS[version] else ""
     if run is None:
-        return f"{PREFIX}{label})"
+        return f"{PREFIX}{label}{words})"
     if not isinstance(run, int) or isinstance(run, bool) or not 1 <= run <= RUN_MAX:
         raise ValueError(f"the run is a whole number from 1 to {RUN_MAX}")
-    return f"{PREFIX}{label}.{run})"
+    return f"{PREFIX}{label}.{run}{words})"
+
+
+def version_of(name: str) -> str | None:
+    """The session's version a numbered sample name was made for ("typed" when it says none);
+    None for any other name, the old unnumbered one included."""
+    found = _NAMED.fullmatch(name)
+    if not found:
+        return None
+    words = found["v"] or ""
+    return next(key for key, said in VERSIONS.items() if said == words)
 
 
 def deploy_of(name: str) -> Label | None:
@@ -116,6 +137,7 @@ def plan_keep(
     existing: Iterable[tuple[str, str]],
     deploy: Label | int,
     protected: Collection[str] = (),
+    version: str = TYPED,
 ) -> Kept:
     """From (campaign id, name) of this DM's sample campaigns, and the deploy being made now: the
     campaign for `deploy` itself is deleted first (a re-run makes it again, never two of one
@@ -123,14 +145,19 @@ def plan_keep(
     unnumbered name counts as older than any label. Labels are compared as wholes: 40b's campaigns
     are never 40's. `protected`: campaigns the guard refuses to delete: they are left alone and
     counted, never reported as deleted. Names that are not samples are not here: callers pass only
-    `is_sample` names."""
+    `is_sample` names. `version`: the session's version being made; this deploy's campaigns of
+    another version are kept (their own series), and a deploy counts once toward `KEEP` whatever
+    its versions."""
     current = as_label(deploy)
     numbered: list[tuple[Label, str]] = []
     old: list[str] = []
+    other_version: list[str] = []  # this deploy's campaigns of another version: kept, not re-made
     for campaign_id, name in existing:
         label = deploy_of(name)
         if label is None:
             old.append(campaign_id)
+        elif label == current and version_of(name) != version:
+            other_version.append(campaign_id)
         else:
             numbered.append((label, campaign_id))
     same = [cid for lab, cid in numbered if lab == current]  # (every run of this label, if re-run)
@@ -145,7 +172,7 @@ def plan_keep(
         1 for cid in old if cid in protected
     )
     return Kept(
-        keep=tuple(cid for _, cid in stay),
+        keep=(*other_version, *(cid for _, cid in stay)),
         delete=tuple([*same, *old_go, *(cid for _, cid in go)]),
         kept_numbers=tuple(sorted(stay_labels | {current})),
         deleted_numbers=tuple(sorted({lab for lab, _ in go})),
@@ -180,7 +207,10 @@ def slot_drops(
     after those deletions are fewer than `need`, the oldest kept deploy goes with all its runs,
     never the newest kept deploy (a deploy any of whose campaigns `deletable` refuses is left
     alone). Returns the extra campaign ids to delete, their names (oldest deploy first), and how
-    many runs there is room for (`need`, or fewer; 0 means none)."""
+    many runs there is room for (`need`, or fewer; 0 means none). The deploy being made is never
+    a candidate: its campaigns of another version of the session are kept whatever the slots
+    (docs/design/session_names.md, section 8), and "the newest kept deploy" is the newest other
+    one, as before the versions."""
     if free is None:
         return (), (), need
     room = free + len(kept.delete)
@@ -188,7 +218,7 @@ def slot_drops(
     by_deploy: dict[Label, list[tuple[str, str]]] = {}
     for cid, name in existing:
         label = deploy_of(name)
-        if label is not None and cid in staying:
+        if label is not None and label != kept.deploy and cid in staying:
             by_deploy.setdefault(label, []).append((cid, name))
     order = sorted(by_deploy)  # oldest first
     extra_ids: list[str] = []
