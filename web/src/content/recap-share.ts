@@ -43,6 +43,9 @@ export const shareWords = {
   /** The state in the recap list. */
   listTag: "Link on",
   audio: RECAP_AUDIO_LIVE,
+  // The wait while the link is being changed (#3347 row 7): said by the page's wait line, not the buttons.
+  workingStage: "DMbot is changing your share link.",
+  workingQuiet: "DMbot is slow to answer. Your change may still go through: look at this recap in a minute before you press again.",
 } as const;
 
 /** The public page at /r/<token>. One message for every kind of dead link, on purpose: the API

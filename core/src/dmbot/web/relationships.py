@@ -1321,6 +1321,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "rules-update-",
             "pack-update-",
             "heard-",
+            "deed-",
         )
     ):
         raise RecapError("not_found")
@@ -1368,6 +1369,17 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "state": got["state"],
             "error": got["error"],
             "kept": int(counts.removeprefix("kept:")) if counts.startswith("kept:") else None,
+            "batch": int(made[0]) if got["state"] == "done" and made else None,
+        }
+    if str(got["action"]).startswith("deed-"):
+        # a deed answered (#3591): which case it was as a short code, never a word, and the change
+        # a recorded one made for the page's Undo
+        made = got.get("resultBatches") or []
+        counts = str(got.get("counts") or "")
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "code": counts.removeprefix("deed:") if counts.startswith("deed:") else None,
             "batch": int(made[0]) if got["state"] == "done" and made else None,
         }
     if str(got["action"]).startswith("heard-"):

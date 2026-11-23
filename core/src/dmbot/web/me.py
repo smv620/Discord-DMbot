@@ -77,6 +77,21 @@ def _iso_time(seconds: int | None) -> str | None:
     return datetime.fromtimestamp(seconds, UTC).isoformat().replace("+00:00", "Z")
 
 
+def _last_accessed(visit: int | None, played: str | None, started: str | None) -> str | None:
+    """When a campaign was last used by this person, for the account page's order (#5037): the
+    latest of their own last visit on the website, the campaign's last session (`played`) and when
+    it was made (`started`), so a brand-new campaign is on top until something newer happens. ISO,
+    or None when nothing is known (an older campaign the facts door did not describe)."""
+    times = [datetime.fromtimestamp(visit, UTC)] if visit else []
+    for text in (played, started):
+        try:  # (a time that does not read is left out: /me is the page everyone lands on)
+            if text:
+                times.append(datetime.fromisoformat(text.replace("Z", "+00:00")))
+        except ValueError:
+            continue
+    return _iso_time(int(max(times).timestamp())) if times else None
+
+
 def _plan_state(plan: entitlements.Entitlement, now: int) -> dict[str, Any]:
     """The plan line's state and its dates (#2165). Dates are ISO days; the page words them."""
     expired = plan.status == "lapsed" or (plan.status == "active" and not plan.usable(now))
@@ -306,6 +321,11 @@ async def build_me(
         # the server gone, DMbot out of it): a card each, so they can still be seen and deleted
         # (#2554). A door keyed by the account; the policy that limits the website to the
         # session's servers is not widened.
+        # When this person last opened each campaign on the website (#5037), kept on their own row.
+        cur = await conn.execute(
+            "SELECT campaign_visits FROM web_users WHERE user_id = %s", (session.user_id,)
+        )
+        visits = ((await cur.fetchone()) or {}).get("campaign_visits") or {}
         cur = await conn.execute("SELECT dmbot_web_owned_campaigns() AS found")
         owned_row = await cur.fetchone()
         shown = {c["ref"] for c in campaigns}
@@ -326,6 +346,13 @@ async def build_me(
                     "serverReachable": False,
                     "canDelete": True,
                 }
+            )
+        for campaign in campaigns:
+            visit = visits.get(campaign["ref"])
+            campaign["lastAccessedAt"] = _last_accessed(
+                int(visit) if isinstance(visit, int) and not isinstance(visit, bool) else None,
+                campaign.get("lastPlayedAt"),
+                campaign.get("startedAt"),
             )
 
         # "Experience points": every minute DMbot has run for this account, all time, through the

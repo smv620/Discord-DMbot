@@ -5,7 +5,7 @@ import { useEffect, useState } from "preact/hooks";
 import { text } from "../content/sharing";
 import { httpApi, type AccountApi } from "./api";
 import SignedInLine from "./SignedInLine";
-import SharingPage from "./Sharing";
+import SharingPage, { refFromSharingPath } from "./Sharing";
 
 const base: string = import.meta.env.PUBLIC_API_BASE ?? "/api";
 
@@ -29,7 +29,7 @@ export default function SharingIsland() {
   return (
     <>
       <SignedInLine api={api} />
-      <SharingPage api={api} />
+      <SharingPage api={api} campaignRef={refFromSharingPath(window.location.pathname)} />
     </>
   );
 }

@@ -620,7 +620,10 @@ class ThePass(NamesTest):
         cast(Any, self.bot).import_state = state
         held: list[Any] = []
         kept = 0
-        store = SimpleNamespace(pending_scans=AsyncMock(side_effect=[1, 1, 0]))
+        store = SimpleNamespace(
+            pending_scans=AsyncMock(side_effect=[1, 1, 0]),
+            ready_for_recap=AsyncMock(return_value=[]),
+        )
         tell = DMBot._tell_import_news.__get__(self.bot)
         for sid in (self.session, quiet, second):
             self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]

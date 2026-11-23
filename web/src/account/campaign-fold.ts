@@ -5,14 +5,22 @@ import type { Campaign } from "./api";
 /** How many campaigns show before the button. */
 export const SHOWN_AT_FIRST = 5;
 
-/** Newest first by last session; a campaign never played comes after the played ones, by name. */
+/** Newest first by when the person last used the campaign (#5037): the latest of their own last visit, its last
+ * session and its creation, as the API says in `lastAccessedAt`. An older API without it falls back to the last
+ * session, then the creation. Never by name. */
 export function byRecentlyPlayed(campaigns: Campaign[]): Campaign[] {
-  // Parsed, not compared as text: "…Z" and "…+00:00" are the same moment. The id is the last tiebreak
-  // so the order never depends on the browser.
-  const when = (c: Campaign): number => (c.lastPlayedAt ? Date.parse(c.lastPlayedAt) : Number.NEGATIVE_INFINITY);
+  // Parsed, not compared as text: "…Z" and "…+00:00" are the same moment. The id breaks a tie, so the order never
+  // depends on the browser.
+  const at = (text: string | null | undefined): number => (text ? Date.parse(text) : Number.NaN);
+  const when = (c: Campaign): number => {
+    const found = [at(c.lastAccessedAt)].filter((n) => !Number.isNaN(n));
+    if (found.length > 0) return found[0]!;
+    const older = [at(c.lastPlayedAt), at(c.startedAt)].filter((n) => !Number.isNaN(n));
+    return older.length > 0 ? Math.max(...older) : Number.NEGATIVE_INFINITY;
+  };
   return [...campaigns].sort((a, b) => {
     const diff = when(b) - when(a);
-    return (Number.isNaN(diff) ? 0 : diff) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+    return (Number.isNaN(diff) ? 0 : diff) || a.id.localeCompare(b.id);
   });
 }
 
@@ -24,11 +32,9 @@ export function foldCampaigns(
   offeredIds: ReadonlySet<string>,
   limit: number = SHOWN_AT_FIRST,
 ): { first: Campaign[]; older: Campaign[] } {
-  // The campaigns you run come before the ones you only play in, so a busy player's table never
-  // pushes your own campaign (and its hand-over) behind the button (#2460).
-  const run = byRecentlyPlayed(campaigns.filter((c) => c.role !== "player"));
-  const played = byRecentlyPlayed(campaigns.filter((c) => c.role === "player"));
-  const sorted = [...run, ...played];
+  // One order, newest use first, whether you run the campaign or only play in it (#5037; the run-before-play split
+  // of #2460 went at the owner's request). A campaign that needs you still shows at first, below.
+  const sorted = byRecentlyPlayed(campaigns);
   const needsYou = (c: Campaign): boolean => c.status === "paused" || offeredIds.has(c.id);
   const newest = new Set(sorted.slice(0, limit).map((c) => c.id));
   const first = sorted.filter((c) => newest.has(c.id) || needsYou(c));

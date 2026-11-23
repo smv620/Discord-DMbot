@@ -173,6 +173,8 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         "_start_import_recap",
         "_apply_import_plays",
         "_tell_import_news",
+        "_import_news",
+        "_import_open",
         "_upkeep_channel",
         "_say_group_writing",
         "_say_writing",
@@ -532,6 +534,45 @@ class TheCrashAndTheNews(WithImports):
         self.assertIn("2 imported sessions", text)
         self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
 
+    async def test_names_a_cap_left_out_are_told_as_a_count_once(self) -> None:
+        # (#5055 A) the scan's and the story reader's limits are counted, never silent: one line in
+        # the import's notice, a count only (the DM Bot channel is read by the campaign's people)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        campaign.dm_bot_channel_id = 88
+        await bot.import_state.bump(GUILD, self.campaign.id, "names_cut", 12)
+        await bot._tell_import_news(GUILD, self.store)
+        channel, text = bot.post.await_args.args[:2]
+        self.assertEqual(channel, 88)
+        self.assertIn("As many as 12 more names were left out", text)
+        self.assertIn("➕ Add a name", text)
+        self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
+        bot.post.reset_mock()
+        await bot._tell_import_news(GUILD, self.store)  # (taken: told once)
+        bot.post.assert_not_awaited()
+
+    async def test_a_scan_given_back_and_run_again_tells_its_cut_once(self) -> None:
+        # (#5055 A) the cut is counted on the scan's success, so a retried scan is not counted twice
+        sid = await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        tries = [0]
+
+        async def scan(gid: int, ready: Any) -> list[str]:
+            await self.store.set_scan_cut(gid, ready.session_id, 12)
+            tries[0] += 1
+            if tries[0] == 1:
+                raise RuntimeError("down")  # given back after the cut was kept
+            return []
+
+        bot._scan_import = scan
+        await rounds(bot, 5)
+        told = [c.args[1] for c in bot.post.await_args_list if "more names were" in c.args[1]]
+        self.assertEqual(tries[0], 2)
+        self.assertEqual(len(told), 1)
+        self.assertIn("As many as 12 more names", told[0])
+        self.assertEqual(await self.store.scan_cut(GUILD, sid), 12)
+
     async def test_the_dm_is_told_once_when_a_name_check_was_given_up(self) -> None:
         await self.imported(1)
         bot, campaign = fake_bot(self.store)
@@ -573,6 +614,23 @@ class TheCrashAndTheNews(WithImports):
         await DMBot.run_import_followups(bot, GUILD)
 
         bot._link_import_party.assert_awaited_once()
+
+    async def test_the_workers_scan_tells_nothing_and_the_bots_news_scans_nothing(self) -> None:
+        # (#4904 3b-4c: the worker has no Discord, so its half only works; the bot's only tells)
+        await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._scan_import = AsyncMock(return_value=["Kazeth"])
+        bot.extractor_ai = None  # (no story read here: its own tests)
+        self.assertEqual(await DMBot.run_import_followups(bot, GUILD, news=False), 1)
+        bot._scan_import.assert_awaited_once()
+        bot._tell_finished_imports.assert_not_awaited()
+        bot._tell_imports_left.assert_not_awaited()
+        self.assertEqual(bot.post.await_args_list, [])  # not a word to Discord from the scan
+        bot._scan_import.reset_mock()
+        self.assertEqual(await DMBot.run_import_followups(bot, GUILD, scan=False), 0)
+        bot._scan_import.assert_not_awaited()
+        bot._tell_finished_imports.assert_awaited_once()  # the news is the bot's
 
     async def test_a_failed_party_link_after_a_scan_changes_nothing_else(self) -> None:
         # The link runs after the scan is finished: when it raises, the scan still counts as done,

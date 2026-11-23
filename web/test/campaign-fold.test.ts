@@ -1,5 +1,5 @@
-// Which campaigns show first on My Account (#1991): newest first, never-played last, and nothing
-// that needs the person hidden behind the button.
+// Which campaigns show first on My Account (#1991, #5037): the one used last first, whether the person runs it or plays
+// in it, never by name, and nothing that needs the person hidden behind the button.
 import { describe, expect, it } from "vitest";
 
 import { byRecentlyPlayed, foldCampaigns } from "../src/account/campaign-fold";
@@ -16,9 +16,28 @@ const make = (id: string, lastPlayedAt: string | null, status: Campaign["status"
 const day = (n: number): string => `2026-09-${String(n).padStart(2, "0")}T19:00:00Z`;
 
 describe("campaign fold", () => {
-  it("orders newest first, and the never-played after the played, by name", () => {
-    const list = [make("d", null), make("a", day(3)), make("c", null), make("b", day(9))];
-    expect(byRecentlyPlayed(list).map((c) => c.id)).toEqual(["b", "a", "c", "d"]);
+  it("an older API without lastAccessedAt: the last session, then the creation, never the name", () => {
+    const made = (id: string, startedAt: string): Campaign => ({ ...make(id, null), startedAt });
+    const list = [made("a", day(2)), make("d", day(4)), made("c", day(7)), make("b", day(9))];
+    expect(byRecentlyPlayed(list).map((c) => c.id)).toEqual(["b", "c", "d", "a"]);
+  });
+
+  it("never-played campaigns order by when they were made, not by name", () => {
+    const made = (id: string, lastAccessedAt: string): Campaign => ({ ...make(id, null), lastAccessedAt });
+    const list = [made("a-deploy-31", day(1)), made("z-deploy-41", day(20)), made("m-deploy-35", day(9))];
+    expect(byRecentlyPlayed(list).map((c) => c.id)).toEqual(["z-deploy-41", "m-deploy-35", "a-deploy-31"]);
+  });
+
+  it("an opened campaign moves to the top: lastAccessedAt counts, not only the last session", () => {
+    const list = [make("old", day(1)), make("new", day(9))];
+    list[0] = { ...list[0]!, lastAccessedAt: day(15) };
+    list[1] = { ...list[1]!, lastAccessedAt: day(9) };
+    expect(byRecentlyPlayed(list).map((c) => c.id)).toEqual(["old", "new"]);
+  });
+
+  it("campaigns you run and ones you only play in are one list, by use", () => {
+    const list = [{ ...make("play", day(9)), role: "player" as const }, make("run", day(3))];
+    expect(foldCampaigns(list, new Set()).first.map((c) => c.id)).toEqual(["play", "run"]);
   });
 
   it("sorts the same moment written two ways as equal, and breaks a full tie by id", () => {

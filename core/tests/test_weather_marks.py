@@ -10,7 +10,7 @@ from typing import Any
 
 from dmbot.memory import weather_marks as wm
 from dmbot.memory.models import CONFIRMED, NewName, new_id
-from tests.test_memory_names import GUILD, NamesTest
+from tests.test_memory_names import DM, GUILD, NamesTest
 
 
 class OncePerPlace(NamesTest):
@@ -24,14 +24,16 @@ class OncePerPlace(NamesTest):
         self.place: str = place
         self.climate = await self.climate_row("hot")
 
-    async def climate_row(self, value: str) -> str:
+    async def climate_row(
+        self, value: str, *, place: str | None = None, campaign: str | None = None
+    ) -> str:
         row = new_id()
         async with self.db.guild(GUILD) as conn:
             await conn.execute(
                 "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
                 " status, source, created_at) VALUES (%s, %s, %s, %s, 'climate', %s, 'confirmed',"
                 " 'dm', 1)",
-                (GUILD, self.campaign.id, row, self.place, value),
+                (GUILD, campaign or self.campaign.id, row, place or self.place, value),
             )
         return row
 
@@ -150,6 +152,7 @@ class ForTheWorkersRow(OncePerPlace):
             ),
             memory=self.memory,
             _dm_message=AsyncMock(return_value=object()),
+            tables={},
         )
         row = {"at": 40, "session": 1_000}
         await DMBot.deliver_story_weather(bot, GUILD, self.campaign.id, row)
@@ -167,6 +170,97 @@ class ForTheWorkersRow(OncePerPlace):
         bot._dm_message.reset_mock()
         await DMBot.deliver_story_weather(bot, GUILD, self.campaign.id, {**row, "at": 41})
         bot._dm_message.assert_not_awaited()
+
+
+class WhileTheTableIsPlaying(OncePerPlace):
+    async def test_a_row_that_arrives_during_play_sends_nothing_and_marks_nothing(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.bot import DMBot
+
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id,
+            [wm.Mark(self.place, "snow", self.climate, "hot")], now=40,
+        )  # fmt: skip
+        bot: Any = SimpleNamespace(
+            campaigns=SimpleNamespace(
+                get=AsyncMock(return_value=SimpleNamespace(dm_accounts=frozenset({7})))
+            ),
+            memory=self.memory,
+            _dm_message=AsyncMock(return_value=object()),
+            tables={GUILD: SimpleNamespace(campaign_id=self.campaign.id)},  # (the table is live)
+        )
+        row = {"at": 40, "session": 1_000}
+        await DMBot.deliver_story_weather(bot, GUILD, self.campaign.id, row)
+        bot._dm_message.assert_not_awaited()
+        self.assertEqual(await wm.noted_at(self.db, GUILD, self.campaign.id, 40), [])
+        # (so a later read may note it: the mark is new again)
+        self.assertEqual(
+            await wm.first_time(
+                self.db, GUILD, self.campaign.id,
+                [wm.Mark(self.place, "snow", self.climate, "hot")], now=90,
+            ),
+            [True],
+        )  # fmt: skip
+
+    async def other_campaign_place(self) -> tuple[str, str, str]:
+        """A second campaign made the same way as the class's own, with its own place and climate
+        row: (campaign id, place, climate)."""
+        other = await self.campaigns.create(GUILD, "Two", DM)
+        made = await self.memory.add_names(
+            GUILD, other.id, [NewName("Frostmere", "place", CONFIRMED)], source="dm"
+        )
+        (place,) = made.value
+        assert place is not None
+        row = await self.climate_row("hot", place=place, campaign=other.id)
+        return other.id, place, row
+
+    async def test_taking_back_a_moment_leaves_another_campaigns_marks_alone(self) -> None:
+        # (both campaigns' marks are the same kind, value and moment: only the campaign id tells
+        # them apart, so this fails if `unmark_at` ignores the campaign)
+        other_id, other_place, other_climate = await self.other_campaign_place()
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id, [wm.Mark(self.place, "snow", self.climate, "hot")],
+            now=40,
+        )  # fmt: skip
+        await wm.first_time(
+            self.db, GUILD, other_id, [wm.Mark(other_place, "snow", other_climate, "hot")], now=40,
+        )  # fmt: skip
+        deleted = await wm.unmark_at(self.db, GUILD, self.campaign.id, 40)
+        self.assertEqual(deleted, 1)
+        self.assertEqual(await wm.noted_at(self.db, GUILD, self.campaign.id, 40), [])
+        self.assertEqual(
+            await wm.noted_at(self.db, GUILD, other_id, 40),
+            [(other_place, "snow", "hot")],
+        )
+
+    async def test_taking_back_a_moment_leaves_another_moment_alone(self) -> None:
+        # (both marks are on this campaign: only the moment tells them apart)
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id, [wm.Mark(self.place, "snow", self.climate, "hot")],
+            now=40,
+        )  # fmt: skip
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id, [wm.Mark(self.place, "frost", self.climate, "hot")],
+            now=90,
+        )  # fmt: skip
+        self.assertEqual(await wm.unmark_at(self.db, GUILD, self.campaign.id, 40), 1)
+        self.assertEqual(
+            await wm.noted_at(self.db, GUILD, self.campaign.id, 90),
+            [(self.place, "frost", "hot")],
+        )
+
+    async def test_taking_back_a_moment_with_nothing_there_deletes_nothing(self) -> None:
+        await wm.first_time(
+            self.db, GUILD, self.campaign.id, [wm.Mark(self.place, "snow", self.climate, "hot")],
+            now=40,
+        )  # fmt: skip
+        self.assertEqual(await wm.unmark_at(self.db, GUILD, self.campaign.id, 77), 0)
+        self.assertEqual(
+            await wm.noted_at(self.db, GUILD, self.campaign.id, 40),
+            [(self.place, "snow", "hot")],
+        )
 
 
 class TheBackup(unittest.TestCase):

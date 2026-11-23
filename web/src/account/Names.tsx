@@ -417,9 +417,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const everything = kindList.reduce((sum, k) => sum + k.count, 0);
   return (
     <div class="stack names-page">
-      <section class="stack" aria-labelledby="names-campaign">
+      <section class="stack" aria-label={data.campaign}>
         <CampaignNav api={api} campaignRef={ref} page="names" name={data.campaign} />
-        <h2 id="names-campaign">{data.campaign}</h2>
         <p class="muted small">{words.lead}</p>
         <a class="button secondary" href={`/account/web/${encodeURIComponent(ref)}`}>
           {words.webLink}

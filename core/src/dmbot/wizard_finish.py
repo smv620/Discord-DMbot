@@ -77,6 +77,10 @@ SHEET_WAITING = "sheet_waiting"
 SHEET_UNREADABLE = "sheet_unreadable"  # D&D Beyond answered, but not with a sheet DMbot can keep
 HOMEBREW_FAILED = "homebrew_failed"  # the stage itself broke; the run goes on
 DOC_LINK_FAILED = "doc_link_failed"  # a web link in a document step could not be read
+# Not a failure (#5095, web half of #5055 A): names past one document's limit that the reader left
+# out. The count goes in `notes` (summed over the run's documents) so the "Ready" page can say so,
+# and the run's `error` stays empty.
+NAMES_CUT = "names_cut"
 HOUSE_FAILED = "house_failed"  # the stage itself broke; the run goes on
 SHEETS_FAILED = "sheets_failed"  # the stage itself broke; the run goes on
 # Documents in a slot this run does not read yet (house rules, homebrew, an own ruleset): they are
@@ -346,6 +350,17 @@ class WizardFinishes:
             row = await cur.fetchone()
         assert row is not None
         return str(row["id"])
+
+    async def lore_cut(self, guild_id: int, upload: str) -> int:
+        """How many names the reader left out past the document's limit (0 for none): a count
+        only, written when the read ends (`lore_uploads.names_cut`, #5055 A)."""
+        async with self._db.guild(guild_id, snapshot=True) as conn:
+            cur = await conn.execute(
+                "SELECT names_cut FROM lore_uploads WHERE guild_id = %s AND id = %s",
+                (guild_id, upload),
+            )
+            row = await cur.fetchone()
+        return int(row["names_cut"]) if row else 0
 
     async def lore_state(self, guild_id: int, upload: str) -> str:
         async with self._db.guild(guild_id, snapshot=True) as conn:
@@ -1019,6 +1034,8 @@ async def _read_one(
         state = await runs.lore_state(guild_id, upload)
         if state in ("done", "failed", "gone"):
             await runs.progress(guild_id, run, _NO_COUNTS)  # (the next document starts at zero)
+            if state == "done" and (cut := await runs.lore_cut(guild_id, upload)):
+                run.notes = _add_pair(run.notes, NAMES_CUT, cut)
             return state
         await runs.progress(guild_id, run, await runs.lore_progress(guild_id, upload))
         if waited >= LORE_WAIT_S:

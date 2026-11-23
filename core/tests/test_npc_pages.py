@@ -112,6 +112,24 @@ class ThePage(WithNpcs):
         bob = await web.read_page(self.web, self.bob, ref, aldric.id)
         self.assertEqual((bob["isDm"], bob["dmNote"]), (False, None))  # DM of another campaign
 
+    async def test_a_dm_reads_the_cards_lines_and_nobody_else_does(self) -> None:
+        from dmbot.memory.card_summaries import CardSummaries
+
+        aldric = await self.npc()
+        await self.listed(aldric)
+        await CardSummaries(self.db).put_who(
+            GUILD, self.one.id, aldric.id, "A monk who keeps the ledger.", "a" * 64
+        )
+        await CardSummaries(self.db).put_mentions(GUILD, self.one.id, aldric.id, None, None)
+        ref = f"{GUILD}.{self.one.id}"
+        dm = await web.read_page(self.web, self.alice, ref, aldric.id, cards=True)
+        self.assertEqual(dm["who"], "A monk who keeps the ledger.")
+        self.assertEqual(dm["lastMentioned"], "Not mentioned at the table yet.")
+        player = await web.read_page(self.web, self.carol, ref, aldric.id, cards=True)
+        self.assertNotIn("who", player)
+        off = await web.read_page(self.web, self.alice, ref, aldric.id)
+        self.assertNotIn("who", off)
+
     async def test_someone_outside_the_server_is_told_the_page_is_not_for_them(self) -> None:
         aldric = await self.npc()
         await self.listed(aldric)

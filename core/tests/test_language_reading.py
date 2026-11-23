@@ -218,6 +218,26 @@ class TheQuestions(unittest.IsolatedAsyncioTestCase):
             "If that's right, the player can add it to their sheet. Nothing was changed.",
         )
 
+    async def test_with_no_discord_the_questions_are_kept_and_only_the_sheet_note_waits(
+        self,
+    ) -> None:
+        # (#4904 3b-4c: a worker has no Discord and a row may carry no names, so the courtesy note
+        # is not sent from there; the questions are written as always)
+        from dmbot.bot import DMBot
+        from dmbot.memory.language_reading import Heard
+
+        camp = SimpleNamespace(dm_accounts=frozenset({7}), name="Grey Reach")
+        bot: Any = SimpleNamespace(
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=camp)), memory=object(),
+            _dm_message=AsyncMock(return_value=object()), headless=True,
+        )  # fmt: skip
+        report = SimpleNamespace(heard_languages=[Heard("Okthandom", "Dwarvish", ("2",))])
+        asked = AsyncMock(return_value=(1, [("Belleros", "Elvish")]))
+        with patch("dmbot.ui.name_background.ask_languages", asked):
+            await DMBot._ask_heard_languages(bot, 1, "c" * 32, report, 1_700_000_000)  # type: ignore[arg-type]
+        asked.assert_awaited_once()
+        bot._dm_message.assert_not_awaited()
+
     def test_the_sheet_message_is_capped_and_escaped(self) -> None:
         from dmbot.ui.name_background import SHEET_LANGUAGES_SHOWN, heard_sheet_languages
 

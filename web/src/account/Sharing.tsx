@@ -6,6 +6,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { problem, text } from "../content/sharing";
 import { RULE_UPDATES_LIVE } from "../content/rule-updates-switch";
+import CampaignNav from "./CampaignNav";
 import LazyPanel from "./LazyPanel";
 import {
   ApiError,
@@ -25,6 +26,18 @@ type Load =
   | { kind: "ready"; value: SharedRulesCampaign[] };
 
 const change = (kind: string): string => (kind === "homebrew" ? text.changePacks : text.changeRules);
+
+/** The campaign in the address: `/account/sharing/<server>.<campaign>`, or null for the overview (#5039). */
+export function refFromSharingPath(path: string): string | null {
+  const match = /^\/account\/sharing\/([^/]+?)\/?$/.exec(path);
+  if (!match) return null;
+  // A malformed address names no campaign the user runs: the page then says so, rather than unmounting.
+  try {
+    return decodeURIComponent(match[1] ?? "");
+  } catch {
+    return "";
+  }
+}
 
 function Shares({ items }: { items: SharedRuleSet[] }) {
   return (
@@ -71,7 +84,7 @@ function Uses({ items }: { items: FollowedRuleSet[] }) {
   );
 }
 
-export default function SharingPage({ api }: { api: AccountApi }) {
+export default function SharingPage({ api, campaignRef = null }: { api: AccountApi; campaignRef?: string | null }) {
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   useEffect(() => {
     let live = true;
@@ -96,18 +109,25 @@ export default function SharingPage({ api }: { api: AccountApi }) {
     };
   }, [api]);
 
+  // With a campaign in the address, the page is that campaign's (#5039): its navigation, and only its sets and packs.
+  const shown = load.kind === "ready" && campaignRef !== null ? load.value.filter((c) => c.ref === campaignRef) : null;
+  const campaignName = shown?.[0]?.name ?? null;
   return (
     <div class="stack">
-      <nav aria-label={text.crumbsLabel}>
-        <ol class="crumbs">
-          <li>
-            <a href="/account">{text.account}</a>
-          </li>
-          <li>
-            <span aria-current="page">{text.heading}</span>
-          </li>
-        </ol>
-      </nav>
+      {campaignRef !== null ? (
+        <CampaignNav api={api} campaignRef={campaignRef} page="sharedRules" name={campaignName} />
+      ) : (
+        <nav aria-label={text.crumbsLabel}>
+          <ol class="crumbs">
+            <li>
+              <a href="/account">{text.account}</a>
+            </li>
+            <li>
+              <span aria-current="page">{text.heading}</span>
+            </li>
+          </ol>
+        </nav>
+      )}
       {load.kind === "loading" && (
         <p class="muted" role="status">
           {text.loading}
@@ -124,16 +144,18 @@ export default function SharingPage({ api }: { api: AccountApi }) {
         </p>
       )}
       {load.kind === "ready" &&
-        (load.value.length === 0 ? (
+        ((shown ?? load.value).length === 0 ? (
           <p class="panel" role="status">
             {text.empty}
           </p>
         ) : (
           <>
             <p class="lead">{text.lead}</p>
-            {load.value.map((c) => (
+            {(shown ?? load.value).map((c) => (
               <section key={c.ref} class="panel" aria-labelledby={`shared-${c.ref}`}>
-                <h2 id={`shared-${c.ref}`}>{c.name}</h2>
+                <h2 id={`shared-${c.ref}`}>
+                  {campaignRef === null ? <a href={`/account/sharing/${encodeURIComponent(c.ref)}`}>{c.name}</a> : c.name}
+                </h2>
                 <p class="small muted">{text.server(c.serverName)}</p>
                 <p class="small">
                   <a href={`/account/house-rules/${encodeURIComponent(c.ref)}`}>{text.openHouseRules}</a>{" · "}
