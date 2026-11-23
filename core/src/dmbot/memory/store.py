@@ -6272,19 +6272,29 @@ class MemoryStore:
         entries' included as `name_uploads` follows them, for the character card's "In your lore:
         *<label>*, under '<heading>'" (#5050); None when no upload made it. DM-only, like the
         label."""
+        found = await self.lore_origin_at(guild_id, campaign_id, entity_id)
+        return None if found is None else (found[0], found[1])
+
+    async def lore_origin_at(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> tuple[str, str, int] | None:
+        """`lore_origin`, and when that upload was read (Unix seconds), so the card can say which
+        came first, the lore or the table (#5050 ruling)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "WITH RECURSIVE family(id) AS ("
                 " SELECT %s::text"
                 " UNION SELECT e.id FROM memory_entities e JOIN family f ON e.merged_into = f.id"
                 " WHERE e.guild_id = %s AND e.campaign_id = %s)"
-                " SELECT s.label, s.heading FROM memory_name_sources s JOIN family f"
+                " SELECT s.label, s.heading, s.created_at FROM memory_name_sources s JOIN family f"
                 " ON s.entity_id = f.id WHERE s.guild_id = %s AND s.campaign_id = %s"
                 " ORDER BY s.created_at, s.upload_key, (s.heading = ''), s.entity_id LIMIT 1",
                 (entity_id, guild_id, campaign_id, guild_id, campaign_id),
             )
             row = await cur.fetchone()
-            return None if row is None else (str(row["label"]), str(row["heading"]))
+            if row is None:
+                return None
+            return str(row["label"]), str(row["heading"]), int(row["created_at"])
 
     async def link_source(
         self, guild_id: int, campaign_id: str, relation_id: str

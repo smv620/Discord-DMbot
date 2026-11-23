@@ -23,10 +23,10 @@ def _mention(raw: Any) -> Mention | None:
     return Mention(int(raw["at"]), 0, str(raw.get("scene") or ""))
 
 
-def _lore(raw: Any) -> tuple[str, str] | None:
-    if not isinstance(raw, dict) or not raw.get("label"):
+def _lore(raw: Any) -> tuple[str, str, int] | None:
+    if not isinstance(raw, dict) or not raw.get("label") or not isinstance(raw.get("at"), int):
         return None
-    return str(raw["label"]), str(raw.get("heading") or "")
+    return str(raw["label"]), str(raw.get("heading") or ""), int(raw["at"])
 
 
 def lines_of(name: str, card: dict[str, Any] | None, numbers: dict[int, int]) -> dict[str, Any]:

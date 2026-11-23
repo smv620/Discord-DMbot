@@ -69,7 +69,9 @@ class OnTheNamesPage(Base):
                 "SELECT dmbot_web_card_lines(%s, %s, %s) AS r", (self.g, other, [self.mira])
             )
             theirs = (await cur.fetchone())["r"]
-        self.assertEqual(mine, {"label": "Harbour notes", "heading": "The quay"})
+        self.assertEqual(mine["label"], "Harbour notes")
+        self.assertEqual(mine["heading"], "The quay")
+        self.assertGreater(mine["at"], 0)
         self.assertIsNone(theirs)  # (not a DM of that campaign: the door gives nothing)
 
     async def test_a_row_with_only_a_sentence_is_a_summary_not_still_writing(self) -> None:
@@ -104,7 +106,7 @@ class TheWords(Base):
         pending = card_lines.lines_of("Shafina", None, {})
         self.assertEqual(pending, {"who": "DMbot is still writing this.", "whoPending": True})
         card = {"who": "An innkeeper.", "madeAt": 5, "scannedAt": 6, "first": None, "last": None,
-                "lore": {"label": "Icewind Dale notes", "heading": "Bryn Shander"}}  # fmt: skip
+                "lore": {"label": "Icewind Dale notes", "heading": "Bryn Shander", "at": 5}}  # fmt: skip
         got = card_lines.lines_of("Shafina", card, {})
         self.assertEqual(
             got["firstMet"], "First met: in your lore, *Icewind Dale notes*, under 'Bryn Shander'."

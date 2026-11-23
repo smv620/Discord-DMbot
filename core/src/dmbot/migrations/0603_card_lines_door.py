@@ -8,7 +8,7 @@ from __future__ import annotations
 # The three lines at the top of a character's card are kept by the background job in
 # `memory_card_summaries` (0600): the sentence, and where and when the character was first met and
 # last mentioned. This door gives the DM's page those rows, plus the lore a character was first
-# read from (the earliest upload's label and heading, merged entries' included, as
+# read from (the earliest upload's label, heading and time, merged entries' included, as
 # `MemoryStore.lore_origin` reads it) and each session's number by its start, so the page says
 # "Session 3, 15 Nov" as Discord does. DM-only like `dmbot_web_scenes`: anyone who is not a DM of
 # the campaign gets NULL. Only characters the job has reached have a row, so only they are given a
@@ -53,7 +53,8 @@ SQL = r"""
                                            JOIN family f ON m.merged_into = f.id
                                        WHERE m.guild_id = g AND m.campaign_id = c)
                                    SELECT jsonb_build_object('label', n.label,
-                                                             'heading', n.heading)
+                                                             'heading', n.heading,
+                                                             'at', n.created_at)
                                    FROM memory_name_sources n JOIN family f
                                        ON n.entity_id = f.id
                                    WHERE n.guild_id = g AND n.campaign_id = c
