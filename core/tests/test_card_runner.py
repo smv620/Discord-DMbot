@@ -115,7 +115,8 @@ class Round(unittest.IsolatedAsyncioTestCase):
 
         p = Pass(budget=Budget(9))
         await runner2.work(
-            p, 1, "c", version=1, sessions=1, agreed=0, entity_ids=["a"], who=self.who, mentions=later
+            p, 1, "c", version=1, sessions=1, agreed=0, entity_ids=["a"],
+            who=self.who, mentions=later,
         )  # fmt: skip
         self.assertEqual(p.failed, 1)
         self.assertTrue(runner2.fresh(1, "c", 1, 1, 0))  # (waiting)
@@ -137,7 +138,8 @@ class Round(unittest.IsolatedAsyncioTestCase):
 
         p = Pass()
         await runner.work(
-            p, 1, "c", version=1, sessions=1, agreed=0, entity_ids=["a"], who=boom, mentions=self.mentions
+            p, 1, "c", version=1, sessions=1, agreed=0, entity_ids=["a"],
+            who=boom, mentions=self.mentions,
         )  # fmt: skip
         self.assertEqual(p.failed, 1)
         self.assertTrue(runner.fresh(1, "c", 1, 1, 0))
