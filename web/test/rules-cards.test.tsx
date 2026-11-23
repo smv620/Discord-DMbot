@@ -97,6 +97,18 @@ describe("Rules cards on the campaign's Settings", () => {
     expect(screen.getByRole("button", { name: words.on }).getAttribute("aria-pressed")).toBe("true");
   });
 
+  it("shows the working words while DMbot is changing it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = mockApi("table");
+    api.campaignSettingAnswer = async () => ({ state: "working" }) as Awaited<ReturnType<NonNullable<typeof api.campaignSettingAnswer>>>;
+    render(<RulesCardsPanel api={api} campaignRef="100.cmp1" on={true} />);
+    fireEvent.click(screen.getByRole("button", { name: words.on }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    expect(screen.getByText(words.working)).toBeTruthy();
+  });
+
   it("says the slow line after a minute with no answer", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const api = mockApi("table");
@@ -125,12 +137,30 @@ describe("Rules cards on the campaign's Settings", () => {
     expect(screen.queryByRole("heading", { name: words.heading })).toBeNull();
   });
 
-  it("a player's page has no switch, even with the switch on", async () => {
+  it("a player's read has no switch, even with the switch on", async () => {
     live.on = true;
     const api = mockApi("table");
-    const { settings: _gone, ...page } = await api.campaignPage!("100.cmp1");
-    render(<CampaignSettings api={api} campaignRef="100.cmp1" page={page} />);
+    const page = await api.campaignPage!("100.cp-player");
+    render(<CampaignSettings api={api} campaignRef="100.cp-player" page={page} />);
     await screen.findByRole("heading", { name: /settings/i });
     expect(screen.queryByRole("heading", { name: words.heading })).toBeNull();
+  });
+
+  it("a game master's read without rulesCards (an older API) has no switch", async () => {
+    live.on = true;
+    const api = mockApi("table");
+    const page = await api.campaignPage!("100.cmp1");
+    const { rulesCards: _old, ...settings } = page.settings!;
+    render(<CampaignSettings api={api} campaignRef="100.cmp1" page={{ ...page, settings }} />);
+    await screen.findByRole("heading", { name: /settings/i });
+    expect(screen.queryByRole("heading", { name: words.heading })).toBeNull();
+  });
+
+  it("the mock refuses a rules_cards change for a refused campaign, and a bad value at the door", async () => {
+    const api = mockApi("table");
+    const id = await api.setCampaignSetting!("100.cmp1.rc-refused", { setting: "rules_cards", value: "on" });
+    const got = await api.campaignSettingAnswer!("100.cmp1.rc-refused", id);
+    expect(got.state).toBe("failed");
+    await expect(api.setCampaignSetting!("100.cmp1", { setting: "rules_cards", value: "maybe" })).rejects.toMatchObject({ kind: "bad-value" });
   });
 });
