@@ -107,6 +107,15 @@ class WhatCountsAsAnAnswer(unittest.TestCase):
         self.assertEqual(total({kinds.NAMES: Counted(2), kinds.WHICH: Counted(3)}), 5)
 
 
+class TheHeavyKinds(unittest.TestCase):
+    def test_heads_ups_are_throttled_like_the_other_full_reads(self) -> None:
+        # (#5147: a continuity check reads the whole snapshot, so the loop counts it every 5th
+        # round, as it does the other heavy kinds, and not every minute)
+        from dmbot.questions.loop import HEAVY
+
+        self.assertIn(kinds.HEADS_UPS, HEAVY)
+
+
 class TheRevealsCount(unittest.IsolatedAsyncioTestCase):
     """What the characters learned (#3863): the count is the reveal card's own, with the people
     recorded in that campaign as the only speakers that count. Stand-ins, no database."""
