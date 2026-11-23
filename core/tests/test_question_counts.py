@@ -8,6 +8,7 @@ import unittest
 from collections.abc import Collection
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from dmbot.campaigns import CampaignStore
@@ -686,3 +687,43 @@ class FamilyTiesAreShownAndAnswerable(unittest.TestCase):
         before = {kinds.FAMILY: Counted(3)}
         self.assertTrue(answered(before, {kinds.FAMILY: Counted(1)}))
         self.assertTrue(grew(before, {kinds.FAMILY: Counted(4)}))
+
+
+class TheDeedsGate(unittest.IsolatedAsyncioTestCase):
+    """The question count's deeds gate is the bot's own `deeds_on` (#5105): off with the switch,
+    off for a campaign that is gone, and the plan's story memory decides otherwise."""
+
+    def fake(self, *, switch: bool, campaign: object, allowed: bool) -> Any:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.bot import DMBot
+
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(story_deeds_on=switch),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            plan_allows=AsyncMock(return_value=allowed),
+        )
+        bot.deeds_on = lambda g, c: DMBot.deeds_on(cast(DMBot, bot), g, c)
+        return bot
+
+    async def test_the_switch_off_is_no_and_asks_no_campaign(self) -> None:
+        bot = self.fake(switch=False, campaign=object(), allowed=True)
+        self.assertFalse(await bot.deeds_on(7, "c"))
+        bot.campaigns.get.assert_not_awaited()
+        bot.plan_allows.assert_not_awaited()
+
+    async def test_a_campaign_that_is_gone_is_no(self) -> None:
+        bot = self.fake(switch=True, campaign=None, allowed=True)
+        self.assertFalse(await bot.deeds_on(7, "c"))
+        bot.plan_allows.assert_not_awaited()
+
+    async def test_a_lapsed_plan_is_no_and_is_asked_fail_closed(self) -> None:
+        campaign = object()
+        bot = self.fake(switch=True, campaign=campaign, allowed=False)
+        self.assertFalse(await bot.deeds_on(7, "c"))
+        bot.plan_allows.assert_awaited_once_with("story", 7, campaign, fail_open=False)
+
+    async def test_switch_on_with_story_memory_is_yes(self) -> None:
+        bot = self.fake(switch=True, campaign=object(), allowed=True)
+        self.assertTrue(await bot.deeds_on(7, "c"))

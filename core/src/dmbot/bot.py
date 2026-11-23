@@ -11408,7 +11408,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ),
                 )
 
-    async def _deeds_on(self, gid: int, cid: str) -> bool:
+    async def deeds_on(self, gid: int, cid: str) -> bool:
         """Whether a campaign's deeds are asked about at all: the deeds switch is on and its plan
         has story memory (the same rule as the after-session question and the deed card, #3175),
         so a lapsed plan's leftover proposals are counted nowhere (#5105)."""
@@ -11417,7 +11417,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         campaign = await self.campaigns.get(gid, cid)
         if campaign is None:
             return False
-        return bool(await self.plan_allows("story", gid, campaign, fail_open=False))
+        return await self.plan_allows("story", gid, campaign, fail_open=False)
 
     async def offer_deeds(self, table: Table) -> None:
         """After a session (#3175), only with DMBOT_STORY_DEEDS: one more question for the DM when
