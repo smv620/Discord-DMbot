@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import unittest
 from typing import ClassVar
+from unittest import IsolatedAsyncioTestCase
 
 from dmbot.memory import card_lines as cl
 from dmbot.memory import heard
@@ -75,46 +76,53 @@ class TheScan(unittest.TestCase):
         self.assertEqual(got["orla"], cl.Seen(4, 4))
 
 
-class TheSpans(unittest.TestCase):
-    def test_first_from_the_oldest_and_last_from_the_newest(self) -> None:
+def sync(sessions: dict[int, dict[str, cl.Seen]], asked: list[int] | None = None):  # type: ignore[no-untyped-def]
+    """A session pass over a table of results, noting which sessions were asked for."""
+
+    async def scan(i: int) -> dict[str, cl.Seen]:
+        if asked is not None:
+            asked.append(i)
+        return sessions.get(i, {})
+
+    return scan
+
+
+class TheSpans(IsolatedAsyncioTestCase):
+    async def test_first_from_the_oldest_and_last_from_the_newest(self) -> None:
         sessions = {
             0: {"orla": cl.Seen(None, 2)},  # (only the recap said her)
             1: {"orla": cl.Seen(5, 9), "rook": cl.Seen(1, 1)},
             2: {"orla": cl.Seen(3, 3)},
         }
-        got = cl.spans(3, lambda i: sessions[i], {"orla", "rook", "nobody"})
+        got = await cl.spans(3, sync(sessions), {"orla", "rook", "nobody"})
         self.assertEqual(got["orla"], cl.Span(cl.Where(1, 5), cl.Where(2, 3)))
         self.assertEqual(got["rook"], cl.Span(cl.Where(1, 1), cl.Where(1, 1)))
         self.assertEqual(got["nobody"], cl.Span(None, None))  # (never, at the table)
 
-    def test_a_name_only_a_recap_said_has_a_last_and_no_first(self) -> None:
-        got = cl.spans(1, lambda i: {"orla": cl.Seen(None, 4)}, {"orla"})
+    async def test_a_name_only_a_recap_said_has_a_last_and_no_first(self) -> None:
+        got = await cl.spans(1, sync({0: {"orla": cl.Seen(None, 4)}}), {"orla"})
         self.assertEqual(got["orla"], cl.Span(None, cl.Where(0, 4)))
 
-    def test_each_session_is_read_at_most_once_for_the_whole_batch(self) -> None:
+    async def test_each_session_is_read_at_most_once_for_the_whole_batch(self) -> None:
         asked: list[int] = []
-
-        def scan(i: int) -> dict[str, cl.Seen]:
-            asked.append(i)
-            return {"orla": cl.Seen(1, 1)} if i in (0, 3) else {}
-
-        cl.spans(4, scan, {"orla", "rook"})
+        sessions = {0: {"orla": cl.Seen(1, 1)}, 3: {"orla": cl.Seen(1, 1)}}
+        await cl.spans(4, sync(sessions, asked), {"orla", "rook"})
         self.assertEqual(sorted(asked), [0, 1, 2, 3])
         self.assertEqual(len(asked), len(set(asked)))  # (no session twice)
 
-    def test_the_search_stops_when_every_character_has_its_first_and_last(self) -> None:
+    async def test_the_search_stops_when_every_character_has_its_first_and_last(self) -> None:
         asked: list[int] = []
 
-        def scan(i: int) -> dict[str, cl.Seen]:
+        async def scan(i: int) -> dict[str, cl.Seen]:
             asked.append(i)
             return {"orla": cl.Seen(1, 1)}
 
-        got = cl.spans(100, scan, {"orla"})
+        got = await cl.spans(100, scan, {"orla"})
         self.assertEqual(got["orla"], cl.Span(cl.Where(0, 1), cl.Where(99, 1)))
         self.assertEqual(sorted(asked), [0, 99])  # (a long campaign, two reads)
 
-    def test_no_sessions_means_no_span(self) -> None:
-        self.assertEqual(cl.spans(0, lambda i: {}, {"orla"}), {"orla": cl.Span(None, None)})
+    async def test_no_sessions_means_no_span(self) -> None:
+        self.assertEqual(await cl.spans(0, sync({}), {"orla"}), {"orla": cl.Span(None, None)})
 
 
 class TheScene(unittest.TestCase):

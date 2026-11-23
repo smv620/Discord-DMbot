@@ -12,7 +12,7 @@ good. The words are plain: no "node", "entity" or "graph".
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -92,19 +92,21 @@ def scan_session(
     return found
 
 
-def spans(
-    count: int, scan: Callable[[int], Mapping[str, Seen]], wanted: Collection[str]
+async def spans(
+    count: int,
+    scan: Callable[[int], Awaitable[Mapping[str, Seen]]],
+    wanted: Collection[str],
 ) -> dict[str, Span]:
     """First and last mention of each character in `wanted` across `count` sessions, oldest first.
-    `scan(i)` is session i's pass (`scan_session`), asked for lazily and at most once for each
-    session, so a long campaign is read once for the whole batch. "First" is looked for from the
-    oldest session on and stops when every character has one; "last" from the newest back, the
-    same."""
+    `scan(i)` is session i's pass (`scan_session`, after loading its lines), asked for lazily and
+    at most once for each session, so a long campaign is read once for the whole batch. "First"
+    is looked for from the oldest session on and stops when every character has one; "last" from
+    the newest back, the same."""
     memo: dict[int, Mapping[str, Seen]] = {}
 
-    def seen(index: int) -> Mapping[str, Seen]:
+    async def seen(index: int) -> Mapping[str, Seen]:
         if index not in memo:
-            memo[index] = scan(index)
+            memo[index] = await scan(index)
         return memo[index]
 
     first: dict[str, Where] = {}
@@ -113,13 +115,13 @@ def spans(
     for index in range(count):
         if len(first) == len(want):
             break
-        for entity_id, hit in seen(index).items():
+        for entity_id, hit in (await seen(index)).items():
             if entity_id in want and entity_id not in first and hit.first_play is not None:
                 first[entity_id] = Where(index, hit.first_play)
     for index in range(count - 1, -1, -1):
         if len(last) == len(want):
             break
-        for entity_id, hit in seen(index).items():
+        for entity_id, hit in (await seen(index)).items():
             if entity_id in want and entity_id not in last:
                 last[entity_id] = Where(index, hit.last)
     return {entity_id: Span(first.get(entity_id), last.get(entity_id)) for entity_id in want}
