@@ -315,7 +315,7 @@ class TheSwitch(unittest.TestCase):
 
 
 class TheBotStep(unittest.TestCase):
-    """`DMBot._read_session_names` on a stand-in bot: metered, never raises, joins the scan."""
+    """`DMBot._read_session_names` on a stand-in bot: metered, never raises, every name found."""
 
     def bot(self, client: Any) -> Any:
         from types import SimpleNamespace
@@ -347,10 +347,10 @@ class TheBotStep(unittest.TestCase):
         from dmbot.bot import DMBot
 
         lines: Any = [SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out")]
-        joined, kinds, _trace, _unread = asyncio.run(
+        found, _trace, _unread = asyncio.run(
             DMBot._read_session_names(bot, 5, "c1", lines, set(), scan)
         )
-        return joined, kinds
+        return [f.name for f in found], {f.name: f.kind for f in found}
 
     def test_its_calls_are_charged_to_the_campaign_as_names(self) -> None:
         from dmbot import credits
@@ -364,7 +364,7 @@ class TheBotStep(unittest.TestCase):
         joined, kinds = self.step(self.bot(FakeClient(answer_for)), [])
         self.assertEqual([(c.guild_id, c.campaign_id, c.job_kind) for c in charged],
                          [(5, "c1", "names")])  # fmt: skip
-        self.assertEqual(([s.name for s in joined], kinds), (["hrothgar"], {"hrothgar": "npc"}))
+        self.assertEqual((joined, kinds), (["hrothgar"], {"hrothgar": "person"}))
 
     def test_a_job_that_already_charges_keeps_charging(self) -> None:
         from dmbot import credits
@@ -379,7 +379,7 @@ class TheBotStep(unittest.TestCase):
             self.step(self.bot(FakeClient(answer_for)), [])
         self.assertEqual([c.job_kind for c in charged], ["import"])
 
-    def test_a_failure_leaves_the_scans_list_as_it_was(self) -> None:
+    def test_a_failure_gives_no_names_and_the_scans_list_stands(self) -> None:
         from dmbot.memory.scan import Suggestion
 
         bot = self.bot(FakeClient(lambda _t: FakeReply(answer())))
@@ -389,7 +389,7 @@ class TheBotStep(unittest.TestCase):
 
         bot.memory.known_keys = broken
         scan = [Suggestion("Targos", 3)]
-        self.assertEqual(self.step(bot, scan), (scan, {}))
+        self.assertEqual(self.step(bot, scan), ([], {}))
 
     def test_the_readers_progress_reaches_the_given_hook_batch_by_batch(self) -> None:
         import asyncio

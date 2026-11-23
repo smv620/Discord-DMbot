@@ -15,8 +15,10 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
+from dmbot.memory import name_groups as ng
 from dmbot.memory import name_trace as nt
 from dmbot.memory import scan
+from dmbot.memory.name_reader import SPOKEN_OF, Found
 from dmbot.memory.scan import Suggestion, find_new_names, group_alike
 
 LINES = [
@@ -229,7 +231,7 @@ def stand_in(
     texts = TEXTS if texts is None else texts
 
     async def lines(*_: Any) -> list[Any]:
-        return [SimpleNamespace(user_id=1, text=t, topic="game") for t in texts]
+        return [SimpleNamespace(user_id=1, text=t, topic="game", typed=False) for t in texts]
 
     async def keys(*_: Any) -> set[str]:
         return set()
@@ -241,17 +243,12 @@ def stand_in(
         return SimpleNamespace(value=SimpleNamespace(id=f"e-{name}"))
 
     async def read(
-        _g: int, _c: str, _lines: Any, _people: Any, every: list[Suggestion], **_kw: Any
+        _g: int, _c: str, _lines: Any, _people: Any, _scan: list[Suggestion], **_kw: Any
     ) -> Any:
         if unread is None:
-            return every, {}, [], None
-        listed = {s.name for s in every}
-        return (
-            [*every, *(Suggestion(n, 2) for n in kinds if n not in listed)],
-            dict(kinds),
-            [],
-            unread,
-        )
+            return [], [], None
+        found = [Found(n, "person", SPOKEN_OF, 2, ("1", "2")) for n in kinds]
+        return found, [], unread
 
     async def campaign(*_: Any) -> Any:
         return SimpleNamespace(name="test of the frostmaiden (sample 41b.1)")
@@ -268,6 +265,7 @@ def stand_in(
         drop_language_suggestions=AsyncMock(),
         _people_keys=AsyncMock(return_value=set()),
         _read_session_names=read,
+        _name_closeness=AsyncMock(return_value=(lambda _s: None, lambda _s: False)),
         _take_name_asks=AsyncMock(return_value=[]),
         _scan_kinds=AsyncMock(return_value={}),
         _session_start=AsyncMock(return_value=None),
@@ -334,11 +332,59 @@ class TheBotStep(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self.run_step(stand_in(d, {"Hope": "creature"}, on=False)), ["Vorna"])
 
+    def test_with_the_switch_off_the_step_is_exactly_today_s(self) -> None:
+        # (Supervisor, on #5137: no real campaign's suggestions change until a scored run; two
+        # spellings heard once each are still too few, nothing is capitalised, no closeness read)
+        texts = ["Then we met Hrothgar at the gate.", "Later Rothgar drank alone.", "Vorna came.",
+                 "And Vorna left.", "we saw hrothgar again."]  # fmt: skip
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, on=False, texts=texts)
+            self.assertEqual(self.run_step(bot, texts), ["Vorna"])
+            bot._name_closeness.assert_not_awaited()
+            self.assertIn((nt.SCAN, "Rothgar", scan.TOO_FEW), self.ends(d))
+
+    def test_two_spellings_heard_once_each_are_one_name_with_both(self) -> None:
+        # (section 5: grouped before the "heard twice" test; before slice 3 both were lost)
+        texts = ["Then we met Hrothgar at the gate.", "Later Rothgar drank alone."]
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            self.assertEqual(self.run_step(bot, texts), ["Hrothgar"])
+            self.assertEqual([c.args[3] for c in bot.memory.add_alias.await_args_list], ["Rothgar"])
+            self.assertIn((nt.SCAN, "Rothgar", ng.GROUPED), self.ends(d))
+
+    def test_a_name_close_to_a_secret_is_never_suggested(self) -> None:
+        texts = ["Then we met Hrothgar at the gate.", "Later Rothgar drank alone."]
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            bot._name_closeness.return_value = (lambda _s: None, lambda s: s == "Rothgar")
+            self.assertEqual(self.run_step(bot, texts), [])
+            # (never named, even in the dev trace: one count row)
+            self.assertIn((nt.SCAN, "", ng.NEAR_SECRET), self.ends(d))
+            self.assertNotIn("Hrothgar", [n for _s, n, _r in self.ends(d)])
+
+    def test_when_the_names_cannot_be_read_nothing_is_suggested(self) -> None:
+        texts = ["Then we met Hrothgar at the gate.", "Later Hrothgar drank alone."]
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            bot._name_closeness.return_value = None
+            self.assertEqual(self.run_step(bot, texts), [])
+
+    def test_a_reader_that_did_not_read_leaves_the_strict_scan(self) -> None:
+        # (unread None: the loosened rule never decides alone; a name heard once is too few)
+        texts = ["We met Hrothgar at the gate.", "Then Hope barks at Vorna.", "And Vorna left."]
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(
+                self.run_step(stand_in(d, {"Hope": "creature"}, unread=None, texts=texts), texts),
+                ["Vorna"],
+            )
+            self.assertIn((nt.SCAN, "Hrothgar", ng.TOO_FEW), self.ends(d))
+
 
 # Rule 2 (design section 11): the functions in the name paths that look at a letter's case. The
 # list may only shrink: a new one fails, and one that no longer looks must leave the list.
 NAME_PATHS = (
     "memory/scan.py",
+    "memory/name_groups.py",
     "memory/name_reader.py",
     "memory/name_longer.py",
     "memory/name_trace.py",
@@ -357,6 +403,9 @@ LOOKS_AT_CASE = frozenset(
         "memory/scan.py:_candidates.leads",  # (#5086: a capitalized word leading a name)
         "memory/scan.py:find_new_names",  # (which words are said in lower case: `ordinary`)
         "memory/name_longer.py:widened",  # (#2570: a place's lower-case last word)
+        # (#5133, the Expert and Supervisor: the spelling proposed for the DM to confirm gets
+        # capitals when none was heard; it shapes the proposal and decides nothing)
+        "memory/name_groups.py:proposed",
         "names/not_names.py:_clause",  # (a lower-case clause word: "so", "and")
         "names/not_names.py:shape_of",  # (a number or a time said with a capital)
         "names/not_names.py:_lower_everywhere",  # (a word only ever said in lower case)
