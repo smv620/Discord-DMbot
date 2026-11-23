@@ -16,6 +16,8 @@ from typing import Any
 
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
+from dmbot.memory.continuity import _predicate_words  # (the card's own words for a kind)
+from dmbot.memory.ontology import Ontology
 from dmbot.web import relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -54,6 +56,7 @@ async def read(
     if got is None:
         raise RecapError("not_allowed")
     hits: list[dict[str, Any]] = []
+    onto = Ontology.build()  # (the core kinds; a campaign's own kind arrives with its label)
     for h in got["hits"]:
         now, before = h["now"], h["earlier"]
         hits.append(
@@ -77,6 +80,10 @@ async def read(
                     "object": str(before["object"] or ""),
                     "label": _opt(before["label"]),
                 },
+                # The earlier fact in the card's words ("Bram carries Heartseeker", "Bram is the
+                # niece of Tamsin"), built as `ContinuityStore` builds it, so the page copies no
+                # table of kinds. None for a death (it has no earlier fact) or a secret clue.
+                "earlierWords": None if before is None else _earlier_words(onto, before),
                 "ended": _opt(h["ended"]),
                 "earlierSession": None if h["earlierSession"] is None else int(h["earlierSession"]),
                 "quote": _opt(h["quote"]),
@@ -87,6 +94,18 @@ async def read(
             }
         )
     return {"total": int(got["total"]), "hits": hits}
+
+
+def _earlier_words(onto: Ontology, before: dict[str, Any]) -> str:
+    """The earlier fact as one line: its subject, the kind in words (the campaign's own label when
+    it has one), its object."""
+    label = _opt(before["label"])
+    kind = label or _predicate_words(
+        onto, str(before["predicate"]), str(before["detail"] or ""), directional=True
+    )
+    return " ".join(
+        part for part in (str(before["subject"] or ""), kind, str(before["object"] or "")) if part
+    )
 
 
 async def ask(db: Database, session: Session, ref: str) -> str:

@@ -6,7 +6,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { NameChange, PlaceWorld, PlaceWorldRow } from "../src/account/api";
-import PlaceCulture, { cultureLine, populationLine } from "../src/account/PlaceCulture";
+import PlaceCulture from "../src/account/PlaceCulture";
+import { cultureLine, populationLine } from "../src/content/place-culture-lines";
 import { placeWorldWords as w } from "../src/content/place-world-words";
 
 afterEach(cleanup);

@@ -622,7 +622,7 @@ class ThePass(NamesTest):
         kept = 0
         store = SimpleNamespace(
             pending_scans=AsyncMock(side_effect=[1, 1, 0]),
-            ready_for_recap=AsyncMock(return_value=[]),
+            recap_waiting=AsyncMock(return_value=False),
         )
         tell = DMBot._tell_import_news.__get__(self.bot)
         for sid in (self.session, quiet, second):

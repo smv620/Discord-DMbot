@@ -42,6 +42,11 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "reading_connections": 15 * 60,
     "waiting_for_limit": None,
     "connections_read": None,
+    # The name reader of an imported session (#5127, #5091): a part is one AI call, as a story
+    # batch is; both ends are resting ones.
+    "reading_names": 15 * 60,
+    "names_read": None,
+    "names_stopped": None,
     "waiting_for_names": None,  # waiting for the DM's answers
     "starting_recap": 10 * 60,
     "writing_recap": 30 * 60,
@@ -93,6 +98,9 @@ ENDS: Final[Mapping[str, str]] = {
     "recap_not_written": DONE,
     "recap_ready": DONE,
     "connections_read": DONE,
+    # A stopped name reader is not a failure of the import: the names found are still suggested.
+    "names_read": DONE,
+    "names_stopped": DONE,
     "failed": FAILED,
     "recap_failed": FAILED,
 }
@@ -106,6 +114,7 @@ UNITS: Final[Mapping[str, str]] = {
     "recap_reading": "parts",
     "restore_writing": "parts",
     "reading_connections": "parts",
+    "reading_names": "parts",
 }
 
 
