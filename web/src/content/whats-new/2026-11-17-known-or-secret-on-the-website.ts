@@ -4,6 +4,5 @@ export const entry: Item = {
   date: "2026-11-17",
   title: "Answer known-or-secret questions on the website",
   what: "When DMbot holds back a connection because your players may already know it, you can now answer the 🤫 question on the Questions page: keep it known, or make it secret. Undo takes a change back.",
-  held: "Held until the core answer is deployed and the website is switched on (#4598).",
   order: 115,
 };

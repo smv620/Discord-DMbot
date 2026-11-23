@@ -21,6 +21,16 @@ vi.mock("../src/content/questions-switch", () => ({
   },
 }));
 
+// The cards that other pages answer stay off here, as they were before their switches went on (#4841): these tests count
+// and route only the kinds each one turns on, and the switches' own pages have their own tests.
+vi.mock("../src/content/heard-switch", () => ({ HEARD_LIVE: false }));
+vi.mock("../src/content/rule-updates-switch", () => ({ RULE_UPDATES_LIVE: false }));
+vi.mock("../src/content/world-notes-switch", () => ({ WORLD_NOTES_LIVE: false }));
+vi.mock("../src/content/threads-switch", () => ({ THREADS_LIVE: false }));
+vi.mock("../src/content/maps-switch", () => ({ MAPS_LIVE: false }));
+vi.mock("../src/content/trait-questions-switch", () => ({ TRAIT_QUESTIONS_LIVE: false }));
+vi.mock("../src/content/confirm-kinds-switch", () => ({ CONFIRM_KINDS_LIVE: false }));
+
 // The 🤫 Known or secret? question is answered on the page only while its switch is on (#4598).
 const secrets = vi.hoisted(() => ({ on: false }));
 vi.mock("../src/content/secret-questions-switch", () => ({
