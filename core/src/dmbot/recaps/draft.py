@@ -33,6 +33,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.extractor import Said, quoted
 from dmbot.memory.importance import beat_score
 from dmbot.memory.importance_rank import beat_rank
@@ -705,8 +706,12 @@ def prose_message(
 
 
 def _with_familiar(name: str, familiar: Mapping[str, str] | None) -> str:
-    """A name as the writer's list shows it: with the name the table uses, when there is one."""
+    """A name as the writer's list shows it: with the name the table uses, when there is one. A
+    description (#5173: `recaps.inputs.described_words`) is shown only as the story says it ("the
+    gemstone mine"), so the writer never sees it written like a proper name."""
     short = (familiar or {}).get(name)
+    if short is not None and short == in_sentence(name, True):
+        return short
     return f"[familiar: {short}; full: {name}]" if short else name
 
 

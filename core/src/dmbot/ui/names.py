@@ -23,7 +23,8 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
-from dmbot.memory import heard_rules, tags
+from dmbot.memory import heard_rules, name_reader, tags
+from dmbot.memory.entity_words import as_said, in_sentence
 from dmbot.memory.list_names import split_list
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -1177,15 +1178,11 @@ def heard_line(times: int, typed: int, also: Sequence[str], *, written: bool = F
     return f"Typed {_times(typed)} in chat{also_heard}{spelled}."
 
 
-SINGLED_OUT = "singled_out"  # how a singled-out thing or place was found (#5173; name_found.how)
-
-
 def singled_line(heard: str, times: int) -> str:
     """The card's line for a thing or a place the story singles out with no name (#5173, as
     ruled): "📌 Not a name, but the story keeps coming back to it: “gemstone mine” (heard 4
     times)." The quote is the story's own words; counts only otherwise."""
-    words = " ".join(heard.split())
-    words = words[:1].lower() + words[1:]  # (as heard: the capital is only DMbot's proposal)
+    words = as_said(heard)  # (as heard: the first capital was only DMbot's proposal)
     return (
         f"📌 Not a name, but the story keeps coming back to it: \u201c{_md(words)}\u201d "
         f"(heard {_times(max(times, 1))})."
@@ -1310,7 +1307,8 @@ def suggestion_text(
     around = f"\nAround it in your text: \u201c{shown}\u201d" if context else ""
     seen = scene_line(scene)  # (DMbot's summary of the scene, #3596, above the places)
     # (`tagged`: the name with its tag, for a description such as "beggar woman", #3431)
-    title = _md(tagged or entity.name)
+    # (a description is titled as the story says it, "the gemstone mine", #5173)
+    title = _md(in_sentence(entity.name, True) if singled else tagged or entity.name)
     # What the players will be told of it (#2967, #3833): shown as written, never cut (the column
     # holds at most 120 characters), so confirming the name is confirming this line too. Nothing
     # extra for a name with no line: DMbot never makes one up.
@@ -1398,6 +1396,12 @@ def spelled_pick(name: str) -> str:
 
 
 NOT_ASKED_SHOWN = 3  # spellings named in "won't ask about …"; then "or N more spellings"
+
+
+def not_kept_note(name: str) -> str:
+    """🚫 Not worth keeping, on a singled-out thing or place (#5173): "🚫 Not kept. DMbot won't
+    ask about **the gemstone mine** again." """
+    return f"🚫 Not kept. DMbot won't ask about **{_md(in_sentence(name, True))}** again."
 
 
 def not_a_name_note(spellings: Sequence[str]) -> str:
@@ -1664,6 +1668,42 @@ class SpelledForm(discord.ui.Modal, title="How is it spelled?"):
         await self.review.apply_words(interaction, self.entity_id, "", self.name.value, keep=True)
 
 
+class GiveNameForm(discord.ui.Modal, title="Give it a name"):
+    """✏️ Give it a name… on a singled-out thing or place (#5173, the ux-critic's words): empty and
+    required, since it has no name to correct. What is typed becomes a real name (the description
+    mark goes); typing the description itself changes nothing."""
+
+    name: discord.ui.TextInput[GiveNameForm] = discord.ui.TextInput(
+        label="Its name in your game",
+        placeholder="For example: the Glittering Deep",
+        max_length=NAME_MAX,
+        required=True,
+    )
+
+    def __init__(self, review: SuggestionReview, entity_id: str, described: str) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.review = review
+        self.entity_id = entity_id
+        self.described = described
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        if name_key(self.name.value) == name_key(self.described):
+            await _tell(interaction, SAME_AS_DESCRIBED)
+            return
+        await self.review.apply_words(interaction, self.entity_id, "", self.name.value, keep=True)
+
+
+SAME_AS_DESCRIBED = (
+    "That's how the story already describes it. Type its name, or press ✅ Keep it to keep it as "
+    "it is."
+)
+
+
 class GroupNameForm(discord.ui.Modal, title="What is the group called?"):
     """ "They're a group" (#3383, part 2): the DM names the group the listed names belong to."""
 
@@ -1769,6 +1809,8 @@ class SuggestionReview(_Menu):
     def new_card(self) -> bool:
         """The card of #5133 slice 3c: a name the after-session step kept what made it a name for,
         with no question of its own ("Sounds like…" and spelled-out cards keep theirs)."""
+        if self.found is not None and self.singled:
+            return True  # (a description has no "Sounds like" or spelled-out question, #5173)
         return self.found is not None and not self.fix_to and self.match is None
 
     def _added(self, entity: Entity) -> str:
@@ -1798,7 +1840,7 @@ class SuggestionReview(_Menu):
         ]
         self.spellings = [entity.name, *self.also]
         self.found = await _found(memory, campaign, entity)
-        self.singled = self.found is not None and self.found.how == SINGLED_OUT
+        self.singled = self.found is not None and self.found.how == name_reader.SINGLED_OUT
         self.refs = []
         self.places = await self._places(interaction, campaign, memory, entity)
         self.entity_id = entity.id
@@ -1811,9 +1853,9 @@ class SuggestionReview(_Menu):
             entity,
             len(self.queue),
             also=self.also,
-            match=self.match,
+            match=None if self.singled else self.match,
             spelled=bool(self.spelled),
-            fix_to=self.fix_to,
+            fix_to="" if self.singled else self.fix_to,
             kind=self.known_kind,
             places=self.places.text(),
             context=context,
@@ -2688,6 +2730,9 @@ class SuggestionReview(_Menu):
         if not sees_secrets(campaign, interaction.user.id):
             await _tell(interaction, "Only the DM can change a name.")
             return
+        if self.singled:  # (no spelling to fix: a name to give, #5173)
+            await interaction.response.send_modal(GiveNameForm(self, entity.id, entity.name))
+            return
         await interaction.response.send_modal(SpelledForm(self, entity.id, entity.name))
 
     async def _change_words(self, interaction: discord.Interaction) -> None:
@@ -2842,9 +2887,8 @@ class SuggestionReview(_Menu):
             return
         changed(interaction, campaign)  # the next card sees it at once
         if heard is not None and written.batch is not None:
-            kept = _Kept(
-                written.batch, entity.id, entity.name, kind, written.rules, session, self.found
-            )
+            shown = in_sentence(entity.name, entity.described)  # ("the gemstone mine", #5173)
+            kept = _Kept(written.batch, entity.id, shown, kind, written.rules, session, self.found)
             note = await self._fix_transcript(interaction, campaign, memory, kept)
             split = split_words.for_one(written.split)
             await self._saved(
@@ -2852,7 +2896,7 @@ class SuggestionReview(_Menu):
             )
             return
         added = (
-            kept_note(entity.name, kind, self.also)
+            kept_note(in_sentence(entity.name, entity.described), kind, self.also)
             if self.new_card
             else f"✅ Added {self._added(entity)}."
         )
@@ -3054,7 +3098,9 @@ class SuggestionReview(_Menu):
             await _tell(interaction, GONE)
             return
         changed(interaction, campaign)
-        if self.new_card:  # (#5133 slice 3c: every spelling heard, as ruled)
+        if entity.described:  # (#5173: a description is not kept, not "not a name")
+            note = not_kept_note(entity.name)
+        elif self.new_card:  # (#5133 slice 3c: every spelling heard, as ruled)
             note = not_a_name_note([entity.name, *self.also])
         else:
             names = _and([f"**{_md(n)}**" for n in [entity.name, *self.also]])

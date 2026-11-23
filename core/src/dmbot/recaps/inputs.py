@@ -235,7 +235,8 @@ def familiar_for(
 def described_words(names: Any, allowed: Collection[str]) -> dict[str, str]:
     """{name: how it reads in a sentence} for each described entry the recap may use (#5173): a
     thing or a place with no name of its own reads "the gemstone mine", given to the writer the
-    way a character's familiar name is, so it is never written as a proper name."""
+    way a familiar name is, and shown to it as its only name (`draft._with_familiar`), so it is
+    never written as a proper name."""
     ok = set(allowed)
     return {
         e.name: in_sentence(e.name, True)

@@ -83,11 +83,31 @@ def head_word(phrase: str) -> str:
     return content[-1] if content else ""
 
 
-def proposed(heard: str) -> str:
+def proposed(heard: str, lines: Iterable[str] = ()) -> str:
     """A description takes a capital on its first word only ("Gemstone mine"): capitals on each
-    word would claim a name the story never gave (the Expert, on #5173)."""
-    text = " ".join(heard.split())
-    return text[:1].upper() + text[1:]
+    word would claim a name the story never gave (the Expert, on #5173). A later word keeps a
+    capital only where the lines give it one ("old Bryn Shander gate"); the reader's own capitals
+    count for nothing."""
+    words = " ".join(heard.split()).split()
+    if not words:
+        return ""
+    said = {w for line in lines for w in re.findall(r"[^\W_]+(?:['’][^\W_]+)*", line)}
+    out = [words[0][:1].upper() + words[0][1:]]
+    for w in words[1:]:
+        cap = w[:1].upper() + w[1:]
+        out.append(cap if cap in said else w[:1].lower() + w[1:])
+    return " ".join(out)
+
+
+def player_keys(names: Iterable[str]) -> set[str]:
+    """The keys a player character's own gear may be named by ("Cerric's", "Cerric Ambere's"): each
+    of its names and aliases whole, and the first word of each (the reviewer, on #5173)."""
+    out: set[str] = set()
+    for n in names:
+        key = name_key(n)
+        if key:
+            out |= {key, key.split()[0]}
+    return out
 
 
 def _possessor(phrase: str) -> str:
@@ -105,6 +125,7 @@ def decide(
     texts: Mapping[str, str],
     known: Collection[str],
     players: Collection[str] = (),
+    live: Collection[str] | None = None,
     is_item: Callable[[str, str], bool] = unique_item.keeps,
 ) -> Decided:
     """The session's singled-out candidates (`name_reader.tally(..., every=True)` output with the
@@ -112,7 +133,9 @@ def decide(
     read, by its number (numbered from 1 in the order read, so a difference is a distance in
     lines). `known`: name keys DMbot has or must never suggest. `players`: the name keys of the
     player characters, whose own gear is never singled out. `is_item`: the one-particular-thing
-    test (`unique_item.keeps`), given the phrase and the words it was said in."""
+    test (`unique_item.keeps`), given the phrase and the words it was said in. `live`: the name keys
+    of the campaign's live entries, which alone may refuse a phrase by its head word (a rejected
+    word, a said-as or a player's name word never does); None: `known` for both."""
     out = Decided()
     mine = [f for f in found if f.why == SINGLED_OUT]
     heads = [head_word(f.name) for f in mine]
@@ -120,14 +143,14 @@ def decide(
     ready: list[Kept] = []
     for f, head in zip(mine, heads, strict=True):
         key = name_key(f.name)
-        if not key or not head or key in known or head in known:
+        if not key or not head or key in known or head in (known if live is None else live):
             out.refused.append((f.name, KNOWN_NAME, f.times))
             continue
         said = " ".join(texts.get(n, "") for n in f.lines)
         if f.kind == "item" and (_possessor(f.name) in players or not is_item(f.name, said)):
             out.refused.append((f.name, EVERYDAY_ITEM, f.times))
             continue
-        lines = list(f.lines)
+        lines = [n for n in f.lines if n in texts]  # (only lines still readable: consent)
         if head not in shared:  # a shorter return: "the mine", when no other phrase has "mine"
             short = re.compile(rf"\b(?:the|that|this)\s+{re.escape(head)}\b", re.IGNORECASE)
             more = [n for n, t in texts.items() if n not in lines and short.search(t)]
@@ -144,7 +167,8 @@ def decide(
             out.refused.append((f.name, reason, len(lines)))
             continue
         ordered = tuple(sorted(dict.fromkeys(lines), key=lambda n: int(n) if n.isdigit() else 0))
-        ready.append(Kept(proposed(f.name), f.name, f.kind, len(ordered), ordered))
+        cited = [texts[n] for n in ordered if n in texts]
+        ready.append(Kept(proposed(f.name, cited), f.name, f.kind, len(ordered), ordered))
     ready.sort(key=lambda k: (-k.times, k.name.casefold()))
     out.kept = ready[:SINGLED_MAX]
     out.refused += [(k.heard, OVER_SINGLED, k.times) for k in ready[SINGLED_MAX:]]

@@ -47,6 +47,40 @@ class TheMark(MemoryTest):
         kept = next(e for e in live if e.type == "place")
         self.assertEqual((kept.name, kept.described), ("Glitterdeep", False))
 
+    async def test_renamed_the_storys_words_stay_as_another_name(self) -> None:
+        mine = await self.add("Gemstone mine", type="place", source="scan", described=True)
+        await self.memory.rename_entity(GUILD_A, self.c, mine, "Glitterdeep", source=DM_SOURCE)
+        keys = {a.key for a in await self.memory.aliases(GUILD_A, self.c, entity_id=mine)}
+        self.assertIn("gemstone mine", keys)  # (so the reader never offers it again as new)
+
+    async def test_a_star_on_another_name_clears_the_mark(self) -> None:
+        mine = await self.add("Gemstone mine", type="place", described=True, status="confirmed")
+        await self.memory.add_alias(
+            GUILD_A,
+            self.c,
+            mine,
+            "Glitterdeep",
+            kind="nickname",
+            source=DM_SOURCE,
+            status="confirmed",
+        )
+        other = next(
+            a
+            for a in await self.memory.aliases(GUILD_A, self.c, entity_id=mine)
+            if a.text == "Glitterdeep"
+        )
+        await self.memory.set_main_name(GUILD_A, self.c, mine, other.id, source=DM_SOURCE)
+        kept = await self.entity(mine)
+        self.assertEqual((kept.name, kept.described), ("Glitterdeep", False))
+
+    async def test_joined_the_other_way_round_the_name_is_kept_too(self) -> None:
+        named = await self.add("Glitterdeep", type="place", status="confirmed")
+        mine = await self.add("Gemstone mine", type="place", described=True, status="confirmed")
+        await self.memory.merge(GUILD_A, self.c, named, mine, source=DM_SOURCE, dm_said_same=True)
+        live = [e for e in await self.memory.entities(GUILD_A, self.c) if e.status != "merged"]
+        kept = next(e for e in live if e.type == "place")
+        self.assertEqual((kept.name, kept.described), ("Glitterdeep", False))
+
 
 class TheBackup(unittest.TestCase):
     def test_the_mark_is_a_checked_column(self) -> None:

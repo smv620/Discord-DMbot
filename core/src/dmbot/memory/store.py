@@ -5754,10 +5754,10 @@ class MemoryStore:
                 }
                 keep_old = False
             if current.get("described"):
-                # The DM giving a description a name (#5173, "Give it a name…"): a name now, and
-                # the story's words for it ("Gemstone mine") are no spelling of that name.
+                # The DM giving a description a name (#5173, "Give it a name…"): a name now. The
+                # story's words for it stay as another name, as a merge keeps them, so the reader
+                # never offers "the gemstone mine" again as something new.
                 changes["described"] = False
-                keep_old = False
             row = await w.update(ENTITIES, entity_id, changes)
             await _relabel_unnamed(
                 w,
@@ -5845,7 +5845,8 @@ class MemoryStore:
                 await w.update(ALIASES, kept[0]["id"], {"status": CONFIRMED})
             if alias["kind"] == "old":  # an old spelling made the name is listened for again
                 await w.update(ALIASES, alias_id, {"kind": "full"})
-            row = await w.update(ENTITIES, entity_id, {"name": alias["text"]})
+            # (⭐ another name as the main one is the DM naming it: no longer a description, #5173)
+            row = await w.update(ENTITIES, entity_id, {"name": alias["text"], "described": False})
             return Written(_entity(row), w.batch)
 
     async def set_note(

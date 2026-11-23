@@ -124,10 +124,6 @@ class TheWords(unittest.TestCase):
         self.assertEqual(in_sentence("Bryn Shander", False), "Bryn Shander")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheCardAndTheRecap(unittest.TestCase):
     def test_the_card_says_it_is_no_name_and_quotes_it_as_heard(self) -> None:
         from dmbot.ui import names as ui
@@ -169,3 +165,87 @@ class TheCardAndTheRecap(unittest.TestCase):
             described_words(names, {"Gemstone mine", "Bryn Shander"}),
             {"Gemstone mine": "the gemstone mine"},  # (only what the recap may use)
         )
+
+
+class TheReviewersCases(unittest.TestCase):
+    """The reviewer's and the ux-critic's points on slice 6a (#5173)."""
+
+    def test_a_possessive_reads_as_the_story_said_it(self) -> None:
+        from dmbot.memory.entity_words import as_said
+        from dmbot.ui import names as ui
+
+        self.assertEqual(in_sentence("Garret's old sled", True), "Garret's old sled")
+        self.assertEqual(as_said("Garret's old sled"), "Garret's old sled")
+        self.assertIn("\u201cGarret's old sled\u201d", ui.singled_line("Garret's old sled", 3))
+        self.assertEqual(in_sentence("Gemstone mine", True), "the gemstone mine")
+        self.assertEqual(in_sentence("The azure tome", True), "the azure tome")
+
+    def test_one_capital_unless_the_lines_give_more(self) -> None:
+        self.assertEqual(
+            so.proposed("gemstone Mine", ["the gemstone mine is shut"]), "Gemstone mine"
+        )
+        self.assertEqual(
+            so.proposed("old bryn shander gate", ["the old Bryn Shander gate"]),
+            "Old Bryn Shander gate",
+        )
+
+    def test_a_player_characters_gear_by_first_name_or_nickname(self) -> None:
+        players = so.player_keys(["Cerric Ambere", "Ceri"])
+        self.assertTrue({"cerric ambere", "cerric", "ceri"} <= players)
+        said = {"1": "cerric's spellbook", "70": "cerric's spellbook", "130": "cerric's spellbook"}
+        out = so.decide([found("Cerric's spellbook", "item", said)], said, set(), players)
+        self.assertEqual(out.refused[0][1], so.EVERYDAY_ITEM)
+
+    def test_only_a_live_name_refuses_by_the_head_word(self) -> None:
+        said = {"1": "the old mine", "70": "the old mine", "130": "the old mine"}
+        item = found("old mine", "place", said)
+        # ("mine" is a word the DM refused as a name once: no reason to refuse the phrase)
+        out = so.decide([item], said, {"mine"}, live={"bryn shander"})
+        self.assertEqual([k.heard for k in out.kept], ["old mine"])
+        out = so.decide([item], said, set(), live={"mine"})
+        self.assertEqual(out.kept, [])
+
+    def test_lines_not_readable_now_are_not_counted(self) -> None:
+        said = texts()
+        item = found("gemstone mine", "place", said)
+        readable = {n: t for n, t in said.items() if n != "118"}  # (its speaker stopped)
+        out = so.decide([item], readable, set())
+        self.assertNotIn("118", out.kept[0].lines)
+
+    def test_the_replies_say_what_happened_in_the_storys_words(self) -> None:
+        from dmbot.ui import names as ui
+
+        self.assertEqual(
+            ui.not_kept_note("Gemstone mine"),
+            "🚫 Not kept. DMbot won't ask about **the gemstone mine** again.",
+        )
+        self.assertEqual(
+            ui.kept_note(in_sentence("Gemstone mine", True), "place", ()),
+            "✅ Kept **the gemstone mine** as a place.",
+        )
+        self.assertIn("Type its name, or press ✅ Keep it", ui.SAME_AS_DESCRIBED)
+
+    def test_the_recap_writer_sees_only_the_storys_words(self) -> None:
+        from dmbot.recaps.draft import _with_familiar
+
+        familiar = {"Gemstone mine": "the gemstone mine", "Garret Voss": "Garret"}
+        self.assertEqual(_with_familiar("Gemstone mine", familiar), "the gemstone mine")
+        self.assertEqual(
+            _with_familiar("Garret Voss", familiar), "[familiar: Garret; full: Garret Voss]"
+        )
+
+    def test_the_card_is_titled_and_quoted_in_the_storys_words(self) -> None:
+        from dmbot.memory.models import Entity
+        from dmbot.ui import names as ui
+
+        mine = Entity(
+            "e1", "place", "Gemstone mine", "", "proposed", None, "scan", 1, described=True
+        )
+        text = ui.suggestion_text(mine, 1, counts=(4, 0), singled=True)
+        self.assertIn("📝 **the gemstone mine**", text)
+        self.assertIn("\u201cgemstone mine\u201d (heard 4 times)", text)
+        self.assertNotIn("a new name?", text)
+
+
+if __name__ == "__main__":
+    unittest.main()

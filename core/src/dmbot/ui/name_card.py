@@ -659,6 +659,8 @@ def card_text(
     phrase = kind_phrase(entity, lookup.links.get(entity_id, ()))
     what = f"{phrase} · played by **{_md(player)}**" if player else phrase
     lines = [f"🪪 **{_md(title or entity.name)}** · {what} · {when}"]
+    if entity.described:  # (right under the title, so a busy card never drops it: #5173)
+        lines.append(DESCRIBED_LINE.strip())
     if summary_lines and secrets:
         lines.extend(summary_lines)
     is_item = entity.type == ITEM if item is None else item
@@ -1109,8 +1111,6 @@ async def show_card(
         line = party_tell.card_line([(_md(n), k) for _, n, k in catch_up])
         if line and len(text) + len(line) <= CARD_MAX:
             text += line
-    if entity.described and len(text) + len(DESCRIBED_LINE) <= CARD_MAX:
-        text += DESCRIBED_LINE  # (a description, not a name: #5173; "Give it a name…" clears it)
     if secrets and (entity.status == PROPOSED or entity.unnamed):
         # The scene (#3596): DMbot's summary of who, where and what, for a question still open;
         # read after the sweep and the consent check, DM-only, "Where was it said?" is the source.
