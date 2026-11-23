@@ -86,7 +86,7 @@ export const text = {
   downloading: "Saving…",
   // The wait while a file is built (#3347 row 8): the page's wait line, under the button.
   buildingFile: "DMbot is building your file.",
-  buildingSlow: "DMbot is slow to build it. Wait a minute, then press the button again.",
+  buildingSlow: "DMbot is slow to build it. Wait a minute. If it still hasn't saved, reload the page, then press the button again.",
   downloadFailed: "That didn't save. Try again.",
   // The game master's script of a session (#3244): a copy with who and what is meant written in brackets.
   scriptDownload: "Save the script",
