@@ -151,6 +151,10 @@ NOT_IN_BACKUP: dict[str, str] = {
     "provenance of working data: the upload's label and, for the DM's Why, the reader's quote "
     "of up to 240 characters (kept only for an upload the DM confirmed the right to use, shown to "
     "the DM alone); a restored campaign's connections read as added by hand (#2946, #3606)",
+    "memory_card_summaries": "a character's one sentence and where and when they were first met "
+    "and last mentioned (#5050): made by a background job from the entry's player-safe facts and "
+    "the transcripts, DMbot's own words and ids only, never a quote; a restored campaign's cards "
+    "read 'still writing' until the job has run again",
     "memory_name_sessions": "which session a waiting name was made in, by the session's start "
     "(#4043): a time and an id only, for the split-party check, kept only while a name waits; a "
     "restored campaign's waiting names fall back to the check's older guess by time, which may "
