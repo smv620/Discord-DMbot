@@ -35,7 +35,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from dmbot.devtools import sample_name
+from dmbot.devtools import sample_name, sample_respell
 from dmbot.devtools.sample_run import characters, costs, counts, map_step, plan, steps
 from dmbot.devtools.sample_run import decide as decide_mod
 from dmbot.devtools.sample_run.plan import SampleError, Step
@@ -89,7 +89,9 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default=sample_name.TYPED,
         help="which version of the sample session --session is (docs/design/session_names.md, "
         "section 8): typed (the default, as always), no-capitals (the owner's edit with the "
-        "capital-letter clues taken out) or spoken (through speech-to-text). Each is its own "
+        "capital-letter clues taken out), spoken (through speech-to-text) or respelled (dev only, "
+        "#5133: give the typed file; a few key names are written several ways from a fixed table, "
+        "`sample_respell`). Each is its own "
         'series: its own campaigns ("sample N.k no capitals") and summaries, never mixed',
     )
     parser.add_argument(
@@ -247,6 +249,8 @@ async def run(
     if not off:
         plan.require_character_players(players)
     lore_text, session_text = read_text(args.lore, "lore"), read_text(args.session, "session")
+    if args.version == "respelled":  # (the typed session, a few key names heard several ways)
+        session_text = sample_respell.respell(session_text)
     steps.check_lore(lore_text, args.lore_choice)
     started = session_start(args.date, now)
     from dmbot.transcript import importer
