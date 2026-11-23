@@ -631,6 +631,23 @@ class UnnamedPeople(unittest.TestCase):
         (tie,) = [t for t in report.ties if t.id == "l035"]
         self.assertEqual((spirit.status, tie.status), (gkc.FOUND, gkc.FOUND))
 
+    def test_extras_are_listed_by_name_only_when_asked(self) -> None:
+        # (#5055: dev1 lists what each run stored that the key does not match, on #3545)
+        data = backup(
+            [("c1", "Cerric", "character"), ("x1", "Underdark", "place"),
+             ("u1", "unnamed - Cerric's grandfather", "character")],
+            [],
+        )  # fmt: skip
+        data["sections"]["memory"][2]["unnamed"] = True
+        for row in data["sections"]["memory"]:
+            row["source"] = "lore"
+        report = gkc.check(data, KEY)
+        listed = gkc.render(report, counts_only=True, list_extras=True)
+        self.assertIn("place | confirmed | lore | Underdark", listed)
+        self.assertIn("unnamed - Cerric's grandfather", listed)
+        self.assertNotIn("Underdark", gkc.render(report, counts_only=True))
+        self.assertNotIn("| Cerric\n", listed)  # (a key match is never an extra)
+
     def test_other_must_not_names_still_count_as_descriptions(self) -> None:
         key = {**self.raider_key(), "must_not_names": ["maul barbarian", "the attackers"]}
         data = backup([("u1", "unnamed - the attackers", "character")], [])

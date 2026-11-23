@@ -301,3 +301,19 @@ class TheRoadLine(WorldNotesDoor):
         (road,) = [line for line in await self.lines() if line.get("layer") == mf.CONDITION]
         self.assertEqual((await self.act("world-not", road["id"])).error, "")
         self.assertEqual([x for x in await self.lines() if x.get("layer") == mf.CONDITION], [])
+
+
+class TheNamedCulture(WorldNotesDoor):
+    """#5062 (migration 0598): a culture line that holds a named culture says its name."""
+
+    async def test_a_named_culture_line_carries_the_cultures_name(self) -> None:
+        await self.memory.add_read_map_facts(
+            self.g, self.one.id,
+            [Read(self.keep, mf.CULTURE, "", how="strong", culture="Illuskan")],
+            source="background",
+        )  # fmt: skip
+        lines = [x for x in await self.lines() if x.get("layer") == mf.CULTURE]
+        self.assertEqual([x["culture"] for x in lines], ["Illuskan"])
+        # (a plain lineage line, or land, has none)
+        terrain = [x for x in await self.lines() if x.get("layer") == mf.TERRAIN]
+        self.assertEqual([x.get("culture") for x in terrain], [None])

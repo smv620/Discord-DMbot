@@ -138,6 +138,28 @@ class AFileRefusedSaysWhichTableBrokeIt(ABackupHoldsTheMemory):
         self.assertNotIn("vanished", " ".join(logged.output))
         self.assertEqual(backup.damaged_tags(rows), ["party_span"])
 
+    async def test_every_breaking_column_is_named_in_one_pass(self) -> None:
+        from dmbot.campaigns.models import CampaignError
+        from dmbot.memory import backup
+
+        main, _ = await self.store.export_set(GUILD, self.campaign.id)
+        rows = main["memory"] if "memory" in main else main["sections"]["memory"]
+        names = [r for r in rows if r.get("table") == "alias"]
+        beliefs = [r for r in rows if r.get("table") == "belief"]
+        self.assertTrue(names and beliefs)
+        names[0]["created_at"] = "not a time"
+        beliefs[0]["confidence"] = "high"
+        with (
+            self.assertLogs("dmbot.memory.backup", level="WARNING") as logged,
+            self.assertRaises(CampaignError),
+        ):
+            backup.MemorySection().check(rows)
+        said = logged.output[0]
+        self.assertIn("memory_aliases.created_at", said)
+        self.assertIn("memory_beliefs.confidence", said)
+        self.assertNotIn("not a time", said)
+        self.assertNotIn("high", said.replace("highest", ""))
+
 
 class TheDatabaseRefusingARowSaysWhere(DatabaseTest):
     """A file that passes its checks and is still refused by the database says which table and

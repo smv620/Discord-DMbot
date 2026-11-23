@@ -126,6 +126,7 @@ NAME_NOT_A_PERSON: Rules = {  # a name of something else, with the reason
     "thread_suggestions": ("name", "name_key"),  # a story thread's name, built from its parts
     "memory_trait_offers": ("name", "name_key"),  # the trait's name (a language, lineage or class)
     "web_delete_notices": ("campaign_name",),  # the deleted campaign's name
+    "memory_card_summaries": ("who",),  # DMbot's one sentence about a character, never a person
     "support_replies": ("who",),  # only 'customer', 'ai' or 'person': who wrote, never a name
 }
 

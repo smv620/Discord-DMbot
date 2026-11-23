@@ -179,7 +179,7 @@ describe("a campaign's entries", () => {
   it("groups them by kind in the bot's order, each with its summary and words", async () => {
     page(mockApi("table"), `/account/homebrew/${REF}`);
     expect(
-      await screen.findByRole("heading", { name: "The Brynwater Crossing" }),
+      await screen.findByRole("link", { name: "The Brynwater Crossing" }),
     ).toBeTruthy();
     const kinds = screen
       .getAllByRole("heading", { level: 3 })
