@@ -849,3 +849,24 @@ class TheHeadsUpCount(unittest.IsolatedAsyncioTestCase):
         (line,) = logged.output
         self.assertIn("RuntimeError", line)
         self.assertNotIn("secret", line)
+
+    async def test_no_memory_store_counts_zero(self) -> None:
+        bot = self.fake(extractor=True, allowed=True, memory=None)
+        self.assertEqual(await bot.heads_up_count(7, "c"), 0)
+
+    async def test_an_error_in_the_gate_counts_zero_and_logs_the_type_only(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.memory.continuity import ContinuityStore
+
+        bot = self.fake(extractor=True, allowed=True)
+        bot.plan_allows = AsyncMock(side_effect=RuntimeError("plan down"))
+        with (
+            patch.object(ContinuityStore, "check", AsyncMock()) as check,
+            self.assertLogs("dmbot.bot", level="WARNING") as logged,
+        ):
+            self.assertEqual(await bot.heads_up_count(7, "c"), 0)
+        check.assert_not_awaited()
+        (line,) = logged.output
+        self.assertIn("RuntimeError", line)
+        self.assertNotIn("plan down", line)

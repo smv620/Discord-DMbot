@@ -11746,11 +11746,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         would list, with who agrees read now and the settings' levels; no AI call. Only with the
         story extractor on and a plan with story memory (the same gate as the after-session check).
         Any error counts 0 and logs the type only."""
-        if self.memory is None or not await self._story_asked(
-            self.settings.story_extractor_on, gid, cid
-        ):
-            return 0
         try:
+            if self.memory is None or not await self._story_asked(
+                self.settings.story_extractor_on, gid, cid
+            ):
+                return 0
             report = await ContinuityStore(self.memory).check(
                 gid,
                 cid,
