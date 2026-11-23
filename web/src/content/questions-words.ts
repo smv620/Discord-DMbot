@@ -54,6 +54,9 @@ export const questionsPage = {
   kinds: {
     // (answered on this page when it can read them, else the link to the recaps: see `howFor` in Questions.tsx)
     names: { label: "New names to check", how: "here", to: "recaps", link: "Open the recaps" },
+    // An imported session's names past the scan's first 10, waiting behind 📝 More names (#5055 B):
+    // added from Discord until the website's button.
+    more_names: { label: "More names from your sessions", how: "discord" },
     heard: { label: "Did they mean…?", how: "discord" },
     lookalikes: { label: "Names that look alike", how: "link", to: "names", link: "Open the Names page" },
     connections: { label: "Connections waiting", how: "here", to: "graph", link: "Open the Story Graph" },
@@ -76,6 +79,8 @@ export const questionsPage = {
     party_leaves: { label: "Still in the party?", how: "discord" },
     // Deeds the party did that mattered to someone, waiting to be recorded (#3591): answered in Discord until the website's card.
     deeds: { label: "Deeds to record", how: "discord" },
+    // Continuity heads-ups waiting for the DM (#5147): answered in Discord until the Names page's panel (#5136) links from here.
+    heads_ups: { label: "Heads-ups", how: "discord" },
     // What the characters learned, waiting to be kept (#3863): answered in Discord until the website's card (step 2).
     reveals: { label: "Things the characters learned", how: "discord" },
     // A map a player kept, waiting for a DM's yes (#4344): asked in Discord until the Maps page (#4347).

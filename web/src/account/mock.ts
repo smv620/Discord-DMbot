@@ -3543,8 +3543,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       // only what the DM confirmed and showed: no "read" row and no hidden one (the real door also cuts by what the reader may know)
-      // (the table reads land, climate and ruler only; a culture or who-lives-here row is not on the table yet, #4412)
-      return { rows: (worldRows.get(placeId) ?? []).filter((r) => r.shown && !r.read && r.layer !== "culture" && r.layer !== "population").map((r) => ({ layer: r.layer as "terrain" | "climate" | "control", value: r.value, words: r.words, groupName: r.groupName, how: r.how, part: r.part })) };
+      // The table shows what the DM kept and showed: land, climate, ruler, and culture and who lives here (#4412).
+      return { rows: (worldRows.get(placeId) ?? []).filter((r) => r.shown && !r.read).map((r) => ({ layer: r.layer, value: r.value, words: r.words, groupName: r.groupName, how: r.how, part: r.part, culture: r.culture ?? null })) };
     },
     async privateScenes(ref): Promise<PrivateScene[]> {
       calls.push(`privateScenes:${ref}`);

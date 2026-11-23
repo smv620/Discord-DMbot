@@ -282,6 +282,7 @@ class TheBotStep(unittest.TestCase):
         from dmbot.bot import DMBot
 
         bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+        bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)  # (#5055 B)
         return asyncio.run(DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1"))
 
     def ends(self, folder: str) -> list[tuple[str, str, str]]:

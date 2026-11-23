@@ -29,7 +29,9 @@ log = logging.getLogger(__name__)
 
 ROUND_S = 60
 # worked out in Python, or a wider read (World notes: three selects, #4285): every 5th round
-HEAVY = frozenset({"lookalikes", "connections", "world_notes"})
+HEAVY = frozenset(
+    {"lookalikes", "connections", "world_notes", "heads_ups"}
+)  # heads-ups: a full continuity read (#5147)
 HEAVY_EVERY = 5
 
 

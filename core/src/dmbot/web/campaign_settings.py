@@ -41,6 +41,10 @@ CHOICES: dict[str, tuple[str, ...]] = {
     # an eleventh: "Map checks", the private note when a distance or direction said at the table
     # is far off a kept map (#4687; on by default)
     "map_checks": ("on", "off"),
+    # a twelfth and thirteenth: "Rules cards" and "Ask me before adding" (#5155; Discord's two other
+    # on/off switches for a campaign)
+    "rules_cards": ("on", "off"),
+    "ask_before_adding": ("on", "off"),
 }
 
 

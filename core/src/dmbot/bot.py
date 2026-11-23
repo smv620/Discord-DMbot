@@ -21,6 +21,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import (
+    AsyncIterator,
     Awaitable,
     Callable,
     Collection,
@@ -416,6 +417,7 @@ from dmbot.memory.models import (
     lookup_key,
     name_key,
 )
+from dmbot.memory.more_names import PROGRESS_EVERY, HeldName, MoreNames
 from dmbot.memory.name_documents import MAX_PDF_BYTES
 from dmbot.memory.name_found import NameFound
 from dmbot.memory.ontology import Tally
@@ -546,6 +548,7 @@ from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot import suggest as time_suggest
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
+from dmbot.transcript import after_session_jobs as after_jobs
 from dmbot.transcript import (
     fix_notes,
     import_clock,
@@ -565,6 +568,7 @@ from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import spelled as spelled_out
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript import suggestions as line_suggestions
+from dmbot.transcript.after_session_jobs import AfterSessionJobs
 from dmbot.transcript.attendance import session_speakers
 from dmbot.transcript.cleaner import (
     DM_EDIT,
@@ -695,6 +699,7 @@ from dmbot.ui.live_heads_up import LiveHeadsUpButton, heads_up_text, heads_up_vi
 from dmbot.ui.map_checks import StopMapChecksButton
 from dmbot.ui.map_layers_note import UndoMapLayersButton
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
+from dmbot.ui.more_names import MoreNamesButton
 from dmbot.ui.name_background import _reading_pictures as reading_pictures
 from dmbot.ui.name_card import (
     FinishPastButton,
@@ -869,6 +874,11 @@ SUMMARY_PARTIAL = (
     "🤫 Some of the secrets in your after-session summary could not be shown to your players "
     "yet, so they are still secret. DMbot will try again after the next session."
 )
+WORKER_TAKE_S = 300  # no worker took a handed-over block in this long: the bot runs it itself
+WORKER_POLL_S = 5.0  # how often the bot looks at a block it waits for
+WORKER_WAIT_MAX_S = 3 * 3600  # the bot stops waiting for the worker's block after this
+AFTER_ROUND_S = 10  # how often the worker looks for blocks (#4905)
+AFTER_LEASE_EVERY_S = 60  # how often a running block's lease is renewed
 CARD_ROUND_S = 300  # how often the card round looks for work (#5050)
 IMPORT_ROUND_S = 30
 IMPORT_SCAN_TRIES = 3  # an imported session's name scan is let go after this many failures
@@ -1195,6 +1205,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         # What the background job kept for each character's card (#5050), read when a card opens.
         self.card_summaries = CardSummaries(recaps.db) if recaps is not None else None
+        # A live session's slow after-session reads handed to the worker (#4905 slice 4a).
+        self.after_jobs = AfterSessionJobs(recaps.db) if recaps is not None else None
         self.outbox_wake = asyncio.Event()
         # The lore DMs uploaded on the website, waiting to be read (#3022), and the reads running.
         self.lore_uploads = lore_queue.LoreQueue(recaps.db) if recaps is not None else None
@@ -2097,6 +2109,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             questions_board.QuestionsButton,
             FamilyTiesButton,
             TraitQuestionsButton,  # 🧬 Character details (#3926)
+            MoreNamesButton,  # 📝 More names, an import's names past the scan's 10 (#5055 B)
             WorldNotesButton,  # 🌍 World notes (#4285)
             ThreadQuestionsButton,  # 📜 Story threads (#4453)
             SecretQuestionsButton,  # 🤫 Known or secret? (#4524)
@@ -3503,6 +3516,282 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 self.pipeline.failed_in.pop(session, None)
                 self.pipeline.sent_s_in.pop(session, None)
 
+    def _worker_does_after_session(self) -> bool:
+        """Whether a live session's slow reads are handed to the worker (`DMBOT_WORKER`, #4905)."""
+        return bool(self.settings.worker_on and self.after_jobs is not None and not self.headless)
+
+    def _after_reads(
+        self, table: Table, ended_at: int
+    ) -> list[tuple[str, Callable[[], Awaitable[Any]]]]:
+        """The story read and what depends on it, in order: the extractor (names, readings, deeds,
+        reveals), where the story is (#4173 slice 4), the scene of each waiting question (#3596),
+        who each name could be (#3602), the contradiction grades and the report for the website
+        (#2661). Today's steps, or with the worker on one step that hands them over."""
+        steps: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
+            ("story extractor", lambda: self.extract_claims(table, ended_at)),
+            ("where the story is", lambda: self.walk_story_chain(table)),
+            ("scenes", lambda: self.write_scenes(table)),
+            ("who is this", lambda: self.write_who(table)),
+            ("contradiction grades", lambda: self.grade_contradictions(table)),
+            ("after-session report", lambda: self.make_report(table)),
+        ]
+        return DMBot._or_worker(self, table, after_jobs.READS, "story reads (worker)", steps)
+
+    def _after_late(self, table: Table) -> list[tuple[str, Callable[[], Awaitable[Any]]]]:
+        """Importance (#3172), then the new story threads (#4522): today's steps, or one step that
+        hands them to the worker."""
+        steps: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
+            ("importance", lambda: self.write_importance(table)),
+            ("story threads", lambda: self.read_session_threads(table)),
+        ]
+        return DMBot._or_worker(self, table, after_jobs.LATE, "late reads (worker)", steps)
+
+    def _or_worker(
+        self,
+        table: Table,
+        block: str,
+        name: str,
+        steps: list[tuple[str, Callable[[], Awaitable[Any]]]],
+    ) -> list[tuple[str, Callable[[], Awaitable[Any]]]]:
+        if not DMBot._worker_does_after_session(self):
+            return steps  # (the worker is off: exactly today's steps)
+        return [(name, lambda: DMBot._hand_to_worker(self, table, block, steps))]
+
+    async def _hand_to_worker(
+        self,
+        table: Table,
+        block: str,
+        steps: list[tuple[str, Callable[[], Awaitable[Any]]]],
+    ) -> None:
+        """Write the block's row and wait until the worker has done it, so the steps after it find
+        its results. If no worker takes it within `WORKER_TAKE_S` (it is down), or the worker that
+        took it died and its lease ran out, the bot takes the row itself and runs the steps as
+        before (keeping the lease fresh while it does), so a session's reads are never lost and
+        never run twice at once. A block the worker failed, or whose row is gone (the campaign was
+        deleted or moved), ends the wait: the steps after it go on. Counts only in the log."""
+        assert self.after_jobs is not None
+        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
+        queue = self.after_jobs
+
+        async def locally() -> None:
+            for name, step in steps:
+                try:
+                    await step()
+                except Exception:
+                    log.exception("After the session: %s failed", name)
+
+        if cid is None or sid is None:
+            return await locally()
+        dm_ids = {table.dm_user_id, *table.dm_user_ids}
+        try:
+            handed = await queue.add(gid, cid, sid, block, dm_ids)
+        except Exception as exc:
+            log.warning("After the session: could not hand %s on (%s)", block, type(exc).__name__)
+            handed = False
+        if not handed:
+            return await locally()
+        # (the DM sees that something is reading, even though the bot only waits: #5126's card)
+        words = (
+            after_session.STORY_IN_WORKER
+            if block == after_jobs.READS
+            else after_session.LATE_IN_WORKER
+        )
+        card = DMBot._after_card(self, table)
+        await card.stage(words)
+        who = f"bot-{uuid.uuid4().hex[:8]}"
+        began = time.monotonic()
+        errors = 0
+        while True:
+            try:
+                found = await queue.status(gid, cid, sid, block)
+                state = None if found is None else found.state
+                waited = time.monotonic() - began
+                if state in (None, after_jobs.DONE, after_jobs.FAILED):
+                    if state == after_jobs.FAILED:
+                        log.warning("After the session: the worker's %s block failed", block)
+                    return  # (None: the row is gone with its campaign)
+                if found is not None and found.stage:  # (what the worker is on: the DM's card)
+                    staged = {
+                        after_jobs.STORY: after_session.STORY,
+                        after_jobs.THREADS: after_session.THREADS,
+                    }.get(found.stage, words)
+                    await card.stage(staged, found.part, found.parts)
+                # `claim` itself refuses a block a live lease holds, so a dead worker's block is
+                # taken here too and a slow one is left alone.
+                if waited >= WORKER_TAKE_S and await queue.claim(gid, cid, sid, block, who):
+                    log.warning("After the session: no worker has %s; running it here", block)
+                    async with self._after_lease(gid, cid, sid, block, who):
+                        await locally()
+                    await queue.finish(gid, cid, sid, block, who, ok=True)
+                    return
+                errors = 0
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # a database hiccup: look again, but not for ever
+                errors += 1
+                log.warning("After the session: waiting for %s (%s)", block, type(exc).__name__)
+                if errors >= 5:
+                    return
+            if time.monotonic() - began >= WORKER_WAIT_MAX_S:
+                log.warning("After the session: gave up waiting for the worker's %s block", block)
+                return
+            await asyncio.sleep(WORKER_POLL_S)
+
+    @contextlib.asynccontextmanager
+    async def _after_lease(
+        self, gid: int, cid: str, sid: str, block: str, who: str
+    ) -> AsyncIterator[None]:
+        """Keep a block's lease fresh while its holder (the worker, or the bot's own fallback) runs
+        it, so a long read is never taken by a second copy. If the lease is found to be someone
+        else's (it was let go while this process was stalled), the run is stopped, never doubled.
+        A renewal that fails for a database reason is tried again at the next beat."""
+        assert self.after_jobs is not None
+        queue = self.after_jobs
+        runner = asyncio.current_task()
+
+        async def keep_fresh() -> None:
+            while True:
+                await asyncio.sleep(AFTER_LEASE_EVERY_S)
+                try:
+                    if not await queue.renew(gid, cid, sid, block, who) and runner is not None:
+                        log.warning("After the session: lost the lease on %s; stopping", block)
+                        runner.cancel()
+                        return
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    log.warning("After the session: lease renewal (%s)", type(exc).__name__)
+
+        renewing = asyncio.create_task(keep_fresh(), name="after-session-lease")
+        try:
+            yield
+        finally:
+            renewing.cancel()
+            await asyncio.gather(renewing, return_exceptions=True)
+
+    async def _run_after_block(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        dm_ids: Collection[int],
+        block: str,
+        report: Callable[[str, int, int], Awaitable[object]] | None = None,
+    ) -> bool:
+        """Run one handed-over block from ids alone (the worker's side, #4905): each step is today's
+        id-based reader, in today's order, each in its own `try` so one failing never stops the
+        next, and consent is asked again inside each as before. Notices go through the outbox
+        (`_story_note`). The extractor's per-session tally is the bot's log only, so it is not
+        kept here. `report` is told the stage and the part n of m as the block goes (the DM's card
+        reads it from the job's row): codes and counts only. True when every step ran without an
+        error."""
+        consenting = partial(self.consent.consenting, gid)
+
+        async def say(stage: str, part: int = 0, parts: int = 0) -> None:
+            if report is not None:
+                try:
+                    await report(stage, part, parts)
+                except Exception as exc:  # a display never breaks a read
+                    log.warning("After the session (worker): progress (%s)", type(exc).__name__)
+
+        async def story(part: int, parts: int) -> None:
+            await say(after_jobs.STORY, part, parts)
+
+        async def threads(part: int, parts: int) -> None:
+            await say(after_jobs.THREADS, part, parts)
+
+        if block == after_jobs.READS:
+            plan: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
+                (
+                    "story extractor",
+                    lambda: self._extract_session(
+                        gid,
+                        cid,
+                        sid,
+                        dm_ids=dm_ids,
+                        tally=None,
+                        notice_channel=None,
+                        progress=story,
+                    ),
+                ),
+                (
+                    "where the story is",
+                    lambda: self._walk_story_chain(gid, cid, sid, dm_ids, consenting),
+                ),
+                ("scenes", lambda: self._write_scenes(gid, cid, sid, dm_ids, consenting)),
+                ("who is this", lambda: self._write_who(gid, cid, sid, dm_ids, consenting)),
+                (
+                    "contradiction grades",
+                    lambda: self._grade_contradictions_for(gid, cid, sid),
+                ),
+                ("after-session report", lambda: self._make_report_for(gid, cid, sid)),
+            ]
+        else:
+            plan = [
+                ("importance", lambda: self._read_importance(gid, cid, sid)),
+                (
+                    "story threads",
+                    lambda: self._read_threads(gid, cid, sid, dm_ids, consenting, step=threads),
+                ),
+            ]
+        failed = 0
+        for name, step in plan:
+            if name not in ("story extractor", "story threads"):  # (those report their own parts)
+                await say(after_jobs.WORKING)
+            try:
+                await step()
+            except Exception as exc:  # the type only: never a word of the story
+                failed += 1
+                log.warning("After the session (worker): %s failed (%s)", name, type(exc).__name__)
+        return failed == 0
+
+    async def _take_after_job(self, job: after_jobs.Job) -> None:
+        """The worker takes one block: claim it (under an id of its own, so a replacement process
+        is never mistaken for it), keep its lease fresh while it runs, run it, end it. A block
+        someone else holds is left alone. A worker that is stopped mid-block (a deploy) gives the
+        block back, unfinished, for the next round; one whose lease was lost stops quietly."""
+        assert self.after_jobs is not None
+        queue = self.after_jobs
+        who = f"worker-{uuid.uuid4().hex[:8]}"
+        gid, cid, sid, block = job.guild_id, job.campaign_id, job.session_id, job.block
+        if not await queue.claim(gid, cid, sid, block, who):
+            return
+        ok = False
+        try:
+            with log_context(guild_id=gid, campaign_id=cid):
+                async with self._after_lease(gid, cid, sid, block, who):
+                    ok = await self._run_after_block(
+                        gid, cid, sid, job.dm_ids, block,
+                        lambda stage, part, parts: queue.step(
+                            gid, cid, sid, block, who, stage, part, parts
+                        ),
+                    )  # fmt: skip
+        except asyncio.CancelledError:
+            await queue.release(gid, cid, sid, block, who)  # (nothing if the lease is not ours)
+            raise
+        except Exception as exc:
+            log.warning(
+                "After the session (worker): %s block failed (%s)", block, type(exc).__name__
+            )
+        await queue.finish(gid, cid, sid, block, who, ok=ok)
+
+    async def _after_session_loop(self) -> None:
+        """The worker's loop for `after_session_jobs` (#4905): every few seconds, the blocks the
+        bot handed over (or whose lease died), taken one at a time."""
+        assert self.after_jobs is not None
+        await asyncio.sleep(20)
+        while True:
+            for gid in await self.work_guild_ids():
+                try:
+                    # (a few at once, so one campaign's long block never holds up another's past
+                    # the bot's take time)
+                    await asyncio.gather(
+                        *(self._take_after_job(j) for j in await self.after_jobs.open(gid, 3))
+                    )
+                except Exception:
+                    log.exception("After the session (worker): a round failed for a server")
+            await asyncio.sleep(AFTER_ROUND_S)
+
     async def _after_session(self, table: Table, ended_at: int, caught_up: bool) -> None:
         sent = 0
 
@@ -3545,20 +3834,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Queues or holds the recap (#2169): held at once while the extractor is still to run.
             ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
-            ("story extractor", lambda: self.extract_claims(table, ended_at)),
-            # Where the story is (#4173 slice 4): the DM's lines move a chain of open places kept
-            # between sessions, and new places get an assumed parent from it. No AI call.
-            ("where the story is", lambda: self.walk_story_chain(table)),
-            # The scene of each waiting question, from the lines it came from (#3596): after the
-            # extractor, so the questions it made are there, and inside the same call limit.
-            ("scenes", lambda: self.write_scenes(table)),
-            # Who each name to check could be (#3602): after the extractor made them, inside the
-            # same call limit; off unless its switch is on.
-            ("who is this", lambda: self.write_who(table)),
-            # After the extractor (its readings are beliefs too); off unless the switch is on.
-            ("contradiction grades", lambda: self.grade_contradictions(table)),
-            # The report for the website (#2661): reuses those grades, then sorts the differences.
-            ("after-session report", lambda: self.make_report(table)),
+            # The story read and what depends on it (where the story is, scenes, who is this,
+            # contradiction grades, the report), as one block: the worker's with `DMBOT_WORKER`.
+            *DMBot._after_reads(self, table, ended_at),
             # The names the extractor proposed are name questions too (#2169): count again.
             ("recap names", lambda: self.recheck_recap_hold(table)),
             ("what was said", lambda: self.note_claims(table)),
@@ -3579,15 +3857,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Private scenes between two player characters (#2996 rule 5): before the importance
             # step, which will weigh them; no AI call. Off unless its switch is on.
             ("private scenes", lambda: self.find_private_scenes(table)),
-            # How much each entry the session touched matters, and its roles (#3172): after the
-            # extractor, inside the same call limit, live wherever it runs (ruled); after the
-            # posts the DM waits for, since nothing above reads a rank.
-            ("importance", lambda: self.write_importance(table)),
-            # New story threads the table's talk started (#4522, quests slice 5a): after the
-            # importance step (as an import runs them), inside the same call limit, so a long
-            # session's threads never leave importance without calls; one counts line in the DM
-            # Bot channel. Off unless its switch is on.
-            ("story threads", lambda: self.read_session_threads(table)),
+            # How much each entry the session touched matters, and its roles (#3172), then the new
+            # story threads (#4522): after the posts the DM waits for, since nothing above reads a
+            # rank, inside the extractor's call limit. One block: the worker's with `DMBOT_WORKER`.
+            *DMBot._after_late(self, table),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             # What maps posted during the session showed (#4259 8a), privately, once each
@@ -3622,7 +3895,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await step()
                 except Exception:
                     log.exception("After the session: %s failed", name)
-                if name == "story threads":  # the last slow read: the card ends here, not later
+                if name in ("story threads", "late reads (worker)"):  # the last slow read
                     await self._end_after_card(table)
         finally:
             await self._end_after_card(table)  # (the safety net: every read is over)
@@ -10849,24 +11122,28 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         No consent re-check, on purpose: no audio or transcript line is read or sent here, only the
         DM-confirmed names and relationships the campaign already stores, so there is no
         speaker's consent for a step to depend on."""
+        if table.campaign_id is None or table.transcript_session_id is None:
+            return
+        await DMBot._grade_contradictions_for(  # (by the class: the tests' stand-ins)
+            self, table.guild_id, table.campaign_id, table.transcript_session_id
+        )
+
+    async def _grade_contradictions_for(self, gid: int, cid: str, sid: str) -> None:
+        """`grade_contradictions` from ids, so the worker can run it (#4905)."""
         if (
             not self.settings.story_contradictions_on
             or not self.settings.story_extractor_on
             or self.extractor_ai is None
             or self.memory is None
             or self.transcripts is None
-            or table.campaign_id is None
-            or table.transcript_session_id is None
         ):
             return
-        gid, cid = table.guild_id, table.campaign_id
         with log_context(guild_id=gid, campaign_id=cid):
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or not await self.plan_allows(
                 "story", gid, campaign, fail_open=False
             ):
                 return  # closed: a plan that can't be checked is not run
-            sid = table.transcript_session_id
             session = await self.transcripts.session(gid, sid)
             _, used = await self.transcripts.extraction(gid, sid)
             day_used = await self.transcripts.extractor_calls_since(
@@ -11467,6 +11744,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         has story memory (the same rule as the after-session question and the deed card, #3175),
         so a lapsed plan's leftover proposals are counted nowhere (#5105)."""
         return await self._story_asked(self.settings.story_deeds_on, gid, cid)
+
+    async def heads_up_count(self, gid: int, cid: str) -> int:
+        """How many continuity heads-ups wait for the DM now (#5147): what `ContinuityStore.check`
+        would list, with who agrees read now and the settings' levels; no AI call. Only with the
+        story extractor on and a plan with story memory (the same gate as the after-session check).
+        Any error counts 0 and logs the type only."""
+        try:
+            if self.memory is None or not await self._story_asked(
+                self.settings.story_extractor_on, gid, cid
+            ):
+                return 0
+            report = await ContinuityStore(self.memory).check(
+                gid,
+                cid,
+                opted_in=await self.consent.consenting(gid),
+                levels=self.settings.continuity,
+            )
+            return len(report.conflicts)
+        except Exception as exc:
+            log.warning("Heads-ups count failed (%s)", type(exc).__name__)
+            return 0
 
     async def reveals_on(self, gid: int, cid: str) -> bool:
         """The same for what the characters learned (#2996, #5109): its switch and the plan's
@@ -12523,7 +12821,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         cut = sum(1 for f in every[MAX_SUGGESTIONS:] if name_key(f.name) not in offered)
         if import_scan and session_id is not None and self.import_job is not None:
             await self.import_job.store.set_scan_cut(gid, session_id, cut)
-        added: list[str] = []
+            # (#5055 B: an import is read once, so what is past the 10 waits behind "📝 More names"
+            # instead of being lost; a live session keeps its short list and only counts)
+            past = [
+                HeldName(f.name, f.times, f.also)
+                for f in every[MAX_SUGGESTIONS:]
+                if name_key(f.name) not in offered
+            ]
+            if past:
+                try:  # (a count must never stop the scan: the 10 are offered either way)
+                    await MoreNames(self.memory._db).hold(gid, cid, session_id, past)
+                except Exception as exc:
+                    log.warning("More names: not kept (%s)", type(exc).__name__)
         kinds = await self._scan_kinds(
             gid, cid, [f.name for f in found if f.name not in reader_kinds], lines
         )
@@ -12538,6 +12847,51 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             sum(1 for g in settled.offered if g.heard_wrong), settled.near_secret,
         )  # fmt: skip
         refused: set[str] = set()
+        added = await self._add_scan_names(
+            gid, cid, found, kinds,
+            session_id=session_id, heard_in=heard_in, session_at=session_at, refused=refused,
+            found_how=found_how, read_in=read_in, read=read,
+        )  # fmt: skip
+        if tracing:  # (#5055 B)
+            await self._write_name_trace(
+                gid,
+                cid,
+                session_id,
+                every,
+                found,
+                offered,
+                refused,
+                scan_keys,
+                trace,
+                read_keys,
+                {name_key(n) for n, _times in asked},
+            )
+        return added
+
+    async def _add_scan_names(
+        self,
+        gid: int,
+        cid: str,
+        found: Sequence[Suggestion],
+        kinds: Mapping[str, str],
+        *,
+        session_id: str | None,
+        heard_in: Sequence[Line],
+        session_at: int | None,
+        refused: set[str] | None = None,
+        found_how: Mapping[str, name_groups.Group] | None = None,
+        read_in: Sequence[Line] = (),
+        read: Sequence[name_reader.Found] = (),
+    ) -> list[str]:
+        """Make each suggestion a name to check, as the scan does: proposed, source scan, "Heard N
+        times", its other spellings as aliases, and where it was said when the lines are given.
+        Shared by the scan and "📝 More names" (#5055 B). Returns the names made; `refused`, when
+        given, gets the key of each the store refused (for the scan's trace). `found_how`,
+        `read_in` and `read` are the scan's own (what made each a name, for the 3b card); "More
+        names" gives none, so its names are found by the scan (#5168: they were the scan's locals,
+        out of reach here once the two were split)."""
+        assert self.memory is not None
+        added: list[str] = []
         for suggestion in found:
             written = None
             # (a kind the campaign's ontology does not allow falls back to none: the card asks)
@@ -12556,13 +12910,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except MemoryRuleError as exc:
                     log.info("Skipped a suggested name: %s", exc)
             if written is None:
-                refused.add(name_key(suggestion.name))
+                if refused is not None:
+                    refused.add(name_key(suggestion.name))
                 continue
             added.append(suggestion.name)
             if self.settings.session_names_on:  # (what made it a name: for the 3c card, 3b)
                 await self._keep_found(
                     gid, cid, session_id, written.value.id,
-                    found_how.get(name_key(suggestion.name)),
+                    (found_how or {}).get(name_key(suggestion.name)),
                     [suggestion.name, *suggestion.also], heard_in, read_in, read,
                 )  # fmt: skip
             if heard_in and session_id is not None:
@@ -12583,21 +12938,66 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
-        if tracing:  # (#5055 B)
-            await self._write_name_trace(
-                gid,
-                cid,
-                session_id,
-                every,
-                found,
-                offered,
-                refused,
-                scan_keys,
-                trace,
-                read_keys,
-                {name_key(n) for n, _times in asked},
-            )
         return added
+
+    async def add_more_names(
+        self,
+        gid: int,
+        cid: str,
+        progress: Callable[[int, int], Awaitable[None]] | None = None,
+    ) -> tuple[int, int]:
+        """The DM pressed "📝 More names" (#5055 B): every name an imported session's scan held past
+        its 10 becomes a name to check, as the scan makes them, and leaves the waiting list. A name
+        DMbot has meanwhile learned, or that the DM said isn't one, is let go; one held from two
+        sessions is one name (its times added, its other spellings joined, the earliest session
+        kept). If making them fails part way, the names not made yet are put back, so none is lost.
+        `progress(done, of)` is awaited every few names (the wait rule). Returns (made, still
+        waiting): one press makes at most `more_names.TAKE_MAX`. No AI call: what each is, the card
+        asks. Counts only in the log."""
+        assert self.memory is not None
+        held = MoreNames(self.memory._db)
+        taken = await held.take(gid, cid)
+        known = set(await self.memory.known_keys(gid, cid))
+        merged: dict[str, HeldName] = {}
+        for h in taken:  # (most heard first, so the first session seen is kept for ties)
+            key = name_key(h.name)
+            if key in known:
+                continue
+            old = merged.get(key)
+            if old is None:
+                merged[key] = h
+                continue
+            also = tuple(dict.fromkeys((*old.also, *h.also)))
+            merged[key] = HeldName(old.name, old.times + h.times, also, old.session_id)
+        waiting = list(merged.values())
+        made = 0
+        starts: dict[str, int | None] = {}
+        try:
+            for done, h in enumerate(waiting):
+                if progress is not None and done % PROGRESS_EVERY == 0:
+                    await progress(done, len(waiting))
+                if h.session_id not in starts:
+                    starts[h.session_id] = await self._session_start(gid, h.session_id)
+                one = [Suggestion(h.name, h.times, h.also)]
+                made += len(
+                    await self._add_scan_names(
+                        gid, cid, one, {},
+                        session_id=h.session_id, heard_in=(), session_at=starts[h.session_id],
+                    )
+                )  # fmt: skip
+                waiting[done] = HeldName("", 0)  # (made, or refused by a rule: not put back)
+        except BaseException:
+            # (nothing is lost: what was not made yet waits again, under its own session)
+            back: dict[str, list[HeldName]] = {}
+            for h in waiting:
+                if h.name:
+                    back.setdefault(h.session_id, []).append(h)
+            for sid, names in back.items():
+                await held.hold(gid, cid, sid, names)
+            raise
+        left = await held.count(gid, cid)
+        log.info("More names: %d taken, %d made, %d still waiting", len(taken), made, left)
+        return made, left
 
     async def _write_name_trace(
         self,
@@ -13772,7 +14172,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         while the worker has its recaps to start (#4904 3b-4c)."""
         if await store.pending_scans(gid, cid):
             return True
-        return any(r.campaign_id == cid for r in await store.ready_for_recap(gid))
+        return await store.recap_waiting(gid, cid)
 
     async def _import_news(
         self, gid: int, store: ImportStore, left: dict[str, int] | None = None
@@ -15322,6 +15722,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def apply_share_improve(self, campaign: Campaign, on: bool) -> None:
         """ "Share this campaign's story to improve DMbot" chosen on the website (#3741)."""
         await self.campaigns.set_share_improve(campaign.guild_id, campaign.id, on)
+
+    async def apply_rules_cards(self, campaign: Campaign, on: bool) -> None:
+        """ "Rules cards" chosen on the website (#5155): `set_rules_cards` itself, as Discord's
+        button calls it, so a session of this campaign follows from now on."""
+        await self.set_rules_cards(campaign.guild_id, campaign.id, on)
+
+    async def apply_ask_before_adding(self, campaign: Campaign, on: bool) -> None:
+        """ "Ask me before adding" chosen on the website (#5155): Discord's button's call."""
+        await self.campaigns.set_ask_before_adding(campaign.guild_id, campaign.id, on)
 
     async def apply_map_checks(self, campaign: Campaign, on: bool) -> None:
         """ "Map checks" chosen on the website (#4687): the call Discord's button makes."""
