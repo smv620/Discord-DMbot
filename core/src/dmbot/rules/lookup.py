@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Protocol
 
-from dmbot.campaigns import FALLBACK_NONE, Campaign
+from dmbot.campaigns import FALLBACK_NONE
 from dmbot.rules import index, rule_card
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.homebrew import Homebrew
@@ -23,6 +24,18 @@ from dmbot.rules.house import HouseRule
 
 CARD, HOMEBREW, NONE, DM_ONLY_KIND = "card", "homebrew", "none", "dm_only"
 DM_ONLY = "That's one for your DM."  # as a table question's answer (sidebar.answer.ONE_FOR_DM)
+
+
+class Table(Protocol):
+    """What a search needs to know of a campaign: its name and its two rulesets. The bot hands in
+    its `Campaign`; the website, which reads only these three, a small stand-in."""
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def target_ruleset(self) -> str: ...
+    @property
+    def fallback_ruleset(self) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,7 +58,7 @@ _KIND_SUFFIX = re.compile(
 _SUFFIX_KINDS = {"creature": "monster"}  # how the list says a kind, where it differs
 
 
-def _named_kind(srd: index.Index, typed: str, campaign: Campaign) -> index.Hit | None:
+def _named_kind(srd: index.Index, typed: str, campaign: Table) -> index.Hit | None:
     """ "Acolyte (background)" or "Acolyte (creature)", as the name list words a name that a
     creature shares with a feat, species or background: the one it says, not the other."""
     match = _KIND_SUFFIX.match(typed)
@@ -96,7 +109,7 @@ def _features(srd: index.Index, typed: str, target: str, fallback: str) -> list[
 
 
 def find(
-    campaign: Campaign,
+    campaign: Table,
     typed: str,
     rules: list[HouseRule],
     own: Homebrew | None,
