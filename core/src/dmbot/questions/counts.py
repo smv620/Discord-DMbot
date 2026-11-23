@@ -51,6 +51,7 @@ class Sources:
     recorded: Callable[[int, str], Awaitable[Collection[int]]] | None = None
     # the story-deeds switch and the plan's story memory, for one campaign (#5105): a lapsed plan
     # is offered no deeds, as the deed card and the after-session question already say
+    reveals_on: Callable[[int, str], Awaitable[bool]] | None = None  # the same, for reveals (#5109)
     deeds_on: Callable[[int, str], Awaitable[bool]] | None = None
 
 
@@ -251,8 +252,10 @@ async def _reveals(src: Sources, g: int, c: str) -> Counted:
     no longer recorded. With nobody known to be recorded it counts nothing, never everything."""
     from dmbot.memory.reveal_proposals import RevealProposals
 
-    if src.memory is None or src.recorded is None:
+    if src.memory is None or src.recorded is None or src.reveals_on is None:
         return Counted(0)
+    if not await src.reveals_on(g, c):
+        return Counted(0)  # the switch is off, or the plan has no story memory (#5109)
     opted_in = await src.recorded(g, c)
     return Counted(await RevealProposals(src.memory).count_waiting(g, c, opted_in=opted_in))
 

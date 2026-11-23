@@ -77,7 +77,7 @@ class TheStep(unittest.TestCase):
         given: list[Any] = []
 
         async def read(_g: int, _c: str, _lines: Any, _people: Any, every: list[Suggestion],
-                       *, progress: Any = None) -> Any:  # fmt: skip
+                       *, progress: Any = None, **_kw: Any) -> Any:  # fmt: skip
             given.append(progress)
             if progress is not None and moves:
                 await progress(1, 2)

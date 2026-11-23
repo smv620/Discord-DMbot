@@ -45,6 +45,7 @@ import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 import SayIt from "./SayIt";
 import LazyPanel from "./LazyPanel";
+import { CARD_SUMMARY_LIVE } from "../content/card-summary-switch";
 
 /** The campaign's address, read from `/account/names/<server>.<campaign>`. */
 export function namesRefFromPath(path: string): string | null {
@@ -1099,6 +1100,7 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
         </form>
       )}
 
+      {CARD_SUMMARY_LIVE && <LazyPanel load={() => import("./CardSummary")} what="the card summary" props={{ card: row }} />}
       <form
         class="name-form"
         onSubmit={(e) => {
