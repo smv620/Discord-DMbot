@@ -105,8 +105,11 @@ class TheWords(Base):
     def test_pending_and_never_mentioned_and_lore(self) -> None:
         pending = card_lines.lines_of("Shafina", None, {})
         self.assertEqual(pending, {"who": "DMbot is still writing this.", "whoPending": True})
-        card = {"who": "An innkeeper.", "madeAt": 5, "scannedAt": 6, "first": None, "last": None,
-                "lore": {"label": "Icewind Dale notes", "heading": "Bryn Shander", "at": 5}}  # fmt: skip
+        lore = {"label": "Icewind Dale notes", "heading": "Bryn Shander", "at": 5}
+        card = {
+            "who": "An innkeeper.", "madeAt": 5, "scannedAt": 6, "first": None, "last": None,
+            "lore": lore,
+        }  # fmt: skip
         got = card_lines.lines_of("Shafina", card, {})
         self.assertEqual(
             got["firstMet"], "First met: in your lore, *Icewind Dale notes*, under 'Bryn Shander'."
