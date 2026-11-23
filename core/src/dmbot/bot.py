@@ -403,7 +403,7 @@ from dmbot.memory.models import (
     lookup_key,
     name_key,
 )
-from dmbot.memory.more_names import HeldName, MoreNames
+from dmbot.memory.more_names import PROGRESS_EVERY, HeldName, MoreNames
 from dmbot.memory.name_documents import MAX_PDF_BYTES
 from dmbot.memory.ontology import Tally
 from dmbot.memory.party import party_notice
@@ -12283,7 +12283,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if name_key(f.name) not in offered
             ]
             if past:
-                await MoreNames(self.memory._db).hold(gid, cid, session_id, past)
+                try:  # (a count must never stop the scan: the 10 are offered either way)
+                    await MoreNames(self.memory._db).hold(gid, cid, session_id, past)
+                except Exception as exc:
+                    log.warning("More names: not kept (%s)", type(exc).__name__)
         kinds = await self._scan_kinds(gid, cid, [f.name for f in found], lines)
         # the session each name is made in, for the split-party check (#4043): never a guess
         session_at = await self._session_start(gid, session_id)
@@ -12351,28 +12354,61 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     log.info("Skipped a name heard with a suggestion: %s", exc)
         return added
 
-    async def add_more_names(self, gid: int, cid: str) -> tuple[int, int]:
+    async def add_more_names(
+        self,
+        gid: int,
+        cid: str,
+        progress: Callable[[int, int], Awaitable[None]] | None = None,
+    ) -> tuple[int, int]:
         """The DM pressed "📝 More names" (#5055 B): every name an imported session's scan held past
         its 10 becomes a name to check, as the scan makes them, and leaves the waiting list. A name
-        DMbot has meanwhile learned, or that the DM said isn't one, is let go. Returns (made, still
+        DMbot has meanwhile learned, or that the DM said isn't one, is let go; one held from two
+        sessions is one name (its times added, its other spellings joined, the earliest session
+        kept). If making them fails part way, the names not made yet are put back, so none is lost.
+        `progress(done, of)` is awaited every few names (the wait rule). Returns (made, still
         waiting): one press makes at most `more_names.TAKE_MAX`. No AI call: what each is, the card
         asks. Counts only in the log."""
         assert self.memory is not None
         held = MoreNames(self.memory._db)
         taken = await held.take(gid, cid)
         known = set(await self.memory.known_keys(gid, cid))
-        by_session: dict[str, list[Suggestion]] = {}
-        for h in taken:
-            if name_key(h.name) not in known:
-                by_session.setdefault(h.session_id, []).append(Suggestion(h.name, h.times, h.also))
+        merged: dict[str, HeldName] = {}
+        for h in taken:  # (most heard first, so the first session seen is kept for ties)
+            key = name_key(h.name)
+            if key in known:
+                continue
+            old = merged.get(key)
+            if old is None:
+                merged[key] = h
+                continue
+            also = tuple(dict.fromkeys((*old.also, *h.also)))
+            merged[key] = HeldName(old.name, old.times + h.times, also, old.session_id)
+        waiting = list(merged.values())
         made = 0
-        for sid, found in by_session.items():
-            session_at = await self._session_start(gid, sid)
-            made += len(
-                await self._add_scan_names(
-                    gid, cid, found, {}, session_id=sid, heard_in=(), session_at=session_at
-                )
-            )
+        starts: dict[str, int | None] = {}
+        try:
+            for done, h in enumerate(waiting):
+                if progress is not None and done % PROGRESS_EVERY == 0:
+                    await progress(done, len(waiting))
+                if h.session_id not in starts:
+                    starts[h.session_id] = await self._session_start(gid, h.session_id)
+                one = [Suggestion(h.name, h.times, h.also)]
+                made += len(
+                    await self._add_scan_names(
+                        gid, cid, one, {},
+                        session_id=h.session_id, heard_in=(), session_at=starts[h.session_id],
+                    )
+                )  # fmt: skip
+                waiting[done] = HeldName("", 0)  # (made, or refused by a rule: not put back)
+        except BaseException:
+            # (nothing is lost: what was not made yet waits again, under its own session)
+            back: dict[str, list[HeldName]] = {}
+            for h in waiting:
+                if h.name:
+                    back.setdefault(h.session_id, []).append(h)
+            for sid, names in back.items():
+                await held.hold(gid, cid, sid, names)
+            raise
         left = await held.count(gid, cid)
         log.info("More names: %d taken, %d made, %d still waiting", len(taken), made, left)
         return made, left

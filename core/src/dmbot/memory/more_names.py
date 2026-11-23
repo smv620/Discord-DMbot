@@ -22,6 +22,8 @@ from dmbot.memory.models import NAME_MAX, name_key
 
 TAKE_MAX = 300  # names one press makes: a long import past this keeps the rest for the next press
 ALSO_MAX = 10  # other spellings kept with a name (the table's own limit)
+TIMES_MAX = 100_000  # the table's own limit on times heard
+PROGRESS_EVERY = 10  # a press says how far it has got every this many names (the wait rule)
 
 
 @dataclass(frozen=True)
@@ -46,11 +48,11 @@ class MoreNames:
         first row stays). Returns how many were new."""
         rows = [
             (
-                guild_id, campaign_id, session_id, n.name[:NAME_MAX], key,
-                max(1, n.times), [a[:NAME_MAX] for a in n.also[:ALSO_MAX]], int(self._now()),
+                guild_id, campaign_id, session_id, name, key, min(max(1, n.times), TIMES_MAX),
+                [a.strip()[:NAME_MAX] for a in n.also[:ALSO_MAX]], int(self._now()),
             )
             for n in names
-            if (key := name_key(n.name)) and n.name.strip()
+            if (name := n.name.strip()[:NAME_MAX]) and (key := name_key(name))
         ]  # fmt: skip
         if not rows:
             return 0

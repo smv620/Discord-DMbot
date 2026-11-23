@@ -6,13 +6,14 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from typing import Any
 
 from dmbot.memory.more_names import HeldName, MoreNames, forget_session
 from dmbot.memory.scan import MAX_SUGGESTIONS
 from dmbot.questions import kinds
 from dmbot.transcript.import_job import ImportStore
 from dmbot.transcript.store import TranscriptStore
-from dmbot.ui.more_names import added_text
+from dmbot.ui.more_names import added_text, working_text
 from tests.test_import_recaps import GUILD as G2
 from tests.test_import_recaps import WithImports
 from tests.test_memory_names import DM, GUILD, PLAYER, NamesTest
@@ -102,11 +103,62 @@ class TheScanAndThePress(NamesTest):
         self.assertIn("Belmira", await self.proposed())
 
 
+class TheHardCases(NamesTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.transcripts = TranscriptStore(self.db)
+        self.bot.transcripts = self.transcripts
+        self.a = await self.transcripts.open_session(GUILD, self.campaign.id, START)
+        self.b = await self.transcripts.open_session(GUILD, self.campaign.id, START + 86_400)
+        self.held = MoreNames(self.db)
+
+    async def proposed(self) -> list[str]:
+        found = await self.memory.entities(GUILD, self.campaign.id, statuses=["proposed"])
+        return sorted(e.name for e in found)
+
+    async def test_a_name_held_from_two_sessions_is_one_name(self) -> None:
+        await self.held.hold(GUILD, self.campaign.id, self.a, [HeldName("Korvath", 2)])
+        await self.held.hold(GUILD, self.campaign.id, self.b, [HeldName("Korvath", 3, ("Korv",))])
+        steps: list[tuple[int, int]] = []
+
+        async def moved(done: int, of: int) -> None:
+            steps.append((done, of))
+
+        made, left = await self.bot.add_more_names(GUILD, self.campaign.id, moved)
+        self.assertEqual((made, left), (1, 0))
+        self.assertEqual(await self.proposed(), ["Korvath"])
+        self.assertEqual(steps, [(0, 1)])  # (the press says how far it has got)
+
+    async def test_a_press_that_fails_part_way_puts_the_rest_back(self) -> None:
+        await self.held.hold(
+            GUILD, self.campaign.id, self.a,
+            [HeldName("Korvath", 5), HeldName("Belmira", 4), HeldName("Tasshen", 3)],
+        )  # fmt: skip
+        real = self.memory.add_entity
+        calls = [0]
+
+        async def flaky(*args: Any, **kw: Any) -> Any:
+            calls[0] += 1
+            if calls[0] == 2:
+                raise RuntimeError("down")
+            return await real(*args, **kw)
+
+        self.memory.add_entity = flaky  # type: ignore[method-assign]
+        with self.assertRaises(RuntimeError):
+            await self.bot.add_more_names(GUILD, self.campaign.id)
+        self.assertEqual(await self.proposed(), ["Korvath"])  # made before the failure
+        back = {h.name for h in await self.held.of_session(GUILD, self.campaign.id, self.a)}
+        self.assertEqual(back, {"Belmira", "Tasshen"})  # nothing lost
+
+
 class TheWords(unittest.TestCase):
     def test_the_press_says_what_it_made_and_what_still_waits(self) -> None:
         self.assertIn("4 more names to check", added_text(4, 0))
         self.assertIn("1 more name to check", added_text(1, 0))
         self.assertIn("2 more wait: press 📝 More names again", added_text(300, 2))
+        none_made = "DMbot already knew those names. 3 more wait: press 📝 More names again."
+        self.assertEqual(added_text(0, 3), none_made)
+        self.assertIn("50 of 300", working_text(50, 300, 12))
         self.assertEqual(kinds.LABELS[kinds.MORE_NAMES], "More names from your sessions")
         self.assertIn(kinds.MORE_NAMES, kinds.ORDER)
 

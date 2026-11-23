@@ -7,8 +7,10 @@ campaign is in the button's ID). Counts only: the names themselves are shown on 
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
+import time
 from typing import Any
 
 import discord
@@ -29,18 +31,19 @@ FAILED = "Something went wrong, so no names were added. They are still waiting: 
 def added_text(made: int, left: int) -> str:
     """What one press did, as counts: how many names now wait in the name check, and how many are
     still behind More names (one press makes at most `more_names.TAKE_MAX`). Pure."""
+    wait = f"{left} more {'waits' if left == 1 else 'wait'}"
+    if not made:
+        return f"DMbot already knew those names. {wait}: press {LABEL} again."
     head = (
         f"📝 **{made} more {'name' if made == 1 else 'names'} to check** from your imported "
         "sessions. Press the button to say which are in your game."
-        if made
-        else "DMbot already knows the names it took this time."
     )
-    tail = (
-        f"\n{left} more {'waits' if left == 1 else 'wait'}: press {LABEL} again after these."
-        if left
-        else ""
-    )
-    return head + tail
+    return head + (f"\n{wait}: press {LABEL} again after these." if left else "")
+
+
+def working_text(done: int, of: int, seconds: int) -> str:
+    """The press's progress (the wait rule): how far, and how long it has been running. Pure."""
+    return f"📝 Adding names to check: {done} of {of} ({seconds} s so far)…"
 
 
 class MoreNamesButton(
@@ -81,9 +84,17 @@ async def add_more_names(interaction: discord.Interaction, campaign_id: str) -> 
     if campaign is None:
         return
     bot: Any = interaction.client
+    began = time.monotonic()
+
+    async def moved(done: int, of: int) -> None:  # (a failed edit never stops the press)
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.edit_original_response(
+                content=working_text(done, of, int(time.monotonic() - began))
+            )
+
     try:
         await interaction.edit_original_response(content=WORKING)
-        made, left = await bot.add_more_names(campaign.guild_id, campaign.id)
+        made, left = await bot.add_more_names(campaign.guild_id, campaign.id, moved)
     except Exception as exc:  # (the type only: the names are the campaign's words)
         log.warning("More names failed (%s)", type(exc).__name__)
         await interaction.edit_original_response(content=FAILED)
@@ -96,4 +107,4 @@ async def add_more_names(interaction: discord.Interaction, campaign_id: str) -> 
     )
 
 
-__all__ = ["LABEL", "MoreNamesButton", "add_more_names", "added_text"]
+__all__ = ["LABEL", "MoreNamesButton", "add_more_names", "added_text", "working_text"]
