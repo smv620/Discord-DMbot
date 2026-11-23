@@ -68,6 +68,9 @@ export const lorePage = {
   units: { parts: "parts", names: "names", checks: "checks", pictures: "pictures" } as Record<string, string>,
   found: (names: number, links: number): string =>
     `DMbot found ${names} ${names === 1 ? "name" : "names"} and ${links} ${links === 1 ? "connection" : "connections"}.`,
+  /** Names past the limit of one document (#5072), the same words as Discord: the count first. */
+  cut: (n: number): string =>
+    `${n === 1 ? "1 more name was" : `${n} more names were`} left out. DMbot lists up to 200 names from one document. To get ${n === 1 ? "it" : "them"}, split the document and upload each part.`,
   foundNothing: "DMbot didn't find any names in that. Try a longer piece.",
   nextLead: "Nothing is kept until you check it:",
   checkNames: "Check the new names",
