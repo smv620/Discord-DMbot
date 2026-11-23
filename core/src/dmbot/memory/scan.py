@@ -483,6 +483,20 @@ def split_joined(
     return out, split
 
 
+def ordinary_in(name: str, lines: Iterable[str], *, leaving_out: Iterable[str] = ()) -> bool:
+    """The #5121 test outside the scan (#5133 slice 3c-2b, the guard on "change to" rules): every
+    name word of `name` is also said in lower case in these lines. The sightings of `leaving_out`
+    (whole, in the very case heard) are taken out first: a misheard "hroth gar" is itself said in
+    lower case and must not make itself ordinary, while "Hope" still finds "we hope". (Its sightings
+    in another case still count: a lower-case "rothgar" makes "Rothgar" ordinary, which only ever
+    stops a rule, the safe side.)"""
+    gone = [re.escape(s) for s in leaving_out if s.strip()]
+    cut = re.compile(rf"(?<!\w)(?:{'|'.join(gone)})(?!\w)") if gone else None
+    kept = [cut.sub(" ", line) if cut is not None else line for line in lines]
+    lower = {_bare(w).casefold() for words in _sentences(kept) for w in words if w[:1].islower()}
+    return _ordinary(name, lower)
+
+
 def _ordinary(name: str, lower_words: set[str]) -> bool:
     """Every name word of it is also said in lower case this session ("Hope", "Ten Towns")."""
     words = [_bare(w).casefold() for w in name.split() if w.casefold() not in (JOINING, _THE)]

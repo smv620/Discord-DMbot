@@ -327,6 +327,9 @@ INT64_MAX = 2**63 - 1
 # For a lookup of a few rows (one key). Reads of a whole campaign's names or facts use
 # _live_ids instead: joined to a campaign with no table statistics yet (one just given
 # a long list), Postgres compared every name with every entry, 1.4 s for 2,000 (#598).
+# The names a yes on the new card may turn into "change to" rules (#5133 slice 3c-2b): heard ones.
+HEARD_KINDS = frozenset({"misheard", "old"})
+
 _LIVE_ENTITY_IDS = (
     " (SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
     " AND status IN ('proposed', 'confirmed'))"
@@ -1156,6 +1159,21 @@ class MemoryStore:
         """What made each of these waiting names a name (#5133 slice 3b, `memory.name_found`):
         how it was found, the pointer to its line, and its counts, for the card."""
         return await name_found_mod.NameFound(self._db).of(guild_id, campaign_id, entity_ids)
+
+    async def keep_name_found(
+        self, guild_id: int, campaign_id: str, entity_id: str, found: name_found_mod.Found
+    ) -> None:
+        """What made a name a name, kept again: an Undo of the new card's yes (#5133 slice 3c-2b)
+        puts the name back waiting, and the row went with the yes (0608's trigger)."""
+        await name_found_mod.NameFound(self._db).keep(
+            guild_id,
+            campaign_id,
+            entity_id,
+            found.how,
+            found.line_ref,
+            times=found.times,
+            typed=found.typed,
+        )
 
     async def sound_alikes(
         self, guild_id: int, campaign_id: str, codes: Sequence[str], *, limit: int = 500
@@ -5880,11 +5898,19 @@ class MemoryStore:
         played_by: int | None = None,
         role: str | None = None,
         as_kin: bool = False,
+        heard: Collection[str] | None = None,
+        may_rule: Collection[str] = (),
     ) -> Written[Entity]:
         """The DM says a suggested name is real: what it is (and, for a character, its
         role), confirmed with all its names, in one change (one undo, one reload). The DM's own
         stated claims about it whose other end is kept are kept in that same change (#4636,
         `ClaimStore.keep_dm_claims_in`).
+
+        `heard` (the new name card, #5133 slice 3c-2b): the other spellings it was heard as. They
+        are not kept as its names: each one in `may_rule` (the pure guard's, `heard_rules`) that
+        no other entry has as a name and that has no rule yet becomes a "change to" rule for the
+        Cleaner; the rest are dropped. All in this same change, so one Undo takes back the yes and
+        the rules; `Written.rules` names the rules made.
 
         `as_kin` (#4636 part 1): an unnamed person kept because the character it hangs off is
         kept ("Brewner's daughter"). An unnamed person is the DM's alone anyway, but once the DM
@@ -5931,6 +5957,8 @@ class MemoryStore:
                 },
             )
             learned = await learn_names_in_scene(w, entity_id, scene) if scene is not None else 0
+            spelled = {name_key(h) for h in heard or ()} - {name_key(before["name"])}
+            made = await self._heard_rules(w, entity_id, spelled, may_rule) if spelled else ()
             for alias in await w.select(
                 ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
             ):
@@ -5950,7 +5978,47 @@ class MemoryStore:
             await ClaimStore(self).keep_dm_claims_in(w, [entity_id])
             await _rematch_pins(w, entity_id)  # (a map's pin with its name, #4670)
             said = "" if scene is None else "group" if learned else "unknown"
-            return Written(_entity(row), w.batch, split=said)
+            return Written(_entity(row), w.batch, split=said, rules=made)
+
+    @staticmethod
+    async def _heard_rules(
+        w: Changes, entity_id: str, spelled: set[str], may_rule: Collection[str]
+    ) -> tuple[str, ...]:
+        """`confirm_entity`'s heard spellings (#5133 slice 3c-2b): each of this entry's names with
+        one of these keys is dropped, and becomes a "change to" rule when the pure guard allowed it,
+        no other entry has it as a name (a name, a "not a name", a secret one: a rule would rewrite
+        it) and no rule for those words exists yet (a "keep as heard" wins over any fix)."""
+        allowed = {name_key(m) for m in may_rule}
+        made: list[str] = []
+        for alias in await w.select(ALIASES, " AND entity_id = %s", [entity_id]):
+            key = alias["key"]
+            # (only what was heard: a misheard spelling, or the one a rename kept; a short form
+            # inside the name, "Vane" for "Oskar Vane", or a DM's nickname stays one of its names)
+            if key not in spelled or alias["kind"] not in HEARD_KINDS:
+                continue
+            await w.delete(ALIASES, alias["id"])
+            text = clean_text(alias["text"])
+            heard_key = lookup_key(text)
+            if (
+                key not in allowed
+                or await w.select(ALIASES, " AND key = %s AND entity_id <> %s", [key, entity_id])
+                or await w.select(CORRECTIONS, " AND heard_key = %s", [heard_key])
+            ):
+                continue
+            await w.insert(
+                CORRECTIONS,
+                {
+                    "id": new_id(),
+                    "heard": text,
+                    "heard_key": heard_key,
+                    "entity_id": entity_id,
+                    "action": FIX,
+                    "source": DM,
+                    "created_at": w.now,
+                },
+            )
+            made.append(text)
+        return tuple(made)
 
     async def has_kin_tie(self, guild_id: int, campaign_id: str, entity_id: str) -> bool:
         """Whether an unnamed relative has a stated tie to its character (`_kin_ties`): what a
