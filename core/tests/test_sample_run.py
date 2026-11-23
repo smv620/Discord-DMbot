@@ -163,6 +163,16 @@ class Steps(DatabaseTest):
         self.assertNotIn(NAME, line)
         self.assertFalse(any(ch.isdigit() for ch in line))
 
+    async def test_a_run_for_40b_leaves_the_campaigns_of_40_alone(self) -> None:
+        # #5057: the label 40b is its own deploy; a re-run of 40b must not touch 40's campaign.
+        of_40 = await self.made(name=sample_name.name_for(sample_name.Label(40)))
+        await steps.fresh_campaign(
+            self.db, self.campaigns, GUILD, DM, deploy=sample_name.Label(40, "b"), say=self.say
+        )
+        self.assertIsNotNone(await self.campaigns.get(GUILD, of_40.id))
+        names = {c.name for c in await self.campaigns.list_campaigns(GUILD)}
+        self.assertIn(sample_name.name_for(sample_name.Label(40, "b")), names)
+
     async def test_the_newest_three_are_kept_and_the_older_ones_go(self) -> None:
         ids = {n: (await self.made(name=sample_name.name_for(n))).id for n in (27, 28, 29, 30)}
         await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)

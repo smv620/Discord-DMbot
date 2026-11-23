@@ -607,6 +607,7 @@ def card_text(
     standing: Mapping[tuple[str, str], int] | None = None,
     seen: Collection[str] | None = None,
     table: Collection[str] | None = None,
+    summary_lines: list[str] | None = None,
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
     character); `sheet`: its D&D Beyond sheet line (#723). `item`: it is an item, of the core
@@ -618,7 +619,8 @@ def card_text(
     knowledge slice 5, §9 rule 2): a player's card is only for what the player holds, and with
     none given it is nothing (fail closed). `table`: the entries the whole table holds, which says
     which entries only some people know: the flags are the DM's switch for "shown now", never the
-    answer to "may this player see it"."""
+    answer to "may this player see it". `summary_lines`: who they are, where they were first met and
+    when they were last mentioned (#5050; the DM's card only, from what the background job kept)."""
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
@@ -650,6 +652,8 @@ def card_text(
     phrase = kind_phrase(entity, lookup.links.get(entity_id, ()))
     what = f"{phrase} · played by **{_md(player)}**" if player else phrase
     lines = [f"🪪 **{_md(title or entity.name)}** · {what} · {when}"]
+    if summary_lines and secrets:
+        lines.extend(summary_lines)
     is_item = entity.type == ITEM if item is None else item
     if is_item and entity.is_unique:
         lines.append(ONLY_ONE if entity.unique_item else ONLY_ONE_GUESS)
@@ -777,6 +781,41 @@ async def confirm_assumed(
         else None
     )
     await show_card(interaction, campaign_id, entity_id, replace=True, note=note)
+
+
+async def _summary_lines(
+    interaction: discord.Interaction,
+    memory: Any,
+    campaign: Campaign,
+    entity: Any,
+    secrets: bool,
+) -> list[str] | None:
+    """The three lines at the top of a character's card (#5050), for the DM only and only with
+    `DMBOT_CARD_SUMMARY` on. Read from what the background job kept: a card never waits for it. A
+    failure to read them leaves the card as it was, never an error."""
+    bot = _bot(interaction)
+    store = getattr(bot, "card_summaries", None)
+    if (
+        not secrets
+        or entity is None
+        or store is None
+        or not getattr(getattr(bot, "settings", None), "card_summary_on", False)
+    ):
+        return None
+    try:
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+        if not onto.is_a(entity.type, "character"):
+            return None
+        from dmbot.memory import card_view
+        from dmbot.ui.continuity import _session_numbers
+
+        found = await store.get(campaign.guild_id, campaign.id, entity.id)
+        numbers = await _session_numbers(interaction, campaign.id)
+        lore = await memory.lore_origin_at(campaign.guild_id, campaign.id, entity.id)
+        return card_view.view(found, entity.name, numbers, lore).lines()
+    except Exception as exc:  # the type only
+        log.warning("Card lines could not be read (%s)", type(exc).__name__)
+        return None
 
 
 async def show_card(
@@ -914,11 +953,13 @@ async def show_card(
         ties = await memory.tag_ties(campaign.guild_id, campaign.id, [entity_id])
         tagged = tags.tag_for(entity, ties.get(entity_id, ()), dm=True)
         title = "" if tagged == entity.name else tagged
+    summary_lines = await _summary_lines(interaction, memory, campaign, entity, secrets)
     text = card_text(
         names,
         entity_id,
         connections,
         secrets=secrets,
+        summary_lines=summary_lines,
         player=player,
         sheet=sheet,
         limit=limit,
@@ -941,7 +982,7 @@ async def show_card(
     if not cuts and text != card_text(
         names, entity_id, connections, secrets=secrets, player=player, sheet=sheet,
         limit=10**6, item=is_item, thread_lines=lines_of_thread, book_line=book_line, title=title,
-        standing=dm_standing, seen=seen, table=table,
+        standing=dm_standing, seen=seen, table=table, summary_lines=summary_lines,
     ):  # fmt: skip
         # Every section is short, but the whole card still didn't fit one message (a long note,
         # a sheet line, many groups): offer every section that has anything in it.

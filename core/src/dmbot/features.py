@@ -193,6 +193,7 @@ FEATURES: tuple[Feature, ...] = (
             "story_threads_on",
             "met_unnamed_on",
             "session_languages_on",
+            "session_names_on",
             "party_leaves_on",
             "private_scenes_on",
             "picture_names_on",
@@ -246,6 +247,14 @@ FEATURES: tuple[Feature, ...] = (
         lambda s: s.imports_on or bool(s.imports_servers),  # (on for all, or for chosen servers)
         ("imports_on", "imports_servers"),
         for_dms=False,
+    ),
+    Feature(
+        "character card lines",
+        "Who a character is",
+        "",
+        lambda s: s.card_summary_on,
+        ("card_summary_on",),
+        for_dms=False,  # off until dev1 reads ten cards on the sample campaign (#5050)
     ),
     Feature(
         "ai helpers",

@@ -2092,6 +2092,7 @@ def create_app(
                 size=wanted,
                 unnamed=unnamed == "1",
                 sources=chosen or None,
+                cards=bool(getattr(settings, "card_summary_on", False)),
             )
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
@@ -5396,7 +5397,9 @@ def create_app(
     async def me_npc_page(ref: str, entry: str, signed: Signed) -> dict[str, Any]:
         session, _token = signed
         try:
-            return await npc_pages.read_page(db, session, ref, entry)
+            return await npc_pages.read_page(
+                db, session, ref, entry, cards=bool(getattr(settings, "card_summary_on", False))
+            )
         except RecapError as err:
             raise npc_refusal(err) from None
 

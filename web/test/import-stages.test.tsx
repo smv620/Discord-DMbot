@@ -142,6 +142,28 @@ describe("the name check that was given up", () => {
   });
 });
 
+describe("names a limit left out (#5072)", () => {
+  it("adds the sessions' counts into one line, with the count first", async () => {
+    await importing({
+      sessions: [
+        { file: "a.txt", date: "2026-09-14", state: "done", reason: null, stage: "done", namesCut: 3 },
+        { file: "b.txt", date: "2026-09-21", state: "done", reason: null, stage: "done", namesCut: 4 },
+      ],
+    });
+    expect(screen.getAllByText(w.namesCut(7))).toHaveLength(1);
+    expect(w.namesCut(7).startsWith("As many as 7 more names were left out.")).toBe(true);
+  });
+
+  it("says one name in the singular", () => {
+    expect(w.namesCut(1)).toContain("As many as 1 more name was left out.");
+  });
+
+  it("shows nothing when no session left names out", async () => {
+    await importing(one({ state: "done", stage: "done", namesCut: 0 }));
+    expect(screen.queryByText(/left out/)).toBeNull();
+  });
+});
+
 describe("when the page asks again", () => {
   const delays = delaysOf;
 
