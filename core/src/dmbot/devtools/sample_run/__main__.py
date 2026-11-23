@@ -265,6 +265,8 @@ async def run(
     lore, windows, story, recap_calls = steps.estimate_cost(
         len(lore_text.split()), len(transcript.utterances), chars
     )
+    for line in describe_input(transcript, args.version):  # (counts, and the sample's names only)
+        say(line)
     say(plan.Cost(lore, windows, story, recap_calls if recap else 0).line())
     if not args.accept_all:
         calls = max(args.max_decisions, 0)
@@ -899,6 +901,31 @@ async def _finish(
             folder / summary_file(args.version, stamp), stats, commit=commit, version=args.version
         )
     return 1 if failed else 0
+
+
+def describe_input(transcript: Any, version: str) -> list[str]:
+    """How the session file writes the session key's names (docs/design/session_names.md,
+    section 8): a description of the input, beside the score, never a score. For a version other
+    than typed, the names still written with a capital mid-sentence are listed (the public
+    sample's names), since the edit was meant to remove every one."""
+    import json
+
+    from dmbot.devtools import graph_key_check
+    from dmbot.devtools.sample_run import input_shape
+
+    path = graph_key_check.DEFAULT_KEY.parent / "session_key.json"
+    try:
+        key = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # (the kind only)
+        return [f"Session file: the session key could not be read ({type(exc).__name__})"]
+    got = input_shape.shape((u.text for u in transcript.utterances), input_shape.key_names(key))
+    lines = [got.line()]
+    if version != sample_name.TYPED and got.capitalized:
+        lines.append(
+            "Still capitalized mid-sentence in this version (check the file): "
+            + ", ".join(got.capitalized)
+        )
+    return lines
 
 
 def check_compare(args: argparse.Namespace) -> None:
