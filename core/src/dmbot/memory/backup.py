@@ -558,14 +558,62 @@ def damaged_tags(rows: list[Any]) -> list[str]:
     return out
 
 
+_OWN_CHECKS = (
+    SHEETS, EVIDENCE, MAP_FACTS, CULTURES, THREAD_PARTS, WEATHER_NOTES, PARTY_SPANS,
+    THREAD_GUESSES, KNOWERS,
+)  # fmt: skip
+
+
+def refusing_columns(rows: list[Any]) -> list[str]:
+    """Every `table.column` whose value a row of the file breaks, in one pass (#4858: one rule per
+    deploy was too slow). Names only, never a value. A table with the wrong set of columns or a bad
+    lineage stamp is named `table.*`; a row that is not a row of a known table is `?`. Rules that
+    compare rows with each other have no column: `damaged_tags` names those tables."""
+    out: list[str] = []
+
+    def add(name: str) -> None:
+        if name not in out:
+            out.append(name)
+
+    try:
+        rows = _expand_default_stamp(rows)
+        rows = _with_definition_fields(_gods_are_npcs(_from_before_kinds(_unnamed_names(rows))))
+    except Exception:  # (a file too odd to prepare is named below, row by row)
+        pass
+    for raw in rows:
+        if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
+            add("?")
+            continue
+        table = _TAGS[raw["table"]]
+        if set(raw) - {"made_by"} != {"table", *table.columns}:
+            add(f"{table.name}.*")
+            continue
+        if not lineage.valid(raw.get("made_by")):
+            add(f"{table.name}.made_by")
+        if table in _OWN_CHECKS:  # (their columns mean other things: `damaged_tags` names them)
+            continue
+        for c in table.columns:
+            try:
+                bad = c != "reading" and not _valid(c, raw[c])
+            except Exception:
+                bad = True
+            if bad:
+                add(f"{table.name}.{c}")
+    return out
+
+
 def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
-    """`_check_rows`, and when it refuses the file, the log says which tables it breaks on (tags
-    only, #4858) before the refusal goes on."""
+    """`_check_rows`, and when it refuses the file, the log says which columns and tables it breaks
+    on (names only, #4858) before the refusal goes on."""
     try:
         return _check_rows(rows)
     except CampaignError:
         try:
-            log.warning("Backup memory check refused the file: %s", ", ".join(damaged_tags(rows)))
+            log.warning(
+                "Backup memory check refused the file: columns %s; tables %s",
+                ", ".join(refusing_columns(rows)) or "none by column",
+                ", ".join(damaged_tags(rows)) or "none alone",
+            )
         except Exception:  # (a diagnosis never changes the refusal)
             log.warning("Backup memory check refused the file")
         raise
