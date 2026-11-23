@@ -1,7 +1,7 @@
 """The whole per-deploy sample run in one command, with no one in Discord (#3547, #3545):
 
     python -m dmbot.devtools.sample_run --guild GUILD --dm DM_USER_ID \\
-        --deploy N --lore FILE --session FILE --yes
+        --deploy LABEL --lore FILE --session FILE --yes
 
 The session's speakers are `player_jac`, `player_ist`, `player_owe` and `player_eri` (players who
 are NOT on Discord, imported with the DM's confirmation as the website's import does) and `DM`.
@@ -13,7 +13,8 @@ file as an imported one and waits for the bot to clean, scan and read it, accept
 and scores both, then writes the recap (no audio). The last thing it prints is one block of counts
 and times, ready to paste on #3545.
 
-Only campaigns called "test of the frostmaiden (sample N)" (N is the deploy, `--deploy N`) are ever
+Only campaigns called "test of the frostmaiden (sample LABEL)" (LABEL is the deploy,
+`--deploy LABEL`: a number 1 to 9999 with an optional lowercase letter, 40 or 40b) are ever
 made or deleted, and only when they are plainly this tool's. The newest three are kept so the story
 graphs can be compared; the same N again replaces that deploy's campaign (#4538). Paid AI calls:
 the most they can be is printed first, and nothing runs without `--yes`. Nothing of the lore, the
@@ -128,10 +129,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--deploy",
-        type=int,
-        metavar="N",
-        help="this deploy's number (1 to 9999): the campaign is \"test of the frostmaiden "
-        '(sample N)", and the newest three are kept (#4538)',
+        type=str,
+        metavar="LABEL",
+        help="this deploy's label: a number from 1 to 9999 and, if you like, one lowercase letter "
+        '(40, 40b); the campaign is "test of the frostmaiden (sample 40b)", and the newest three '
+        "are kept (#4538)",
     )
     parser.add_argument("--lore-choice", default="smart", help="world, spoilers or smart")
     parser.add_argument("--date", help="when the past session was held (YYYY-MM-DD)")
@@ -169,13 +171,15 @@ def switches(environ: Mapping[str, str]) -> list[str]:
     )
 
 
-def deploy_number(value: int | None) -> int:
-    """The deploy's number from `--deploy N`, or a refusal that changes nothing (#4538)."""
+def deploy_label(value: str | None) -> sample_name.Label:
+    """The deploy's label from `--deploy LABEL` (40 or 40b), or a refusal that changes nothing
+    (#4538, #5057)."""
     if value is None:
         raise SampleError(sample_name.SAY_WHICH)
-    if not 1 <= value <= sample_name.DEPLOY_MAX:
-        raise SampleError(f"--deploy is a whole number from 1 to {sample_name.DEPLOY_MAX}")
-    return value
+    try:
+        return sample_name.parse_label(value)
+    except ValueError as exc:
+        raise SampleError(str(exc)) from exc
 
 
 def session_start(date: str | None, now: int) -> int:
@@ -222,7 +226,7 @@ async def run(
     say = say or (lambda line: print(line, flush=True))
     if args.lore is None or args.session is None:
         raise SampleError("--lore and --session are needed for a run")
-    deploy = deploy_number(args.deploy)
+    deploy = deploy_label(args.deploy)
     accept = accept or _accept_all()
     sure = sure or _sure()
     decide_client = decide_client or _careful_client
@@ -711,7 +715,7 @@ def fit_parallel(budget: float, run_usd: float, wanted: int) -> int:
 
 
 async def _make_room(
-    args: argparse.Namespace, deploy: int, say: Callable[[str], None], need: int = 1
+    args: argparse.Namespace, deploy: sample_name.Label, say: Callable[[str], None], need: int = 1
 ) -> int:
     """Once, before the runs of a parallel deploy start (#4551): the plan check, and every sample
     campaign of this deploy (a re-run) and the oldest beyond the newest three deleted, as a single
@@ -775,7 +779,7 @@ async def run_parallel(args: argparse.Namespace, n: int, **kw: Any) -> int:
             f"Only {width} at once fit ${args.max_usd:g}; --max-usd {need:.2f} would fit "
             f"{wanted}. Going {width} at a time."
         )
-    deploy = deploy_number(args.deploy)
+    deploy = deploy_label(args.deploy)
     # The paid slots are counted before anything is deleted or made, like the money: older kept
     # deploys go (all their runs, never the newest) until the runs fit, or fewer runs are made.
     allowed = await _make_room(args, deploy, say, n)
