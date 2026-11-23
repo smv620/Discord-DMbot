@@ -24,6 +24,7 @@ class _Jobs:
         self.added: list[tuple[str, tuple[int, ...]]] = []
         self.holder: dict[str, str] = {}
         self.renewed: list[tuple[str, str]] = []
+        self.progress: dict[str, tuple[str, int, int]] = {}
         self.dead: set[str] = set()  # blocks whose running lease has run out
 
     async def add(self, g: int, c: str, s: str, block: str, dm_ids: Any) -> bool:
@@ -33,6 +34,14 @@ class _Jobs:
 
     async def state(self, g: int, c: str, s: str, block: str) -> str | None:
         return self.rows.get(block)
+
+    async def status(self, g: int, c: str, s: str, block: str) -> jobs.Status | None:
+        state = await self.state(g, c, s, block)
+        if state is None:
+            return None
+        if self.progress.get(block) and state == jobs.RUNNING:
+            return jobs.Status(state, *self.progress[block])
+        return jobs.Status(state)
 
     async def claim(self, g: int, c: str, s: str, block: str, who: str) -> bool:
         running_dead = self.rows.get(block) == jobs.RUNNING and block in self.dead
@@ -209,7 +218,7 @@ class WithAWorkerThatDiesOrASlowOne(unittest.IsolatedAsyncioTestCase):
         ((_, hand),) = DMBot._after_late(me, _table())
 
         class Vanishing(_Jobs):
-            async def state(self, *a: Any) -> str | None:
+            async def status(self, *a: Any) -> jobs.Status | None:
                 return None
 
         me.after_jobs = Vanishing()
@@ -218,7 +227,7 @@ class WithAWorkerThatDiesOrASlowOne(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_database_error_while_waiting_is_tried_again_then_given_up(self) -> None:
         class Broken(_Jobs):
-            async def state(self, *a: Any) -> str | None:
+            async def status(self, *a: Any) -> jobs.Status | None:
                 raise RuntimeError("the database")
 
         me = _bot(worker_on=True, queue=Broken())
@@ -252,6 +261,42 @@ class WithAWorkerThatDiesOrASlowOne(unittest.IsolatedAsyncioTestCase):
         ):
             await hand()
         self.assertGreaterEqual(len(queue.renewed), 2)
+
+
+class TheCardFollowsTheWorker(unittest.IsolatedAsyncioTestCase):
+    async def test_the_waiting_card_shows_the_workers_stage_and_part_n_of_m(self) -> None:
+        queue = _Jobs()
+        me = _bot(worker_on=True, queue=queue)
+        ((_, hand),) = DMBot._after_reads(me, _table(), 5)
+        shown: list[tuple[str, int, int]] = []
+
+        class Card:
+            async def stage(self, words: str, part: int = 0, parts: int = 0) -> None:
+                shown.append((words, part, parts))
+
+        await queue.add(1, "c", "s", jobs.READS, {3})
+        queue.rows[jobs.READS] = jobs.RUNNING
+        queue.holder[jobs.READS] = "worker-live"
+        queue.progress[jobs.READS] = (jobs.STORY, 2, 5)
+        ticks = [0]
+
+        async def tick(_: float) -> None:
+            ticks[0] += 1
+            if ticks[0] == 1:
+                queue.progress[jobs.READS] = (jobs.THREADS, 1, 3)
+            else:
+                queue.rows[jobs.READS] = jobs.DONE
+
+        with (
+            mock.patch("asyncio.sleep", tick),
+            mock.patch.object(DMBot, "_after_card", lambda self, table: Card()),
+        ):
+            await hand()
+        self.assertEqual(
+            shown[1:],
+            [("Reading the story", 2, 5), ("Reading story threads", 1, 3)],
+        )
+        self.assertEqual(shown[0][1:], (0, 0))  # (first: only that it goes on in the background)
 
 
 class TheWorkersSide(unittest.IsolatedAsyncioTestCase):
@@ -288,6 +333,54 @@ class TheWorkersSide(unittest.IsolatedAsyncioTestCase):
         extract = me.calls[0]
         self.assertEqual(extract[1], (1, "c", "s"))
         self.assertIsNone(extract[2]["tally"])  # (the bot's own log tally is not the worker's)
+
+    async def test_the_block_tells_the_row_its_stage_and_part_as_it_goes(self) -> None:
+        me = self.worker()
+        said: list[tuple[str, int, int]] = []
+
+        async def report(stage: str, part: int, parts: int) -> None:
+            said.append((stage, part, parts))
+
+        async def extract(*a: Any, progress: Any = None, **kw: Any) -> None:
+            await progress(2, 5)
+
+        async def threads(*a: Any, step: Any = None, **kw: Any) -> None:
+            await step(1, 3)
+
+        me._extract_session = extract
+        me._read_threads = threads
+        await DMBot._run_after_block(me, 1, "c", "s", {3}, jobs.READS, report)
+        await DMBot._run_after_block(me, 1, "c", "s", {3}, jobs.LATE, report)
+        self.assertEqual(said[0], ("story", 2, 5))
+        self.assertIn(("working", 0, 0), said)
+        self.assertEqual(said[-1], ("threads", 1, 3))
+
+    async def test_a_progress_report_that_fails_never_breaks_the_block(self) -> None:
+        me = self.worker()
+
+        async def report(stage: str, part: int, parts: int) -> None:
+            raise RuntimeError("a word of the story")
+
+        with self.assertLogs("dmbot.bot", level="WARNING") as logs:
+            ok = await DMBot._run_after_block(me, 1, "c", "s", {3}, jobs.LATE, report)
+        self.assertTrue(ok)
+        self.assertEqual([c[0] for c in me.calls], ["_read_importance", "_read_threads"])
+        self.assertNotIn("a word of the story", " ".join(logs.output))
+
+    async def test_nothing_in_a_block_adds_to_the_combined_questions(self) -> None:
+        """The DM's questions are collected in `table.asks` and sent as one message (#3210). The
+        blocks' readers take ids, not a table, and none of them calls `ask_dm`, so moving them to
+        the worker leaves that single message to the bot's later steps exactly as it was."""
+        import inspect
+
+        for name in (
+            "_extract_session", "_read_threads", "_walk_story_chain", "_write_scenes",
+            "_write_who", "_make_report_for", "_read_importance", "_grade_contradictions_for",
+            "_tell_threads",
+        ):  # fmt: skip
+            source = inspect.getsource(getattr(DMBot, name))
+            self.assertNotIn("ask_dm(", source, name)
+            self.assertNotIn("table.asks", source, name)
 
     async def test_the_late_block_is_importance_then_threads(self) -> None:
         me = self.worker()

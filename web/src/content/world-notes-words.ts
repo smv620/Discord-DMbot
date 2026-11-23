@@ -1,5 +1,6 @@
 // The words of World notes on the Names page (#4285): the same as Discord's 🌍 World notes screen (slice 1b, the ux-critic's), so the two
 // stay level. DM only. A line's own words (the land, climate and ruler) come from the place screen's words (place-world-words.ts).
+import { cultureWords, populationWords } from "./place-culture-lines";
 import { placeWorldWords as place } from "./place-world-words";
 
 /** The words for each step, as Discord's card has them: "Mithral Keep is unfriendly toward elves". */
@@ -35,7 +36,7 @@ export const worldNotesWords = {
   keepAllRoads: (n: number): string => (n === 1 ? "✅ Keep the 1 road" : `✅ Keep all ${n} roads`),
   showing: (shown: number, total: number): string => `Showing ${shown} of ${total}. Check some and the rest come up.`,
   /** What a line is and where it came from. */
-  kindHint: { terrain: "Land", climate: "Climate", control: "Ruler", condition: "Road condition", language: "Language" } as Record<string, string>,
+  kindHint: { terrain: "Land", climate: "Climate", control: "Ruler", condition: "Road condition", culture: "Culture", population: "Who lives here", language: "Language" } as Record<string, string>,
   fromLore: "from your lore",
   fromSession: "from a session",
   kept: (line: string): string => `✅ Kept: ${line}`,
@@ -52,7 +53,10 @@ export const worldNotesWords = {
   working: "Working on it…",
   /** One line's words, as Discord's card says them: the land ("partly" when only part of it), the climate (and dry or wet), who holds
    * the place, or the language. A value of "other" shows the table's own words. */
-  place: (n: { name: string; layer: string; value: string; words: string; how: string | null; ruler: string | null }): string => {
+  place: (n: { name: string; layer: string; value: string; words: string; how: string | null; ruler: string | null; culture?: string | null }): string => {
+    // A culture or who lives here (#4412): the words of the place's panel, for the one row (a named culture by its name).
+    if (n.layer === "culture") return `${n.name}: ${cultureWords([{ value: n.value, words: n.words, how: n.how ?? "", culture: n.culture ?? null }])}`;
+    if (n.layer === "population") return `${n.name}: ${populationWords([{ value: n.value, words: n.words, how: n.how ?? "", culture: n.culture ?? null }])}`;
     if (n.layer === "terrain") {
       const land = n.value === "other" ? n.words : (place.land.choices[n.value]?.[0] ?? n.value);
       return `${n.name}: ${n.how === "partly" ? `Partly ${land.toLowerCase()}` : land}`;
