@@ -193,6 +193,16 @@ class TheWords(unittest.TestCase):
         self.assertEqual(cl.who_line(None, "Shafina"), "DMbot doesn't know much about Shafina yet.")
         self.assertEqual(cl.who_line("", "Shafina", pending=True), cl.STILL_WRITING)
 
+    def test_a_hidden_entry_never_reads_as_an_unknown_one(self) -> None:
+        # (a secret NPC: the job kept no sentence because the players may not see the entry)
+        self.assertEqual(
+            cl.who_line(None, "Veiled", hidden=True),
+            "DMbot writes this line only from what your players may know.",
+        )
+        self.assertNotIn("know much", cl.who_line(None, "Veiled", hidden=True))
+        # (a sentence is still shown when there is one; hidden only explains an empty line)
+        self.assertEqual(cl.who_line("A rogue.", "Veiled", hidden=True), "A rogue.")
+
     def test_a_long_sentence_is_cut_at_a_word_and_never_refused(self) -> None:
         long = "word " * 100
         cut = cl.cut_sentence(long)
@@ -208,6 +218,7 @@ class TheWords(unittest.TestCase):
             cl.NEVER_AT_THE_TABLE,
             cl.STILL_WRITING,
             cl.who_line(None, "Shafina"),
+            cl.who_line(None, "Shafina", hidden=True),
         ]
         for text in lines:
             self.assertIsNone(re.search(r"\b(node|entity|graph)\b", text, re.I), text)

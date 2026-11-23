@@ -25,6 +25,7 @@ FIRST_MET = "First met"
 LAST_MENTIONED = "Last mentioned"
 NEVER_AT_THE_TABLE = "Not mentioned at the table yet."
 STILL_WRITING = "DMbot is still writing this."
+HIDDEN_WHO = "DMbot writes this line only from what your players may know."
 WHO_MAX = 300  # the sentence is cut here at the end of a word, if the AI went long
 
 
@@ -186,10 +187,17 @@ def lore_line(document: str, heading: str = "") -> str:
     return f"{FIRST_MET}: in your lore, {where}."
 
 
-def who_line(sentence: str | None, name: str, *, pending: bool = False) -> str:
-    """The first line: the one sentence DMbot wrote from what it holds, or why there is none."""
+def who_line(
+    sentence: str | None, name: str, *, pending: bool = False, hidden: bool = False
+) -> str:
+    """The first line: the one sentence DMbot wrote from what it holds, or why there is none:
+    still being written (`pending`), written from nothing the players may know (`hidden`: a secret
+    NPC must not read as an unknown one, nor give away that anything is held back), or too little
+    known."""
     if sentence and sentence.strip():
         return cut_sentence(sentence)
+    if hidden:
+        return HIDDEN_WHO
     if pending:
         return STILL_WRITING
     return f"DMbot doesn't know much about {name} yet."
