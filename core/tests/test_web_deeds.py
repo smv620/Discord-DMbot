@@ -150,6 +150,15 @@ class DeedsOnTheWeb(Web):
         self.assertNotIn("lines", str(got))  # (no line numbers, speakers or session)
         self.assertNotIn(str(SAID), str(got))
 
+    async def test_with_the_deeds_switch_off_nothing_is_listed(self) -> None:
+        # The Questions count shows 0 while DMBOT_STORY_DEEDS is off; the card never disagrees.
+        await self.put(kind="rescue")
+        got = await deeds.read(
+            self.web, self.session, self.cref, outside_engine=None, deeds_on=False
+        )
+        self.assertEqual(got, {"total": 0, "deeds": []})
+        self.assertEqual((await self.read())["total"], 1)  # (and on, it is listed)
+
     async def test_the_order_is_discords_and_the_page_is_limited_with_the_total(self) -> None:
         for n in range(WAITING_MAX + 3):
             await self.put(text=f"Deed {n:02d}", viewer=f"Place {n:02d}")

@@ -3327,7 +3327,13 @@ def create_app(
         them: DM only."""
         session, _token = signed
         try:
-            return await deeds.read(db, session, ref, outside_engine=settings.outside_engine)
+            return await deeds.read(
+                db,
+                session,
+                ref,
+                outside_engine=settings.outside_engine,
+                deeds_on=settings.story_deeds_on,
+            )
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

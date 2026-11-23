@@ -26,14 +26,24 @@ ACTIONS = {"record": "deed-record", "not": "deed-not"}
 
 
 async def read(
-    db: Database, session: Session, ref: str, *, outside_engine: str | None
+    db: Database,
+    session: Session,
+    ref: str,
+    *,
+    outside_engine: str | None,
+    deeds_on: bool = True,
 ) -> dict[str, Any]:
     """`{total, deeds: [{id, doer, text, viewers, effect, kind}]}`, oldest first, at most 50, only
     deeds whose speakers are all recorded now (under the current wording and, while an outside
     company hears the voices, for that company: the bot's rule). `not_allowed` for anyone who is
-    not a DM of the campaign."""
+    not a DM of the campaign. With the deeds switch off (`DMBOT_STORY_DEEDS`, the bot's own gate)
+    nothing is listed, so the page and the Questions count never disagree (Supervisor's note on
+    #5114); the plan half of the bot's rule (`deeds_on`) is the bot's to check and is checked again
+    when the DM answers."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
+    if not deeds_on:
+        return {"total": 0, "deeds": []}
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         cur = await conn.execute(
