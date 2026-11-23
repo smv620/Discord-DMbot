@@ -5450,7 +5450,7 @@ def create_app(
         if rule_lookup_limit.take(f"rule-lookup:{session.user_id}") != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
         length = request.headers.get("content-length", "")
-        if not length.isdecimal() or int(length) > 2000:
+        if not length.isdecimal() or int(length) > rule_lookup_pages.BODY_MAX:
             raise HTTPException(status_code=413, detail="too_big")
         try:
             body = await request.json()

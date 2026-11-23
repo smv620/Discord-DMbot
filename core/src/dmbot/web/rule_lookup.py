@@ -24,6 +24,7 @@ from dmbot.web.campaign_page import read_campaign  # (the page's own DM check)
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
 
+BODY_MAX = 4096  # the biggest request body read: a 100-character name, however it is escaped
 TYPED_MAX = 100  # Discord's box takes 100 characters (`ui.rule_lookup.BOX_MAX`)
 
 
