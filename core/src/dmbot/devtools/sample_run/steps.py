@@ -108,7 +108,11 @@ async def existing_samples(db: Database, campaigns: CampaignStore, guild: int) -
 
 
 async def check_existing(
-    db: Database, campaigns: CampaignStore, guild: int, dm: int, deploy: int | None = None
+    db: Database,
+    campaigns: CampaignStore,
+    guild: int,
+    dm: int,
+    deploy: sample_name.Label | int | None = None,
 ) -> list[Existing]:
     """The earlier sample campaigns. Only this deploy's own (the same N, which the run replaces)
     must pass `plan.can_replace`: if it cannot be deleted, the run cannot make a second one with
@@ -117,6 +121,7 @@ async def check_existing(
     played in never blocks a run."""
     found = await existing_samples(db, campaigns, guild)
     if deploy is not None:
+        deploy = sample_name.as_label(deploy)
         own = {
             c.id
             for c in await campaigns.list_campaigns(guild)
@@ -185,7 +190,7 @@ async def clear_for_deploy(
     guild: int,
     dm: int,
     *,
-    deploy: int,
+    deploy: sample_name.Label | int,
     say: Say,
     found: list[Existing] | None = None,
     sleep: Sleep | None = None,
@@ -213,6 +218,7 @@ async def clear_for_deploy(
     # Only what the run would delete is checked: a kept sample is never touched. A refusal on
     # this deploy's own campaign stops the run (it cannot be made again); on any other it is
     # left alone and counted in the line.
+    deploy = sample_name.as_label(deploy)
     first = sample_name.plan_keep(have, deploy)
     refused: set[str] = set()
     for campaign_id in first.delete:
@@ -287,7 +293,7 @@ async def make_campaign(
     guild: int,
     dm: int,
     *,
-    deploy: int,
+    deploy: sample_name.Label | int,
     run: int | None = None,
     say: Say,
     deleted: int = 0,
@@ -321,7 +327,7 @@ async def fresh_campaign(
     guild: int,
     dm: int,
     *,
-    deploy: int,
+    deploy: sample_name.Label | int,
     say: Say,
     found: list[Existing] | None = None,
     sleep: Sleep | None = None,
@@ -381,7 +387,7 @@ async def _lore_row(db: Database, guild: int, upload: str) -> dict[str, Any]:
     async with db.guild(guild, snapshot=True) as conn:
         cur = await conn.execute(
             "SELECT state, stage, error, done, total, names_found, links_found, words_done,"
-            " calls_made FROM lore_uploads WHERE guild_id = %s AND id = %s",
+            " calls_made, names_cut FROM lore_uploads WHERE guild_id = %s AND id = %s",
             (guild, upload),
         )
         return dict(await cur.fetchone() or {})
@@ -429,6 +435,8 @@ async def wait_lore(
                 "connections": int(row["links_found"]),
                 "words": int(row["words_done"]),
                 "calls": int(row["calls_made"]),
+                # names past the one-document limit (#5055 A): a loss to the cap, not a miss
+                "names cut": int(row["names_cut"]),
             }
         if row["state"] == "failed":
             raise SampleError(f"the lore read failed ({row['error'] or 'no reason'})")
@@ -539,7 +547,8 @@ async def _import_row(db: Database, guild: int, session: str) -> dict[str, Any]:
     async with db.guild(guild, snapshot=True) as conn:
         cur = await conn.execute(
             "SELECT state, reason, scanned, scan_finished, step_done, step_total, words_done,"
-            " calls_made, story_state, story_part, story_parts FROM session_imports"
+            " calls_made, story_state, story_part, story_parts, scan_cut, story_held"
+            " FROM session_imports"
             " WHERE guild_id = %s AND session_id = %s",
             (guild, session),
         )
@@ -611,6 +620,10 @@ async def wait_import(
         "words": int(row["words_done"]),
         "calls": int(row["calls_made"]),
         "story": str(row["story_state"] or "not read"),
+        # (#5055 A) names past the name scan's limit (left out), and new names past the story
+        # reader's (held for a later session): kept apart, as they mean different things
+        "scan cut": int(row["scan_cut"]),
+        "reader held": int(row["story_held"]),
     }
 
 
@@ -656,14 +669,26 @@ def master_key() -> dict[str, object]:
     return key
 
 
-def score(path: Path, docs: str) -> list[str]:
+async def met_words(db: Database, guild: int, campaign_id: str) -> list[str]:
+    """The words of the campaign's "met but not named" rows (`memory_met`), which a backup does not
+    carry, for the key's described rows (#5055 D). The sample's own words, kept on the server: the
+    check prints counts only."""
+    async with db.guild(guild, snapshot=True) as conn:
+        cur = await conn.execute(
+            "SELECT what FROM memory_met WHERE guild_id = %s AND campaign_id = %s",
+            (guild, campaign_id),
+        )
+        return [str(r["what"]) for r in await cur.fetchall()]
+
+
+def score(path: Path, docs: str, met: Sequence[str] = ()) -> list[str]:
     """`graph_key_check --docs DOCS --counts-only` on a backup, as the command does, and its
-    counts-only lines back."""
+    counts-only lines back. `met`: the "met but not named" words (`met_words`)."""
     from dmbot.devtools import graph_key_check
 
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        code = graph_key_check.main([str(path), "--docs", docs, "--counts-only"])
+        code = graph_key_check.main([str(path), "--docs", docs, "--counts-only"], met=met)
     if code != 0:
         # (the checker's own one-line reason: it names a rule, never a name from the backup)
         why = err.getvalue().strip().splitlines()[:1]
@@ -674,15 +699,16 @@ def score(path: Path, docs: str) -> list[str]:
     return out.getvalue().splitlines()
 
 
-def score_numbers(path: Path, docs: str) -> dict[str, int]:
+def score_numbers(path: Path, docs: str, met: Sequence[str] = ()) -> dict[str, int]:
     """The answer-key check's totals as numbers (#3545's spread): entries and ties found, missing,
-    wrong and waiting over every group, and the extras. Counts only."""
+    wrong and waiting over every group, the extras, and the described rows found (#5055 D).
+    Counts only."""
     from collections import Counter
 
     from dmbot.campaigns.store import decode_backup
     from dmbot.devtools import graph_key_check as gkc
 
-    summary = gkc.summarize(gkc.check(decode_backup(path.read_bytes()), master_key(), docs))
+    summary = gkc.summarize(gkc.check(decode_backup(path.read_bytes()), master_key(), docs, met))
     out: dict[str, int] = {}
     for part in ("entries", "ties"):
         total: Counter[str] = Counter()
@@ -697,6 +723,9 @@ def score_numbers(path: Path, docs: str) -> dict[str, int]:
         })  # fmt: skip
     out["extra entries"] = sum(summary["extra_entries"].values())
     out["extra ties"] = int(summary["extra_ties"])
+    described = summary["described"]
+    if described.get("total"):  # (#5055 D: not name misses, so a line of their own)
+        out["described found"] = described.get(gkc.AS_ENTRY, 0) + described.get(gkc.ON_MET_LIST, 0)
     return out
 
 

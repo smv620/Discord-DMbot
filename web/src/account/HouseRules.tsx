@@ -147,7 +147,6 @@ function Rules({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
             <a href="/account/house-rules">{text.allCampaigns}</a>
           </p>
           <CampaignNav api={api} campaignRef={campaignRef} page="houseRules" name={found.name} />
-          <h2>{found.name}</h2>
           <p class="small">{text.leadOneCampaign}</p>
           {found.rules.length === 0 ? (
             <p class="panel" role="status">

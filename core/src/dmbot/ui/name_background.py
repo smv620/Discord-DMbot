@@ -739,6 +739,7 @@ class BackgroundOffer(_Menu):
                     + secret_questions_ui.count_line(done.secret_questions)
                     + picture_held_line(len(done.picture_held))
                     + pictures_unread_line(done.pictures_unread, done.unread_pages)
+                    + names_over_cap_line(done.dropped)
                     + pictures_kept_line(
                         done.pictures_kept, done.pictures_not_kept, done.pictures_undo
                     )
@@ -1849,6 +1850,20 @@ def pictures_kept_line(n: int, missed: int = 0, undo: bool = False) -> str:
             "some under Pictures on the website to make room."
         )
     return line
+
+
+def names_over_cap_line(dropped: Mapping[str, int]) -> str:
+    """The note's line for names past the one-document limit (#5055 A, #5056 point 2; Supervisor's
+    ruling): how many more names the read found than DMbot lists, so a shorter list is never a
+    silent one. A count only, never a name. Pure."""
+    n = dropped.get(bg.NAMES_OVER_CAP, 0)
+    if not n:
+        return ""
+    more = "1 more name was" if n == 1 else f"{n} more names were"
+    return (
+        f"\n📄 {more} left out. DMbot lists up to {bg.MAX_NAMES} names from one document. To "
+        f"get {'it' if n == 1 else 'them'}, split the document and upload each part."
+    )
 
 
 def pictures_unread_line(n: int, pages: Sequence[int] = ()) -> str:
@@ -3235,6 +3250,7 @@ async def announce(
         card += done.knowledge_note
     # (#4003 slice b: on the DM's own card)
     card += pictures_unread_line(done.pictures_unread, done.unread_pages)
+    card += names_over_cap_line(done.dropped)
     card += pictures_kept_line(done.pictures_kept, done.pictures_not_kept, done.pictures_undo)
     card += maps_asked_line(done.maps_asked, done.maps_over, done.maps_unsent)
     if interaction.user.id in campaign.dm_user_ids:  # (a manager who isn't a DM: counts only)
