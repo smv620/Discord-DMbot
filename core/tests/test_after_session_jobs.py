@@ -55,6 +55,28 @@ class TheQueue(MemoryTest):
             await self.queue.finish(GUILD_A, self.c, SESSION, "reads", "worker", ok=True)
         )
 
+    async def test_a_running_block_says_what_it_is_on_and_only_its_holder_can(self) -> None:
+        await self.hand()
+        self.assertEqual(
+            await self.queue.status(GUILD_A, self.c, SESSION, "reads"), jobs.Status("waiting")
+        )
+        await self.queue.claim(GUILD_A, self.c, SESSION, "reads", "worker-1")
+        self.assertFalse(
+            await self.queue.step(GUILD_A, self.c, SESSION, "reads", "worker-2", jobs.STORY, 1, 4)
+        )
+        self.assertTrue(
+            await self.queue.step(GUILD_A, self.c, SESSION, "reads", "worker-1", jobs.STORY, 2, 4)
+        )
+        self.assertEqual(
+            await self.queue.status(GUILD_A, self.c, SESSION, "reads"),
+            jobs.Status("running", jobs.STORY, 2, 4),
+        )
+        await self.queue.finish(GUILD_A, self.c, SESSION, "reads", "worker-1", ok=True)
+        self.assertEqual(
+            await self.queue.status(GUILD_A, self.c, SESSION, "reads"), jobs.Status("done")
+        )
+        self.assertIsNone(await self.queue.status(GUILD_A, self.c, SESSION, "late"))
+
     async def test_a_block_given_back_waits_again_and_only_its_holder_can_give_it(self) -> None:
         await self.hand()
         await self.queue.claim(GUILD_A, self.c, SESSION, "reads", "worker-1")

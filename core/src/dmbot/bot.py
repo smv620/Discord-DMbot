@@ -3589,18 +3589,26 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if block == after_jobs.READS
             else after_session.LATE_IN_WORKER
         )
-        await DMBot._after_card(self, table).stage(words)
+        card = DMBot._after_card(self, table)
+        await card.stage(words)
         who = f"bot-{uuid.uuid4().hex[:8]}"
         began = time.monotonic()
         errors = 0
         while True:
             try:
-                state = await queue.state(gid, cid, sid, block)
+                found = await queue.status(gid, cid, sid, block)
+                state = None if found is None else found.state
                 waited = time.monotonic() - began
                 if state in (None, after_jobs.DONE, after_jobs.FAILED):
                     if state == after_jobs.FAILED:
                         log.warning("After the session: the worker's %s block failed", block)
                     return  # (None: the row is gone with its campaign)
+                if found is not None and found.stage:  # (what the worker is on: the DM's card)
+                    staged = {
+                        after_jobs.STORY: after_session.STORY,
+                        after_jobs.THREADS: after_session.THREADS,
+                    }.get(found.stage, words)
+                    await card.stage(staged, found.part, found.parts)
                 # `claim` itself refuses a block a live lease holds, so a dead worker's block is
                 # taken here too and a slow one is left alone.
                 if waited >= WORKER_TAKE_S and await queue.claim(gid, cid, sid, block, who):
@@ -3655,20 +3663,48 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await asyncio.gather(renewing, return_exceptions=True)
 
     async def _run_after_block(
-        self, gid: int, cid: str, sid: str, dm_ids: Collection[int], block: str
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        dm_ids: Collection[int],
+        block: str,
+        report: Callable[[str, int, int], Awaitable[object]] | None = None,
     ) -> bool:
         """Run one handed-over block from ids alone (the worker's side, #4905): each step is today's
         id-based reader, in today's order, each in its own `try` so one failing never stops the
         next, and consent is asked again inside each as before. Notices go through the outbox
         (`_story_note`). The extractor's per-session tally is the bot's log only, so it is not
-        kept here. True when every step ran without an error."""
+        kept here. `report` is told the stage and the part n of m as the block goes (the DM's card
+        reads it from the job's row): codes and counts only. True when every step ran without an
+        error."""
         consenting = partial(self.consent.consenting, gid)
+
+        async def say(stage: str, part: int = 0, parts: int = 0) -> None:
+            if report is not None:
+                try:
+                    await report(stage, part, parts)
+                except Exception as exc:  # a display never breaks a read
+                    log.warning("After the session (worker): progress (%s)", type(exc).__name__)
+
+        async def story(part: int, parts: int) -> None:
+            await say(after_jobs.STORY, part, parts)
+
+        async def threads(part: int, parts: int) -> None:
+            await say(after_jobs.THREADS, part, parts)
+
         if block == after_jobs.READS:
             plan: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
                 (
                     "story extractor",
                     lambda: self._extract_session(
-                        gid, cid, sid, dm_ids=dm_ids, tally=None, notice_channel=None
+                        gid,
+                        cid,
+                        sid,
+                        dm_ids=dm_ids,
+                        tally=None,
+                        notice_channel=None,
+                        progress=story,
                     ),
                 ),
                 (
@@ -3686,10 +3722,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         else:
             plan = [
                 ("importance", lambda: self._read_importance(gid, cid, sid)),
-                ("story threads", lambda: self._read_threads(gid, cid, sid, dm_ids, consenting)),
+                (
+                    "story threads",
+                    lambda: self._read_threads(gid, cid, sid, dm_ids, consenting, step=threads),
+                ),
             ]
         failed = 0
         for name, step in plan:
+            if name not in ("story extractor", "story threads"):  # (those report their own parts)
+                await say(after_jobs.WORKING)
             try:
                 await step()
             except Exception as exc:  # the type only: never a word of the story
@@ -3712,7 +3753,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         try:
             with log_context(guild_id=gid, campaign_id=cid):
                 async with self._after_lease(gid, cid, sid, block, who):
-                    ok = await self._run_after_block(gid, cid, sid, job.dm_ids, block)
+                    ok = await self._run_after_block(
+                        gid, cid, sid, job.dm_ids, block,
+                        lambda stage, part, parts: queue.step(
+                            gid, cid, sid, block, who, stage, part, parts
+                        ),
+                    )  # fmt: skip
         except asyncio.CancelledError:
             await queue.release(gid, cid, sid, block, who)  # (nothing if the lease is not ours)
             raise

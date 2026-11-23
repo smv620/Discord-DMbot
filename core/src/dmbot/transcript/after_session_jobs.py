@@ -22,6 +22,19 @@ LATE = "late"  # importance and the story threads
 BLOCKS = (READS, LATE)
 STALE_S = 15 * 60  # a lease not renewed for this long is dead: one AI call takes minutes at most
 WAITING, RUNNING, DONE, FAILED = "waiting", "running", "done", "failed"
+# What a running block is on (a code the bot turns into words for the DM's card).
+STORY, THREADS, WORKING = "story", "threads", "working"
+
+
+@dataclass(frozen=True, slots=True)
+class Status:
+    """Where a block is, for the bot that waits for it: its state and, while it runs, the stage,
+    the part and of how many (0 when not known)."""
+
+    state: str
+    stage: str = ""
+    part: int = 0
+    parts: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +178,50 @@ class AfterSessionJobs:
             )
             row = await cur.fetchone()
         return None if row is None else str(row["state"])
+
+    async def step(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_id: str,
+        block: str,
+        who: str,
+        stage: str,
+        part: int = 0,
+        parts: int = 0,
+    ) -> bool:
+        """The holder says what the block is on now (and renews its lease with it)."""
+        now = int(self._now())
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE after_session_jobs SET stage = %s, part = %s, parts = %s, moved_at = %s,"
+                " lease_at = %s WHERE guild_id = %s AND campaign_id = %s AND session_id = %s"
+                " AND block = %s AND state = 'running' AND claimed_by = %s",
+                (stage, max(0, part), max(0, parts), now, now, guild_id, campaign_id, session_id,
+                 block, who[:40]),
+            )  # fmt: skip
+            return bool(cur.rowcount)
+
+    async def status(
+        self, guild_id: int, campaign_id: str, session_id: str, block: str
+    ) -> Status | None:
+        """`state`, with what a running block is on; None when it was never handed over."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT state, stage, part, parts FROM after_session_jobs WHERE guild_id = %s"
+                " AND campaign_id = %s AND session_id = %s AND block = %s",
+                (guild_id, campaign_id, session_id, block),
+            )
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        running = row["state"] == RUNNING
+        return Status(
+            str(row["state"]),
+            str(row["stage"]) if running else "",
+            int(row["part"]) if running else 0,
+            int(row["parts"]) if running else 0,
+        )
 
     async def open(self, guild_id: int, limit: int = 10) -> list[Job]:
         """The blocks a worker may take now: waiting, or running on a dead lease. Oldest first."""
