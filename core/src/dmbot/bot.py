@@ -12318,8 +12318,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # such line yet, #5124)
             stage = self.import_job.store if import_scan and self.import_job is not None else None
 
+            started = False  # a "reading" was written: a reader that then fails says "stopped"
+
             async def moved(part: int, parts: int) -> None:
+                nonlocal started
                 if stage is not None and session_id is not None:
+                    started = True
                     await stage.set_names(
                         gid, session_id, "reading", int(time.time()), part=part, parts=parts
                     )
@@ -12327,9 +12331,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             every, reader_kinds, trace, unread = await self._read_session_names(
                 gid, cid, read_in, people, every, progress=moved if stage is not None else None
             )
-            if stage is not None and session_id is not None and unread is not None:
+            # A reader that failed after it started leaves "stopped", never a "reading" that
+            # looks as if it still runs; one that never started leaves the stage empty.
+            ended = "read" if unread is not None else "stopped" if started else ""
+            if stage is not None and session_id is not None and ended:
                 try:
-                    await stage.set_names(gid, session_id, "read", int(time.time()), unread=unread)
+                    await stage.set_names(gid, session_id, ended, int(time.time()), unread=unread)
                 except Exception as exc:  # (the card is a nicety: the names are suggested)
                     log.warning("The import card's names stage failed (%s)", type(exc).__name__)
         if loose and unread is None:

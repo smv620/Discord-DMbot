@@ -390,3 +390,19 @@ class TheBotStep(unittest.TestCase):
         bot.memory.known_keys = broken
         scan = [Suggestion("Targos", 3)]
         self.assertEqual(self.step(bot, scan), (scan, {}))
+
+    def test_the_readers_progress_reaches_the_given_hook_batch_by_batch(self) -> None:
+        import asyncio
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        bot = self.bot(FakeClient(lambda _t: FakeReply(answer(item("hrothgar")))))
+        moves: list[tuple[int, int]] = []
+
+        async def moved(part: int, parts: int) -> None:
+            moves.append((part, parts))
+
+        lines: Any = [SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out")]
+        asyncio.run(DMBot._read_session_names(bot, 5, "c1", lines, set(), [], progress=moved))
+        self.assertEqual(moves, [(1, 1)])

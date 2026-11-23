@@ -340,19 +340,21 @@ class ImportStore:
         unread: int | None = None,
     ) -> None:
         """Where the name reader of this import is (#5091, as `set_story` is for the story read):
-        'reading' (stretch `part` of `parts`) or 'read' (with how many stretches could not be read,
-        `unread`, which the card says plainly, never as "no names"). Counts and times only. It
-        started when it first went to 'reading' (or went back to an earlier stretch: a new read
-        after a restart); every call is a move."""
+        'reading' (stretch `part` of `parts`), 'read' (with how many stretches could not be read,
+        `unread`, which the card says plainly, never as "no names") or 'stopped' (the reader failed
+        after it started). Counts and times only. It started when it first went to 'reading', or
+        when the first stretch is read again (a new read after a restart, even one that died in
+        its first stretch); every call is a move."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE session_imports SET names_moved_at = %s,"
                 " names_started_at = CASE WHEN %s = 'reading' AND (names_state <> 'reading'"
-                " OR coalesce(%s, 0) < names_part) THEN %s ELSE names_started_at END,"
+                " OR coalesce(%s, 0) < names_part OR coalesce(%s, 0) = 1)"
+                " THEN %s ELSE names_started_at END,"
                 " names_part = coalesce(%s, names_part), names_parts = coalesce(%s, names_parts),"
                 " names_unread = coalesce(%s, names_unread),"
                 " names_state = %s WHERE guild_id = %s AND session_id = %s",
-                (now, state, part, now, part, parts, unread, state, guild_id, session_id),
+                (now, state, part, part, now, part, parts, unread, state, guild_id, session_id),
             )
 
     async def finish_scan(self, guild_id: int, session_id: str, ended: int) -> None:

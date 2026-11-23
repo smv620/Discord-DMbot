@@ -11,7 +11,9 @@ from dmbot.migrations._shared import _swaps
 # The import card already shows the story read's stage from `session_imports` (0325: state, part of
 # parts, started, moved); the name reader gets the same, as its own stage, so a long read is never a
 # silent wait (CLAUDE.md, "Every wait shows that DMbot is still working", #2564). Counts and times
-# only, never a name: `names_state` is '' (not read, or the reader is off), 'reading' or 'read';
+# only, never a name: `names_state` is '' (not read, or the reader is off), 'reading', 'read', or
+# 'stopped' (the reader failed after it started: the card says so, and the names come from the scan
+# alone; a wait that stops is never left looking as if it still runs);
 # `names_part` of `names_parts` is the stretch being read; `names_started_at` / `names_moved_at` are
 # Unix seconds; `names_unread` is how many stretches could not be read (said plainly, never "no
 # names"). `dmbot_import_progress` sends them beside the story's, rebuilt from its stored definition
@@ -34,7 +36,7 @@ SQL = (
     r"""
     ALTER TABLE session_imports
         ADD COLUMN names_state      TEXT NOT NULL DEFAULT ''
-            CHECK (names_state IN ('', 'reading', 'read')),
+            CHECK (names_state IN ('', 'reading', 'read', 'stopped')),
         ADD COLUMN names_part       INTEGER NOT NULL DEFAULT 0 CHECK (names_part >= 0),
         ADD COLUMN names_parts      INTEGER NOT NULL DEFAULT 0 CHECK (names_parts >= 0),
         ADD COLUMN names_started_at BIGINT NOT NULL DEFAULT 0 CHECK (names_started_at >= 0),
