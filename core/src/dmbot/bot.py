@@ -375,7 +375,11 @@ from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.card_summaries import CardSummaries
 from dmbot.memory.claims import ClaimStore
+from dmbot.memory.continuity import CHANGED as CONTINUITY_CHANGED
+from dmbot.memory.continuity import NOT_TRUE as CONTINUITY_NOT_TRUE
 from dmbot.memory.continuity import ContinuityStore
+from dmbot.memory.continuity_hits import ContinuityHits
+from dmbot.memory.continuity_hits import hit_of as continuity_hit_of
 from dmbot.memory.contradiction_grades import MAJOR, GradeStore
 from dmbot.memory.deed_proposals import DeedProposals
 from dmbot.memory.deed_proposals_backup import DeedProposalsSection
@@ -14763,6 +14767,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 reveals_ask=self._work_out_reveals,
                                 reveals_drop=self._drop_reveal,
                                 deeds=self._answer_deed,
+                                continuity_ask=self._work_out_continuity,
+                                continuity_answer=self._answer_continuity,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -15492,6 +15498,68 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         this buttons use, so every rule and the consent re-check are the card's own."""
         return await deed_card.apply_answer(self, guild_id, campaign_id, proposal_id, record=record)
 
+    async def _work_out_continuity(self, guild_id: int, campaign_id: str, user_id: int) -> int:
+        """The continuity heads-ups for the website (#3695 half 1): the same check Discord's card
+        runs when it opens (`ContinuityStore.check`, no AI call, the same levels), with who is
+        recorded read now, kept as pointers for the page (`continuity_hits`), replacing the
+        campaign's earlier set. Only a DM of the campaign (checked again here)."""
+        db, memory = self._picture_db, self.memory
+        if db is None or memory is None:
+            raise RuntimeError("the heads-ups cannot be kept yet")
+        campaign = await self.campaigns.get(guild_id, campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            raise RuntimeError("only a DM of the campaign")
+        report = await ContinuityStore(memory).check(
+            guild_id,
+            campaign_id,
+            opted_in=await self.consent.consenting(guild_id),
+            levels=self.settings.continuity,
+        )
+        hits = [h for h in map(continuity_hit_of, report.conflicts) if h is not None]
+        return await ContinuityHits(db).replace(guild_id, campaign_id, hits)
+
+    async def _answer_continuity(
+        self, guild_id: int, campaign_id: str, claim_id: str, choice: str
+    ) -> bool:
+        """A heads-up answered from the website (#3695 half 1), through the card's own answer
+        (`ContinuityStore.answer`), with who is recorded asked again now. "c": the story changed
+        (the claim becomes a fact, in one change; the story watch then looks, as after the card's
+        button); "n": it wasn't real. False when the claim is not waiting any more (answered in
+        Discord, say). Either way the claim leaves the page's kept set at once."""
+        db, memory = self._picture_db, self.memory
+        if db is None or memory is None:
+            raise RuntimeError("the heads-ups cannot be answered yet")
+        action = CONTINUITY_CHANGED if choice == "c" else CONTINUITY_NOT_TRUE
+        try:
+            await ContinuityStore(memory).answer(
+                guild_id,
+                campaign_id,
+                claim_id,
+                action,
+                opted_in=await self.consent.consenting(guild_id),
+                levels=self.settings.continuity,
+            )
+        except MemoryRuleError:
+            await ContinuityHits(db).drop(guild_id, campaign_id, claim_id)
+            return False
+        await ContinuityHits(db).drop(guild_id, campaign_id, claim_id)
+        if action == CONTINUITY_CHANGED:
+            await self._watch_after_answer(guild_id, campaign_id)
+        log.info("Continuity heads-up answered from the website: %s", choice)  # a word only
+        return True
+
+    async def _watch_after_answer(self, guild_id: int, campaign_id: str) -> None:
+        """A condition the DM just confirmed may have left their adventure behind (#1729): the
+        story watch looks, as after the card's button. It never makes the answer fail, and a
+        worker with no Discord skips it."""
+        campaign = await self.campaigns.get(guild_id, campaign_id)
+        if campaign is None or getattr(self, "headless", False):
+            return
+        try:
+            await self.watch_story(guild_id, campaign_id, campaign.dm_screen_channel_id)
+        except Exception:
+            log.exception("Story watch after a heads-up answered on the website failed")
+
     async def _drop_reveal(self, guild_id: int, campaign_id: str, proposal_id: str) -> None:
         """An answered proposal leaves the website's kept lists at once (#3863)."""
         if self._picture_db is not None:
@@ -15520,6 +15588,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.info("%s kept join choices were cleared", kept)
         except Exception as exc:
             log.warning("The kept join choices could not be swept: %s", type(exc).__name__)
+        try:
+            hits = await ContinuityHits(db).sweep(guild_id)  # (the heads-ups' pointers, #3695)
+            if hits:
+                log.info("%s kept continuity heads-ups were cleared", hits)
+        except Exception as exc:
+            log.warning("The kept continuity heads-ups could not be swept: %s", type(exc).__name__)
 
     def _lore_pdfs(self) -> LorePdfs:
         """What `lore-pdf-estimate` needs (#4762): the staging bucket, the staged-file table and the
