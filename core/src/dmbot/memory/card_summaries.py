@@ -15,6 +15,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from dmbot.db import Database
+from dmbot.memory import meaning
 
 SCENE_MAX = 300  # the column's limit
 WHO_MAX = 600  # the column's limit (the card cuts the sentence shorter, `card_lines.WHO_MAX`)
@@ -86,6 +87,50 @@ class CardSummaries:
                 else {"name": r["name"], "description": "", "aliases": [], "links": []}
                 for r in await cur.fetchall()
             }
+
+    async def player_facts(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> tuple[str, dict[str, object], str] | bool | None:
+        """What the players may be told about one entry, for the card's sentence: (name, parts,
+        text), or None when the entry may not be shown to the players (the same rule as
+        `meaning.entry_texts(for_players=True)`: held by the table, not a person's card, not a
+        story-planning kind, not unnamed, its name not a secret), or False when it is not a
+        confirmed entry of this campaign at all. The text is "" for an entry with no description."""
+        found = (await self.parts(guild_id, campaign_id, [entity_id])).get(entity_id)
+        if found is None:
+            return False
+        shown = await meaning.entry_texts(
+            self._db, guild_id, campaign_id, [entity_id], for_players=True, described_only=False
+        )
+        if entity_id not in shown:
+            return None
+        return str(found.get("name") or ""), found, shown[entity_id]
+
+    async def put_nothing(
+        self, guild_id: int, campaign_id: str, entity_id: str, facts_key: str
+    ) -> bool:
+        """The job ran and there is no sentence to keep (the entry may not be shown to the
+        players): the sentence is cleared, so one made before it was hidden does not stay, and the
+        card says DMbot knows little rather than "still writing". False when the entry is gone."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "INSERT INTO memory_card_summaries"
+                " (guild_id, campaign_id, entity_id, who, facts_key, made_at)"
+                " SELECT %s, %s, e.id, NULL, %s, %s FROM memory_entities e"
+                " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = %s"
+                " ON CONFLICT (guild_id, campaign_id, entity_id) DO UPDATE SET"
+                " who = NULL, facts_key = EXCLUDED.facts_key, made_at = EXCLUDED.made_at",
+                (
+                    guild_id,
+                    campaign_id,
+                    facts_key,
+                    int(self._now()),
+                    guild_id,
+                    campaign_id,
+                    entity_id,
+                ),
+            )
+            return bool(cur.rowcount)
 
     async def put_who(
         self, guild_id: int, campaign_id: str, entity_id: str, who: str, facts_key: str
