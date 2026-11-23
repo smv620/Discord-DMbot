@@ -125,10 +125,12 @@ class TheRevealsCount(unittest.IsolatedAsyncioTestCase):
         async def asked(_g: int, _c: str) -> bool:
             return True
 
-        src = Sources(  # type: ignore[arg-type]
-            db=object(), memory=object(), recorded=who if recorded is not None else None,
+        src = Sources(
+            db=cast(Any, object()),
+            memory=object(),
+            recorded=cast(Any, who if recorded is not None else None),
             reveals_on=asked,
-        )  # fmt: skip
+        )
         with patch("dmbot.memory.reveal_proposals.RevealProposals.count_waiting", count_waiting):
             got = await counts.count_kinds(src, 1, "c", only={kinds.REVEALS})
         return got[kinds.REVEALS].n, seen
@@ -761,6 +763,8 @@ class TheDeedsGate(unittest.IsolatedAsyncioTestCase):
 
         with patch("dmbot.memory.reveal_proposals.RevealProposals.count_waiting", count_waiting):
             for gate, want in ((yes, 3), (no, 0), (None, 0)):
-                src = Sources(db=object(), memory=object(), recorded=who, reveals_on=gate)  # type: ignore[arg-type]
+                src = Sources(
+                    db=cast(Any, object()), memory=object(), recorded=who, reveals_on=gate
+                )
                 got = await counts.count_kinds(src, 1, "c", only={kinds.REVEALS})
                 self.assertEqual(got[kinds.REVEALS].n, want)
