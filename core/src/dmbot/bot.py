@@ -349,6 +349,7 @@ from dmbot.memory import (
     lore_queue,
     meaning,
     name_reader,
+    name_trace,
     plan_reader,
     report_make,
     role_match,
@@ -12282,13 +12283,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # found from what is said about them, never from capitals, joined with the scan's before
         # the cap. Only lines with a stored speaker can be read (consent is asked per line).
         reader_kinds: dict[str, str] = {}
+        trace: list[name_trace.Row] = []
+        scan_keys = {name_key(f.name) for f in every}
         if self.settings.session_names_on and heard_in:
             # (exactly the lines the scan read: never a sidebar or off-topic line it left out,
             # and on a put-back sweep only the lines put back, not the whole session again)
             scanned = set(lines)
             read_in = [x for x in heard_in if x.text in scanned]
             people = await self._people_keys(gid, users, cid)
-            every, reader_kinds = await self._read_session_names(gid, cid, read_in, people, every)
+            every, reader_kinds, trace = await self._read_session_names(
+                gid, cid, read_in, people, every
+            )
         found = every[:MAX_SUGGESTIONS]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
         asked = await self._take_name_asks(gid, cid, session_id) if session_id is not None else []
@@ -12315,6 +12320,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             "Name scan: %d name(s) suggested, %d with a kind, %d without, %d past the limit",
             len(found), len(kinds), len(found) - len(kinds), cut,
         )  # fmt: skip
+        refused: set[str] = set()
         for suggestion in found:
             written = None
             # (a kind the campaign's ontology does not allow falls back to none: the card asks)
@@ -12333,6 +12339,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except MemoryRuleError as exc:
                     log.info("Skipped a suggested name: %s", exc)
             if written is None:
+                refused.add(name_key(suggestion.name))
                 continue
             added.append(suggestion.name)
             if heard_in and session_id is not None:
@@ -12353,7 +12360,71 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
+        if self.settings.name_trace_dir and self.settings.name_trace_guild == gid:  # (#5055 B)
+            await self._write_name_trace(
+                gid,
+                cid,
+                session_id,
+                every,
+                found,
+                offered,
+                refused,
+                scan_keys,
+                trace,
+                {name_key(n) for n in reader_kinds},
+                {name_key(n) for n, _times in asked},
+            )
         return added
+
+    async def _write_name_trace(
+        self,
+        gid: int,
+        cid: str,
+        session_id: str | None,
+        every: Sequence[Suggestion],
+        found: Sequence[Suggestion],
+        offered: Collection[str],
+        refused: Collection[str],
+        scan_keys: Collection[str],
+        trace: list[name_trace.Row],
+        reader_keys: Collection[str],
+        asked_keys: Collection[str],
+    ) -> None:
+        """The per-name trace of this step (#5055 B, dev tools): each name in the joined list ends
+        offered, over the number or refused by the store, with where it came from (the scan, the
+        reader or the name pass), beside the reader's own refusals. Written only for a sample
+        campaign (`name_trace.write`). Never raises."""
+        try:
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None:
+                return
+            shown = {name_key(f.name) for f in found}
+            rows = list(trace)
+            listed = {name_key(f.name) for f in every}
+            # (the joined list, then what was offered beside it: a word the name pass asked)
+            for f in [*every, *(f for f in found if name_key(f.name) not in listed)]:
+                key = name_key(f.name)
+                if key in asked_keys:
+                    source = name_trace.ASKED  # (offered because the name pass asked about it)
+                elif key in scan_keys:
+                    source = name_trace.SCAN
+                elif key in reader_keys:
+                    source = name_trace.READER
+                else:
+                    source = name_trace.ASKED
+                if key not in shown:  # (past the number: the only way into `every` but not shown)
+                    reason = name_trace.OVER_CAP
+                elif key in refused:
+                    reason = name_trace.STORE_REFUSED
+                else:
+                    reason = name_trace.OFFERED
+                rows.append(name_trace.Row(source, f.name, reason, times=f.times))
+            name_trace.write(
+                self.settings.name_trace_dir, campaign.name, cid, session_id, rows,
+                guild_id=gid, test_guild=self.settings.name_trace_guild,
+            )  # fmt: skip
+        except Exception as exc:  # (a dev tool: the step's own work is done)
+            log.warning("Name trace failed: %s", type(exc).__name__)
 
     async def _read_session_names(
         self,
@@ -12362,14 +12433,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         heard_in: Sequence[Line],
         people: Collection[str],
         scan: list[Suggestion],
-    ) -> tuple[list[Suggestion], dict[str, str]]:
+    ) -> tuple[list[Suggestion], dict[str, str], list[name_trace.Row]]:
         """The name reader over the session's lines (docs/design/session_names.md, slice 2),
         joined with the scan's suggestions (`name_reader.join`). Never raises: no AI, a plan
         without it, or a failure leave the scan's list as it was. Who is recorded is asked before
         and after each call. Counts only in the log."""
         ai = self.name_pass_ai
         if ai is None or not heard_in or self.memory is None:
-            return scan, {}
+            return scan, {}, []
         try:
             # Each name never to suggest, with why: a trace can tell "the DM said it isn't a
             # name" from a known name or a person at the table (the Expert, on #5087).
@@ -12380,7 +12451,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             skip.update({k: name_reader.AT_TABLE for k in people})
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
-                return scan, {}
+                return scan, {}, []
             dms = set(campaign.dm_user_ids)
             rows = [
                 name_reader.Row(str(i), x.user_id, x.user_id in dms, x.text)
@@ -12410,10 +12481,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 " %d stretch(es) not read",
                 len(kept), len(dropped), len(joined) - len(scan), read.unread,
             )  # fmt: skip
-            return joined, kinds
+            # The trace (#5055 B): every candidate the reader ended, with its fixed reason. A kept
+            # name the scan also found is "joined"; the rest are traced with the joined list in
+            # `_propose_new_names` (offered, or over the number).
+            scanned = {name_key(x.name) for x in scan} | {name_key(a) for x in scan for a in x.also}
+            traced = name_trace.reader_rows(read.outcomes, dropped, kept, scanned)
+            return joined, kinds, traced
         except Exception as exc:  # the reader adds names; the scan's list stands without it
             log.warning("Name reader failed: %s", type(exc).__name__)
-            return scan, {}
+            return scan, {}, []
 
     async def _scan_kinds(
         self, gid: int, cid: str, names: Sequence[str], lines: Sequence[str]
