@@ -71,6 +71,24 @@ they are heard right and matched as known names. The scan is the fallback for na
 DMbot first, such as an NPC the DM makes up at the table, and that is where speech-to-text is
 least reliable.
 
+**Checked in the code with GraphEngineer (2026-11-23):**
+
+- **With no capitals in the middle of a sentence the scan offers nothing.** `scan._is_name_word`
+  needs the word to start with a capital, and a word capitalised only at a sentence start never
+  counts. `name_longer` only widens what the scan found, so it adds nothing either.
+- **The name pass gets nothing too:** it takes its candidates from the same scan. The Cleaner's
+  unknown-word test is the same check on the first letter.
+- **One source does not look at capitals:** the story reader's own new names (up to 20 a session).
+  So the no-capitals baseline will not be zero, and whatever it finds is that reader's.
+- **Spellings are grouped after the "heard twice" test today,** not before. "Rothgar" heard once
+  and "Hrothgar" heard once are both dropped before they can be joined.
+- **A typed import and a no-capitals import run the same code;** only the text differs. An import
+  has no speech-to-text, and so no hints.
+
+**Not covered here: names missed in uploaded lore.** Whether the reader never listed them or a rule
+dropped them is not known until the per-name trace exists (#5055). That is not designed from a
+guess, and the trace comes before any change to the lore read.
+
 ---
 
 ## 2. The decision
@@ -111,14 +129,16 @@ suggestion.
 |---|---|---|
 | **The name reader** (section 4) | a name with the words that show it is one | the main source |
 | **Typed lines** (the table's chat, the DM's typed notes to DMbot) | a name as a person typed it | **the best source of spelling:** a typed spelling beats any heard one |
-| **The story reader's own claims** | names that appear in what it found | as today |
+| **The story reader's own claims** | names that appear in what it found (up to 20 a session) | as today. It is the only source today that doesn't look at capitals |
 | **The capital-letter scan** | a run of capitalised words | a hint only. It adds a candidate; it never removes one, and it gets no say in spelling over a typed line |
 
 **The scan's rule is loosened, since it no longer decides alone:**
 
 - **"Never in lower case" is dropped.** A word also said in lower case may be a name (#5086 already
   lets it lead a longer one).
-- **A run may include small joining words** ("Spine of the World", "Heart of Chardalyn").
+- **A run may include small joining words** ("Spine of the World", "Heart of Chardalyn"). The
+  joining words don't count toward the scan's three-word limit (`MAX_WORDS`), which today drops a
+  longer run whole.
 - **A possessive inside a name is kept** when the longer form is what was said ("Kelvin's Cairn").
 - **A name that is also an ordinary word** ("Hope", "Boy", "Valley") needs the name reader's
   evidence that it is used as a name. The scan alone never suggests it.
@@ -175,7 +195,10 @@ Before anything is counted or suggested, in this order:
    as "which one?", as today.
 2. **Group what is left by sound.** Candidates that sound alike and are of one kind become one
    name with several spellings (`scan.sound_keys` and `group_alike` exist for this). "Hrothgar",
-   "Rothgar" and "hroth gar" are one name heard three times.
+   "Rothgar" and "hroth gar" are one name heard three times. **This changes the order:** today the
+   "heard twice" test runs first and grouping after it, so spellings heard once each are lost
+   before they can be joined. Whether a two-word spelling passes the fold test against a one-word
+   one is to be proved by a test, not assumed.
 3. **Join split names.** Two short words that together sound like a spelling in the group belong
    to it.
 4. **Count hearings for the group,** not for each spelling.
@@ -370,10 +393,10 @@ Each slice is its own PR with tests, and its numbers on the versions that exist.
 
 | # | Slice | Whose | What changes for the DM | Judged on |
 |---|---|---|---|---|
-| 1 | **The "no capitals" version in the sample run,** scored beside the typed one, with today's code | dev1, GraphEngineer | nothing | the baseline: how far today's scan falls with no capitals |
+| 1 | **The "no capitals" version in the sample run,** scored beside the typed one, with today's code: a version choice on the sample run (typed, no capitals, spoken) with its own campaigns and summaries, the "wrong shape" count, and the input description | dev1, GraphEngineer | nothing | the baseline: how far today's readers fall with no capitals, and which reader found what is left |
 | 2 | **The name reader,** joined with the scan and the story reader's names; the check; the loosened scan rule; the trace's reasons | GraphEngineer | new names found from context | no capitals: at least today's typed count. Typed: nothing lost |
 | 3 | **Grouping by sound, and the new suggestion** ("heard as", "spelled another way"); other spellings become "said as" on a yes | GraphEngineer, WebDev | one question for one name, with its spelling | no doubled names; the typed version unchanged |
-| 4 | **The name pass's candidates** come from the readers, not from capitals | GraphEngineer, CloudDev-lead | known names heard in lower case are fixed after the session | the no-capitals version: known names corrected |
+| 4 | **The name pass's candidates** come from the readers, not from capitals. It first settles whether the name pass runs on an imported session at all: if it doesn't, the sample can't score this slice until it does | GraphEngineer, CloudDev-lead | known names heard in lower case are fixed after the session | the no-capitals version: known names corrected |
 | 5 | **The spoken version of the sample** | dev1, with the owner's recording | nothing | the first real numbers |
 | 6 | **Singled-out things and places** from sessions | GraphEngineer | "the gemstone mine" offered | extra names stay low |
 | 7 | **The live Cleaner's second test,** if question 1 is answered | CloudDev-lead | known names fixed live in lower case | no wrong live fixes on the spoken version |
@@ -397,6 +420,6 @@ Slice 1 is first because it costs almost nothing and turns the owner's point int
 4. **An ordinary word used as a name with no introduction** ("Boy", the dog). It is found only when
    the name reader says it is addressed or spoken of as a name. Whether twice is enough for these
    is for the sample to show.
-5. **#5086** (a word also said in lower case may lead a longer name) is taken in by section 3. It
-   can merge as it is, or be closed in favour of slice 2. For Supervisor.
+5. **#5086: answered.** Supervisor ruled that it merges as it is. It helps the typed version now,
+   and section 3 builds on it.
 6. **The words** of the new suggestion, for the ux-critic.
