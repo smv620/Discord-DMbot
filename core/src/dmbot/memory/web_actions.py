@@ -1699,9 +1699,9 @@ async def _leave(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Out
 # only a short code and the batch. It raises `MemoryRuleError` (`deed_proposals.GONE` when the deed
 # is no longer waiting).
 DeedAnswerFn = Callable[[int, str, str, bool], Awaitable[tuple[str, int | None]]]
-UNKNOWN_NAME = (
-    "unknown_name"  # a name in the deed is not one DMbot knows yet (or the store said no)
-)
+# The store said no to a record (a name in the deed DMbot does not know yet, or another of its
+# rules): one neutral code, since the store's own words quote the deed and the page never gets them.
+DEED_REFUSED = "refused"
 
 
 async def _deed(
@@ -1716,7 +1716,7 @@ async def _deed(
     (consent is asked again inside it). A recorded deed is `deed:recorded` with its change for the
     page's Undo, a turned-down one `deed:not`; one already answered, or whose speaker stopped being
     recorded, is `gone`; a name DMbot does not know (or any other rule of the store) is
-    `unknown_name`, a code only, never the store's words (they quote the deed). `deed-undo` takes
+    `refused`, a code only, never the store's words (they quote the deed). `deed-undo` takes
     back only a change this DM's own done `deed-record` made, read again here (a made-up number
     must never reach `undo`), as the card's own Undo does (`source` DM); past the store's limit it
     is `too_late`. Nothing here logs a word of the deed."""
@@ -1743,7 +1743,7 @@ async def _deed(
     try:
         _words, batch_made = await answer(guild_id, cid, a.text, record)
     except MemoryRuleError as exc:
-        return _failed(GONE if str(exc) == DEED_PROPOSALS_GONE else UNKNOWN_NAME)
+        return _failed(GONE if str(exc) == DEED_PROPOSALS_GONE else DEED_REFUSED)
     except Exception:
         log.exception("A website answer to a deed failed")  # (the traceback, never the deed)
         return _failed(FAILED)

@@ -282,10 +282,10 @@ class DeedsOnTheWeb(Web):
         (deed,) = (await self.read())["deeds"]
         answer_id = await self.answer("record", deed=deed["id"])
         (done,) = await self.bot_loop()
-        self.assertEqual((done.error, done.counts, done.batches), ("unknown_name", "", ()))
+        self.assertEqual((done.error, done.counts, done.batches), ("refused", "", ()))
         self.assertEqual(await self.status_of(deed["id"]), "proposed")  # (still waiting)
         read = await relationships.read_answer(self.web, self.session, self.cref, answer_id)
-        self.assertEqual((read["state"], read["error"]), ("failed", "unknown_name"))
+        self.assertEqual((read["state"], read["error"]), ("failed", "refused"))
         self.assertNotIn("Nobody", str(read))
 
     async def test_an_answer_from_someone_who_is_not_a_dm_now_is_refused(self) -> None:
@@ -355,7 +355,7 @@ class DeedsOnTheWeb(Web):
         done = await wa.apply(
             self.memory, self.g, {ALICE.id}, action, actions=self.actions, deeds=refusing
         )
-        self.assertEqual((done.error, done.counts), ("unknown_name", ""))
+        self.assertEqual((done.error, done.counts), ("refused", ""))
         self.assertNotIn("Cerric", str(done))
         self.assertEqual(deed_proposals.GONE, "That deed is no longer waiting.")
 
