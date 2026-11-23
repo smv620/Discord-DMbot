@@ -121,6 +121,8 @@ NOT_STAMPED: dict[str, str] = {
     "web_reveals": "what the characters learned, in words for a page and kept an hour, not story",
     # (#3695: the continuity heads-ups worked out on the DM's ask; pointers only, kept a day)
     "continuity_hits": "heads-ups worked out for a page and kept a day, pointers only, not story",
+    # (#5133: what made a waiting name a name, how and one line's pointer; goes when answered)
+    "name_found": "how a waiting name was found and a pointer to its line, not story",
     # (#4905: the queue that hands a live session's slow reads to the worker: ids, a lease and a
     # state; what the reads make carries the stamp)
     "after_session_jobs": "a working queue of ids and a lease; what the reads make is stamped",

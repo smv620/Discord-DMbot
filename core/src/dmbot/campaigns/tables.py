@@ -211,6 +211,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "continuity_hits": "the continuity heads-ups DMbot worked out for the website on the DM's "
     "ask (pointers only, no words), gone within a day and worked out again on the next ask "
     "(#3695)",
+    "name_found": "how the after-session step found a waiting name and a pointer to the line "
+    "that made it a name (no words), gone once the name is answered; a restored campaign's cards "
+    "show no quote (#5133)",
     "web_rule_takes": "a day-long undo handle for a website pick of a followed set's changes; "
     "a restored campaign has nothing to undo (#4841)",
     "upload_notices": _RUNTIME,  # each lore upload's notice and the changes it made (#3878)
