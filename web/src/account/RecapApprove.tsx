@@ -26,6 +26,7 @@ import {
 } from "./api";
 import { CueProblems } from "./CueParts";
 import { keepFocus } from "./focus";
+import SavingWait from "./SavingWait";
 import { audioIsStale } from "./useRemake";
 
 /** The text was approved but the post step after it failed: the page says both. */
@@ -240,6 +241,7 @@ export default function RecapApprove({
           {problem}
         </p>
       )}
+      <SavingWait active={busy !== null} stage={words.workingStage} whatToDo={words.workingQuiet} />
       {approval.approved && approval.choice ? (
         <>
           <p ref={statusRef} tabIndex={-1}>
