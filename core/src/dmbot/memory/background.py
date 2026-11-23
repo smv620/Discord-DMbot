@@ -38,6 +38,8 @@ from dmbot.word_end import at_word_end
 MAX_NAMES = 200  # suggestions from one document
 # The `dropped` word for names past `MAX_NAMES` (#5055 A, #5056 point 2): counted, never silent.
 NAMES_OVER_CAP = "names_over_cap"
+# The `dropped` word for the names of a shaping slice that failed or stayed cut (#5056 point 3).
+NAMES_UNREAD = "names_unread"
 NAME_WORDS = 8
 NAME_CHARS = 80
 QUOTE_WORDS = 20
@@ -762,6 +764,29 @@ def group_connections(
             if group is not None:
                 out.extend(Connection(p, "member_of", group.name, item.quote) for p in parts[1:])
     return out
+
+
+def passes(
+    item: Found,
+    skip_keys: Collection[str] = (),
+    *,
+    rules: tuple[str, str] | None = None,
+    dropped: Counter[str] | None = None,
+) -> bool:
+    """`merge`'s filters for one name taken as it is, never split as a list or folded (#5056 point
+    4, the held picture names): not a name DMbot already has, an ordinary word or a game term; not a
+    kind of creature or spell the rules hold; and, for an item, one particular thing (the unique
+    item judge; a generic one is counted in `dropped` as `item_not_unique`, as `merge` does)."""
+    key = name_key(item.name)
+    if not key or key in {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS:
+        return False
+    if rules is not None and in_the_rules(item.name, item.kind, *rules):
+        return False
+    if item.kind == "item" and not unique_item.keeps(item.name, item.quote):
+        if dropped is not None:
+            dropped["item_not_unique"] += 1  # (a count of names, never the names)
+        return False
+    return True
 
 
 def merge(
