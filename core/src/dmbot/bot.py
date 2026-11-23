@@ -432,7 +432,7 @@ from dmbot.memory.reveal_proposals_backup import RevealProposalsSection
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.role_backup import RolesSection
 from dmbot.memory.role_store import RoleStore
-from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names
+from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.scenes import ENTITY, Scenes
@@ -12351,127 +12351,160 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # The scan's own refusals, for the trace (dev tools): the sample's names only
             return out, [name_trace.Row(name_trace.SCAN, n, why) for n, why in left or ()]
 
-        spelled, scan_rows = scanned_names(loose)
-        # The name reader (docs/design/session_names.md, slice 2; DMBOT_SESSION_NAMES): names
-        # found from what is said about them, never from capitals, grouped with the scan's before
-        # any count or cap. Only lines with a stored speaker can be read (consent is asked per
-        # line).
+        settled = name_groups.Settled()
         read: list[name_reader.Found] = []
         read_in: list[Line] = []  # the lines the reader read, numbered from 1 in this order
-        trace: list[name_trace.Row] = []
         unread: int | None = None  # the reader's batches not read; None: it did not read at all
-        if self.settings.session_names_on and heard_in:
-            # (exactly the lines the scan read: never a sidebar or off-topic line it left out,
-            # and on a put-back sweep only the lines put back, not the whole session again)
-            scanned = set(lines)
-            read_in = [x for x in heard_in if x.text in scanned]
-            people = await self._people_keys(gid, users, cid)
-            # (an import's card shows the reader's stage, part n of m, #5091; a live session's
-            # after-session card shows it through `card`, #5124)
-            stage = self.import_job.store if import_scan and self.import_job is not None else None
-            started = False  # a "reading" was written: a reader that then fails says "stopped"
-
-            async def moved(part: int, parts: int) -> None:
-                nonlocal started
-                if stage is not None and session_id is not None:
-                    started = True
-                    await stage.set_names(
-                        gid, session_id, "reading", int(time.time()), part=part, parts=parts
-                    )
-
-            read, trace, unread = await self._read_session_names(
-                gid, cid, read_in, people, spelled,
-                card=card, progress=moved if stage is not None else None,
-            )  # fmt: skip
-            # A reader that failed after it started leaves "stopped", never a "reading" that
-            # looks as if it still runs; one that never started leaves the stage empty.
-            ended = "read" if unread is not None else "stopped" if started else ""
-            if stage is not None and session_id is not None and ended:
-                try:
-                    await stage.set_names(gid, session_id, ended, int(time.time()), unread=unread)
-                except Exception as exc:  # (the card is a nicety: the names are suggested)
-                    log.warning("The import card's names stage failed (%s)", type(exc).__name__)
-        if loose and unread is None:
-            # The reader did not read (nothing to read, a plan without it, a failure): the scan
-            # alone never decides with the loosened rule, so its usual list stands.
-            loose = False
-            spelled, scan_rows = scanned_names(False)
-        scan_keys = {name_key(f.name) for f in spelled}
-        read_keys = {name_key(f.name) for f in read}
-        # Section 5, in its order (`name_groups`): grouping by sound before any count, a group
-        # close to a secret dropped whole, the group's hearings against its reason's need, the
-        # spelling to show, most sure first. A typed line counts only where the spelling was found
-        # in it (`Line.typed`: chat typed at the table, never speech-to-text's guess): for the
-        # reader, the lines it found the name in; for the scan, a typed line holding the spelling
-        # as written (a typed "i hope so" is not where the scan heard "Hope").
-        typed_texts = [x.text for x in heard_in if x.typed]
-
-        def typed_by_scan(text: str) -> int:
-            exact = re.compile(rf"(?<!\w){re.escape(text)}(?!\w)")
-            return sum(1 for t in typed_texts if exact.search(t))
-
-        def typed_by_reader(numbers: Sequence[str]) -> int:
-            # (the reader numbers the lines it read from 1, in the order given: `read_in`)
-            return sum(
-                1 for n in numbers if n.isdigit() and 0 < int(n) <= len(read_in)
-                and read_in[int(n) - 1].typed
-            )  # fmt: skip
-
-        spellings = [
-            name_groups.Spelling(f.name, f.times, typed=typed_by_scan(f.name), ordinary=f.ordinary)
-            for f in spelled
-        ] + [
-            name_groups.Spelling(
-                f.name, f.times, why=f.why, typed=typed_by_reader(f.lines), kind=f.kind
-            )
-            for f in read
-        ]
-        closeness = await self._name_closeness(gid, cid)
-        heard_wrong: Callable[[str], name_scan.Match | None]
-        near_secret: Callable[[str], bool]
-        if closeness is None:
-            # Unsure whether a name is close to a secret: nothing is suggested this time (a
-            # secret is never risked; the log says so, counts only)
-            log.warning("Name scan: names held back, the campaign's names could not be read")
-            heard_wrong, near_secret = (lambda _s: None), (lambda _s: True)
+        ordinary = 0
+        if not self.settings.session_names_on:
+            # The switch off (DMBOT_SESSION_NAMES): the step exactly as it was before slice 3, so
+            # no real campaign's suggestions change until a scored run shows the typed series
+            # unchanged or better (Supervisor, on #5137). One question per thing ("Oskar Vane",
+            # also "Vane"), grouped after the "heard twice" test and before the cap (#394).
+            left: list[tuple[str, str]] | None = [] if tracing else None
+            every = group_alike(find_new_names(lines, skip, unlimited=True, refusals=left))
+            trace = [name_trace.Row(name_trace.SCAN, n, why) for n, why in left or ()]
+            trace += [
+                name_trace.Row(name_trace.SCAN, other, name_scan.GROUPED)
+                for f in every
+                for other in f.also
+            ]
+            reader_kinds: dict[str, str] = {}
+            scan_keys = {name_key(f.name) for f in every}
+            read_keys: set[str] = set()
         else:
-            heard_wrong, near_secret = closeness
-        # (pure and sometimes hundreds of spellings: off the event loop)
-        settled = await asyncio.to_thread(
-            name_groups.settle, spellings, heard_wrong=heard_wrong, near_secret=near_secret
-        )
-        every = [g.suggestion() for g in settled.offered]
-        reader_kinds = {g.name: LORE_KINDS[g.kind] for g in settled.offered if g.kind in LORE_KINDS}
-        split: list[Suggestion] = []
-        if loose:  # "Wulfgar of Icewind Dale" is two names when the reader named a part of it
-            every, split = name_scan.split_joined(every, read_keys, skip)
-        # An ordinary word the reader didn't also find is never suggested by the scan alone
-        # (design section 3). Its trace says when the reader could not say (a call's fault).
-        why_ordinary = name_scan.ORDINARY_PART_READ if unread else name_scan.ORDINARY
-        ordinary = sum(1 for *_x, why, _t in settled.refused if why == name_groups.ORDINARY)
-        # Each spelling's end, once for each reader that found it; names close to a secret are
-        # never written, not even here: one count row
-        trace = [
-            *scan_rows,
-            *trace,
-            *(
-                name_trace.Row(
-                    source, n, why_ordinary if why == name_groups.ORDINARY else why, times=t
+            spelled, scan_rows = scanned_names(loose)
+            # The name reader (docs/design/session_names.md, slice 2; DMBOT_SESSION_NAMES): names
+            # found from what is said about them, never from capitals, grouped with the scan's
+            # before
+            # any count or cap. Only lines with a stored speaker can be read (consent is asked per
+            # line).
+            trace = []
+            if self.settings.session_names_on and heard_in:
+                # (exactly the lines the scan read: never a sidebar or off-topic line it left out,
+                # and on a put-back sweep only the lines put back, not the whole session again)
+                scanned = set(lines)
+                read_in = [x for x in heard_in if x.text in scanned]
+                people = await self._people_keys(gid, users, cid)
+                # (an import's card shows the reader's stage, part n of m, #5091; a live session's
+                # after-session card shows it through `card`, #5124)
+                stage = (
+                    self.import_job.store if import_scan and self.import_job is not None else None
                 )
-                for n, why, t in settled.refused
-                for source, keys in ((name_trace.SCAN, scan_keys), (name_trace.READER, read_keys))
-                if name_key(n) in keys
-            ),
-            *(
-                [name_trace.Row(name_trace.SCAN, "", name_groups.NEAR_SECRET, times=hidden)]
-                if (hidden := settled.near_secret)
-                else []
-            ),
-            *(
-                name_trace.Row(name_trace.SCAN, f.name, name_scan.SPLIT, times=f.times)
-                for f in split
-            ),
-        ]
+                started = False  # a "reading" was written: a reader that then fails says "stopped"
+
+                async def moved(part: int, parts: int) -> None:
+                    nonlocal started
+                    if stage is not None and session_id is not None:
+                        started = True
+                        await stage.set_names(
+                            gid, session_id, "reading", int(time.time()), part=part, parts=parts
+                        )
+
+                read, trace, unread = await self._read_session_names(
+                    gid, cid, read_in, people, spelled,
+                    card=card, progress=moved if stage is not None else None,
+                )  # fmt: skip
+                # A reader that failed after it started leaves "stopped", never a "reading" that
+                # looks as if it still runs; one that never started leaves the stage empty.
+                ended = "read" if unread is not None else "stopped" if started else ""
+                if stage is not None and session_id is not None and ended:
+                    try:
+                        await stage.set_names(
+                            gid, session_id, ended, int(time.time()), unread=unread
+                        )
+                    except Exception as exc:  # (the card is a nicety: the names are suggested)
+                        log.warning("The import card's names stage failed (%s)", type(exc).__name__)
+            if loose and unread is None:
+                # The reader did not read (nothing to read, a plan without it, a failure): the scan
+                # alone never decides with the loosened rule, so its usual list stands.
+                loose = False
+                spelled, scan_rows = scanned_names(False)
+            scan_keys = {name_key(f.name) for f in spelled}
+            read_keys = {name_key(f.name) for f in read}
+            # Section 5, in its order (`name_groups`): grouping by sound before any count, a group
+            # close to a secret dropped whole, the group's hearings against its reason's need, the
+            # spelling to show, most sure first. A typed line counts only where the spelling was
+            # found
+            # in it (`Line.typed`: chat typed at the table, never speech-to-text's guess): for the
+            # reader, the lines it found the name in; for the scan, a typed line holding the
+            # spelling
+            # as written (a typed "i hope so" is not where the scan heard "Hope").
+            typed_texts = [x.text for x in heard_in if x.typed]
+
+            def typed_by_scan(text: str) -> int:
+                exact = re.compile(rf"(?<!\w){re.escape(text)}(?!\w)")
+                return sum(1 for t in typed_texts if exact.search(t))
+
+            def typed_by_reader(numbers: Sequence[str]) -> int:
+                # (the reader numbers the lines it read from 1, in the order given: `read_in`)
+                return sum(
+                    1 for n in numbers if n.isdigit() and 0 < int(n) <= len(read_in)
+                    and read_in[int(n) - 1].typed
+                )  # fmt: skip
+
+            spellings = [
+                name_groups.Spelling(
+                    f.name, f.times, typed=typed_by_scan(f.name), ordinary=f.ordinary
+                )
+                for f in spelled
+            ] + [
+                name_groups.Spelling(
+                    f.name, f.times, why=f.why, typed=typed_by_reader(f.lines), kind=f.kind
+                )
+                for f in read
+            ]
+            closeness = await self._name_closeness(gid, cid)
+            heard_wrong: Callable[[str], name_scan.Match | None]
+            near_secret: Callable[[str], bool]
+            if closeness is None:
+                # Unsure whether a name is close to a secret: nothing is suggested this time (a
+                # secret is never risked; the log says so, counts only)
+                log.warning("Name scan: names held back, the campaign's names could not be read")
+                heard_wrong, near_secret = (lambda _s: None), (lambda _s: True)
+            else:
+                heard_wrong, near_secret = closeness
+            # (pure and sometimes hundreds of spellings: off the event loop)
+            settled = await asyncio.to_thread(
+                name_groups.settle, spellings, heard_wrong=heard_wrong, near_secret=near_secret
+            )
+            every = [g.suggestion() for g in settled.offered]
+            reader_kinds = {
+                g.name: LORE_KINDS[g.kind] for g in settled.offered if g.kind in LORE_KINDS
+            }
+            split: list[Suggestion] = []
+            if loose:  # "Wulfgar of Icewind Dale" is two names when the reader named a part of it
+                every, split = name_scan.split_joined(every, read_keys, skip)
+            # An ordinary word the reader didn't also find is never suggested by the scan alone
+            # (design section 3). Its trace says when the reader could not say (a call's fault).
+            why_ordinary = name_scan.ORDINARY_PART_READ if unread else name_scan.ORDINARY
+            ordinary = sum(1 for *_x, why, _t in settled.refused if why == name_groups.ORDINARY)
+            # Each spelling's end, once for each reader that found it; names close to a secret are
+            # never written, not even here: one count row
+            trace = [
+                *scan_rows,
+                *trace,
+                *(
+                    name_trace.Row(
+                        source, n, why_ordinary if why == name_groups.ORDINARY else why, times=t
+                    )
+                    for n, why, t in settled.refused
+                    for source, keys in (
+                        (name_trace.SCAN, scan_keys),
+                        (name_trace.READER, read_keys),
+                    )
+                    if name_key(n) in keys
+                ),
+                *(
+                    [name_trace.Row(name_trace.SCAN, "", name_groups.NEAR_SECRET, times=hidden)]
+                    if (hidden := settled.near_secret)
+                    else []
+                ),
+                *(
+                    name_trace.Row(name_trace.SCAN, f.name, name_scan.SPLIT, times=f.times)
+                    for f in split
+                ),
+            ]
         found = every[:MAX_SUGGESTIONS]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
         asked = await self._take_name_asks(gid, cid, session_id) if session_id is not None else []
