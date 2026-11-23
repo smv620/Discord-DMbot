@@ -44,6 +44,9 @@ export default function DeedQuestions({
   const statusRef = useRef<HTMLParagraphElement | null>(null);
   const flight = useRef(false);
   const live = useRef(true);
+  // The campaign on the page now: a read that was asked for another campaign is dropped, so its deeds never show here.
+  const current = useRef(campaignRef);
+  current.current = campaignRef;
   useEffect(() => {
     live.current = true;
     return () => void (live.current = false);
@@ -52,9 +55,10 @@ export default function DeedQuestions({
   async function read(): Promise<void> {
     // Nothing is read while the switch is off: the page makes no call for it.
     if (!DEED_QUESTIONS_LIVE || !api.deedQuestions) return;
+    const asked = campaignRef;
     try {
       const got = await api.deedQuestions(campaignRef);
-      if (!live.current) return;
+      if (!live.current || asked !== current.current) return;
       setDeeds(got.deeds);
       setFailed(false);
       onLeft?.(got.total);
@@ -81,7 +85,11 @@ export default function DeedQuestions({
     try {
       await run();
     } catch (error) {
-      if (live.current) setSaid({ ok: false, text: sayFailure(error, undoing) });
+      if (live.current) {
+        setSaid({ ok: false, text: sayFailure(error, undoing) });
+        // A recorded deed that could not be taken back stays recorded: the Undo is no longer offered for it.
+        if (undoing || (error instanceof ApiError && (error.kind === "undo-late" || error.kind === "changed"))) setUndo(null);
+      }
     } finally {
       await read(); // (what shows is always the API's own)
       flight.current = false;
@@ -142,7 +150,7 @@ export default function DeedQuestions({
           {said.text}
         </p>
       )}
-      {!first && <p role="status">{w.empty}</p>}
+      {!first && <p role="status">{deeds.length === 0 ? w.empty : w.allLater}</p>}
       {first && (
         <div class="stack">
           <p>

@@ -6,9 +6,10 @@
  * The names are our own invented cast (docs/test-scripts/), never real people.
  */
 import { plotThreadsWords } from "../content/plot-threads-words";
-import type { DeedQuestions, DeedWaiting } from "./api";
 import type { PlanId } from "../content/pricing";
 import type {
+  DeedQuestions,
+  DeedWaiting,
   AccountApi,
   BackupFile,
   Campaign,

@@ -17,6 +17,7 @@ export const deedWords = {
   refused: "Couldn't do that. A name in it may not be one DMbot knows yet: check the new names, then try again.",
   couldNot: "Couldn't do that. Try again in a minute.",
   empty: "No deeds are waiting. DMbot will ask after a later session if it notices more.",
+  allLater: "The deeds left are set aside with Later. They come back when the page is read again.",
   saving: "Working on it…",
   nothingSaved: "Nothing is saved until you press Record.",
   more: (n: number): string => `${n} more after this one.`,
