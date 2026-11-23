@@ -746,7 +746,10 @@ describe("the wizard", () => {
     for (let i = 0; i < 30 && !screen.queryByText(w.finish.done); i++) await vi.advanceTimersByTimeAsync(2100);
     expect(screen.getByText(w.finish.notes["house_unreadable"]!(2))).toBeTruthy();
     expect(screen.getByText(w.finish.notes["homebrew_link_failed"]!(1))).toBeTruthy();
-    expect(screen.queryByText(/homebrew_/)).toBeNull(); // (words and counts, never the raw note)
+    // Names a limit left out (#5095): a note, not a failure, in the Lore page's words.
+    expect(screen.getByText(w.finish.notes["names_cut"]!(7))).toBeTruthy();
+    expect(w.finish.notes["names_cut"]!(1)).toContain("1 more name was left out");
+    expect(screen.queryByText(/homebrew_|names_cut/)).toBeNull(); // (words and counts, never the raw note)
   });
 
   it("the typed box is only on the house rules step, not homebrew (#4211)", async () => {
