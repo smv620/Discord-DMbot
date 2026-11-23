@@ -256,6 +256,7 @@ class TheSentence(NamesTest):
                 got = await self.rows.get(GUILD, self.campaign.id, case["id"])
                 assert got is not None
                 self.assertIsNone(got.who)  # (the job ran and kept nothing to say)
+                self.assertTrue(got.hidden)  # (so the card says why, not "knows little")
 
     async def test_another_campaigns_entry_is_gone(self) -> None:
         from dmbot.campaigns.store import CampaignStore
@@ -310,3 +311,17 @@ class TheSentence(NamesTest):
         sent = client.complete.await_args.args[1]
         self.assertEqual(sent.count("</facts>"), 1)
         self.assertTrue(sent.rstrip().endswith("</facts>"))
+
+    async def test_the_three_empty_lines_are_told_apart_by_the_row(self) -> None:
+        # no row: the job has not run ("still writing"); a hidden entry: `hidden`; a real sentence
+        # or the canned "knows little" one: neither
+        self.assertIsNone(await self.rows.get(GUILD, self.campaign.id, self.shafina))
+        await self.go(ai())
+        written = await self.rows.get(GUILD, self.campaign.id, self.shafina)
+        assert written is not None
+        self.assertFalse(written.hidden)
+        await self.go(ai(), self.rook)  # (no facts: the canned sentence)
+        little = await self.rows.get(GUILD, self.campaign.id, self.rook)
+        assert little is not None
+        self.assertFalse(little.hidden)
+        self.assertEqual(little.who, "DMbot doesn't know much about Rook yet.")

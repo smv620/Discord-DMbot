@@ -41,6 +41,14 @@ class Summary:
     last: Mention | None
     scanned_at: int | None  # when the first and last were last worked out
 
+    @property
+    def hidden(self) -> bool:
+        """The job ran and kept no sentence because the players may not see this entry (a row made
+        by `put_nothing`): its card line says DMbot writes it only from what the players may know,
+        never "knows little" (a canned sentence is kept for that) and never "still writing" (no
+        row at all, or a row with no `made_at`)."""
+        return self.who is None and self.made_at is not None
+
 
 class CardSummaries:
     def __init__(self, db: Database, *, clock: Callable[[], float] = time.time) -> None:
@@ -112,7 +120,9 @@ class CardSummaries:
     ) -> bool:
         """The job ran and there is no sentence to keep (the entry may not be shown to the
         players): the sentence is cleared, so one made before it was hidden does not stay, and the
-        card says DMbot knows little rather than "still writing". False when the entry is gone."""
+        row reads `hidden`: the card says DMbot writes this line only from what the players may
+        know, which is neither "knows little" (a real sentence is kept for that) nor "still
+        writing" (no row yet). False when the entry is gone."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "INSERT INTO memory_card_summaries"
