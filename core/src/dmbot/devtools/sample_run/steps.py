@@ -112,7 +112,7 @@ async def check_existing(
     campaigns: CampaignStore,
     guild: int,
     dm: int,
-    deploy: int | None = None,
+    deploy: sample_name.Label | int | None = None,
     version: str = sample_name.TYPED,
 ) -> list[Existing]:
     """The earlier sample campaigns. Only this deploy's own (the same N, which the run replaces)
@@ -123,6 +123,7 @@ async def check_existing(
     the session are replaced (docs/design/session_names.md, section 8)."""
     found = await existing_samples(db, campaigns, guild)
     if deploy is not None:
+        deploy = sample_name.as_label(deploy)
         own = {
             c.id
             for c in await campaigns.list_campaigns(guild)
@@ -192,7 +193,7 @@ async def clear_for_deploy(
     guild: int,
     dm: int,
     *,
-    deploy: int,
+    deploy: sample_name.Label | int,
     say: Say,
     found: list[Existing] | None = None,
     sleep: Sleep | None = None,
@@ -226,6 +227,7 @@ async def clear_for_deploy(
     # Only what the run would delete is checked: a kept sample is never touched. A refusal on
     # this deploy's own campaign stops the run (it cannot be made again); on any other it is
     # left alone and counted in the line.
+    deploy = sample_name.as_label(deploy)
     first = sample_name.plan_keep(have, deploy, version=version)
     refused: set[str] = set()
     for campaign_id in first.delete:
@@ -301,7 +303,7 @@ async def make_campaign(
     guild: int,
     dm: int,
     *,
-    deploy: int,
+    deploy: sample_name.Label | int,
     run: int | None = None,
     say: Say,
     deleted: int = 0,
@@ -336,7 +338,7 @@ async def fresh_campaign(
     guild: int,
     dm: int,
     *,
-    deploy: int,
+    deploy: sample_name.Label | int,
     say: Say,
     found: list[Existing] | None = None,
     sleep: Sleep | None = None,
