@@ -25,6 +25,7 @@ from typing import Any
 
 from dmbot.db import Database
 from dmbot.recaps.notify import parse_ref
+from dmbot.web import card_lines
 from dmbot.web.recaps import RecapError, _scoped
 from dmbot.web.sessions import Session
 
@@ -53,7 +54,9 @@ def _entry(entry: str) -> str:
     return entry
 
 
-async def read_page(db: Database, session: Session, ref: str, entry: str) -> dict[str, Any]:
+async def read_page(
+    db: Database, session: Session, ref: str, entry: str, *, cards: bool = False
+) -> dict[str, Any]:
     """One NPC's page: the players' view, the posted recaps that mention it, the caller's own note
     and (for a DM of the campaign) the DM's note. 'not_in_server' for someone outside the server,
     'not_found' for an entry that is not listed (a secret one, an unconfirmed one, another
@@ -73,7 +76,7 @@ async def read_page(db: Database, session: Session, ref: str, entry: str) -> dic
     if found.get("status") != "ok":
         raise RecapError("not_found")
     view = found["view"]
-    return {
+    out = {
         "id": view["id"],
         "name": view["name"],
         "kind": view["kind"],
@@ -96,6 +99,13 @@ async def read_page(db: Database, session: Session, ref: str, entry: str) -> dic
         # Only a DM of the campaign is given this key's value; everyone else gets null.
         "dmNote": found["dmNote"] if found["isDm"] else None,
     }
+    if cards and found["isDm"]:  # the card's three lines, a DM's alone (#5050)
+        row = {"id": view["id"], "name": view["name"]}
+        async with db.user(session.user_id, session=session.id_hash) as conn:
+            await _scoped(conn, guild_id)
+            await card_lines.attach(conn, guild_id, campaign_id, [row])
+        out.update({k: v for k, v in row.items() if k not in ("id", "name")})
+    return out
 
 
 async def save_note(db: Database, session: Session, ref: str, entry: str, body: object) -> None:

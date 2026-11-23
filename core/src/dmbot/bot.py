@@ -372,6 +372,7 @@ from dmbot.memory import (
 from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
+from dmbot.memory.card_summaries import CardSummaries
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.continuity import ContinuityStore
 from dmbot.memory.contradiction_grades import MAJOR, GradeStore
@@ -1179,6 +1180,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if recaps is not None
             else None
         )
+        # What the background job kept for each character's card (#5050), read when a card opens.
+        self.card_summaries = CardSummaries(recaps.db) if recaps is not None else None
         self.outbox_wake = asyncio.Event()
         # The lore DMs uploaded on the website, waiting to be read (#3022), and the reads running.
         self.lore_uploads = lore_queue.LoreQueue(recaps.db) if recaps is not None else None
@@ -11409,6 +11412,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ),
                 )
 
+    async def deeds_on(self, gid: int, cid: str) -> bool:
+        """Whether a campaign's deeds are asked about at all: the deeds switch is on and its plan
+        has story memory (the same rule as the after-session question and the deed card, #3175),
+        so a lapsed plan's leftover proposals are counted nowhere (#5105)."""
+        if not self.settings.story_deeds_on:
+            return False
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None:
+            return False
+        return await self.plan_allows("story", gid, campaign, fail_open=False)
+
     async def offer_deeds(self, table: Table) -> None:
         """After a session (#3175), only with DMBOT_STORY_DEEDS: one more question for the DM when
         the session reader noticed deeds the party did that mattered to someone and they wait to
@@ -13162,7 +13176,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         the log."""
         from dmbot.memory import card_job, card_mentions
         from dmbot.memory.card_runner import CardRunner, Pass
-        from dmbot.memory.card_summaries import CardSummaries
 
         if (
             not self.settings.card_summary_on
@@ -13173,7 +13186,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             or self.ai is None
         ):
             return
-        summaries = CardSummaries(self.recaps.db)
+        summaries = self.card_summaries
         runner = CardRunner()
         ai = self.ai
         await asyncio.sleep(90)

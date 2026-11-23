@@ -149,6 +149,7 @@ def build_round(bot: DMBot) -> Round | None:
         packs=sets if isinstance(sets, PackUpdateStore) else None,
         agreed=bot.consent.consenting,
         recorded=bot.consent.recorded_in,
+        deeds_on=bot.deeds_on,  # (#5105: a lapsed plan's deeds are counted nowhere)
     )
     return Round(
         sources=sources,

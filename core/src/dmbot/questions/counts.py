@@ -49,6 +49,9 @@ class Sources:
     agreed: Callable[[int], Awaitable[Collection[int]]] | None = None  # who agreed to be recorded
     # who counts as recorded in one campaign's stored sessions (`ConsentStore.recorded_in`)
     recorded: Callable[[int, str], Awaitable[Collection[int]]] | None = None
+    # the story-deeds switch and the plan's story memory, for one campaign (#5105): a lapsed plan
+    # is offered no deeds, as the deed card and the after-session question already say
+    deeds_on: Callable[[int, str], Awaitable[bool]] | None = None
 
 
 async def count_kinds(
@@ -254,6 +257,23 @@ async def _reveals(src: Sources, g: int, c: str) -> Counted:
     return Counted(await RevealProposals(src.memory).count_waiting(g, c, opted_in=opted_in))
 
 
+async def _deeds(src: Sources, g: int, c: str) -> Counted:
+    """Deeds the party did that mattered to someone, waiting for the DM to record them (#3591):
+    what the deed card counts (`DeedProposals.count_waiting`), leaving out a proposal whose
+    speaker is no longer recorded. The speakers are the guild-wide `agreed` set, as the deed card's
+    `consenting(guild_id)` uses (not the campaign's `recorded`, which reveals use).
+    """
+    from dmbot.memory.deed_proposals import DeedProposals
+
+    if src.memory is None or src.agreed is None or src.deeds_on is None:
+        return Counted(0)
+    if not await src.deeds_on(g, c):
+        return Counted(0)  # the switch is off, or the plan has no story memory
+    return Counted(
+        int(await DeedProposals(src.memory).count_waiting(g, c, opted_in=await src.agreed(g)))
+    )
+
+
 async def _maps(src: Sources, g: int, c: str) -> Counted:
     """Maps a player kept that no DM has answered yet (`MapStore.waiting_for_a_dm`)."""
     if src.maps is None:
@@ -279,6 +299,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.MAPS: _maps,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,
+    kinds.DEEDS: _deeds,
     kinds.PLOT: _plot,
     kinds.RECAP_APPROVE: _recap_approve,
     kinds.RULES: _rules,
