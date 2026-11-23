@@ -675,7 +675,8 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       const body = "undo" in change ? { choice: "undo", batch: change.undo } : { choice: change.answer, deed: change.deed };
       const queued = (await call("POST", `${base}/deeds/answer`, body)) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
-      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      // A deed answer can fail with "refused" (the bot does not know a name in it): the card shows its own words for that (#3591).
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`, undefined, undefined, { refused: "refused" });
       return { batch: typeof got.batch === "number" ? got.batch : null };
     },
     // What the characters learned (#3863 step 2): the bot is asked first and waited for, then the list is read. DM only.

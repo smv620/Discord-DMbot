@@ -4021,7 +4021,6 @@ export const fixErrorKinds: Record<string, ApiErrorKind> = {
 };
 
 export const errorKinds: Record<string, ApiErrorKind> = {
-  refused: "refused", // the bot refused an answer, e.g. a name it does not know (the deed card's words, #3591)
   plan: "plan-needed",
   no_clock: "no-clock", // a date asked for with no game clock (#4503)
   no_rules: "no-rules",
@@ -4215,7 +4214,7 @@ export function withLinks<T extends object>(
 export interface ApiHelpers {
   call: (method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown, asFile?: boolean, raw?: Blob, anonymous?: boolean, kinds?: Record<string, ApiErrorKind>) => Promise<unknown>;
   restoreCall: ApiHelpers["call"];
-  waitForAnswer: (path: string, onLook?: (got: WebAnswer) => void, polls?: number) => Promise<WebAnswer>;
+  waitForAnswer: (path: string, onLook?: (got: WebAnswer) => void, polls?: number, extraKinds?: Record<string, ApiErrorKind>) => Promise<WebAnswer>;
   root: string;
   url: (path: string, body?: unknown) => Promise<string>;
 }
@@ -4338,7 +4337,8 @@ export function httpApi(
   /** Wait for the bot's answer to one queued edit, asking about once a second for up to a minute.
    * A failed look is not an answer (the bot may still apply the change); only "signed out" stops.
    * A change that is not done in time ends as "still-waiting", never as "nothing changed". */
-  async function waitForAnswer(path: string, onLook?: (got: WebAnswer) => void, polls = NAME_POLLS): Promise<WebAnswer> {
+  // `extraKinds` maps the codes this one answer can fail with (a deed's "refused", #3591) on top of the shared list.
+  async function waitForAnswer(path: string, onLook?: (got: WebAnswer) => void, polls = NAME_POLLS, extraKinds: Record<string, ApiErrorKind> = {}): Promise<WebAnswer> {
     for (let i = 0; i < polls; i++) {
       let got: WebAnswer | null = null;
       try {
@@ -4348,7 +4348,7 @@ export function httpApi(
         if (error instanceof ApiError && error.kind === "signed-out") throw error;
       }
       if (got?.state === "done") return got;
-      if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+      if (got?.state === "failed") throw new ApiError(extraKinds[got.error ?? ""] ?? errorKinds[got.error ?? ""] ?? "server");
       if (i < polls - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
     }
     throw new ApiError("still-waiting");

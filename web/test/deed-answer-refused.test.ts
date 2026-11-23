@@ -2,15 +2,11 @@
 // failure code becomes the "refused" kind the card shows its own words for. Nothing here is mocked above the HTTP layer.
 import { describe, expect, it } from "vitest";
 
-import { ApiError, errorKinds, httpApi } from "../src/account/api";
+import { ApiError, httpApi } from "../src/account/api";
 
 const DEED = "a1".repeat(16);
 
 describe("a refused deed answer through the real client", () => {
-  it("maps the bot's refused code to the refused kind", () => {
-    expect(errorKinds.refused).toBe("refused");
-  });
-
   it("rejects with the refused kind when the bot refuses the answer", async () => {
     const fetchFn = async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
