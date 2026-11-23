@@ -296,3 +296,4 @@ Every row in Section 1 marked "built, switched off" or "in an open PR" is on the
   switched on (#3693).
 | The clues of a story thread (add, false lead, take off, Undo) | the clues card in 🧵 Story threads (Discord, #4625) | Yes, on the quest sheet (#4625), behind `THREAD_CLUES_LIVE` (page built, switched off) |
 | The table's guesses about a story thread (read only) | the guesses in 🧵 Story threads (Discord, #4665) | Yes, on the quest sheet (#4665), behind `THREAD_GUESSES_LIVE` (page built, switched off) |
+| The card summary at the top of a character's card: who they are, "First met", "Last mentioned" (DMbot is still writing the sentence while it is pending) | the top of a character's card in the Story Graph and the name card (Discord, #5050) | Built, switched off on the Names and NPC pages (`CARD_SUMMARY_LIVE`; page #5051, core #5050) |

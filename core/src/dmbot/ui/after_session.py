@@ -1,0 +1,103 @@
+"""The one message that shows a live session's after-session reads while they run (#5124, CLAUDE.md
+"Every wait shows that DMbot is still working"): the story read, the names step and the story
+threads take minutes of AI calls and used to show nothing. It is a single message in the DM screen,
+edited in place by `WaitingMessage` (stage, part n of m, how long it has run, when it last moved,
+and a plain line once a stage stops moving), and ended with what was not read.
+
+It carries stages, counts and fixed words only: never a line of the transcript, a name or a
+question. It is opened by the first slow read that has something to say, so a session with every
+read switched off posts nothing, and it never changes what a read does: a card that cannot be
+posted or edited is only logged.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from dmbot.waiting import WaitingMessage, message_is_gone
+
+log = logging.getLogger(__name__)
+
+TITLE = "📖 DMbot is reading the session…"
+STALL_AFTER_S = 10 * 60  # one batch is one AI call (minutes at most): longer is said out loud
+POST_TIMEOUT_S = 10.0  # a hung send never holds up the read it reports on
+STALL_NOTE = "DMbot will move on by itself. Anything it could not read is listed at the end."
+DONE = "Finished reading the session."
+DONE_BUT = "Finished reading the session, but some parts could not be read."
+
+STORY = "Reading the story"
+NAMES = "Reading names"
+THREADS = "Reading story threads"
+
+
+def not_read(parts: int, what: str = "names") -> str:
+    """A part a read could not do is counted, never shown as "nothing found"; `what` says what may
+    be missing ("names", "story details" or "story threads")."""
+    return (
+        f"{parts} part{'' if parts == 1 else 's'} of the session could not be read, "
+        f"so some {what} may be missing."
+    )
+
+
+class AfterSessionCard:
+    """`post(text)` sends the opening message and returns an object with `edit(content=...)`, or
+    None when it could not be posted (then nothing here does anything)."""
+
+    def __init__(self, post: Callable[[str], Awaitable[Any | None]]) -> None:
+        self._post = post
+        self._message: Any | None = None
+        self._waiting: WaitingMessage | None = None
+        self._tried = False
+        self._notes: list[str] = []
+
+    async def _edit(self, text: str) -> None:
+        if self._message is not None:
+            await self._message.edit(content=text)
+
+    async def stage(self, words: str, done: int = 0, total: int = 0) -> None:
+        """Where the reading is now; opens the card the first time. Never raises."""
+        try:
+            if not self._tried:
+                self._tried = True
+                self._message = await asyncio.wait_for(self._post(TITLE), POST_TIMEOUT_S)
+                if self._message is not None:
+                    self._waiting = WaitingMessage(
+                        self._edit,
+                        TITLE,
+                        stall_after_s=STALL_AFTER_S,
+                        stall_note=STALL_NOTE,
+                        gone=message_is_gone,
+                    )
+                    await self._waiting.__aenter__()
+            if self._waiting is not None:
+                self._waiting.step(words, done, total)
+        except Exception as exc:  # the type only: the read goes on without its card
+            log.warning("After-session card: could not show a stage (%s)", type(exc).__name__)
+
+    def note(self, text: str) -> None:
+        """A fixed sentence for the end of the card (a stretch that was not read)."""
+        if text not in self._notes:
+            self._notes.append(text)
+
+    async def finish(self) -> None:
+        """End the card with the last word. Does nothing if it was never opened."""
+        if self._waiting is None:
+            if self._notes:  # (never opened, but a part was not read: say so once, never silent)
+                try:
+                    text = "\n".join([f"📖 {DONE_BUT}", *self._notes])
+                    await asyncio.wait_for(self._post(text), POST_TIMEOUT_S)
+                except Exception as exc:
+                    log.warning("After-session card: could not say it (%s)", type(exc).__name__)
+                self._notes = []
+            return
+        try:
+            await self._waiting.__aexit__(None, None, None)
+            head = DONE_BUT if self._notes else DONE  # (the warning first, so "Finished" is not all
+            await self._edit("\n".join([f"📖 {head}", *self._notes]))  # that is read)
+        except Exception as exc:
+            log.warning("After-session card: could not end it (%s)", type(exc).__name__)
+        finally:
+            self._waiting = None
