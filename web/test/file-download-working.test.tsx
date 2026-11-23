@@ -15,6 +15,7 @@ import { text as houseRulesText } from "../src/content/house-rules";
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 const REF = "200000000000000001.cmp1";
@@ -93,5 +94,34 @@ describe("the building line while a homebrew file is built", () => {
     expect(await screen.findByText(homebrewText.buildingFile)).toBeTruthy();
     release();
     await waitFor(() => expect(screen.queryByText(homebrewText.buildingFile)).toBeNull());
+  });
+
+  it("says what to do when the homebrew file is slow", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    vi.setSystemTime(new Date(1_900_000_000 * 1000));
+    try {
+      const api = mockApi("table");
+      (api as Required<AccountApi>).homebrewFile = () => new Promise(() => undefined); // never answers
+      render(<HomebrewPageView api={api} path={`/account/homebrew/${REF}`} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      fireEvent.click(screen.getByRole("button", { name: homebrewText.download }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(59_000);
+      });
+      expect(screen.getByText(homebrewText.buildingFile)).toBeTruthy();
+      expect(screen.queryByText(homebrewText.buildingSlow)).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(screen.getByText(homebrewText.buildingSlow)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
