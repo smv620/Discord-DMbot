@@ -234,7 +234,6 @@ function Entries({
               <a href="/account/homebrew">{text.allCampaigns}</a>
             </p>
             <CampaignNav api={api} campaignRef={campaignRef} page="homebrew" name={found.name} />
-            <h2>{found.name}</h2>
             <p class="small">
               {text.rulesNote} <a href="/account/house-rules">{text.rulesLink}</a>
             </p>
