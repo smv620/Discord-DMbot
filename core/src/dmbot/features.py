@@ -193,6 +193,7 @@ FEATURES: tuple[Feature, ...] = (
             "story_threads_on",
             "met_unnamed_on",
             "session_languages_on",
+            "session_names_on",
             "party_leaves_on",
             "private_scenes_on",
             "picture_names_on",
@@ -246,6 +247,14 @@ FEATURES: tuple[Feature, ...] = (
         lambda s: s.imports_on or bool(s.imports_servers),  # (on for all, or for chosen servers)
         ("imports_on", "imports_servers"),
         for_dms=False,
+    ),
+    Feature(
+        "character card lines",
+        "Who a character is",
+        "",
+        lambda s: s.card_summary_on,
+        ("card_summary_on",),
+        for_dms=False,  # off until dev1 reads ten cards on the sample campaign (#5050)
     ),
     Feature(
         "ai helpers",
@@ -356,6 +365,8 @@ FEATURES: tuple[Feature, ...] = (
 # Settings that are not switches (a name, a number, a place), each with the reason. A setting
 # that is neither here nor in FEATURES fails the test, so a new switch cannot be forgotten.
 NOT_A_SWITCH: dict[str, str] = {
+    "name_trace_dir": "a dev tool's folder on the test server, for the sample campaign only",
+    "name_trace_guild": "the test server the dev tool's trace is written for",
     "discord_token": "a secret, always needed",
     "ears_secret": "a secret, always needed",
     "ears_host": "where the voice service is",

@@ -135,9 +135,10 @@ class FinishTest(DatabaseTest):
                 if rows:
                     self.seen.append((rows[0]["choice"], rows[0]["text"]))
                     await self.sql(
-                        "UPDATE lore_uploads SET state = 'done', text = '' WHERE id = %s",
-                        rows[0]["id"],
-                    )
+                        "UPDATE lore_uploads SET state = 'done', text = '', names_cut = %s"
+                        " WHERE id = %s",
+                        getattr(self, "cut", 0), rows[0]["id"],
+                    )  # fmt: skip
                 await asyncio.sleep(0.01)
 
         self.worker = asyncio.create_task(work())
@@ -546,6 +547,23 @@ class TheLinks(FinishTest):
         [up] = await self.sql("SELECT source, text, link, choice FROM lore_uploads")
         self.assertEqual((up["source"], up["text"], up["choice"]), ("link", "", "world"))
         self.assertTrue(up["link"].startswith("https://docs.google.com/"))
+
+    async def test_names_a_limit_left_out_are_counted_in_the_notes(
+        self,
+    ) -> None:
+        self.cut = 7
+        await self.draft()
+        await self.add_doc("lore", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit")
+        await self.add_doc("lore", "https://docs.google.com/document/d/bbcdefghijklmnopqrstu/edit")
+        row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        self.assertEqual(row["notes"], "names_cut:14")  # (summed over the two documents)
+
+    async def test_no_names_cut_leaves_the_notes_empty(self) -> None:
+        await self.draft()
+        await self.add_doc("lore", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit")
+        row = await self.finish()
+        self.assertEqual(row["notes"], "")
 
     async def test_a_bad_address_in_a_lore_step_is_a_failed_read_and_nothing_is_queued(
         self,

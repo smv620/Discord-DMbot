@@ -5,7 +5,7 @@ the table (the newcomer too) does not; no read writes a row. Invented names and 
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 from dmbot.memory import gate
 from dmbot.memory.lookup import CampaignLookup
@@ -77,3 +77,29 @@ class ANewcomerAndTheCard(Party):
         await self.card(self.cara)
         await self.card(self.vell)
         self.assertEqual(await self.rows(), before)  # (§9 rule 6: never "repaired" by a reader)
+
+
+class TheSummaryLinesAreTheDMs(Party):
+    """The three lines at the top of a character's card (#5050) go to the DM's card only."""
+
+    LINES: ClassVar[list[str]] = ["A harbour official.", "Not mentioned at the table yet."]
+
+    async def with_lines(self, *, secrets: bool) -> str | None:
+        view: Any = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.c))
+        seen = await self.memory.entries_held(GUILD, self.c, gate.Viewer.player([self.vell]))
+        table = await self.memory.entries_held(GUILD, self.c)
+        return name_card.card_text(
+            view, self.npc, [], secrets=secrets, seen=seen, table=table, summary_lines=self.LINES
+        )
+
+    async def test_the_dm_reads_them_under_the_name(self) -> None:
+        text = await self.with_lines(secrets=True)
+        assert text is not None
+        head, first, second = text.split("\n")[:3]
+        self.assertTrue(head.startswith("🪪"))
+        self.assertEqual([first, second], self.LINES)
+
+    async def test_a_player_never_reads_them(self) -> None:
+        text = await self.with_lines(secrets=False)
+        assert text is not None
+        self.assertNotIn("A harbour official.", text)

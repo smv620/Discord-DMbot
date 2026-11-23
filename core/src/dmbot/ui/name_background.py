@@ -179,7 +179,8 @@ def rights_text(pictures: bool = False) -> str:
         f"Use this for {NOT_A_BOOK}. (For a book or adventure, use the **Shared story** "
         "switch.)\n**Pressing 🤖 Find names says this is your own writing, and you may use "
         "it.** The text is sent once to Anthropic (an AI company) to be read. DMbot does not "
-        "keep it, only a short line beside each name until you answer it."
+        "keep it. It keeps a short line beside each name until you answer it, and, for you alone, "
+        "the document's name and the heading each name was found under."
         + (PICTURES_KEPT_NOTE if pictures else "")
     )
 
@@ -1182,7 +1183,19 @@ async def _read_background(
     )
     if owner_of is not None:
         await _owners_learn(memory, campaign, found, made_ids, world_names, owner_of)
-    await _record_sources(memory, campaign, stored, upload, label)
+    # (the heading each new name was read under, while the text is still here: kept with the
+    # upload's label for the character card, #5050; the text itself is never kept, #2167)
+    # (off the event loop: a long upload with many names is many passes over its text)
+    headings = await asyncio.to_thread(
+        lore_knowledge.first_headings,
+        upload.text,
+        {
+            made_ids[name_key(f.name)]: (f.name, *f.also)
+            for f in found
+            if name_key(f.name) in made_ids
+        },
+    )
+    await _record_sources(memory, campaign, stored, upload, label, headings)
     # ... and again for the people this read made ("Tran" for a new Tran Vosk), whatever the AI
     # listed (#3880).
     if short is not None:
@@ -2857,18 +2870,25 @@ async def _record_sources(
     stored: Mapping[str, Sequence[str]],
     upload: Upload,
     label: str,
+    headings: Mapping[str, str] | None = None,
 ) -> None:
     """Which upload made the names just stored (#3675 Part B), for the Names page's filter: the
     website's upload id when there is one, else the dated label the DM sees. Only names this read
     made (a name another entry already had is not this upload's). Never a reason to lose a name:
-    a failed write is logged by its type and the names stay."""
+    a failed write is logged by its type and the names stay. `headings`: by entry id, the section
+    each was read under (#5050), kept beside the label."""
     made = [i for ids in stored.values() for i in ids]
     record = getattr(memory, "record_name_sources", None)  # (a stand-in store may not have it)
     if not made or record is None:
         return
     try:
         await record(
-            campaign.guild_id, campaign.id, made, upload_key=upload.source_id or label, label=label
+            campaign.guild_id,
+            campaign.id,
+            made,
+            upload_key=upload.source_id or label,
+            label=label,
+            **({"headings": dict(headings)} if headings else {}),
         )
     except Exception as exc:  # the type only: a database error can quote a row
         log.warning("Couldn't record which upload the names came from (%s)", type(exc).__name__)

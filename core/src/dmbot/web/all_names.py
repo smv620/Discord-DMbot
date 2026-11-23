@@ -21,7 +21,7 @@ from dmbot.memory import map_facts, place_levels, place_peoples
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.background import LABELS
 from dmbot.memory.models import MERGE_MANY_MAX, PLAYERS_TEXT_MAX, PRONOUNCED
-from dmbot.web import scenes
+from dmbot.web import card_lines, scenes
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -124,6 +124,7 @@ async def read_page(
     only: str | None = None,
     unnamed: bool = False,
     sources: list[str] | None = None,
+    cards: bool = False,
 ) -> dict[str, Any]:
     """One page of the campaign's confirmed names, `size` to a page (one of `PAGE_SIZES`); `kind` is
     one kind or several joined with commas. "not_found" for anyone who may not see the list (or
@@ -187,6 +188,10 @@ async def read_page(
     if got["canEdit"] and names:
         await _add_said_as(db, session, guild_id, campaign_id, names)
         await _add_scenes(db, session, guild_id, campaign_id, names)
+        if cards:  # a character's three lines, a DM's alone (#5050; DMBOT_CARD_SUMMARY)
+            async with db.user(session.user_id, session=session.id_hash) as conn:
+                await _scoped(conn, guild_id)
+                await card_lines.attach(conn, guild_id, campaign_id, names)
     return {
         "campaign": got["campaign"],
         "canEdit": bool(got["canEdit"]),
