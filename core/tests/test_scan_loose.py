@@ -92,6 +92,56 @@ class TheLooseRule(unittest.TestCase):
         self.assertFalse(any(s.ordinary for s in got.values()))
 
 
+class TheTypedVersionLosesNothing(unittest.TestCase):
+    """The bar for the typed version (design section 10): with the reader returning nothing, every
+    name the strict scan offers is still offered in loose mode, whole or inside a longer name
+    loose mode offers (the Expert, on slice 2d). "Ordinary" names, which loose mode holds back,
+    are by definition ones the strict scan never offered."""
+
+    TRANSCRIPTS = (
+        LINES,
+        [
+            "We reach Bryn Shander at dusk. The guards of Bryn Shander frown.",
+            "Speaker Duvessa Shane waits. Duvessa Shane nods at Hlin.",
+            "Hlin says the Dwarven Valley is close; the dwarven city is old.",
+            "We cross the Dwarven Valley and meet Hlin's friend Torg.",
+            "Torg of Easthaven grins. Torg of Easthaven fishes; Easthaven is cold.",
+            "roll for it. Roll again, and Kelvin's Cairn looms. kelvin's cairn, said Torg.",
+        ],
+    )
+
+    @staticmethod
+    def words(name: str) -> list[str]:
+        return [w.casefold().removesuffix("'s") for w in name.split()]
+
+    def test_every_strict_name_is_still_offered_in_loose_mode(self) -> None:
+        for lines in self.TRANSCRIPTS:
+            strict = find_new_names(lines, unlimited=True)
+            loose = [s for s in find_new_names(lines, unlimited=True, loose=True) if not s.ordinary]
+            for name in (s.name for s in strict):
+                held = [
+                    s.name
+                    for s in loose
+                    if " ".join(self.words(name)) in " ".join(self.words(s.name))
+                ]
+                self.assertTrue(held, f"{name!r} offered strict, not loose")
+
+    def test_a_known_name_is_never_joined_across(self) -> None:
+        lines = ["We meet Wulfgar of Icewind Dale.", "Then Wulfgar of Icewind Dale nods."]
+        got = found(lines, loose=True, skip_keys=["Icewind Dale"])
+        self.assertEqual(list(got), ["Wulfgar"])
+        got = found(lines, loose=True, skip_keys=["Wulfgar"])
+        self.assertEqual(list(got), ["Icewind Dale"])
+
+    def test_split_joined_offers_the_parts_once_and_never_a_skipped_one(self) -> None:
+        found_ = [Suggestion("Wulfgar of Icewind Dale", 3), Suggestion("Wulfgar", 2)]
+        out, split = scan.split_joined(found_, {"wulfgar"}, {"icewind dale"})
+        self.assertEqual([(s.name, s.times) for s in out], [("Wulfgar", 2)])
+        self.assertEqual([s.name for s in split], ["Wulfgar of Icewind Dale"])
+        out, split = scan.split_joined(found_, {"wulfgar of icewind dale", "wulfgar"})
+        self.assertEqual(split, [])
+
+
 class TheRefusals(unittest.TestCase):
     def test_each_candidate_left_out_has_one_fixed_reason(self) -> None:
         lines = [
@@ -109,6 +159,13 @@ class TheRefusals(unittest.TestCase):
         self.assertEqual(why["Old Grey Cold Sea of Ice"], scan.TOO_LONG)
         self.assertNotIn("Chardalyn", why)  # (offered)
 
+    def test_a_run_that_stopped_at_another_small_word_is_counted(self) -> None:
+        lines = ["We meet Wulfgar the Mighty.", "Hrothgar in Bryn Shander waits."]
+        left: list[tuple[str, str]] = []
+        find_new_names(lines, unlimited=True, loose=True, refusals=left)
+        self.assertIn(("Wulfgar the Mighty", scan.SMALL_WORD), left)
+        self.assertIn(("Hrothgar in Bryn Shander", scan.SMALL_WORD), left)
+
     def test_a_skipped_word_is_never_listed(self) -> None:
         # (a person at the table or a known name: never a candidate, so never in the trace)
         left: list[tuple[str, str]] = []
@@ -116,11 +173,20 @@ class TheRefusals(unittest.TestCase):
         self.assertEqual(left, [])
 
 
-def stand_in(trace_dir: str, kinds: dict[str, str], *, on: bool = True) -> Any:
-    """A bot whose name reader (mocked) found the names in `kinds`."""
+def stand_in(
+    trace_dir: str,
+    kinds: dict[str, str],
+    *,
+    on: bool = True,
+    unread: int | None = 0,
+    texts: list[str] | None = None,
+) -> Any:
+    """A bot whose name reader (mocked) found the names in `kinds`, with `unread` batches not
+    read (None: the reader did not read at all)."""
+    texts = TEXTS if texts is None else texts
 
     async def lines(*_: Any) -> list[Any]:
-        return [SimpleNamespace(user_id=1, text=t, topic="game") for t in TEXTS]
+        return [SimpleNamespace(user_id=1, text=t, topic="game") for t in texts]
 
     async def keys(*_: Any) -> set[str]:
         return set()
@@ -132,7 +198,15 @@ def stand_in(trace_dir: str, kinds: dict[str, str], *, on: bool = True) -> Any:
         return SimpleNamespace(value=SimpleNamespace(id=f"e-{name}"))
 
     async def read(_g: int, _c: str, _lines: Any, _people: Any, every: list[Suggestion]) -> Any:
-        return every, dict(kinds), []
+        if unread is None:
+            return every, {}, [], None
+        listed = {s.name for s in every}
+        return (
+            [*every, *(Suggestion(n, 2) for n in kinds if n not in listed)],
+            dict(kinds),
+            [],
+            unread,
+        )
 
     async def campaign(*_: Any) -> Any:
         return SimpleNamespace(name="test of the frostmaiden (sample 41b.1)")
@@ -160,11 +234,38 @@ TEXTS = ["We call Hope home.", "Then Hope barks at Vorna.", "I hope so, Vorna sa
 
 
 class TheBotStep(unittest.TestCase):
-    def run_step(self, bot: Any) -> list[str]:
+    def run_step(self, bot: Any, texts: list[str] = TEXTS) -> list[str]:
         from dmbot.bot import DMBot
 
         bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
-        return asyncio.run(DMBot._propose_new_names(bot, 5, "c1", TEXTS, set(), "s1"))
+        return asyncio.run(DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1"))
+
+    def ends(self, folder: str) -> list[tuple[str, str, str]]:
+        return [(r.source, r.name, r.reason) for r in nt.read(Path(folder, "trace-c1.jsonl"))]
+
+    def test_when_the_reader_could_not_say_the_trace_blames_the_call_not_the_word(self) -> None:
+        for unread, why in ((None, scan.ORDINARY_NOT_READ), (1, scan.ORDINARY_PART_READ)):
+            with tempfile.TemporaryDirectory() as d:
+                self.assertEqual(self.run_step(stand_in(d, {}, unread=unread)), ["Vorna"])
+                self.assertIn((nt.SCAN, "Hope", why), self.ends(d))
+
+    def test_a_joined_name_the_reader_split_is_offered_as_its_parts(self) -> None:
+        texts = [
+            "We meet Wulfgar of Icewind Dale.",
+            "Then Wulfgar of Icewind Dale nods.",
+        ]
+        with tempfile.TemporaryDirectory() as d:
+            made = self.run_step(stand_in(d, {"Wulfgar": "npc"}, texts=texts), texts)
+            self.assertEqual(sorted(made), ["Icewind Dale", "Wulfgar"])
+            self.assertIn((nt.SCAN, "Wulfgar of Icewind Dale", scan.SPLIT), self.ends(d))
+        with tempfile.TemporaryDirectory() as d:  # (the reader said nothing of it: offered whole)
+            made = self.run_step(stand_in(d, {}, texts=texts), texts)
+            self.assertEqual(made, ["Wulfgar of Icewind Dale"])
+        with tempfile.TemporaryDirectory() as d:  # (the reader named the whole: kept whole)
+            made = self.run_step(
+                stand_in(d, {"Wulfgar of Icewind Dale": "npc"}, texts=texts), texts
+            )
+            self.assertEqual(made, ["Wulfgar of Icewind Dale"])
 
     def test_an_ordinary_word_goes_on_only_when_the_reader_found_it_too(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -192,8 +293,13 @@ NAME_PATHS = (
     "memory/name_trace.py",
     "transcript/name_pass.py",
     "names/not_names.py",
+    # (the live Cleaner keeps its capital test until a word list exists, section 7: on the list
+    # where it can be seen)
+    "transcript/cleaner.py",
 )
 CASE_CALLS = frozenset({"isupper", "islower", "istitle", "capitalize", "title"})
+# A pattern that looks for an upper-case letter looks at case too (the Expert, on slice 2d)
+UPPER_CLASSES = ("A-Z", r"\p{Lu}", "[:upper:]", r"\p{Uppercase")
 LOOKS_AT_CASE = frozenset(
     {
         "memory/scan.py:_is_name_word",  # (the strict scan; the loose one passes no lower words)
@@ -202,13 +308,23 @@ LOOKS_AT_CASE = frozenset(
         "memory/name_longer.py:widened",  # (#2570: a place's lower-case last word)
         "names/not_names.py:_clause",  # (a lower-case clause word: "so", "and")
         "names/not_names.py:shape_of",  # (a number or a time said with a capital)
+        "transcript/cleaner.py:_by_sound.unknown",  # (the Cleaner's capital test, section 7)
+        "transcript/cleaner.py:_lower_words",
+        "transcript/cleaner.py:_named_words",
+        "transcript/cleaner.py:_respelled",  # (keeps the heard word's capital on a fix)
     }
 )
+# Patterns that look for a capital: none today. A new one fails, as a new case call does.
+UPPER_PATTERNS: frozenset[str] = frozenset()
 
 
-def case_functions() -> set[str]:
+def case_functions(source: str | None = None) -> tuple[set[str], set[str]]:
+    """`file:function` for each function in the name paths that calls a case method, and (`file:
+    <module>` at the top level) each that holds a string with an upper-case pattern class.
+    `source`: read this text as one file instead (the test of the test)."""
     root = Path(__file__).resolve().parents[1] / "src" / "dmbot"
     out: set[str] = set()
+    patterns: set[str] = set()
 
     def walk(rel: str, node: ast.AST, where: list[str]) -> None:
         for child in ast.iter_child_nodes(node):
@@ -222,13 +338,33 @@ def case_functions() -> set[str]:
                 and child.func.attr in CASE_CALLS
             ):
                 out.add(f"{rel}:{'.'.join(where)}")
+            if (
+                isinstance(child, ast.Constant)
+                and isinstance(child.value, str)
+                and any(c in child.value for c in UPPER_CLASSES)
+            ):
+                patterns.add(f"{rel}:{'.'.join(where) or '<module>'}")
             walk(rel, child, where)
 
-    for rel in NAME_PATHS:
+    if source is not None:
+        walk("given", ast.parse(source), [])
+    for rel in NAME_PATHS if source is None else ():
         walk(rel, ast.parse((root / rel).read_text(encoding="utf-8")), [])
-    return out
+    return out, patterns
 
 
 class RuleTwo(unittest.TestCase):
     def test_the_functions_that_look_at_case_in_the_name_paths_only_shrink(self) -> None:
-        self.assertEqual(case_functions(), set(LOOKS_AT_CASE))
+        calls, patterns = case_functions()
+        self.assertEqual(calls, set(LOOKS_AT_CASE))
+        self.assertEqual(
+            patterns, set(UPPER_PATTERNS), "a pattern in a name path looks for a capital"
+        )
+
+    def test_the_list_sees_a_case_call_and_an_upper_case_pattern(self) -> None:
+        source = (
+            "import re\nCAP = re.compile('[A-Z][a-z]+')\n"
+            "def f(w):\n    return w.istitle()\n"
+            "def g(w):\n    return re.match(r'\\p{Lu}', w)\n"
+        )
+        self.assertEqual(case_functions(source), ({"given:f"}, {"given:<module>", "given:g"}))

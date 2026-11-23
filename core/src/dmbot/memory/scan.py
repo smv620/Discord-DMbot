@@ -24,7 +24,7 @@ from __future__ import annotations
 import difflib
 import re
 from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, replace
 
 from dmbot.memory.models import NAME_MAX, name_key
@@ -53,6 +53,10 @@ _BREAKS = frozenset({",", ";", "/"})
 # Chardalyn"). Those words don't count toward MAX_WORDS.
 JOINING = "of"
 _THE = "the"
+# Other small words a name may hold ("Wulfgar the Mighty", "Hrothgar in Bryn Shander" may not):
+# never joined, only counted in the trace when one stands between two name words, so the sample
+# shows whether any is worth adding (the Expert, on slice 2d).
+SMALL_WORDS = frozenset({"the", "on", "in", "upon", "by", "at", "under", "von", "van", "de", "du"})
 
 # Why the scan left a candidate out, for the per-name trace (design section 10, rule 6). Fixed
 # words; `find_new_names(refusals=...)` collects them, the bot adds ORDINARY and GROUPED.
@@ -60,7 +64,13 @@ TOO_FEW = "too_few_hearings"
 AT_START = "only_at_a_sentence_start"
 TOO_LONG = "too_long"
 INSIDE = "only_inside_a_longer_name"
+SMALL_WORD = "stopped_at_a_small_word"  # ("Wulfgar the Mighty", the whole run: counted only)
 ORDINARY = "ordinary_word"  # also said in lower case, and the name reader didn't find it
+# ...and the reader could not say: it did not run or failed, or some of its batches were not read
+# (a call's fault, never the word's; why_missed must not blame the word)
+ORDINARY_NOT_READ = "ordinary_word_reader_not_read"
+ORDINARY_PART_READ = "ordinary_word_some_lines_not_read"
+SPLIT = "split_by_the_reader"  # "Wulfgar of Icewind Dale": the reader named a part, not the whole
 GROUPED = "grouped_into_another"
 
 
@@ -182,6 +192,7 @@ def _candidates(
     *,
     loose: bool = False,
     too_long: list[str] | None = None,
+    small: list[str] | None = None,
 ) -> list[tuple[str, bool, str]]:
     """Each run of name-like words as (text, said mid-sentence, the key of the longer name that
     holds it here, or ""). Runs longer than MAX_WORDS name words are dropped, not chopped (no
@@ -189,7 +200,8 @@ def _candidates(
     sentence also offers its tail, so "Ask Hrothgar" still finds Hrothgar. A known
     name said whole ends a run: what's left on either side is still looked at. `loose`: the
     run goes on through "of" or "of the" to more name words, and each part of it is kept as
-    well, marked (design section 3)."""
+    well, marked (design section 3). `small`, when given, gets each run that stopped at a small
+    word before more name words, with them (`SMALL_WORDS`, for the trace)."""
     covered = _known_name_spans(words, many)
 
     def name_like(index: int) -> bool:
@@ -244,6 +256,16 @@ def _candidates(
                 break
             j = on
         names = sum(b - a for a, b in parts)  # (joining words don't count toward MAX_WORDS)
+        if (
+            small is not None
+            and j + 1 < len(words)
+            and words[j].casefold() in SMALL_WORDS
+            and name_like(j + 1)
+        ):
+            end = j + 1
+            while end < len(words) and name_like(end):
+                end += 1
+            small.append(_text(words[i:end]))
         run = _text(words[i:j])
         if len(parts) > 1:
             # "Spine of the World": the whole is one candidate, and each part is kept too, marked,
@@ -318,6 +340,7 @@ def find_new_names(
     skip = frozenset({name_key(k) for k in skip_keys} | COMMON | GAME_TERMS)
     lower_words = {_bare(w).casefold() for words in sentences for w in words if w[:1].islower()}
     long_runs: list[str] | None = [] if refusals is not None else None
+    small_runs: list[str] | None = [] if refusals is not None and loose else None
     many = _many_word_names(skip)
     counts: Counter[str] = Counter()
     spellings: dict[str, Counter[str]] = {}
@@ -327,7 +350,13 @@ def find_new_names(
     for words in sentences:
         # (loose: no word is ruled out for being said in lower case, design rule 2)
         for text, mid, led_key in _candidates(
-            words, skip, set() if loose else lower_words, many, loose=loose, too_long=long_runs
+            words,
+            skip,
+            set() if loose else lower_words,
+            many,
+            loose=loose,
+            too_long=long_runs,
+            small=small_runs,
         ):
             key = name_key(text)
             if not key or len(text) > NAME_MAX or key in skip:
@@ -364,9 +393,55 @@ def find_new_names(
     if refusals is not None:
         for run in long_runs or ():
             left_out.setdefault(name_key(run), (run, TOO_LONG))
+        for run in small_runs or ():
+            left_out.setdefault(name_key(run), (run, SMALL_WORD))
         refusals += sorted(left_out.values(), key=lambda r: (r[1], r[0].casefold()))
     found.sort(key=lambda s: (-s.times, s.name))
     return found if unlimited else found[:MAX_SUGGESTIONS]
+
+
+def joined_parts(name: str) -> list[str]:
+    """The names a name joined by "of" holds: "Wulfgar of Icewind Dale" is Wulfgar and Icewind
+    Dale; any other name is itself alone."""
+    words = name.split()
+    parts: list[list[str]] = [[]]
+    i = 0
+    while i < len(words):
+        if words[i].casefold() == JOINING and parts[-1] and i + 1 < len(words):
+            i += 2 if words[i + 1].casefold() == _THE and i + 2 < len(words) else 1
+            parts.append([])
+            continue
+        parts[-1].append(words[i])
+        i += 1
+    return [" ".join(p) for p in parts if p]
+
+
+def split_joined(
+    found: Iterable[Suggestion], named: Collection[str], skip: Collection[str] = ()
+) -> tuple[list[Suggestion], list[Suggestion]]:
+    """A name joined by "of" that the name reader did not return, when it did return a part of it,
+    is two names ("Wulfgar of Icewind Dale": a person and a place, the Expert on slice 2d): its
+    parts are offered in its place, each heard as often as it, unless already listed or in `skip`.
+    `named`: the keys the reader returned. Returns the list, in order, and the names split."""
+    out: list[Suggestion] = []
+    split: list[Suggestion] = []
+    found = list(found)
+    have = {name_key(f.name) for f in found}
+    for f in found:
+        parts = joined_parts(f.name)
+        if (
+            len(parts) > 1
+            and name_key(f.name) not in named
+            and any(name_key(p) in named for p in parts)
+        ):
+            split.append(f)
+            for part in parts:
+                if (key := name_key(part)) not in have and key not in skip:
+                    out.append(Suggestion(part, f.times))
+                    have.add(key)
+            continue
+        out.append(f)
+    return out, split
 
 
 def _ordinary(name: str, lower_words: set[str]) -> bool:

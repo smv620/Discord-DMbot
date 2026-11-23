@@ -12301,6 +12301,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # the cap. Only lines with a stored speaker can be read (consent is asked per line).
         reader_kinds: dict[str, str] = {}
         trace: list[name_trace.Row] = []
+        unread: int | None = None  # the reader's batches not read; None: it did not read at all
         scan_keys = {name_key(f.name) for f in every}
         if self.settings.session_names_on and heard_in:
             # (exactly the lines the scan read: never a sidebar or off-topic line it left out,
@@ -12308,20 +12309,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             scanned = set(lines)
             read_in = [x for x in heard_in if x.text in scanned]
             people = await self._people_keys(gid, users, cid)
-            every, reader_kinds, trace = await self._read_session_names(
+            every, reader_kinds, trace, unread = await self._read_session_names(
                 gid, cid, read_in, people, every
             )
         # An ordinary word the reader didn't also find is never suggested by the scan alone
-        # (design section 3), whether the reader ran or not.
+        # (design section 3), whether the reader ran or not. Its trace says when the reader
+        # could not say (a call's fault, not the word's).
         read_keys = {name_key(n) for n in reader_kinds}
         ordinary = [f for f in every if f.ordinary and name_key(f.name) not in read_keys]
         every = [f for f in every if f not in ordinary]
+        why_ordinary = (
+            name_scan.ORDINARY_NOT_READ
+            if unread is None
+            else name_scan.ORDINARY_PART_READ
+            if unread
+            else name_scan.ORDINARY
+        )
+        split: list[Suggestion] = []
+        if loose:  # "Wulfgar of Icewind Dale" is two names when the reader named a part of it
+            every, split = name_scan.split_joined(every, read_keys, skip)
         trace = [
             *scan_rows,
             *trace,
             *(
-                name_trace.Row(name_trace.SCAN, f.name, name_scan.ORDINARY, times=f.times)
+                name_trace.Row(name_trace.SCAN, f.name, why_ordinary, times=f.times)
                 for f in ordinary
+            ),
+            *(
+                name_trace.Row(name_trace.SCAN, f.name, name_scan.SPLIT, times=f.times)
+                for f in split
             ),
         ]
         found = every[:MAX_SUGGESTIONS]
@@ -12464,14 +12480,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         heard_in: Sequence[Line],
         people: Collection[str],
         scan: list[Suggestion],
-    ) -> tuple[list[Suggestion], dict[str, str], list[name_trace.Row]]:
+    ) -> tuple[list[Suggestion], dict[str, str], list[name_trace.Row], int | None]:
         """The name reader over the session's lines (docs/design/session_names.md, slice 2),
         joined with the scan's suggestions (`name_reader.join`). Never raises: no AI, a plan
         without it, or a failure leave the scan's list as it was. Who is recorded is asked before
         and after each call. Counts only in the log."""
         ai = self.name_pass_ai
         if ai is None or not heard_in or self.memory is None:
-            return scan, {}, []
+            return scan, {}, [], None
         try:
             # Each name never to suggest, with why: a trace can tell "the DM said it isn't a
             # name" from a known name or a person at the table (the Expert, on #5087).
@@ -12482,7 +12498,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             skip.update({k: name_reader.AT_TABLE for k in people})
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
-                return scan, {}, []
+                return scan, {}, [], None
             dms = set(campaign.dm_user_ids)
             rows = [
                 name_reader.Row(str(i), x.user_id, x.user_id in dms, x.text)
@@ -12517,10 +12533,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # `_propose_new_names` (offered, or over the number).
             scanned = {name_key(x.name) for x in scan} | {name_key(a) for x in scan for a in x.also}
             traced = name_trace.reader_rows(read.outcomes, dropped, kept, scanned)
-            return joined, kinds, traced
+            return joined, kinds, traced, read.unread
         except Exception as exc:  # the reader adds names; the scan's list stands without it
             log.warning("Name reader failed: %s", type(exc).__name__)
-            return scan, {}, []
+            return scan, {}, [], None
 
     async def _scan_kinds(
         self, gid: int, cid: str, names: Sequence[str], lines: Sequence[str]
