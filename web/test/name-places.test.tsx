@@ -209,7 +209,7 @@ describe("the page itself", () => {
     expect(
       held
         .map((h) => h.title)
-        .includes("See where names were said"),
+        .includes("See where a recap's new name was said"),
     ).toBe(!real.NAME_PLACES_LIVE);
     const golive = readFileSync(process.cwd() + "/../docs/GO_LIVE.md", "utf8");
     expect(
