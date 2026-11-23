@@ -602,7 +602,23 @@ class Stopping(Setup):
             GUILD_A, self.a.id, pad.id, sp.MONTH_CAP_MICRO - 400_000, 0, 0
         )  # room for one call's worst case, not two
         slow_a, slow_b = Canned(FIRST, SECOND, THIRD, delay=0.2), Canned(FIRST, delay=0.2)
-        first, second = await asyncio.gather(self.read(slow_a, one), self.read(slow_b, two))
+        # The first read reserves its worst case and is then held in its slow call; the second
+        # starts only once that reservation is in the ledger, so which one wins is not left to
+        # the order two tasks happen to reach the database in (#5079). The campaign row lock is
+        # what the second one meets: the reservation is already there, and it finds no room.
+        task = asyncio.ensure_future(self.read(slow_a, one))
+        for _ in range(500):
+            async with self.db.guild(GUILD_A) as conn:
+                cur = await conn.execute("SELECT sum(micro_usd) AS total FROM plan_spend")
+                row = await cur.fetchone()
+            if row is not None and int(row["total"] or 0) > sp.MONTH_CAP_MICRO - 400_000:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            task.cancel()
+            self.fail("the first read never reserved its call")
+        second = await self.read(slow_b, two)
+        first = await task
         self.assertEqual((second.stopped, second.calls), (reader.STOP_MONTH_CAP, 0))
         self.assertEqual(first.calls, 3)  # settled to its real cost, so its own next calls fit
         async with self.db.guild(GUILD_A) as conn:

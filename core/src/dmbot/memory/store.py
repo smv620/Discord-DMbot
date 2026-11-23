@@ -6113,6 +6113,19 @@ class MemoryStore:
             await ClaimStore(self).keep_dm_claims_in(w, [str(i) for i in ids])
             return Written(len(ids), w.batch, split_counts=(heard, not_told))
 
+    async def rejected_keys(self, guild_id: int, campaign_id: str) -> set[str]:
+        """The names the DM said are not names ("Not a name"), as keys: a subset of `known_keys`,
+        so a reader can say why it left a name out (docs/design/session_names.md, slice 2)."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT a.key FROM memory_aliases a JOIN memory_entities e"
+                " ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id"
+                " AND e.id = a.entity_id"
+                " WHERE a.guild_id = %s AND a.campaign_id = %s AND e.status = 'rejected'",
+                scope.ids,
+            )
+            return {str(r["key"]) for r in await cur.fetchall()}
+
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
         """Every name and word DMbot already has an answer for in this campaign, whatever
         the answer: names (rejected ones too, so "Not a name" sticks) and "keep as heard"
@@ -6272,19 +6285,29 @@ class MemoryStore:
         entries' included as `name_uploads` follows them, for the character card's "In your lore:
         *<label>*, under '<heading>'" (#5050); None when no upload made it. DM-only, like the
         label."""
+        found = await self.lore_origin_at(guild_id, campaign_id, entity_id)
+        return None if found is None else (found[0], found[1])
+
+    async def lore_origin_at(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> tuple[str, str, int] | None:
+        """`lore_origin`, and when that upload was read (Unix seconds), so the card can say which
+        came first, the lore or the table (#5050 ruling)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "WITH RECURSIVE family(id) AS ("
                 " SELECT %s::text"
                 " UNION SELECT e.id FROM memory_entities e JOIN family f ON e.merged_into = f.id"
                 " WHERE e.guild_id = %s AND e.campaign_id = %s)"
-                " SELECT s.label, s.heading FROM memory_name_sources s JOIN family f"
+                " SELECT s.label, s.heading, s.created_at FROM memory_name_sources s JOIN family f"
                 " ON s.entity_id = f.id WHERE s.guild_id = %s AND s.campaign_id = %s"
                 " ORDER BY s.created_at, s.upload_key, (s.heading = ''), s.entity_id LIMIT 1",
                 (entity_id, guild_id, campaign_id, guild_id, campaign_id),
             )
             row = await cur.fetchone()
-            return None if row is None else (str(row["label"]), str(row["heading"]))
+            if row is None:
+                return None
+            return str(row["label"]), str(row["heading"]), int(row["created_at"])
 
     async def link_source(
         self, guild_id: int, campaign_id: str, relation_id: str

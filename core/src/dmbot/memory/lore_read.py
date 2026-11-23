@@ -1008,6 +1008,7 @@ async def _shape(
         if lines <= 1 or depth >= SPLIT_DEPTH or isinstance(exc, AIOutOfFunds):
             # (no credit is no reason to ask again in halves: that only fans the failure out)
             stats.dropped["cut_before_check"] += len(links)
+            stats.dropped[bg.NAMES_UNREAD] += len(names)  # (#5056 point 3: counted, never silent)
             return [], [], True
         return await _halves(ai, text, names, links, own, gate, stats, depth, aliases, defer)
     stats.shape_calls += 1
@@ -1025,6 +1026,7 @@ async def _shape(
     stats.shape_cut += 1
     if lines <= 1 or depth >= SPLIT_DEPTH:
         stats.dropped["cut_before_check"] += len(links)  # shaped smaller, still cut: lost
+        stats.dropped[bg.NAMES_UNREAD] += len(names)  # (and its names, #5056 point 3)
         return [], [], True
     return await _halves(ai, text, names, links, own, gate, stats, depth, aliases, defer)
 

@@ -19,10 +19,11 @@ OLD_NAME = "test of the frostmaiden (sample)"  # before #4538: still accepted, c
 PREFIX = "test of the frostmaiden (sample "
 # "(sample 31)" is the deploy's one campaign; "(sample 31b.2)" is run 2 of deploy 31b (#4551,
 # #5057); "(sample 31b.2 no capitals)" is run 2 of that deploy on another version of the session
-# (docs/design/session_names.md, section 8: typed, no capitals, spoken, each its own series).
+# (docs/design/session_names.md, section 8: typed, no capitals, spoken, and the dev-only respelled
+# one, #5133; each its own series).
 _NAMED = re.compile(
     r"^test of the frostmaiden \(sample (?P<n>[0-9]{1,4})(?P<l>[a-z])?(?:\.(?P<k>[1-9][0-9]?))?"
-    r"(?: (?P<v>no capitals|spoken))?\)$"
+    r"(?: (?P<v>no capitals|spoken|respelled))?\)$"
 )
 _LABEL = re.compile(r"^(?P<n>[1-9][0-9]{0,3})(?P<l>[a-z])?$")  # no leading zero: "40", not "040"
 RUN_MAX = 99
@@ -32,7 +33,9 @@ SAY_WHICH = "Say which deploy this is: --deploy N"
 # The session's versions (`sample_run --version`), and the words each adds to a campaign's name. The
 # typed one, the sample as it always was, adds none, so every name made before stays the same.
 TYPED = "typed"
-VERSIONS = {TYPED: "", "no-capitals": "no capitals", "spoken": "spoken"}
+# "respelled" (dev only, #5133): the typed sample with a few key names heard several ways, from a
+# fixed table (`sample_respell`), so grouping can be scored before the spoken recording exists.
+VERSIONS = {TYPED: "", "no-capitals": "no capitals", "spoken": "spoken", "respelled": "respelled"}
 BAD_LABEL = (
     "the deploy is a number from 1 to 9999, with one lowercase letter after it if you like: "
     "40 or 40b"

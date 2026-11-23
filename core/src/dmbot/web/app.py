@@ -49,6 +49,8 @@ from dmbot.web import (
     campaign_delete,
     campaign_settings,
     campaign_visits,
+    continuity,
+    deeds,
     discord_accounts,
     dm_players,
     email_change,
@@ -2092,6 +2094,7 @@ def create_app(
                 size=wanted,
                 unnamed=unnamed == "1",
                 sources=chosen or None,
+                cards=bool(getattr(settings, "card_summary_on", False)),
             )
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
@@ -3315,6 +3318,73 @@ def create_app(
             body = None
         try:
             return {"answer": await leave_questions.queue_answer(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/deeds")
+    async def me_campaign_deeds(ref: str, signed: Signed) -> dict[str, Any]:
+        """The deeds the party did that wait for the DM (#3591), as Discord's deed card shows
+        them: DM only."""
+        session, _token = signed
+        try:
+            return await deeds.read(db, session, ref, outside_engine=settings.outside_engine)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/deeds/answer", status_code=202)
+    async def me_campaign_deeds_answer(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"choice": "record" | "not", "deed"}` or `{"choice": "undo", "batch"}`; polled at
+        `.../web/answers/{answer}` (a recorded one carries its change number)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await deeds.queue_answer(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/continuity")
+    async def me_campaign_continuity(ref: str, signed: Signed) -> dict[str, Any]:
+        """The heads-ups the bot last worked out for the DM (#3695), as Discord's continuity card
+        words them: DM only."""
+        session, _token = signed
+        try:
+            return await continuity.read(db, session, ref, outside_engine=settings.outside_engine)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/continuity/ask", status_code=202)
+    async def me_campaign_continuity_ask(ref: str, signed: Signed) -> dict[str, str]:
+        """Ask the bot to work the heads-ups out now; polled at `.../web/answers/{answer}`
+        (carries how many it found)."""
+        session, _token = signed
+        try:
+            return {"answer": await continuity.ask(db, session, ref)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/continuity/answer", status_code=202)
+    async def me_campaign_continuity_answer(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"claim", "choice": "changed" | "not"}`; polled at `.../web/answers/{answer}` (`gone`
+        or `refused` when it did not apply)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await continuity.answer(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -5396,7 +5466,9 @@ def create_app(
     async def me_npc_page(ref: str, entry: str, signed: Signed) -> dict[str, Any]:
         session, _token = signed
         try:
-            return await npc_pages.read_page(db, session, ref, entry)
+            return await npc_pages.read_page(
+                db, session, ref, entry, cards=bool(getattr(settings, "card_summary_on", False))
+            )
         except RecapError as err:
             raise npc_refusal(err) from None
 

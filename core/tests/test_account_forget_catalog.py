@@ -35,6 +35,7 @@ ELSEWHERE: Rules = {
         "web_rule_takes",  # (a day-long undo handle for a website pick, swept within a day, #4841)
         "web_join_choices",  # (the choices worked out for a DM's page, swept within an hour, #4799)
         "web_reveals",  # (what they learned, for a DM's page, swept within an hour, #3863)
+        "continuity_hits",  # (the heads-ups' pointers, for a DM's page, swept within a day, #3695)
     )
 }  # fmt: skip
 BY_DESIGN: Rules = {  # kept on purpose: protects the person, or stops a second free trial (#4145)
@@ -119,7 +120,10 @@ NAME_NOT_A_PERSON: Rules = {  # a name of something else, with the reason
     "rule_set_follows": ("set_name",),  # a rule set's name
     "rule_set_suggestions_sent": ("set_name",),
     "rule_sets": ("name",),
-    "session_imports": ("file_name",),  # an imported file's name
+    "session_imports": (
+        "file_name",
+        "names_state",
+    ),  # an imported file's name; the reader's stage (#5091)
     "trait_answers": ("name_key",),  # the key of a trait name
     "web_reveals": ("who",),  # the name of a character in the story, never a person (#3863)
     "secret_questions": ("label",),  # an upload's or a session's label, never a person's name
