@@ -41,6 +41,64 @@ export function readCampaign(api: AccountApi, ref: string): Promise<CampaignPage
   return found;
 }
 
+/** The campaign's name as the first heading of the page, and the page's own title under it (#5038; the owner,
+ * 2026-11-22: "the actively selected campaign title should always be on top of every page"). The page's static
+ * heading (the page's title, drawn before any script runs) becomes the second-level heading and the campaign's
+ * name is put above it, at the top of the page's content, so on a phone the name is not a screen down. Done once for
+ * each page (a page with two navs has one name), the space is kept while the name is loading (and the empty heading
+ * is hidden from a screen reader until it has words), and it is undone when the last nav leaves, so a page of the
+ * island that is not a campaign's keeps its own title. The rule it relies on: the page's static `<h1>` is a direct
+ * child of the page's one `.account` (every `.astro` page of the account is). The campaign's own page already makes
+ * its one heading the name (CampaignPage), so it is left alone. */
+let navsOnPage = 0;
+
+function useCampaignHeading(name: string | null, skip: boolean): void {
+  useEffect(() => {
+    if (skip || typeof document === "undefined") return;
+    const root = document.querySelector<HTMLElement>(".account");
+    if (!root) return;
+    navsOnPage += 1;
+    let title = root.querySelector<HTMLElement>(":scope > [data-campaign-title]");
+    if (!title) {
+      title = document.createElement("h1");
+      title.setAttribute("data-campaign-title", "");
+      title.className = "campaign-title";
+      title.setAttribute("aria-hidden", "true"); // (until it has words)
+      const pageTitle = root.querySelector<HTMLElement>(":scope > h1");
+      if (pageTitle) {
+        // The page's own title goes one level down, in the same place, with whatever it had.
+        const sub = document.createElement("h2");
+        for (const attr of Array.from(pageTitle.attributes)) sub.setAttribute(attr.name, attr.value);
+        sub.setAttribute("data-page-title", "");
+        sub.append(...Array.from(pageTitle.childNodes));
+        pageTitle.replaceWith(sub);
+      }
+      root.insertBefore(title, root.firstChild);
+    }
+    return () => {
+      navsOnPage -= 1;
+      if (navsOnPage > 0) return;
+      // The last nav went (another page of the island, or another campaign): the page is as it was served.
+      root.querySelector(":scope > [data-campaign-title]")?.remove();
+      const sub = root.querySelector<HTMLElement>(":scope > [data-page-title]");
+      if (sub) {
+        const back = document.createElement("h1");
+        for (const attr of Array.from(sub.attributes)) if (attr.name !== "data-page-title") back.setAttribute(attr.name, attr.value);
+        back.append(...Array.from(sub.childNodes));
+        sub.replaceWith(back);
+      }
+    };
+  }, [skip]);
+  useEffect(() => {
+    if (skip || typeof document === "undefined") return;
+    const title = document.querySelector<HTMLElement>(".account > [data-campaign-title]");
+    if (!title) return;
+    title.textContent = name ?? "";
+    if (name) title.removeAttribute("aria-hidden");
+    else title.setAttribute("aria-hidden", "true");
+  }, [name, skip]);
+}
+
 export default function CampaignNav({
   api,
   campaignRef,
@@ -74,6 +132,7 @@ export default function CampaignNav({
   }, [isDmNow]);
 
   const campaign = name || found?.name || words.thisCampaign;
+  useCampaignHeading(name || found?.name || null, page === "campaign");
   // Settings is a part of the campaign's own page: its tab is the marked one once the person has gone there (#settings).
   const [hash, setHash] = useState(typeof window === "undefined" ? "" : window.location.hash);
   useEffect(() => {

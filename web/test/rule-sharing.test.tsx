@@ -51,7 +51,7 @@ describe("while it is switched off", () => {
         <HouseRulesPage api={api} path="/account/house-rules/200000000000000001.cmp1" />
       </div>,
     );
-    await screen.findByRole("heading", { level: 2 });
+    await screen.findByRole("link", { name: "The Brynwater Crossing" });
     expect(screen.queryByRole("heading", { name: w.heading })).toBeNull();
     expect(calls(api, "ruleSharing")).toHaveLength(0);
   });

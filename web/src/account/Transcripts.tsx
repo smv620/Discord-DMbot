@@ -170,7 +170,6 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
             <a href="/account/transcripts">{text.allCampaigns}</a>
           </p>
           <CampaignNav api={api} campaignRef={campaignRef} page="transcripts" name={found.name} />
-          <h2>{found.name}</h2>
           <p class="small">{text.shareLine}</p>
           {IMPORT_LIVE && api.importPreview && (
             <p>

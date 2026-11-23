@@ -55,9 +55,10 @@ export default function RouteLength({
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "";
       setSaid({ ok: false, text: kind === "gone" ? w.gone : kind === "changed" ? w.changed : w.couldNot, undo: false });
-      if (kind === "gone" || kind === "changed") onChanged();
     } finally {
       setBusy(false);
+      // The page is read again after every outcome: the server may have applied a change that failed on the way back (#5035).
+      onChanged();
     }
   }
 
@@ -75,7 +76,6 @@ export default function RouteLength({
       setForm(false);
       setWords("");
       setSaid({ ok: true, text: typed ? w.saved(typed) : w.takenOff, undo: true });
-      onChanged();
     });
 
   const keep = () =>
@@ -85,7 +85,6 @@ export default function RouteLength({
       setLocal({ length: { words: current.words, read: false } });
       if (made.batch !== null) setUndo({ batch: made.batch, prev: current });
       setSaid({ ok: true, text: w.kept(current.words), undo: made.batch !== null });
-      onChanged();
     });
 
   // An undo that is too late, or refused because something changed, says so; nothing else about it is claimed.
@@ -100,12 +99,12 @@ export default function RouteLength({
       setUndo(null);
       setLocal({ length: back.prev });
       setSaid({ ok: true, text: w.undone, undo: false });
-      onChanged();
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "";
       setSaid({ ok: false, text: kind === "undo-late" || kind === "changed" ? w.undoLate : w.couldNot, undo: false });
     } finally {
       setBusy(false);
+      onChanged();
     }
   };
 

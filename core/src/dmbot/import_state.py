@@ -30,6 +30,7 @@ UNHONOURED = "unhonoured"  # why recaps were not made (one line each, kept as ma
 QUEUED = "queued"  # the starts of the sessions whose recap was queued at once
 NAME_ASKS = "name_asks"  # words PlotBot was not sure of in a session: "<session> <times> <word>"
 REPORTS = "reports"  # each scanned session's name-pass report, as text (#4904)
+NAMES_CUT = "names_cut"  # names a cap left out of its sessions (a counter, #5055 A)
 
 _KIND = re.compile(r"^[a-z_]{1,40}$")
 

@@ -99,13 +99,13 @@ describe("what still waits for IMPORT_LIVE", () => {
     expect(entries.some((e) => e.title === "Bring in older sessions")).toBe(false);
     const link = () => screen.queryByRole("link", { name: w.heading });
     render(<Transcripts api={mockApi("table")} path="/account/transcripts/200000000000000001.cmp1" />);
-    await screen.findByRole("heading", { name: "The Brynwater Crossing" });
+    await screen.findByRole("link", { name: "The Brynwater Crossing" });
     expect(link()).toBeNull();
     // The same page with the site switch on does link it (so the check above can fail).
     cleanup();
     live.on = true;
     render(<Transcripts api={mockApi("table")} path="/account/transcripts/200000000000000001.cmp1" />);
-    await screen.findByRole("heading", { name: "The Brynwater Crossing" });
+    await screen.findByRole("link", { name: "The Brynwater Crossing" });
     expect(link()).toBeTruthy();
   });
 });

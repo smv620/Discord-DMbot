@@ -311,6 +311,7 @@ class Linking(ConfirmedMemoryTest):
         found += [said("Bram", "owes", name) for name in STRANGERS[5:]]
         got = await self.propose(*found, new_names=20)
         self.assertEqual((got.named, got.deferred), (20, 5))
+        self.assertEqual(got.names_over_cap, 5)  # counted, never silent (#5055 A)
         names = set(await self.entries())
         # The five said once are the ones left for next time.
         self.assertEqual(names, set(STRANGERS[5:]))
@@ -332,9 +333,20 @@ class Linking(ConfirmedMemoryTest):
         )
         self.assertEqual((later.named, later.deferred), (5, 3))
         self.assertEqual(set(later.new), set(STRANGERS[:5]))
+        self.assertEqual(later.names_over_cap, 3)  # (#5055 A) only this read's own new names
         self.assertEqual(set(await self.entries()), set(STRANGERS[:25]))
         # The five claims were waiting already; they are still waiting, now on a proposed name.
         self.assertEqual((await self.counts())["names"], 45 + 3)
+
+    async def test_a_held_name_said_again_is_not_counted_past_the_limit_again(self) -> None:
+        # (#5055 A) a name held from an earlier read and said again counts once, in that read
+        first = [said("Bram", "knows", name) for name in STRANGERS[:25]]
+        first += [said("Bram", "owes", name) for name in STRANGERS[5:25]]
+        got = await self.propose(*first, new_names=20)
+        self.assertEqual(got.names_over_cap, 5)
+        later = await self.propose(*[said("Bram", "fears", n) for n in STRANGERS[:5]], new_names=2)
+        self.assertEqual(later.named, 2)  # two of the five held are made now
+        self.assertEqual(later.names_over_cap, 0)  # the other three were counted already
 
     async def test_a_kept_claim_is_asked_once_its_name_is_confirmed(self) -> None:
         names = STRANGERS[:2]
