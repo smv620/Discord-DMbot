@@ -244,5 +244,6 @@ Unlocks: #1831
 - **Split and group names on the website (#3406):** dev1 checks it on the test server before the What's new entry leaves held; nothing needs the owner until dev1 has seen it work.
 - **Questions for you on the website (#3438):** dev1 opens the Questions list in Discord and the Questions page on the test site for one campaign and sees the same counts and words; a player gets neither. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
 - **See where a name was said (#3384):** dev1 presses 📜 Where was it said? on a name question in the test campaign and sees up to three places with a line either side; a player who presses it is refused. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
+- **Who a character is (#5050, #5051):** dev1 turns `DMBOT_CARD_SUMMARY` on for the sample campaign, reads ten character cards in Discord and on the Names page against the sample's key (who they are, where first met, when last mentioned), and checks that a player sees none of it. Then the What's new entry leaves held and `CARD_SUMMARY_LIVE` goes on in the same deploy. Nothing needs the owner until dev1 has seen it work.
 
 The reasons are in `docs/GO_LIVE.md`.
