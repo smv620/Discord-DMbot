@@ -314,6 +314,7 @@ from dmbot.import_state import (
     ENTRIES,
     LEFT_TOLD,
     NAME_ASKS,
+    NAMES_CUT,
     PARTY,
     QUEUED,
     REPORTS,
@@ -699,6 +700,7 @@ from dmbot.ui.names import (
     held_back_count_text,
     held_back_pointer,
     held_back_text,
+    names_cut_note,
     private_after_session_text,
     review_view,
 )
@@ -10533,6 +10535,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     leaves=self.settings.party_leaves_on and not old_import,
                 )
             log.info(report.line())
+            if report.names_over_cap and self.import_job is not None:
+                # (#5055 A: names held for a later session, for the sample run only. They are not
+                # lost, so the DM is not told; a live session has no import row, so its log has it)
+                try:
+                    await self.import_job.store.add_story_held(gid, sid, report.names_over_cap)
+                except Exception as exc:
+                    log.warning("Import: held names not counted (%s)", type(exc).__name__)
             if report.heard_languages:  # (#4229 1d: each a question for the DM, never written)
                 await self._ask_heard_languages(gid, cid, report, session.started_at, sid)
             if report.goodbyes:  # (#4537 6b: each an after-session question, never a leave)
@@ -12220,6 +12229,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         *,
         agreed: Collection[int] | None = None,
         game_only: bool = False,
+        import_scan: bool = False,
     ) -> list[str]:
         """Suggest the names DMbot heard in `lines` but doesn't know, for the DM to check (the name
         scan of a live session's end and of an imported one, #2106). `users`: the people whose
@@ -12252,20 +12262,29 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
         # (#394). Which known name each sounds like is worked out when the DM looks,
         # never saved: names can change, or be made secret, before then.
-        found = group_alike(find_new_names(lines, skip, unlimited=True))[:MAX_SUGGESTIONS]
+        every = group_alike(find_new_names(lines, skip, unlimited=True))
+        found = every[:MAX_SUGGESTIONS]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
         asked = await self._take_name_asks(gid, cid, session_id) if session_id is not None else []
         have = {name_key(f.name) for f in found}
         for name, times in asked:
             if name_key(name) not in skip and name_key(name) not in have:
                 found.append(Suggestion(name, times))
+        # What the cap left out is counted, never silent (#5055 A; no rule change: the same 10
+        # are offered). A name the name pass asked about is offered anyway, so it is not cut. An
+        # import's own scan keeps the count on its session (set, not added: a retried scan counts
+        # once), for its notice and the sample run; a live session's log has it.
+        offered = {name_key(f.name) for f in found}
+        cut = sum(1 for f in every[MAX_SUGGESTIONS:] if name_key(f.name) not in offered)
+        if import_scan and session_id is not None and self.import_job is not None:
+            await self.import_job.store.set_scan_cut(gid, session_id, cut)
         added: list[str] = []
         kinds = await self._scan_kinds(gid, cid, [f.name for f in found], lines)
         # the session each name is made in, for the split-party check (#4043): never a guess
         session_at = await self._session_start(gid, session_id)
         log.info(  # counts only
-            "Name scan: %d name(s) suggested, %d with a kind, %d without",
-            len(found), len(kinds), len(found) - len(kinds),
+            "Name scan: %d name(s) suggested, %d with a kind, %d without, %d past the limit",
+            len(found), len(kinds), len(found) - len(kinds), cut,
         )  # fmt: skip
         for suggestion in found:
             written = None
@@ -13203,6 +13222,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         await self.import_state.add_strings(
                             gid, ready.campaign_id, ADDED_NAMES, added
                         )
+                        # (#5055 A: the scan's cut, told once in the import's notice; counted
+                        # here, on success, so a scan given back and retried counts once)
+                        if cut := await store.scan_cut(gid, ready.session_id):
+                            await self.import_state.bump(gid, ready.campaign_id, NAMES_CUT, cut)
                     await self._link_import_party(gid, ready)
                     await self._offer_import_time(gid, ready)
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
@@ -13898,7 +13921,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await self.import_state.counted(gid, UNCHECKED) if self.import_state is not None else {}
         )
         over = (
-            await self.import_state.campaigns_with(gid, [ADDED_NAMES, SPEAKERS, ENTRIES])
+            await self.import_state.campaigns_with(gid, [ADDED_NAMES, SPEAKERS, ENTRIES, NAMES_CUT])
             if self.import_state is not None
             else set()
         ) | set(skipped_by)
@@ -13910,6 +13933,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # that fails costs this campaign's news for this import, never the other campaigns')
             try:
                 skipped = await state.take_count(gid, cid, UNCHECKED) if state else 0
+                cut = await state.take_count(gid, cid, NAMES_CUT) if state else 0
                 names = await state.take_strings(gid, cid, ADDED_NAMES) if state else []
                 speakers = (
                     {int(v) for v in await state.take_strings(gid, cid, SPEAKERS)}
@@ -13953,6 +13977,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     f"{'it' if one else 'them'} may be missing. Add any with ➕ Add a name "
                     "on the names panel."
                 )
+                text = f"{text}\n{note}" if text else f"📝 {note}"
+            if cut:  # (#5055 A: a cap's cut is told, never silent; a count only)
+                note = names_cut_note(cut)
                 text = f"{text}\n{note}" if text else f"📝 {note}"
             if text:
                 await self.post(notice_to, text, view=review_view(cid) if names else None)
@@ -14130,7 +14157,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         }
         added = await self._propose_new_names(
             gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id,
-            agreed=set(agreed), game_only=True,
+            agreed=set(agreed), game_only=True, import_scan=True,
         )  # fmt: skip
         if self.import_state is not None:
             await self.import_state.add_strings(
