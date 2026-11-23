@@ -61,6 +61,7 @@ class TheKinds(unittest.TestCase):
             [kinds.LABELS[k] for k in kinds.ORDER],
             [
                 "New names to check",
+                "More names from your sessions",  # (#5055 B)
                 "Did they mean…?",
                 "Names that look alike",
                 "Connections waiting",

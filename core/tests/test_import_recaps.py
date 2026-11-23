@@ -634,8 +634,8 @@ class TheCrashAndTheNews(WithImports):
         await bot._tell_import_news(GUILD, self.store)
         channel, text = bot.post.await_args.args[:2]
         self.assertEqual(channel, 88)
-        self.assertIn("As many as 12 more names were left out", text)
-        self.assertIn("➕ Add a name", text)
+        self.assertIn("As many as 12 more names are waiting", text)
+        self.assertIn("📝 More names", text)
         self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
         bot.post.reset_mock()
         await bot._tell_import_news(GUILD, self.store)  # (taken: told once)
@@ -657,7 +657,7 @@ class TheCrashAndTheNews(WithImports):
 
         bot._scan_import = scan
         await rounds(bot, 5)
-        told = [c.args[1] for c in bot.post.await_args_list if "more names were" in c.args[1]]
+        told = [c.args[1] for c in bot.post.await_args_list if "more names are" in c.args[1]]
         self.assertEqual(tries[0], 2)
         self.assertEqual(len(told), 1)
         self.assertIn("As many as 12 more names", told[0])
