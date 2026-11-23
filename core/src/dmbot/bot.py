@@ -348,6 +348,7 @@ from dmbot.memory import (
     lore_context,
     lore_queue,
     meaning,
+    name_reader,
     plan_reader,
     report_make,
     role_match,
@@ -12266,6 +12267,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # (#394). Which known name each sounds like is worked out when the DM looks,
         # never saved: names can change, or be made secret, before then.
         every = group_alike(find_new_names(lines, skip, unlimited=True))
+        # The name reader (docs/design/session_names.md, slice 2; DMBOT_SESSION_NAMES): names
+        # found from what is said about them, never from capitals, joined with the scan's before
+        # the cap. Only lines with a stored speaker can be read (consent is asked per line).
+        reader_kinds: dict[str, str] = {}
+        if self.settings.session_names_on and heard_in:
+            # (exactly the lines the scan read: never a sidebar or off-topic line it left out,
+            # and on a put-back sweep only the lines put back, not the whole session again)
+            scanned = set(lines)
+            read_in = [x for x in heard_in if x.text in scanned]
+            people = await self._people_keys(gid, users, cid)
+            every, reader_kinds = await self._read_session_names(gid, cid, read_in, people, every)
         found = every[:MAX_SUGGESTIONS]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
         asked = await self._take_name_asks(gid, cid, session_id) if session_id is not None else []
@@ -12282,7 +12294,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if import_scan and session_id is not None and self.import_job is not None:
             await self.import_job.store.set_scan_cut(gid, session_id, cut)
         added: list[str] = []
-        kinds = await self._scan_kinds(gid, cid, [f.name for f in found], lines)
+        kinds = await self._scan_kinds(
+            gid, cid, [f.name for f in found if f.name not in reader_kinds], lines
+        )
+        kinds.update({n: k for n, k in reader_kinds.items() if n not in kinds})
         # the session each name is made in, for the split-party check (#4043): never a guess
         session_at = await self._session_start(gid, session_id)
         log.info(  # counts only
@@ -12328,6 +12343,66 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
         return added
+
+    async def _read_session_names(
+        self,
+        gid: int,
+        cid: str,
+        heard_in: Sequence[Line],
+        people: Collection[str],
+        scan: list[Suggestion],
+    ) -> tuple[list[Suggestion], dict[str, str]]:
+        """The name reader over the session's lines (docs/design/session_names.md, slice 2),
+        joined with the scan's suggestions (`name_reader.join`). Never raises: no AI, a plan
+        without it, or a failure leave the scan's list as it was. Who is recorded is asked before
+        and after each call. Counts only in the log."""
+        ai = self.name_pass_ai
+        if ai is None or not heard_in or self.memory is None:
+            return scan, {}
+        try:
+            # Each name never to suggest, with why: a trace can tell "the DM said it isn't a
+            # name" from a known name or a person at the table (the Expert, on #5087).
+            known = await self.memory.known_keys(gid, cid)
+            rejected = await self.memory.rejected_keys(gid, cid)
+            skip = {k: name_reader.KNOWN_NAME for k in known}
+            skip.update({k: name_reader.NOT_A_NAME for k in rejected})
+            skip.update({k: name_reader.AT_TABLE for k in people})
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
+                return scan, {}
+            dms = set(campaign.dm_user_ids)
+            rows = [
+                name_reader.Row(str(i), x.user_id, x.user_id in dms, x.text)
+                for i, x in enumerate(heard_in, 1)
+            ]
+            # Metered: charged to the campaign as "names" unless a job around it (an import)
+            # already charges its calls (Supervisor, on #5090).
+            meter = (
+                credits.preparing(gid, cid, "names")
+                if credits.current() is None
+                else contextlib.nullcontext()
+            )
+            with meter:
+                read = await name_reader.read(
+                    ai,
+                    rows,
+                    skip,
+                    known=sorted(known - rejected),
+                    consenting=lambda: self.consent.consenting(gid),
+                    max_tokens=OUTPUT_FLOOR,  # (background calls never send less, #2596)
+                    rules=(campaign.target_ruleset, campaign.fallback_ruleset),
+                )
+            kept, dropped = name_reader.tally(read.heard, {r.number: r.text for r in rows})
+            joined, kinds = name_reader.join(scan, kept)
+            log.info(  # counts only (a stretch not read is never "no names")
+                "Name reader: %d name(s) kept, %d with too few hearings, %d new beside the scan,"
+                " %d stretch(es) not read",
+                len(kept), len(dropped), len(joined) - len(scan), read.unread,
+            )  # fmt: skip
+            return joined, kinds
+        except Exception as exc:  # the reader adds names; the scan's list stands without it
+            log.warning("Name reader failed: %s", type(exc).__name__)
+            return scan, {}
 
     async def _scan_kinds(
         self, gid: int, cid: str, names: Sequence[str], lines: Sequence[str]
