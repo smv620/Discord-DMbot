@@ -1,7 +1,7 @@
 {
  "campaign": "test of the frostmaiden (sample)",
  "source": "the public sample session, https://docs.google.com/document/d/1BtHZ4O75886WHOoTq0FCPst2hdg7YLnsaCiI-kNsv-E/edit?usp=sharing (the plain-text export; each connection names its line)",
- "version": 3,
+ "version": 4,
  "goes_with": "the small sample lore, https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing",
  "how_to_read": {
   "described": "true = a thing the story describes but never names (the kennel, Garret's old sled); DMbot never makes a name from a description, so it is scored on its own line, found as an entry or on the met-but-not-named list by its said_as words, and is never a name miss (#5055 D)",
@@ -116,7 +116,8 @@
    "name": "Explorer's League",
    "kind": "group",
    "aliases": [
-    "the Explorers' League"
+    "the Explorers' League",
+    "Explorer League"
    ],
    "note": "Guild of explorers."
   },
@@ -186,7 +187,9 @@
   {
    "name": "Kelvin's Cairn",
    "kind": "place",
-   "aliases": [],
+   "aliases": [
+    "Kelvin Cairn"
+   ],
    "note": ""
   },
   {

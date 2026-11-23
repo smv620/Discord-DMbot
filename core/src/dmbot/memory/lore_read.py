@@ -38,7 +38,7 @@ from typing import Any
 from dmbot import ai_feed
 from dmbot.ai import OUTPUT_FLOOR, AIError, AIOutOfFunds, Reply, max_output
 from dmbot.memory import background as bg
-from dmbot.memory import descriptions, place_words
+from dmbot.memory import descriptions, place_words, trace_note
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.end_match import usable_alias
 from dmbot.memory.models import name_key
@@ -1009,15 +1009,21 @@ async def _shape(
             # (no credit is no reason to ask again in halves: that only fans the failure out)
             stats.dropped["cut_before_check"] += len(links)
             stats.dropped[bg.NAMES_UNREAD] += len(names)  # (#5056 point 3: counted, never silent)
+            for n in names:
+                trace_note.note(line_name(n), trace_note.SLICE_UNREAD)
             return [], [], True
         return await _halves(ai, text, names, links, own, gate, stats, depth, aliases, defer)
     stats.shape_calls += 1
     if not reply.cut:
+        shaped = bg.read_answer(reply.text, text)
+        if not shaped and names and not bg.has_name_list(reply.text):
+            for n in names:  # (an answer with no list of names: the slice was not read)
+                trace_note.note(line_name(n), trace_note.SLICE_UNREAD)
         if defer is not None:
             defer.append(reply.text)
-            return bg.read_answer(reply.text, text), [], False
+            return shaped, [], False
         return (
-            bg.read_answer(reply.text, text),
+            shaped,
             bg.read_connections(
                 reply.text, text, set(own), stats.dropped, aliases, stats.unsettled
             ),
@@ -1027,6 +1033,8 @@ async def _shape(
     if lines <= 1 or depth >= SPLIT_DEPTH:
         stats.dropped["cut_before_check"] += len(links)  # shaped smaller, still cut: lost
         stats.dropped[bg.NAMES_UNREAD] += len(names)  # (and its names, #5056 point 3)
+        for n in names:
+            trace_note.note(line_name(n), trace_note.SLICE_UNREAD)
         return [], [], True
     return await _halves(ai, text, names, links, own, gate, stats, depth, aliases, defer)
 
@@ -1095,6 +1103,8 @@ def fold_names(
         first, second = (
             (f, g) if skip_name and skip_name(f.name) and not skip_name(g.name) else (g, f)
         )
+        if name_key(second.name) != name_key(first.name):
+            trace_note.note(second.name, trace_note.FOLDED, first.name)
         hidden = {name_key(sp) for sp in (*g.secret, *f.secret)}
         # (when one line called the other's name its disguise, that pair stays hidden whichever
         # name the entry keeps)
@@ -1248,6 +1258,11 @@ async def _read_lore(
         tick, look = _tick, _look
 
     listed, cut = await read_list(read_ai, text, own, gate, stats, tick, look)
+    for n in listed.names:
+        trace_note.note(line_name(n), trace_note.LISTED)
+    for n in listed.left_out:  # (NOT INCLUDED: a name pass 1 saw and chose not to give)
+        if "—" not in n:  # (a relationship left out is not a name)
+            trace_note.note(line_name(n), trace_note.LEFT_OUT)
     words_read[0] = len(text.split())
     _counts()
     known_named: tuple[str, ...] = ()
@@ -1262,6 +1277,9 @@ async def _read_lore(
                 if skip_name(line_name(n)) and _says_word_for_word(text, line_name(n))
             )
         )
+        for n in listed.names:
+            if skip_name(line_name(n)) and not _gives_spellings(n):
+                trace_note.note(line_name(n), trace_note.KNOWN)
         listed.names = [
             n for n in listed.names if not skip_name(line_name(n)) or _gives_spellings(n)
         ]
@@ -1307,13 +1325,16 @@ async def _read_lore(
         if tasks:
             _, pending = await asyncio.wait(tasks, timeout=left)
     finally:  # also when the caller is cancelled: no shaping call is left running
-        for task in tasks:
+        for task, (slice_names, _slice_links) in zip(tasks, slices, strict=True):
             if not task.done():
                 task.cancel()
+                # (the trace, #5106: cut at the time limit, or the whole read was stopped)
+                for n in slice_names:
+                    trace_note.note(line_name(n), trace_note.TIME_LIMIT)
         await asyncio.gather(*tasks, return_exceptions=True)
     cut = cut or bool(pending)
     for task in tasks:
-        if task.cancelled():
+        if task.cancelled():  # (noted above, when it was cancelled)
             continue
         found, joined, shape_cut = task.result()
         names += found
@@ -1354,6 +1375,9 @@ async def _read_lore(
             for f in names
             if skip_name(f.name) and (f.also or f.secret)
         }
+        for f in names:
+            if skip_name(f.name):
+                trace_note.note(f.name, trace_note.KNOWN)
         names = [f for f in names if not skip_name(f.name)]
     stats.names_kept, stats.links_kept = len(names), len(links)
     stats.unnamed_listed = len(listed.unnamed)

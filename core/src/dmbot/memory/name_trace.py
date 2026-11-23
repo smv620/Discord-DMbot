@@ -45,6 +45,7 @@ def is_sample(name: str) -> bool:
 SCAN = "scan"  # the capital-letter scan (`memory/scan.py`)
 READER = "reader"  # the name reader (`memory/name_reader.py`)
 ASKED = "name_pass"  # a word PlotBot's name pass was not sure of (#2628)
+LORE = "lore"  # the lore read (`lore_read`, `background`, `ui/name_background`: #5106)
 
 # How a candidate ended, beside the reader's own refusal reasons (`name_reader`)
 OFFERED = "offered"  # suggested to the DM
@@ -55,7 +56,7 @@ JOINED = "joined_scan"  # the reader found a name the scan already offered
 
 @dataclass(frozen=True, slots=True)
 class Row:
-    source: str  # SCAN, READER or ASKED
+    source: str  # SCAN, READER, ASKED, or LORE / "lore_picture" (the lore read, #5106)
     name: str  # as found: the public sample's words only (a sample campaign, see `write`)
     reason: str  # one fixed word
     why: str = ""  # the reader's reason for a name (introduced, place...), when it gave one
