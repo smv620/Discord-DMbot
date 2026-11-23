@@ -173,6 +173,7 @@ class Sections:
     def __init__(self, text: str) -> None:
         self.text = text
         self.starts: list[int] = []  # where each heading's line begins
+        self.ends: list[int] = []  # and where it ends (any line break `splitlines` knows, #5050)
         self.heads: list[str] = []
         rows = text.splitlines(keepends=True)
         below_of = [""] * len(rows)  # the next line with words in it, for each line (one pass)
@@ -189,6 +190,7 @@ class Sections:
             head = _heading(raw, above, above_heading, below)
             if head:
                 self.starts.append(at)
+                self.ends.append(at + len(raw))
                 self.heads.append(head)
             if raw.strip():
                 above, above_heading = raw, bool(head)
@@ -205,12 +207,52 @@ class Sections:
             return ""
         pattern = re.compile(r"\s+".join(re.escape(w) for w in words[:12]))
         for found in pattern.finditer(self.text):
-            line_start = self.text.rfind("\n", 0, found.start()) + 1
-            if line_start in self.starts:
-                continue  # (the heading itself, or a contents line: not its section)
             n = bisect.bisect_right(self.starts, found.start()) - 1
+            if n >= 0 and found.start() < self.ends[n]:
+                continue  # (the heading itself, or a contents line: not its section)
             return self.heads[n] if n >= 0 else ""
         return ""
+
+    def at(self, position: int) -> str:
+        """The heading of the section that holds `position` in the text, or "" before the first
+        heading or for a place on the first heading's own line (a name in a heading is that
+        section's title, so the section it is "under" is the one above)."""
+        n = bisect.bisect_right(self.starts, position) - 1
+        if n >= 0 and position < self.ends[n]:
+            n -= 1  # (on the heading's own line, whatever line break ends it: a PDF's page break)
+        return self.heads[n] if n >= 0 else ""
+
+
+def first_headings(text: str, names: Mapping[str, Sequence[str]]) -> dict[str, str]:
+    """For each key, the heading above the first whole-word place in `text` where its name is
+    written (#5050, a character card's "In your lore: …, under '…'"), letters in any case. The
+    first spelling is the name itself and decides when it is found; the others ("the captain")
+    count only when it is not, since a short other name can be any earlier mention. No key for a
+    name not found as written or with no heading above it. Pure; one compiled pattern per spelling
+    over the upload, so the caller runs it off the event loop; never a word of the text beyond the
+    heading itself."""
+    if not text or not names:
+        return {}
+    sections = Sections(text)
+    out: dict[str, str] = {}
+    for key, spellings in names.items():
+        first: int | None = None
+        for n, spelling in enumerate(spellings):
+            words = spelling.split()
+            if not words:
+                continue
+            pattern = re.compile(
+                r"(?<!\w)" + r"\s+".join(re.escape(w) for w in words) + r"(?!\w)", re.IGNORECASE
+            )
+            found = pattern.search(text)
+            if found is not None and (first is None or found.start() < first):
+                first = found.start()
+            if n == 0 and first is not None:
+                break  # (the name itself was found: its other names don't move it)
+        heading = sections.at(first) if first is not None else ""
+        if heading:
+            out[key] = heading
+    return out
 
 
 def section_of(text: str, quote: str) -> str:
