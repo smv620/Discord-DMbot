@@ -36,6 +36,8 @@ from dmbot.names import not_names
 from dmbot.word_end import at_word_end
 
 MAX_NAMES = 200  # suggestions from one document
+# The `dropped` word for names past `MAX_NAMES` (#5055 A, #5056 point 2): counted, never silent.
+NAMES_OVER_CAP = "names_over_cap"
 NAME_WORDS = 8
 NAME_CHARS = 80
 QUOTE_WORDS = 20
@@ -776,7 +778,7 @@ def merge(
     entry's secret spellings. `rules`
     (target, fallback ruleset): names the rules hold as a monster or spell are left out too. An
     item that is not one particular thing (a dagger, arrows) is left out and counted in `dropped`
-    as `item_not_unique` (#3373)."""
+    as `item_not_unique` (#3373), and the names past `cap` as `NAMES_OVER_CAP` (#5055 A)."""
     skip = {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS
     answers = _split_lists(answers, skip_keys)
     order: list[str] = []
@@ -860,7 +862,10 @@ def merge(
     # The cap counts the kept entries only: a folded disguise takes no slot, so it can never
     # cost its holder one. A holder that is cut takes its folded disguise's spellings with it.
     folded = [f for f in out if not kept_keys[name_key(f.name)]]
-    out = [f for f in out if kept_keys[name_key(f.name)]][:cap]
+    kept = [f for f in out if kept_keys[name_key(f.name)]]
+    if dropped is not None and len(kept) > cap:
+        dropped[NAMES_OVER_CAP] += len(kept) - cap  # (a count of names, never the names)
+    out = kept[:cap]
     # A folded entry's other spellings (its secret ones too) name the same disguise, so they join
     # its holder as secret spellings, never public ones and never another entry's own name:
     # "Brother Aldric also [Aldric]" folded into Vecnor leaves Vecnor holding "Aldric" in secret.

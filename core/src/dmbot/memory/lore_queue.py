@@ -195,16 +195,19 @@ class LoreQueue:
         names: int = 0,
         links: int = 0,
         found: Mapping[str, Sequence[str]] | None = None,
+        names_cut: int = 0,
     ) -> bool:
         """Done, or failed with a word. The text and the link are blanked in this same statement,
         whichever way it ends. `found`: the ids of the names this reading proposed, kind by kind,
         kept with the row for the website's "Add all" (#3207); ids only, capped so the row's size
-        limit is never hit. Only the worker that holds the claim can write. False: not its row
+        limit is never hit. `names_cut`: names past the one-document limit, a count kept for the
+        sample run (#5055 A). Only the worker that holds the claim can write. False: not its row
         any more."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE lore_uploads SET state = %s, stage = %s, error = %s, names_found = %s,"
-                " links_found = %s, found = %s, text = '', link = '', updated_at = %s"
+                " links_found = %s, found = %s, names_cut = %s, text = '', link = '',"
+                " updated_at = %s"
                 " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
                 (
                     "failed" if error else "done",
@@ -213,6 +216,7 @@ class LoreQueue:
                     max(names, 0),
                     max(links, 0),
                     Jsonb({} if error else _capped(found or {})),
+                    max(names_cut, 0),
                     int(self._now()),
                     guild_id,
                     claim.id,
