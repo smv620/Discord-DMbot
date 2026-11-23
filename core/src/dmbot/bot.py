@@ -375,8 +375,15 @@ from dmbot.memory.adventure import AdventureSection, AdventureStore
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.card_summaries import CardSummaries
+from dmbot.memory.claims import GONE as CLAIM_GONE
+from dmbot.memory.claims import ODD_NOW as CLAIM_ODD_NOW
+from dmbot.memory.claims import STOPPED_NOW as CLAIM_STOPPED_NOW
 from dmbot.memory.claims import ClaimStore
+from dmbot.memory.continuity import CHANGED as CONTINUITY_CHANGED
+from dmbot.memory.continuity import NOT_TRUE as CONTINUITY_NOT_TRUE
 from dmbot.memory.continuity import ContinuityStore
+from dmbot.memory.continuity_hits import ContinuityHits
+from dmbot.memory.continuity_hits import hit_of as continuity_hit_of
 from dmbot.memory.contradiction_grades import MAJOR, GradeStore
 from dmbot.memory.deed_proposals import DeedProposals
 from dmbot.memory.deed_proposals_backup import DeedProposalsSection
@@ -618,6 +625,7 @@ from dmbot.transcription.base import (
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import (
+    after_session,
     contradiction_notes,
     deed_card,
     dm_links,
@@ -3611,7 +3619,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await step()
                 except Exception:
                     log.exception("After the session: %s failed", name)
+                if name == "story threads":  # the last slow read: the card ends here, not later
+                    await self._end_after_card(table)
         finally:
+            await self._end_after_card(table)  # (the safety net: every read is over)
             leftover, table.asks = table.asks or [], None
             if leftover:  # the sending step itself failed: still ask, so nothing is lost
                 try:
@@ -10048,9 +10059,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if table.campaign_id is None or table.transcript_session_id is None:
             return
         gid = table.guild_id
+        card = DMBot._after_card(self, table)
+
+        async def window(part: int, parts: int) -> None:
+            await card.stage(after_session.THREADS, part, parts)
+
         await DMBot._read_threads(  # (by the class: the tests' stand-ins are not DMBots)
             self, gid, table.campaign_id, table.transcript_session_id,
             {table.dm_user_id, *table.dm_user_ids}, lambda: self.consent.consenting(gid),
+            step=window,
         )  # fmt: skip
 
     async def _read_threads(
@@ -10061,6 +10078,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         dm_ids: Collection[int],
         consenting: Callable[[], Awaitable[Collection[int]]],
         renew: Callable[[], Awaitable[Any]] | None = None,
+        step: Callable[[int, int], Awaitable[None]] | None = None,
     ) -> None:
         """The new story threads one stored session's talk starts (#4522, quests slice 5a;
         `memory.session_threads`), waiting on the 📜 card for the DM, with one counts line in the
@@ -10134,7 +10152,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ai, lines, dm_ids=dm_ids, entries=entries, names=names, have=have,
                     known=known, consenting=consenting, max_calls=allowed,
                     max_tokens=OUTPUT_FLOOR, count_call=count_call, progress=moving,
-                    finders=finders,
+                    finders=finders, step=step,
                 )  # fmt: skip
                 store = ThreadSuggestionStore(memory._db)
                 # (the consent re-check just before storing: who stopped meanwhile is never kept)
@@ -10356,6 +10374,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         "Who is this: couldn't post the joins line (%s)", type(exc).__name__
                     )
 
+    def _after_card(self, table: Table) -> after_session.AfterSessionCard:
+        """The one message that shows this session's after-session reads while they run (#5124):
+        made the first time a read asks for it, ended once by `_after_session`."""
+        card = getattr(table, "after_card", None)
+        if not isinstance(card, after_session.AfterSessionCard):
+            channel = getattr(table, "screen_channel_id", None)
+
+            async def post(text: str) -> Any:
+                return None if channel is None else await self.post_message(channel, text)
+
+            card = after_session.AfterSessionCard(post)
+            table.after_card = card
+        return card
+
+    async def _end_after_card(self, table: Table) -> None:
+        """The reads are over: the card says so, once, and the table lets it go."""
+        card = getattr(table, "after_card", None)
+        if isinstance(card, after_session.AfterSessionCard):
+            await card.finish()
+            table.after_card = None
+
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a live session: see `_extract_session`."""
         if (
@@ -10367,6 +10406,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             or table.transcript_session_id is None
         ):
             return  # (off means off: nothing is read or built)
+        card = DMBot._after_card(self, table)  # (by the class: the tests' stand-ins)
+
+        async def batch(part: int, parts: int) -> None:
+            await card.stage(after_session.STORY, part, parts)
+
         await self._extract_session(
             table.guild_id,
             table.campaign_id,
@@ -10374,6 +10418,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             dm_ids={table.dm_user_id, *table.dm_user_ids},
             tally=table.steward_tally,
             notice_channel=table.screen_channel_id,
+            progress=batch,
         )
 
     async def _map_measure(
@@ -11418,7 +11463,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """Whether a campaign's deeds are asked about at all: the deeds switch is on and its plan
         has story memory (the same rule as the after-session question and the deed card, #3175),
         so a lapsed plan's leftover proposals are counted nowhere (#5105)."""
-        if not self.settings.story_deeds_on:
+        return await self._story_asked(self.settings.story_deeds_on, gid, cid)
+
+    async def reveals_on(self, gid: int, cid: str) -> bool:
+        """The same for what the characters learned (#2996, #5109): its switch and the plan's
+        story memory, so a lapsed plan's leftover proposals are counted nowhere."""
+        return await self._story_asked(self.settings.story_reveals_on, gid, cid)
+
+    async def _story_asked(self, switch: bool, gid: int, cid: str) -> bool:
+        if not switch:
             return False
         campaign = await self.campaigns.get(gid, cid)
         if campaign is None:
@@ -12247,6 +12300,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         agreed: Collection[int] | None = None,
         game_only: bool = False,
         import_scan: bool = False,
+        card: after_session.AfterSessionCard | None = None,
     ) -> list[str]:
         """Suggest the names DMbot heard in `lines` but doesn't know, for the DM to check (the name
         scan of a live session's end and of an imported one, #2106). `users`: the people whose
@@ -12314,8 +12368,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             scanned = set(lines)
             read_in = [x for x in heard_in if x.text in scanned]
             people = await self._people_keys(gid, users, cid)
-            # (an import's card shows the reader's stage, part n of m, #5091; a live session has no
-            # such line yet, #5124)
+            # (an import's card shows the reader's stage, part n of m, #5091; a live session's
+            # after-session card shows it through `card`, #5124)
             stage = self.import_job.store if import_scan and self.import_job is not None else None
 
             started = False  # a "reading" was written: a reader that then fails says "stopped"
@@ -12329,8 +12383,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
 
             every, reader_kinds, trace, unread = await self._read_session_names(
-                gid, cid, read_in, people, every, progress=moved if stage is not None else None
-            )
+                gid, cid, read_in, people, every,
+                card=card, progress=moved if stage is not None else None,
+            )  # fmt: skip
             # A reader that failed after it started leaves "stopped", never a "reading" that
             # looks as if it still runs; one that never started leaves the stage empty.
             ended = "read" if unread is not None else "stopped" if started else ""
@@ -12508,6 +12563,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         people: Collection[str],
         scan: list[Suggestion],
         *,
+        card: after_session.AfterSessionCard | None = None,
         progress: Callable[[int, int], Awaitable[None]] | None = None,
     ) -> tuple[list[Suggestion], dict[str, str], list[name_trace.Row], int | None]:
         """The name reader over the session's lines (docs/design/session_names.md, slice 2),
@@ -12540,6 +12596,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if credits.current() is None
                 else contextlib.nullcontext()
             )
+
+            async def moved(part: int, parts: int) -> None:
+                # the reader's batch n of m: the live session's card (#5124) and an import's
+                # card (#5091) each follow it
+                if card is not None:
+                    await card.stage(after_session.NAMES, part, parts)
+                if progress is not None:
+                    await progress(part, parts)
+
             with meter:
                 read = await name_reader.read(
                     ai,
@@ -12549,8 +12614,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     consenting=lambda: self.consent.consenting(gid),
                     max_tokens=OUTPUT_FLOOR,  # (background calls never send less, #2596)
                     rules=(campaign.target_ruleset, campaign.fallback_ruleset),
-                    progress=progress,
+                    progress=moved if card is not None or progress is not None else None,
                 )
+            if card is not None and read.unread:  # (a stretch not read is said, never "no names")
+                card.note(after_session.not_read(read.unread))
             kept, dropped = name_reader.tally(read.heard, {r.number: r.text for r in rows})
             joined, kinds = name_reader.join(scan, kept)
             log.info(  # counts only (a stretch not read is never "no names")
@@ -12715,8 +12782,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     except Exception:
                         log.exception("Name pass: couldn't read the lines turned back")
             added = await self._propose_new_names(
-                gid, cid, lines, users, table.transcript_session_id, agreed=agreed
-            )
+                gid, cid, lines, users, table.transcript_session_id, agreed=agreed,
+                card=DMBot._after_card(self, table),
+            )  # fmt: skip
             log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
@@ -14840,6 +14908,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 reveals_ask=self._work_out_reveals,
                                 reveals_drop=self._drop_reveal,
                                 deeds=self._answer_deed,
+                                continuity_ask=self._work_out_continuity,
+                                continuity_answer=self._answer_continuity,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -15569,6 +15639,76 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         this buttons use, so every rule and the consent re-check are the card's own."""
         return await deed_card.apply_answer(self, guild_id, campaign_id, proposal_id, record=record)
 
+    async def _work_out_continuity(self, guild_id: int, campaign_id: str, user_id: int) -> int:
+        """The continuity heads-ups for the website (#3695 half 1): the same check Discord's card
+        runs when it opens (`ContinuityStore.check`, no AI call, the same levels), with who is
+        recorded read now, kept as pointers for the page (`continuity_hits`), replacing the
+        campaign's earlier set. Only a DM of the campaign (checked again here)."""
+        db, memory = self._picture_db, self.memory
+        if db is None or memory is None:
+            raise RuntimeError("the heads-ups cannot be kept yet")
+        campaign = await self.campaigns.get(guild_id, campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            raise RuntimeError("only a DM of the campaign")
+        report = await ContinuityStore(memory).check(
+            guild_id,
+            campaign_id,
+            opted_in=await self.consent.consenting(guild_id),
+            levels=self.settings.continuity,
+        )
+        hits = [h for h in map(continuity_hit_of, report.conflicts) if h is not None]
+        return await ContinuityHits(db).replace(guild_id, campaign_id, hits)
+
+    async def _answer_continuity(
+        self, guild_id: int, campaign_id: str, claim_id: str, choice: str
+    ) -> str:
+        """A heads-up answered from the website (#3695 half 1), through the card's own answer
+        (`ContinuityStore.answer`), with who is recorded asked again now. "c": the story changed
+        (the claim becomes a fact, in one change; the story watch then looks, as after the card's
+        button); "n": it wasn't real. Only a claim the last ask listed (the card answers only its
+        own lines). As on the card, a claim not waiting any more, or one someone who stopped
+        being recorded said, ends the heads-up (`GONE`); any other refusal leaves it waiting and on
+        the page (`REFUSED`)."""
+        db, memory = self._picture_db, self.memory
+        if db is None or memory is None:
+            raise RuntimeError("the heads-ups cannot be answered yet")
+        hits = ContinuityHits(db)
+        if not await hits.has(guild_id, campaign_id, claim_id):
+            return web_actions.GONE
+        action = CONTINUITY_CHANGED if choice == "c" else CONTINUITY_NOT_TRUE
+        try:
+            await ContinuityStore(memory).answer(
+                guild_id,
+                campaign_id,
+                claim_id,
+                action,
+                opted_in=await self.consent.consenting(guild_id),
+                levels=self.settings.continuity,
+            )
+        except MemoryRuleError as exc:
+            if (str(exc) or CLAIM_GONE) not in (CLAIM_GONE, CLAIM_STOPPED_NOW, CLAIM_ODD_NOW):
+                return web_actions.REFUSED  # (the card shows the rule and keeps the heads-up)
+            await hits.drop(guild_id, campaign_id, claim_id)
+            return web_actions.GONE
+        await hits.drop(guild_id, campaign_id, claim_id)
+        if action == CONTINUITY_CHANGED:
+            # (in the background, as after the card's button: the answer never waits on it)
+            self._track(self._watch_after_answer(guild_id, campaign_id), "continuity-watch")
+        log.info("Continuity heads-up answered from the website: %s", choice)  # a word only
+        return web_actions.APPLIED
+
+    async def _watch_after_answer(self, guild_id: int, campaign_id: str) -> None:
+        """A condition the DM just confirmed may have left their adventure behind (#1729): the
+        story watch looks, as after the card's button. It never makes the answer fail, and a
+        worker with no Discord skips it."""
+        campaign = await self.campaigns.get(guild_id, campaign_id)
+        if campaign is None or getattr(self, "headless", False):
+            return
+        try:
+            await self.watch_story(guild_id, campaign_id, campaign.dm_screen_channel_id)
+        except Exception:
+            log.exception("Story watch after a heads-up answered on the website failed")
+
     async def _drop_reveal(self, guild_id: int, campaign_id: str, proposal_id: str) -> None:
         """An answered proposal leaves the website's kept lists at once (#3863)."""
         if self._picture_db is not None:
@@ -15597,6 +15737,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.info("%s kept join choices were cleared", kept)
         except Exception as exc:
             log.warning("The kept join choices could not be swept: %s", type(exc).__name__)
+        try:
+            hits = await ContinuityHits(db).sweep(guild_id)  # (the heads-ups' pointers, #3695)
+            if hits:
+                log.info("%s kept continuity heads-ups were cleared", hits)
+        except Exception as exc:
+            log.warning("The kept continuity heads-ups could not be swept: %s", type(exc).__name__)
 
     def _lore_pdfs(self) -> LorePdfs:
         """What `lore-pdf-estimate` needs (#4762): the staging bucket, the staged-file table and the

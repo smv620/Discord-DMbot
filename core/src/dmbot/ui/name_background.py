@@ -1178,7 +1178,9 @@ async def _read_background(
             log.warning("World names were not made common knowledge (%s)", type(exc).__name__)
     # A name read from a picture that the text didn't plainly resolve (#4003): stored on its own,
     # after the text's names, with its note; never added by itself, and never in an "Add all".
-    held_ids = await _store_held(memory, campaign, pictures, known, found, stored, upload.label)
+    held_ids = await _store_held(
+        memory, campaign, pictures, known, found, stored, upload.label, read.stats.dropped
+    )
     if owner_of is not None:
         await _owners_learn(memory, campaign, found, made_ids, world_names, owner_of)
     # (the heading each new name was read under, while the text is still here: kept with the
@@ -1506,11 +1508,15 @@ async def _store_held(
     found: Sequence[bg.Found],
     stored: dict[str, list[str]],
     label: str,
+    dropped: Counter[str] | None = None,
 ) -> set[str]:
     """Store the held picture names (#4003) as names to check, each with its own note, and add their
     ids to `stored` (the summary counts them). One the campaign or this reading already has is left
     alone. They go in exactly as read, one name each: never split as a list, folded into a text
-    place or matched as a connection's end. Returns their entry ids."""
+    place or matched as a connection's end. They pass the same filters as the text's names
+    (`bg.passes`, `merge`'s: ordinary words and game terms, what the rules hold, the item judge),
+    so a held item stored `unique` was judged like any other (#5056 point 4); what a filter left
+    out is counted in `dropped`. Returns their entry ids."""
     if pictures is None or not pictures.held:
         return set()
     taken = set(known) | {name_key(n) for f in found for n in (f.name, *f.also, *f.secret)}
@@ -1522,6 +1528,8 @@ async def _store_held(
             continue
         held.append(bg.Found(h.found.name, h.found.kind, (), (), "", ""))
         notes[key] = picture_read.held_note(h)
+    rules = (campaign.target_ruleset, campaign.fallback_ruleset)
+    held = [f for f in held if bg.passes(f, taken, rules=rules, dropped=dropped)]
     if not held:
         return set()
     made: dict[str, str] = {}
@@ -1717,6 +1725,9 @@ async def _read_pictures(
         return None
     sorted_names = picture_read.sort(seen.names, read.names, upload.text, upload.pictures)
     read.names.extend(sorted_names.kept)
+    # (a picture slice that failed loses its names too: counted with the text's, #5056 point 3)
+    if lost := seen.stats.dropped.get(bg.NAMES_UNREAD, 0):
+        read.stats.dropped[bg.NAMES_UNREAD] += lost
     # (a held one never joins the text's names: the caller stores it on its own, see
     # `_store_held`, so no list split, place fold or connection end can carry it off)
     log.info(
@@ -1866,17 +1877,23 @@ def pictures_kept_line(n: int, missed: int = 0, undo: bool = False) -> str:
 
 
 def names_over_cap_line(dropped: Mapping[str, int]) -> str:
-    """The note's line for names past the one-document limit (#5055 A, #5056 point 2; Supervisor's
-    ruling): how many more names the read found than DMbot lists, so a shorter list is never a
-    silent one. A count only, never a name. Pure."""
-    n = dropped.get(bg.NAMES_OVER_CAP, 0)
-    if not n:
-        return ""
-    more = "1 more name was" if n == 1 else f"{n} more names were"
-    return (
-        f"\n📄 {more} left out. DMbot lists up to {bg.MAX_NAMES} names from one document. To "
-        f"get {'it' if n == 1 else 'them'}, split the document and upload each part."
-    )
+    """The note's lines for names past the one-document limit (#5055 A, #5056 point 2; Supervisor's
+    ruling) and for names in a part of the list that couldn't be read (#5056 point 3), so a shorter
+    list is never a silent one. Counts only, never a name. Pure."""
+    out = ""
+    if n := dropped.get(bg.NAMES_OVER_CAP, 0):
+        more = "1 more name was" if n == 1 else f"{n} more names were"
+        out += (
+            f"\n📄 {more} left out. DMbot lists up to {bg.MAX_NAMES} names from one document. To "
+            f"get {'it' if n == 1 else 'them'}, split the document and upload each part."
+        )
+    if n := dropped.get(bg.NAMES_UNREAD, 0):  # (#5056 point 3: a part of the list not read)
+        what = "1 name" if n == 1 else f"{n} names"
+        out += (
+            f"\n📄 {what} couldn't be read in full, so {'it was' if n == 1 else 'they were'} left "
+            "out. Upload the document again to read the rest: names you already have are skipped."
+        )
+    return out
 
 
 def pictures_unread_line(n: int, pages: Sequence[int] = ()) -> str:
