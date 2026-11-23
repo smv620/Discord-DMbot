@@ -3612,7 +3612,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except Exception:
                     log.exception("After the session: %s failed", name)
         finally:
-            if table.after_card is not None:  # (the reads are over: the card says so, once)
+            if getattr(table, "after_card", None) is not None:  # (the reads are over)
                 await table.after_card.finish()
                 table.after_card = None
             leftover, table.asks = table.asks or [], None
@@ -10369,7 +10369,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     def _after_card(self, table: Table) -> after_session.AfterSessionCard:
         """The one message that shows this session's after-session reads while they run (#5124):
         made the first time a read asks for it, ended once by `_after_session`."""
-        if table.after_card is None:
+        if getattr(table, "after_card", None) is None:
             channel = table.screen_channel_id
             table.after_card = after_session.AfterSessionCard(
                 lambda text: self.post_message(channel, text)
@@ -10387,7 +10387,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             or table.transcript_session_id is None
         ):
             return  # (off means off: nothing is read or built)
-        card = self._after_card(table)
+        card = DMBot._after_card(self, table)  # (by the class: the tests' stand-ins)
 
         async def batch(part: int, parts: int) -> None:
             await card.stage(after_session.STORY, part, parts)
@@ -12674,7 +12674,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         log.exception("Name pass: couldn't read the lines turned back")
             added = await self._propose_new_names(
                 gid, cid, lines, users, table.transcript_session_id, agreed=agreed,
-                card=self._after_card(table),
+                card=DMBot._after_card(self, table),
             )  # fmt: skip
             log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
             if self.lookup is not None and not any(
