@@ -308,3 +308,78 @@ class TheSwitch(unittest.TestCase):
         self.assertTrue(load_settings({**base, "DMBOT_SESSION_NAMES": "1"}).session_names_on)
         with self.assertRaises(ConfigError):
             load_settings({**base, "DMBOT_SESSION_NAMES": "maybe"})
+
+
+class TheBotStep(unittest.TestCase):
+    """`DMBot._read_session_names` on a stand-in bot: metered, never raises, joins the scan."""
+
+    def bot(self, client: Any) -> Any:
+        from types import SimpleNamespace
+
+        async def keys(*_: Any) -> set[str]:
+            return set()
+
+        async def get(*_: Any) -> Any:
+            return SimpleNamespace(dm_user_ids=[1], target_ruleset="2024", fallback_ruleset="2014")
+
+        async def allows(*_: Any, **__: Any) -> bool:
+            return True
+
+        async def consenting(_gid: int) -> set[int]:
+            return {1}
+
+        return SimpleNamespace(
+            name_pass_ai=client,
+            memory=SimpleNamespace(known_keys=keys, rejected_keys=keys),
+            campaigns=SimpleNamespace(get=get),
+            plan_allows=allows,
+            consent=SimpleNamespace(consenting=consenting),
+        )
+
+    def step(self, bot: Any, scan: list[Any]) -> tuple[list[Any], dict[str, str]]:
+        import asyncio
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        lines = [SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out")]
+        return asyncio.run(DMBot._read_session_names(bot, 5, "c1", lines, set(), scan))
+
+    def test_its_calls_are_charged_to_the_campaign_as_names(self) -> None:
+        from dmbot import credits
+
+        charged: list[Any] = []
+
+        def answer_for(_text: str) -> FakeReply:
+            charged.append(credits.current())
+            return FakeReply(answer(item("hrothgar")))
+
+        joined, kinds = self.step(self.bot(FakeClient(answer_for)), [])
+        self.assertEqual([(c.guild_id, c.campaign_id, c.job_kind) for c in charged],
+                         [(5, "c1", "names")])  # fmt: skip
+        self.assertEqual(([s.name for s in joined], kinds), (["hrothgar"], {"hrothgar": "npc"}))
+
+    def test_a_job_that_already_charges_keeps_charging(self) -> None:
+        from dmbot import credits
+
+        charged: list[Any] = []
+
+        def answer_for(_text: str) -> FakeReply:
+            charged.append(credits.current())
+            return FakeReply(answer())
+
+        with credits.preparing(5, "c1", "import"):
+            self.step(self.bot(FakeClient(answer_for)), [])
+        self.assertEqual([c.job_kind for c in charged], ["import"])
+
+    def test_a_failure_leaves_the_scans_list_as_it_was(self) -> None:
+        from dmbot.memory.scan import Suggestion
+
+        bot = self.bot(FakeClient(lambda _t: FakeReply(answer())))
+
+        async def broken(*_: Any) -> set[str]:
+            raise RuntimeError("down")
+
+        bot.memory.known_keys = broken
+        scan = [Suggestion("Targos", 3)]
+        self.assertEqual(self.step(bot, scan), (scan, {}))

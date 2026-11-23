@@ -12366,15 +12366,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 name_reader.Row(str(i), x.user_id, x.user_id in dms, x.text)
                 for i, x in enumerate(heard_in, 1)
             ]
-            read = await name_reader.read(
-                ai,
-                rows,
-                skip,
-                known=sorted(known - rejected),
-                consenting=lambda: self.consent.consenting(gid),
-                max_tokens=OUTPUT_FLOOR,  # (background calls never send less, #2596)
-                rules=(campaign.target_ruleset, campaign.fallback_ruleset),
+            # Metered: charged to the campaign as "names" unless a job around it (an import)
+            # already charges its calls (Supervisor, on #5090).
+            meter = (
+                credits.preparing(gid, cid, "names")
+                if credits.current() is None
+                else contextlib.nullcontext()
             )
+            with meter:
+                read = await name_reader.read(
+                    ai,
+                    rows,
+                    skip,
+                    known=sorted(known - rejected),
+                    consenting=lambda: self.consent.consenting(gid),
+                    max_tokens=OUTPUT_FLOOR,  # (background calls never send less, #2596)
+                    rules=(campaign.target_ruleset, campaign.fallback_ruleset),
+                )
             kept, dropped = name_reader.tally(read.heard, {r.number: r.text for r in rows})
             joined, kinds = name_reader.join(scan, kept)
             log.info(  # counts only (a stretch not read is never "no names")
