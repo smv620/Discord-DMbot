@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, CharacterLanguages, HeardQuestions, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, NodeTrait, PlotThreads, RevealProposal, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes, LeaveGroup } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, DeedQuestions, HeardQuestions, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, NodeTrait, PlotThreads, RevealProposal, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes, LeaveGroup } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 /** The revealed list of an upload notice (#4661): plain lines of at most 200 characters, at most ten; anything else is dropped. */
@@ -663,6 +663,17 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     answerLeave: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
       const queued = (await call("POST", `${base}/leave-questions/answer`, { character: change.character, answer: change.answer })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
+    // The deeds the party did, waiting to be recorded (#3591): DM only; the door answers anyone else with nothing.
+    deedQuestions: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/deeds`)) as DeedQuestions,
+    // Queued for the bot (202 {answer}), then waited for: a record gives its batch, for Undo; an undo gives null.
+    answerDeed: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const body = "undo" in change ? { choice: "undo", batch: change.undo } : { choice: change.answer, deed: change.deed };
+      const queued = (await call("POST", `${base}/deeds/answer`, body)) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
       const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { batch: typeof got.batch === "number" ? got.batch : null };

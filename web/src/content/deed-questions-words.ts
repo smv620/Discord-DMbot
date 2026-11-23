@@ -1,0 +1,27 @@
+// The words of the "Deeds to record" card on the Questions page (#3591): Discord's words, no markdown. A name is the character's own.
+export const deedWords = {
+  title: "Deeds the party did",
+  loading: "Loading…",
+  failed: "Couldn't load the deeds.",
+  tryAgain: "Try again",
+  record: "✅ Record",
+  not: "Not this",
+  later: "Later",
+  recorded: "✅ Recorded.",
+  changedMind: "Changed your mind about the one you just recorded?",
+  undo: "↩️ Undo",
+  undone: "Taken back.",
+  notThis: "Okay, not this one.",
+  gone: "That one was already answered, or someone it came from has stopped being recorded.",
+  tooLate: "That can't be taken back now.",
+  refused: "Couldn't do that. A name in it may not be one DMbot knows yet: check the new names, then try again.",
+  couldNot: "Couldn't do that. Try again in a minute.",
+  empty: "No deeds are waiting. DMbot will ask after a later session if it notices more.",
+  saving: "Working on it…",
+  nothingSaved: "Nothing is saved until you press Record.",
+  more: (n: number): string => `${n} more after this one.`,
+  // The kind's note after the deed's words, as Discord has it.
+  kindNote: { attack: " (a fight)", kill: " (a killing)", rescue: " (a rescue)", save: " (a saving)", steal: " (a theft)", help: " (a favour)" } as Record<string, string>,
+  landed: { "Helped them": "helped", "Pleased them": "pleased", "Annoyed them": "annoyed", "Hurt them": "hurt" } as Record<string, string>,
+  landedDefault: "touched",
+};
