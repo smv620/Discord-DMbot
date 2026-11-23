@@ -189,7 +189,7 @@ class TheImportNamesReport(unittest.IsolatedAsyncioTestCase):
             id="c" * 32, guild_id=GUILD, dm_bot_channel_id=UPKEEP, dm_screen_channel_id=SCREEN
         )
         store = SimpleNamespace(
-            pending_scans=AsyncMock(return_value=[]), ready_for_recap=AsyncMock(return_value=[])
+            pending_scans=AsyncMock(return_value=[]), recap_waiting=AsyncMock(return_value=False)
         )
         fake: Any = SimpleNamespace(
             import_state=state,
@@ -232,7 +232,7 @@ class TheUnhonouredRecapsLine(unittest.IsolatedAsyncioTestCase):
         )
         fake._import_open = partial(DMBot._import_open, fake)
         store = SimpleNamespace(
-            pending_scans=AsyncMock(return_value=[]), ready_for_recap=AsyncMock(return_value=[])
+            pending_scans=AsyncMock(return_value=[]), recap_waiting=AsyncMock(return_value=False)
         )
         await partial(DMBot._tell_import_news, fake)(GUILD, store)  # type: ignore[arg-type]
         return fake

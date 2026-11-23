@@ -14,7 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
-from dmbot.campaigns import CampaignStore
+from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.consent import ConsentStore
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.models import DM as DM_SOURCE
@@ -41,9 +41,16 @@ class WithImports(DatabaseTest):
         self.store = ImportStore(self.db)
 
     async def imported(
-        self, day: int, *, state: str = "done", recap: bool = False, said: str = "Kazeth rides."
+        self,
+        day: int,
+        *,
+        state: str = "done",
+        recap: bool = False,
+        said: str = "Kazeth rides.",
+        campaign: Campaign | None = None,
     ) -> str:
-        sid = await self.transcripts.open_session(GUILD, self.campaign.id, START + day * DAY)
+        cid = (campaign if campaign is not None else self.campaign).id
+        sid = await self.transcripts.open_session(GUILD, cid, START + day * DAY)
         await self.transcripts.add_lines(
             GUILD, sid, [Line((START + day * DAY) * 1000, MIRA, said, said)]
         )
@@ -52,7 +59,7 @@ class WithImports(DatabaseTest):
                 "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
                 " file_name, imported_by, imported_at, state, write_recap)"
                 " VALUES (%s, %s, %s, %s, 'a.txt', %s, 1, %s, %s)",
-                (GUILD, self.campaign.id, sid, "a" * 32, DM, state, recap),
+                (GUILD, cid, sid, "a" * 32, DM, state, recap),
             )
         return sid
 
@@ -112,6 +119,39 @@ class TheStore(WithImports):
         await self.store.finish_scan(GUILD, other, int(time.time()))
         self.assertEqual(await self.store.ready_for_recap(GUILD), [])
 
+    async def test_another_campaigns_waiting_recaps_never_hide_this_ones(self) -> None:
+        # (`ready_for_recap` lists the oldest few for the whole server: asked of one campaign, a
+        # recap that is still to start must still count, #4904 3b-4c)
+        other = await self.campaigns.create(GUILD, "Two", DM)
+        for day in (1, 2, 3, 4):  # (more than `ready_for_recap` lists at once)
+            sid = await self.transcripts.open_session(GUILD, other.id, START + day * DAY)
+            async with self.db.guild(GUILD) as conn:
+                await conn.execute(
+                    "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
+                    " file_name, imported_by, imported_at, state, write_recap, scan_finished)"
+                    " VALUES (%s, %s, %s, %s, 'b.txt', %s, 1, 'done', TRUE, TRUE)",
+                    (GUILD, other.id, sid, "b" * 32, DM),
+                )
+        mine = await self.imported(9, recap=True)  # (a later date than all four of the other's)
+        await self.store.claim_scan(GUILD, mine, int(time.time()))
+        await self.store.finish_scan(GUILD, mine, int(time.time()))
+        self.assertTrue(await self.store.recap_waiting(GUILD, self.campaign.id))
+        self.assertTrue(await self.store.recap_waiting(GUILD, other.id))
+        await self.store.mark_recap_started(GUILD, mine)
+        self.assertFalse(await self.store.recap_waiting(GUILD, self.campaign.id))
+        self.assertTrue(await self.store.recap_waiting(GUILD, other.id))
+
+    async def test_an_import_whose_session_was_deleted_is_not_waited_for(self) -> None:
+        # (as `ready_for_recap` leaves it out: nothing is left to write a recap of)
+        sid = await self.imported(1, recap=True)
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.finish_scan(GUILD, sid, int(time.time()))
+        self.assertTrue(await self.store.recap_waiting(GUILD, self.campaign.id))
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM transcript_sessions WHERE id = %s", (sid,))
+        self.assertEqual(await self.store.ready_for_recap(GUILD), [])
+        self.assertFalse(await self.store.recap_waiting(GUILD, self.campaign.id))
+
     async def test_the_choice_travels_with_the_session(self) -> None:
         await self.imported(1, recap=True)
         (ready,) = await self.store.ready_for_scan(GUILD)
@@ -129,6 +169,56 @@ class TheStore(WithImports):
                 (GUILD, sid, MIRA),
             )
         self.assertEqual(await self.store.scan_lines(GUILD, sid), [(MIRA, "we meet Kazeth")])
+
+
+class TheImportOpen(WithImports):
+    """The news at the end of an import waits while a session still needs its scan or its recap
+    (#4904 3b-4c): an import is open until both are done, and never because of another campaign."""
+
+    async def test_an_import_is_open_while_a_scan_waits_and_while_its_recap_is_to_start(
+        self,
+    ) -> None:
+        bot, _campaign = fake_bot(self.store)
+        sid = await self.imported(1, recap=True)
+        self.assertTrue(await bot._import_open(GUILD, self.store, self.campaign.id))  # scan waits
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.finish_scan(GUILD, sid, int(time.time()))
+        self.assertTrue(
+            await bot._import_open(GUILD, self.store, self.campaign.id)
+        )  # recap to start
+        await self.store.mark_recap_started(GUILD, sid)
+        self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
+
+    async def test_a_session_whose_recap_was_not_asked_for_is_over_once_scanned(self) -> None:
+        bot, _campaign = fake_bot(self.store)
+        sid = await self.imported(1)
+        self.assertTrue(await bot._import_open(GUILD, self.store, self.campaign.id))
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.finish_scan(GUILD, sid, int(time.time()))
+        self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
+
+    async def test_another_campaigns_recap_does_not_hold_this_one_open(self) -> None:
+        bot, _campaign = fake_bot(self.store)
+        other = await self.campaigns.create(GUILD, "Two", DM)
+        other_session = await self.imported(1, recap=True, campaign=other)  # its recap is asked
+        mine = await self.imported(2)  # this campaign's own session, no recap
+        await self.store.claim_scan(GUILD, mine, int(time.time()))
+        await self.store.finish_scan(GUILD, mine, int(time.time()))
+        self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
+        # the other campaign's session is scanned too, so only its recap (to start) holds it open
+        await self.store.claim_scan(GUILD, other_session, int(time.time()))
+        await self.store.finish_scan(GUILD, other_session, int(time.time()))
+        self.assertTrue(await bot._import_open(GUILD, self.store, other.id))
+
+    async def test_a_gave_up_scan_still_has_its_recap_to_start(self) -> None:
+        # (a gave-up scan skips the name questions only: its recap is still written)
+        bot, _campaign = fake_bot(self.store)
+        sid = await self.imported(1, recap=True)
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.give_up_scan(GUILD, sid)
+        self.assertTrue(await bot._import_open(GUILD, self.store, self.campaign.id))
+        await self.store.mark_recap_started(GUILD, sid)
+        self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
 
 
 def fake_bot(store: ImportStore, **kw: Any) -> Any:
