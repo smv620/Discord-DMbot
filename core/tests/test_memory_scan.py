@@ -43,6 +43,66 @@ class Scan(unittest.TestCase):
         lines = ["I hit the Wall. The Wall falls.", "Behind the wall is a door."]
         self.assertEqual(find_new_names(lines), [])
 
+    def test_a_lower_case_word_may_lead_a_longer_name(self) -> None:
+        # "dwarven" is said in lower case, so alone it is a word, but it leads the name (#5055).
+        lines = [
+            "We circle back through the dwarven city.",
+            "He knows where the Dwarven Valley is.",
+            "We ride to the Dwarven Valley now.",
+        ]
+        self.assertEqual(names(find_new_names(lines)), ["Dwarven Valley"])
+
+    def test_the_word_after_the_lead_must_never_be_lower_case(self) -> None:
+        # Supervisor's condition (#5055): "the Dwarven city" offers nothing.
+        lines = [
+            "We pass the dwarven gate.",
+            "We reach the Dwarven city.",
+            "We leave the Dwarven city.",
+            "It is a city of stone.",
+        ]
+        self.assertEqual(find_new_names(lines), [])
+
+    def test_a_lead_word_is_never_offered_alone(self) -> None:
+        lines = [
+            "The Frozen Sea is close.",
+            "We sail the Frozen Sea.",
+            "I see the Frozen Sea.",
+            "The lake is frozen. Frozen again.",
+        ]
+        self.assertEqual(names(find_new_names(lines)), ["Frozen Sea"])
+
+    def test_a_form_of_address_never_leads_a_name(self) -> None:
+        # "Friend" is no common word, but it is a form of address (not_names.shape_of).
+        lines = ["We saw Friend Hrothgar there.", "We saw Friend Hrothgar again.", "My friend."]
+        self.assertEqual(names(find_new_names(lines)), ["Hrothgar"])
+
+    def test_no_lead_at_the_start_of_a_sentence_or_after_a_comma(self) -> None:
+        # Every word there may have a capital, so it proves nothing (#5055).
+        lines = [
+            "Dwarven Valley is far.",
+            "So, Dwarven Valley is cold.",
+            "A dwarven axe. And Valley again.",
+        ]
+        self.assertNotIn("Dwarven Valley", names(find_new_names(lines)))
+
+    def test_only_one_lead_word(self) -> None:
+        lines = [
+            "We reach the Old Dwarven Valley.",
+            "We leave the Old Dwarven Valley.",
+            "An old dwarven axe.",
+        ]
+        self.assertEqual(names(find_new_names(lines)), ["Dwarven Valley"])
+
+    def test_a_name_also_heard_alone_keeps_every_sighting(self) -> None:
+        # The reviewer's case: before #5055 this was "Hrothgar" twice; a lead must not split it.
+        lines = ["We saw Brave Hrothgar.", "Then we ask Hrothgar.", "So brave."]
+        self.assertEqual([(s.name, s.times) for s in find_new_names(lines)], [("Hrothgar", 2)])
+
+    def test_a_lead_never_pushes_a_name_past_the_word_limit(self) -> None:
+        lines = ["We see the Old Caer Dineval Keep.", "Back at the Old Caer Dineval Keep.", "Old."]
+        lines.append("It is old.")
+        self.assertEqual(names(find_new_names(lines)), ["Caer Dineval Keep"])
+
     def test_known_answers_are_never_suggested_again(self) -> None:
         lines = ["I see Hrothgar now.", "We ask Hrothgar again.", "So Mia laughs.", "I tell Mia."]
         self.assertEqual(names(find_new_names(lines)), ["Hrothgar", "Mia"])  # without skips

@@ -8,7 +8,10 @@ Pure, no database. Speech-to-text writes names it doesn't know with capitals, so
 candidate is a capitalized word or run of words that:
 - appears capitalized in the middle of a sentence at least once (so "Then" at the start
   of a sentence isn't a name),
-- never appears in lower case in the session ("Roll" next to "roll" is a word),
+- never appears in lower case in the session ("Roll" next to "roll" is a word); the one
+  exception is a word that leads a longer name mid-sentence: "the Dwarven Valley" is a name
+  even when "the dwarven city" is said too, as long as "Valley" itself is never lower case
+  ("the Dwarven city" offers nothing), and such a word is never offered alone (#5055),
 - isn't a common word, a game term, or anything DMbot already has an answer for (known
   names, names the DM said aren't names, "keep as heard" words, people at the table),
   and isn't part of a known name said whole in that sentence ("Oskar" in "Oskar Vane",
@@ -141,8 +144,9 @@ def _known_name_spans(words: list[str], many: KnownNames) -> set[int]:
 
 def _candidates(
     words: list[str], skip: frozenset[str], lower_words: set[str], many: KnownNames
-) -> list[tuple[str, bool]]:
-    """Each run of name-like words as (text, said mid-sentence). Runs longer than
+) -> list[tuple[str, bool, str]]:
+    """Each run of name-like words as (text, said mid-sentence, the key of the longer name that
+    led it here, or ""). Runs longer than
     MAX_WORDS are dropped, not chopped (no "Caer Dineval Ice"). A run that starts the
     sentence also offers its tail, so "Ask Hrothgar" still finds Hrothgar. A known
     name said whole ends a run: what's left on either side is still looked at."""
@@ -150,6 +154,20 @@ def _candidates(
 
     def name_like(index: int) -> bool:
         return index not in covered and _is_name_word(words[index], skip, lower_words)
+
+    def leads(index: int) -> bool:
+        # A capitalized word also said in lower case ("dwarven") may lead a name that follows it
+        # mid-sentence (#5055: Supervisor's ruling). Only one such word, never at the sentence's
+        # start (where every word has a capital), and never a common word, a known one, a
+        # pronoun or a word of address: "so I Hrothgar" must still find Hrothgar.
+        word = words[index]
+        return (
+            word[:1].isupper()
+            and index not in covered
+            and name_key(word) not in skip
+            and not not_names.is_not_name(word)
+            and not_names.shape_of(word) is None
+        )
 
     out = []
     i = 0
@@ -171,9 +189,25 @@ def _candidates(
             i = j  # a form of address ("Friend"), a number, a measure or a time: no name (#3394)
             continue
         if j - i <= MAX_WORDS:
-            out.append((" ".join(words[i:j]), i > 0))
+            # "the Dwarven Valley" (#5055): the led name is offered too, and its plain tail is
+            # kept as well, marked, so a name also heard alone ("Hrothgar" beside "Brave
+            # Hrothgar") keeps every sighting; find_new_names drops the tail only when it was
+            # never heard unled. Not after a comma (a clause start, capitalized like a
+            # sentence's), and never past MAX_WORDS.
+            led = (
+                i >= 2
+                and words[i - 2] not in _BREAKS
+                and j - i < MAX_WORDS
+                and leads(i - 1)
+                and not not_names.is_not_name(" ".join(words[i - 1 : j]))
+                and not_names.shape_of(" ".join(words[i - 1 : j])) is None
+            )
+            led_key = name_key(" ".join(words[i - 1 : j])) if led else ""
+            out.append((" ".join(words[i:j]), i > 0, led_key))
+            if led:
+                out.append((" ".join(words[i - 1 : j]), True, ""))
             if i == 0 and j - i > 1:
-                out.append((" ".join(words[1:j]), True))
+                out.append((" ".join(words[1:j]), True, ""))
         i = j
     return out
 
@@ -196,18 +230,26 @@ def find_new_names(
     counts: Counter[str] = Counter()
     spellings: dict[str, Counter[str]] = {}
     mid_sentence: set[str] = set()
+    led_times: Counter[str] = Counter()  # sightings of a name inside a longer led name (#5055)
+    led_by: dict[str, set[str]] = {}
     for words in sentences:
-        for text, mid in _candidates(words, skip, lower_words, many):
+        for text, mid, led_key in _candidates(words, skip, lower_words, many):
             key = name_key(text)
             if not key or len(text) > NAME_MAX or key in skip:
                 continue
             counts[key] += 1
+            if led_key:
+                led_times[key] += 1
+                led_by.setdefault(key, set()).add(led_key)
             spellings.setdefault(key, Counter())[text] += 1
             if mid:
                 mid_sentence.add(key)
+    offered = {k for k, times in counts.items() if times >= min_times and k in mid_sentence}
     found = []
     for key, times in counts.items():
-        if times >= min_times and key in mid_sentence:
+        if key in offered and led_times[key] == times and led_by[key] & offered:
+            continue  # only ever heard inside "the Dwarven Valley": "Valley" is not offered alone
+        if key in offered:
             name = spellings[key].most_common(1)[0][0]
             # A place's last word is often lower case in the transcript ("Harrow's keep"): when the
             # same word is followed by the same place word often enough, the longer name is what is
