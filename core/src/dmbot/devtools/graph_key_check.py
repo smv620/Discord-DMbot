@@ -105,6 +105,14 @@ FOUND, WRONG, WAITING, MISSING = "found", "wrong_type", "waiting_only", "missing
 # miss when absent and is listed on its own line, so a change in that rule shows up. A particular
 # creature the lore names or sets apart is an entry and stays must-find (no flag).
 BY_DESIGN = "by_design"
+# A thing the story describes but never names (#5055 D; Supervisor's ruling): marked
+# `"described": true`, with the words it is described by in `said_as`. DMbot never makes a name out
+# of a description, so such a row is not a name miss: it is scored on its own line, found as an
+# entry (named by the DM, or a person the story never named) or on the "met but not named" list
+# (`memory_met`, which a backup does not carry, so the caller gives its words).
+DESCRIBED = "described"
+AS_ENTRY, ON_MET_LIST = "as_entry", "on_met_list"
+MET_KINDS = frozenset({"person", "group", "creature"})  # what the met list can hold
 HEADS = ("total", "found", "waiting", "wrong", "missing", "must-miss")
 WIDTHS = (6, 7, 9, 7, 9, 11)
 
@@ -128,6 +136,7 @@ class Report:
     ties: list[Row] = field(default_factory=list)
     extra_entries: Counter[str] = field(default_factory=Counter)
     unnamed_extras: int = 0  # people the story never named that the key does not list (#3736)
+    described: list[Row] = field(default_factory=list)  # the key's described rows (#5055 D)
     # Each extra entry as (kind, status, source, stored name), for `--list-extras` (#5055): which
     # "miss" is the key's wording and which a real reader miss. The sample's own words only.
     extra_list: list[tuple[str, str, str, str]] = field(default_factory=list)
@@ -440,12 +449,29 @@ def _text(tie: Mapping[str, Any]) -> str:
     return f"{tie['a']} {rel} {tie['b']}"
 
 
-def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
+def _on_met_list(words: Sequence[str], met: Sequence[str]) -> bool:
+    """Whether a "met but not named" row's words hold one of `words` whole (#5055 D): "the kennel
+    where the dogs sleep" holds "kennel". Plain words both sides, no leading article."""
+    rows = [f" {_plain(m)} " for m in met]
+    return any(f" {w} " in row for w in map(_plain, words) if w for row in rows)
+
+
+def check(
+    backup: object, key: Mapping[str, Any], docs: str = "both", met: Sequence[str] = ()
+) -> Report:
+    """Score a backup against the key. `met`: the words of the campaign's "met but not named" rows
+    (`memory_met`), which a backup does not carry, for the key's described rows (#5055 D)."""
     graph = Graph(_tables(backup))
     wanted = {"lore", "session"} if docs == "both" else {docs}
     report = Report()
     nodes = [n for n in key["nodes"] if wanted & set(n.get("docs", ["lore", "session"]))]
-    names: dict[str, list[str]] = {n["name"]: [n["name"], *n.get("aliases", [])] for n in nodes}
+    # (a described row is found by its `said_as` words too, in its own line and in its ties alike)
+    names: dict[str, list[str]] = {
+        n["name"]: [
+            n["name"], *n.get("aliases", []), *(n.get("said_as", []) if n.get(DESCRIBED) else [])
+        ]
+        for n in nodes
+    }  # fmt: skip
     kinds = {i: str(e["type"]) for i, e in graph.entities.items()}
     kind_of_key = {n["name"]: n["kind"] for n in nodes}
     matched_ids: set[str] = set()
@@ -460,6 +486,16 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     for n in nodes:
         ids = lookup(n["name"])
         matched_ids |= ids
+        if n.get(DESCRIBED):  # (its own line, never a name miss: #5055 D)
+            # Found as an entry of any kind: the DM named it, or kept the person unnamed (the kind
+            # is the names table's business). The met list holds only beings the party was with
+            # (`met_reading.MET_ADDENDUM`), so only a being's row is looked for there: a place or
+            # item matched by "the dogs in the kennel" would be a false find.
+            being = n["kind"] in MET_KINDS
+            on_list = being and _on_met_list(names[n["name"]], met)
+            where = AS_ENTRY if ids else ON_MET_LIST if on_list else MISSING
+            report.described.append(Row(n["name"], n["name"], where, n["kind"], False))
+            continue
         if not ids:
             status = BY_DESIGN if n.get("by_design") else MISSING
         elif any(kinds[i] in ENTRY_TYPES.get(n["kind"], frozenset()) for i in ids):
@@ -1081,6 +1117,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "ties": tally(report.ties),
         "extra_entries": dict(report.extra_entries),
         "unnamed_extras": report.unnamed_extras,
+        "described": dict(Counter(r.status for r in report.described), total=len(report.described)),
         "extra_ties": report.extra_ties,
         "violations": len(report.violations),
         "inferred_confirmed": len(report.inferred_confirmed),
@@ -1126,6 +1163,15 @@ def render(report: Report, counts_only: bool = False, list_extras: bool = False)
         f"{dict(report.extra_entries)}"
     )
     lines.append(f"Unnamed people not in the key: {report.unnamed_extras}")
+    if report.described:  # (#5055 D: not name misses; the series broke here)
+        d = Counter(r.status for r in report.described)
+        lines.append(
+            f"Described, never named: found {d[AS_ENTRY] + d[ON_MET_LIST]} of "
+            f"{len(report.described)} ({d[AS_ENTRY]} as an entry, {d[ON_MET_LIST]} on the met list)"
+        )
+        for r in report.described:
+            if r.status == MISSING:
+                lines.append("  missing    " + ("" if counts_only else r.text))
     if list_extras:
         lines.append("Extra entries, listed (kind | status | source | stored name):")
         for kind, status, source, name in sorted(report.extra_list):
@@ -1234,7 +1280,9 @@ def render(report: Report, counts_only: bool = False, list_extras: bool = False)
     return "\n".join(lines) + "\n"
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, met: Sequence[str] = ()) -> int:
+    """The command. `met`: the campaign's "met but not named" words, from the caller (sample_run
+    reads them from the database), or `--met FILE` (a JSON list, kept on the server)."""
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -1246,6 +1294,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--counts-only", action="store_true", help="print ids and counts, no names")
     parser.add_argument("--json", type=Path, help="also write the counts and rows as json")
     parser.add_argument("--i-know-this-is-the-test-campaign", action="store_true", dest="force")
+    parser.add_argument(
+        "--met", type=Path, help='the "met but not named" words, a JSON list (#5055 D)'
+    )
     parser.add_argument(
         "--list-extras",
         action="store_true",
@@ -1285,7 +1336,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 'This campaign is not "test of the frostmaiden (sample N)"; the check is only '
                 "for the sample."
             )
-        report = check(backup, key, args.docs)
+        if args.met is not None:
+            listed = json.loads(args.met.read_text())
+            if not isinstance(listed, list) or not all(isinstance(w, str) for w in listed):
+                raise ValueError("--met is a JSON list of words")
+            met = listed
+        report = check(backup, key, args.docs, met)
     except (ValueError, OSError) as exc:
         sys.stderr.write(f"{exc}\n")
         return 2

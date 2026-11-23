@@ -659,6 +659,92 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class DescribedThings(unittest.TestCase):
+    """A thing the story describes but never names (#5055 D, Supervisor's ruling): scored on its
+    own line, found as an entry or (a being only) on the met-but-not-named list, never a name
+    miss; its ties are found by the same words."""
+
+    KEY: ClassVar[dict[str, Any]] = {
+        "nodes": [
+            {"name": "The kennel", "kind": "place", "aliases": [], "described": True,
+             "said_as": ["kennel"]},
+            {"name": "Garret's old sled", "kind": "item", "aliases": [], "described": True,
+             "said_as": ["Garret's old sled", "old sled"]},
+            {"name": "Garret's clients", "kind": "group", "aliases": [], "described": True,
+             "said_as": ["Garret's clients"]},
+            {"name": "Garret Velryn", "kind": "person", "aliases": []},
+        ],
+        "pairs": [
+            {"id": "d1", "a": "Garret Velryn", "relation": "owns", "b": "Garret's old sled",
+             "tier": "stated", "must_find": True, "in": ["session"]},
+        ],
+    }  # fmt: skip
+
+    def statuses(self, report: gkc.Report) -> dict[str, str]:
+        return {r.id: r.status for r in report.described}
+
+    def test_found_as_an_entry_with_its_tie_or_a_being_on_the_met_list(self) -> None:
+        data = backup(
+            [("g1", "Garret Velryn", "character"), ("s1", "Old sled", "item")],
+            [rel("r1", "g1", "owns", "s1")],
+        )
+        met = ["Garret's clients, waiting by the dock.", "the dogs in the kennel"]
+        report = gkc.check(data, self.KEY, met=met)
+        self.assertEqual([e.id for e in report.entries], ["Garret Velryn"])  # (not in the names)
+        self.assertEqual(
+            self.statuses(report),
+            {
+                "Garret's old sled": gkc.AS_ENTRY,
+                "Garret's clients": gkc.ON_MET_LIST,  # (punctuation and all)
+                "The kennel": gkc.MISSING,  # (a place is never on the met list: beings only)
+            },
+        )
+        (tie,) = report.ties
+        self.assertEqual(tie.status, gkc.FOUND)  # (the sled's tie, found by its said_as words)
+        self.assertEqual((sum(report.extra_entries.values()), report.extra_ties), (0, 0))
+        self.assertIn(
+            "Described, never named: found 2 of 3 (1 as an entry, 1 on the met list)",
+            gkc.render(report, counts_only=True),
+        )
+        self.assertEqual(gkc.summarize(report)["described"]["total"], 3)
+
+    def test_a_person_the_story_never_named_is_found_by_description(self) -> None:
+        data = backup([("u1", "unnamed - Garret's clients", "character")], [])
+        data["sections"]["memory"][0]["unnamed"] = True
+        self.assertEqual(self.statuses(gkc.check(data, self.KEY))["Garret's clients"], gkc.AS_ENTRY)
+
+    def test_a_word_inside_another_word_is_no_find(self) -> None:
+        report = gkc.check(backup([], []), self.KEY, met=["Garret's clientele"])
+        self.assertIn(
+            "Described, never named: found 0 of 3 (0 as an entry, 0 on the met list)",
+            gkc.render(report, counts_only=True),
+        )
+
+    def test_the_command_reads_the_met_words_from_a_file(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d)
+            (folder / "key.json").write_text(json.dumps(self.KEY))
+            (folder / "b.json").write_text(json.dumps(backup([], [])))
+            (folder / "met.json").write_text(json.dumps(["Garret's clients"]))
+            (folder / "bad.json").write_text(json.dumps("Garret's clients"))
+            base = [str(folder / "b.json"), "--key", str(folder / "key.json"), "--counts-only"]
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(gkc.main([*base, "--met", str(folder / "met.json")]), 0)
+            self.assertIn("found 1 of 3 (0 as an entry, 1 on the met list)", out.getvalue())
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(gkc.main([*base, "--met", str(folder / "bad.json")]), 2)
+
+    def test_the_sample_keys_mark_the_four_described_rows(self) -> None:
+        for name in ("session_key.json", "master_key.json"):
+            rows = [n["name"] for n in load(name)["nodes"] if n.get("described")]
+            self.assertEqual(
+                sorted(rows),
+                ["Garret's clients", "Garret's old sled", "The kennel", "The windbreak shelter"],
+                name,
+            )
+
+
 class PlaceFacts(unittest.TestCase):
     """A place's land, climate and ruler, scored per layer (#4256)."""
 
