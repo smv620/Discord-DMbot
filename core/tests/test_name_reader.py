@@ -302,7 +302,6 @@ class FixesFromReview(unittest.TestCase):
 class TheSwitch(unittest.TestCase):
     def test_off_by_default_on_with_1_and_refused_otherwise(self) -> None:
         from dmbot.config import ConfigError, load_settings
-
         from tests.test_config import BASE as base
 
         self.assertFalse(load_settings(base).session_names_on)
