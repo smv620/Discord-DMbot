@@ -25,8 +25,12 @@ def _args(folder: str, *extra: str) -> Any:
 class Names(unittest.TestCase):
     def test_a_run_name_is_the_deploy_dot_the_run_and_both_are_sample_names(self) -> None:
         self.assertEqual(sn.name_for(31, 2), "test of the frostmaiden (sample 31.2)")
-        self.assertEqual((sn.deploy_of(sn.name_for(31, 2)), sn.run_of(sn.name_for(31, 2))), (31, 2))
-        self.assertEqual((sn.deploy_of(sn.name_for(31)), sn.run_of(sn.name_for(31))), (31, None))
+        self.assertEqual(
+            (sn.deploy_of(sn.name_for(31, 2)), sn.run_of(sn.name_for(31, 2))), (sn.Label(31), 2)
+        )
+        self.assertEqual(
+            (sn.deploy_of(sn.name_for(31)), sn.run_of(sn.name_for(31))), (sn.Label(31), None)
+        )
         self.assertTrue(sn.is_sample(sn.name_for(31, 5)))
         for good in (sn.name_for(31, 1), sn.name_for(31, 10), sn.name_for(31, 99)):
             self.assertTrue(sn.is_sample(good), good)
@@ -56,8 +60,8 @@ class Names(unittest.TestCase):
         plan = sn.plan_keep(have, 31)
         self.assertEqual(set(plan.keep), {"b1", "b2", "c1"})  # (the newest two deploys, all runs)
         self.assertEqual(set(plan.delete), {"a1", "a2", "d1"})
-        self.assertEqual(plan.kept_numbers, (29, 30, 31))
-        self.assertEqual(plan.deleted_numbers, (27, 28))
+        self.assertEqual(plan.kept_numbers, (sn.Label(29), sn.Label(30), sn.Label(31)))
+        self.assertEqual(plan.deleted_numbers, (sn.Label(27), sn.Label(28)))
 
     def test_a_re_run_deletes_every_run_of_the_same_deploy(self) -> None:
         have = [("x1", sn.name_for(31, 1)), ("x2", sn.name_for(31, 2)), ("y", sn.name_for(30))]
@@ -173,7 +177,8 @@ class Parallel(unittest.TestCase):
                 d, "--repeat", "4", "--parallel", "4", "--max-usd", "100"
             )
             self.assertEqual(
-                (sorted(started), code, done["room"], done["peak"]), ([1, 2, 3, 4], 0, 31, 4)
+                (sorted(started), code, done["room"], done["peak"]),
+                ([1, 2, 3, 4], 0, sn.Label(31), 4),
             )
             self.assertEqual(done["kept"]["campaign"], "c1")  # (the recap goes to run 1's campaign)
 

@@ -1,12 +1,13 @@
 {
  "campaign": "test of the frostmaiden (sample)",
- "version": 4,
+ "version": 6,
  "sources": {
   "lore": "https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing",
   "session": "https://docs.google.com/document/d/1BtHZ4O75886WHOoTq0FCPst2hdg7YLnsaCiI-kNsv-E/edit?usp=sharing"
  },
  "order": "the lore is read first, then the session; where they disagree about what is current, the session wins",
  "how_to_read": {
+  "described": "true = a thing the story describes but never names (the kennel, Garret's old sled); DMbot never makes a name from a description, so it is scored on its own line, found as an entry or on the met-but-not-named list by its said_as words, and is never a name miss (#5055 D)",
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted; one exception, #4636 part 3: a place the text lists as one of a region's, 'in', sure, with no other parent, is kept by an upload's sure step, and the key's row for it is stated); needs_context = only readable with the lore or the recap (for example 'she' is Keegan); recap_only = only in the 'Previously' recap on line 1, so background and never this session's event; by_rule = made by a rule, not read",
   "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place); route (a road or way between two places, either way round, #4255)",
   "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads b), member (a belongs to b), in (a place is inside place b); sibling, spouse and rival_of read the same both ways",
@@ -354,7 +355,9 @@
   {
    "name": "Cerric's paternal grandfather",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Cerric Vanya'elen's paternal grandfather"
+   ],
    "note": "Unnamed. Died in a storm.",
    "docs": [
     "lore"
@@ -375,7 +378,8 @@
    "name": "Brewner's daughter",
    "kind": "person",
    "aliases": [
-    "Brewner's daughter (name unknown)"
+    "Brewner's daughter (name unknown)",
+    "Brewner's daughter, who led her father home"
    ],
    "note": "Unnamed. Leads Brewner home.",
    "docs": [
@@ -398,7 +402,8 @@
    "name": "The beggar woman",
    "kind": "person",
    "aliases": [
-    "beggar woman"
+    "beggar woman",
+    "beggar woman at the docks"
    ],
    "note": "Unnamed. Gives a prophecy.",
    "docs": [
@@ -513,7 +518,8 @@
    "name": "Explorer's League",
    "kind": "group",
    "aliases": [
-    "the Explorers' League"
+    "the Explorers' League",
+    "Explorer League"
    ],
    "note": "guild of explorers Guild of explorers.",
    "docs": [
@@ -779,7 +785,9 @@
   {
    "name": "Kelvin's Cairn",
    "kind": "place",
-   "aliases": [],
+   "aliases": [
+    "Kelvin Cairn"
+   ],
    "note": "",
    "docs": [
     "lore",
@@ -874,7 +882,9 @@
   {
    "name": "Aurora's Wind",
    "kind": "item",
-   "aliases": [],
+   "aliases": [
+    "Aurora"
+   ],
    "note": "Fizzlebomb's ship",
    "docs": [
     "lore"
@@ -932,6 +942,8 @@
    "name": "Garret's clients",
    "kind": "group",
    "aliases": [],
+   "described": true,
+   "said_as": ["Garret's clients", "Garret's client", "the people Garret guided"],
    "note": "Unnamed. Hired Garret as a guide; Keegan never met them.",
    "docs": [
     "session"
@@ -959,6 +971,8 @@
    "name": "The kennel",
    "kind": "place",
    "aliases": [],
+   "described": true,
+   "said_as": ["kennel"],
    "note": "Where Jebidiah keeps the dogs, in Targos.",
    "docs": [
     "session"
@@ -968,6 +982,8 @@
    "name": "The windbreak shelter",
    "kind": "place",
    "aliases": [],
+   "described": true,
+   "said_as": ["windbreak shelter", "windbreak", "shelter against the cliff"],
    "note": "Unnamed small shelter against a cliff where the party spends the blizzard.",
    "docs": [
     "session"
@@ -977,6 +993,8 @@
    "name": "Garret's old sled",
    "kind": "item",
    "aliases": [],
+   "described": true,
+   "said_as": ["Garret's old sled", "old sled", "Garret's sled"],
    "note": "The sled Keegan lets the party take.",
    "docs": [
     "session"

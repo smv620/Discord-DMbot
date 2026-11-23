@@ -1261,8 +1261,11 @@ class TheProgress(WithImports):
                     "stage": "cleaning",
                     "namesToAnswer": 0,
                     "namesUnchecked": False,
+                    "namesCut": 0,
                     "recap": None,
                     "story": None,  # (the story read has not started)
+                    "names": None,  # (the name reader is off or has not started)
+                    "namesUnread": 0,
                     "clock": None,  # (no offer to set the clock for it, #3199)
                     "progress": {
                         "stage": "cleaning",
@@ -1413,6 +1416,40 @@ class TheProgress(WithImports):
         await self.set_import(story_state="read")
         story = (await self.stage(imp))["story"]
         self.assertEqual((story["stage"], story["state"]), ("connections_read", "done"))
+
+    async def test_the_name_reader_shows_each_of_its_states_with_its_unread_count(self) -> None:
+        imp, _, _ = await self.one_import(False)
+        got = await self.stage(imp)
+        self.assertEqual((got["names"], got["namesUnread"]), (None, 0))  # off or not started
+        now = int(time.time())
+        await self.set_import(
+            names_state="reading", names_part=3, names_parts=8,
+            names_started_at=now - 90, names_moved_at=now - 10,
+        )  # fmt: skip
+        names = (await self.stage(imp))["names"]
+        self.assertEqual(
+            (names["stage"], names["state"], names["done"], names["total"], names["unit"]),
+            ("reading_names", "running", 3, 8, "parts"),
+        )
+        self.assertGreaterEqual(names["updatedAt"], names["startedAt"])
+        await self.set_import(names_state="read", names_unread=2)
+        got = await self.stage(imp)
+        self.assertEqual((got["names"]["stage"], got["names"]["state"]), ("names_read", "done"))
+        self.assertEqual(got["namesUnread"], 2)
+        await self.set_import(names_state="stopped")
+        got = await self.stage(imp)
+        self.assertEqual((got["names"]["stage"], got["names"]["state"]), ("names_stopped", "done"))
+        self.assertNotIn("done", {k for k in got["names"] if k == "total"})  # no bar once ended
+
+    async def test_a_name_reader_that_stops_moving_is_called_stalled(self) -> None:
+        imp, _, _ = await self.one_import(False)
+        now = int(time.time())
+        await self.set_import(
+            names_state="reading", names_part=1, names_parts=4,
+            names_started_at=now - 7200, names_moved_at=now - 3600,
+        )  # fmt: skip
+        names = (await self.stage(imp))["names"]
+        self.assertEqual((names["stage"], names["state"]), ("reading_names", "stalled"))
 
     async def test_a_story_read_that_stops_moving_is_called_stalled_but_a_wait_for_the_limit_is_not(
         self,
@@ -1739,6 +1776,15 @@ class TheProgress(WithImports):
         got = await self.stage(imp)
         self.assertTrue(got["namesUnchecked"])
         self.assertEqual(got["stage"], "done")  # it moves on, but the DM is told it was skipped
+
+    async def test_the_names_the_scan_left_out_come_back_as_a_count_only(self) -> None:
+        from dmbot.transcript.import_job import ImportStore
+
+        imp, sid, _ = await self.one_import(False)
+        await self.set_import(state="done")
+        self.assertEqual((await self.stage(imp))["namesCut"], 0)
+        await ImportStore(self.db).set_scan_cut(THURSDAY.id, sid, 4)
+        self.assertEqual((await self.stage(imp))["namesCut"], 4)
 
     async def test_an_unknown_import_is_not_found(self) -> None:
         with self.assertRaises(RecapError):

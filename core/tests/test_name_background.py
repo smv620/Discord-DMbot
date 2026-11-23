@@ -436,7 +436,11 @@ class ThePath(NamesTest):
         self.assertRegex(text, r"About [\d,]+ AI credits? for the lore\.")
         self.assertNotIn("cent", text)  # (the old cents wording is gone)
         self.assertIn("not a published book", text)
-        self.assertIn("does not keep it, only a short line", text)
+        self.assertIn(
+            "DMbot does not keep it. It keeps a short line beside each name until you answer it, "
+            "and, for you alone, the document's name and the heading each name was found under.",
+            text,
+        )
         self.assertEqual(
             [b.label for b in view.children],
             ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel", ui_bg.KNOWS_LABELS["world"]],
@@ -722,6 +726,25 @@ class ThePath(NamesTest):
         self.assertEqual({entities[n].id for n in ("North Haven", "Aldmoor, Quillgate, Fenwick")},
                          held)  # fmt: skip
         self.assertEqual(ui_bg.not_held(stored, held), {"place": [entities["Northhaven"].id]})
+
+    async def test_held_picture_names_pass_the_texts_filters(self) -> None:
+        """#5056 point 4: an ordinary word and a generic item held from a picture are left out, as
+        the text's would be (an item stored `unique` was judged); a real name still goes in."""
+        from dmbot.memory.picture_names import ToCheck
+        from dmbot.memory.picture_read import Held, Sorted
+
+        sorted_ = Sorted(held=[
+            Held(bg.Found("Captain", "npc", (), (), ""), ToCheck(), 2, ""),
+            Held(bg.Found("dagger", "item", (), (), ""), ToCheck(), 3, ""),
+            Held(bg.Found("Wand of Conducting", "item", (), (), ""), ToCheck(), 4, ""),
+        ])  # fmt: skip
+        dropped: Counter[str] = Counter()
+        held = await ui_bg._store_held(
+            self.memory, self.campaign, sorted_, set(), [], {}, "map.pdf", dropped
+        )
+        self.assertEqual({e.name for e in await self.entities()}, {"Wand of Conducting"})
+        self.assertEqual(len(held), 1)
+        self.assertEqual(dropped["item_not_unique"], 1)
 
     async def test_the_players_line_comes_only_from_an_upload_they_all_know(self) -> None:
         """#2967 slice a: "🌍 Common knowledge" stores the read's line; a spoilers upload, a smart

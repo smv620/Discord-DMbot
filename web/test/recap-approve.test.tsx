@@ -6,6 +6,7 @@
 // ("not set up") while RECAP_AUDIO_LIVE is false, so these tests switch it on where it should work.
 // The API decides; the page shows what it says.
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -427,5 +428,56 @@ describe("a refused approval", () => {
     await expect(real.approveRecap!("a.b.1", "voice")).rejects.toMatchObject({
       kind: "audio-unavailable",
     });
+  });
+});
+
+// The wait while a choice is sent (#3347 row 7): the working line shows while the request runs, and nothing shows otherwise.
+describe("the working line while a choice is sent", () => {
+  it("shows the working line while a choice is being sent, and removes it when the answer comes", async () => {
+    const api = await open();
+    // The gate is made before the press, so the test can open it once the working line is shown.
+    let release!: () => void;
+    const gate = new Promise<void>((go) => {
+      release = go;
+    });
+    const approve = api.approveRecap!.bind(api);
+    api.approveRecap = async (ref, choice, post) => {
+      await gate;
+      return approve(ref, choice, post);
+    };
+    fireEvent.click(screen.getByRole("button", { name: w.postText }));
+    expect(await screen.findByText(w.workingStage)).toBeTruthy();
+    release();
+    await waitFor(() => expect(screen.queryByText(w.workingStage)).toBeNull());
+  });
+
+  it("shows nothing when nothing is running", async () => {
+    await open();
+    expect(screen.queryByText(w.workingStage)).toBeNull();
+    expect(screen.queryByText(w.workingQuiet)).toBeNull();
+  });
+
+  it("says what to do when it is slow", async () => {
+    // Fake clock from before the page is drawn, as the recap progress tests do; the page reads Date.now for the wait.
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    vi.setSystemTime(new Date(1_900_000_000 * 1000));
+    try {
+      const api = mockApi("table");
+      api.approveRecap = () => new Promise(() => undefined); // never answers
+      render(<Recaps api={api} path={path} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      fireEvent.click(screen.getByRole("button", { name: w.postText }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(61_000);
+      });
+      expect(screen.getByText(w.workingQuiet)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

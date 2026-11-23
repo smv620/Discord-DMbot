@@ -154,13 +154,22 @@ NOT_IN_BACKUP: dict[str, str] = {
     "provenance of working data: the upload's label and, for the DM's Why, the reader's quote "
     "of up to 240 characters (kept only for an upload the DM confirmed the right to use, shown to "
     "the DM alone); a restored campaign's connections read as added by hand (#2946, #3606)",
+    "after_session_jobs": "a live session's slow after-session reads handed to the worker: ids, "
+    "times, a lease and a state, never a word of the session; a working queue made again for "
+    "each session (#4905)",
+    "memory_card_summaries": "a character's one sentence and where and when they were first met "
+    "and last mentioned (#5050): made by a background job from the entry's player-safe facts and "
+    "the transcripts, DMbot's own words and ids only, never a quote; a restored campaign's cards "
+    "read 'still writing' until the job has run again",
     "memory_name_sessions": "which session a waiting name was made in, by the session's start "
     "(#4043): a time and an id only, for the split-party check, kept only while a name waits; a "
     "restored campaign's waiting names fall back to the check's older guess by time, which may "
     "pick the wrong session (the DM can still choose who knows a name)",
     "memory_name_sources": "which upload a name was read from, for the Names page's filter: "
-    "provenance of working data (an upload id or label and a time, never a word of it), made again "
-    "by the next read; a restored campaign's names read as not known yet (#3675)",
+    "provenance of working data (an upload id or label, a time, and the heading of the section "
+    "the name was read under: at most 60 characters of the DM's document, shown to the DM alone, "
+    "#5050), made again by the next read; a restored campaign's names read as not known yet "
+    "(#3675)",
     "memory_trait_offers": "a lore upload's lineage or class for a character the campaign already "
     "has, waiting for the DM's Keep it or Not this (#3926): the trait, the reader's quote of the "
     "DM's own text (up to 240 characters, DM-only) and the upload's label; a question is made "
@@ -202,6 +211,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "web_reveals": 'what DMbot worked out for a DM\'s "Things the characters learned" page (names '
     "and the statements in words), gone within an hour and worked out again from the graph "
     "(#3863)",
+    "continuity_hits": "the continuity heads-ups DMbot worked out for the website on the DM's "
+    "ask (pointers only, no words), gone within a day and worked out again on the next ask "
+    "(#3695)",
     "web_rule_takes": "a day-long undo handle for a website pick of a followed set's changes; "
     "a restored campaign has nothing to undo (#4841)",
     "upload_notices": _RUNTIME,  # each lore upload's notice and the changes it made (#3878)
