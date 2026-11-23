@@ -13,6 +13,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from dmbot.db import Database
 from dmbot.memory import meaning
@@ -90,7 +91,7 @@ class CardSummaries:
 
     async def player_facts(
         self, guild_id: int, campaign_id: str, entity_id: str
-    ) -> tuple[str, dict[str, object], str] | bool | None:
+    ) -> tuple[str, dict[str, object], str] | Literal[False] | None:
         """What the players may be told about one entry, for the card's sentence: (name, parts,
         text), or None when the entry may not be shown to the players (the same rule as
         `meaning.entry_texts(for_players=True)`: held by the table, not a person's card, not a
