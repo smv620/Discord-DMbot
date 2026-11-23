@@ -669,14 +669,26 @@ def master_key() -> dict[str, object]:
     return key
 
 
-def score(path: Path, docs: str) -> list[str]:
+async def met_words(db: Database, guild: int, campaign_id: str) -> list[str]:
+    """The words of the campaign's "met but not named" rows (`memory_met`), which a backup does not
+    carry, for the key's described rows (#5055 D). The sample's own words, kept on the server: the
+    check prints counts only."""
+    async with db.guild(guild, snapshot=True) as conn:
+        cur = await conn.execute(
+            "SELECT what FROM memory_met WHERE guild_id = %s AND campaign_id = %s",
+            (guild, campaign_id),
+        )
+        return [str(r["what"]) for r in await cur.fetchall()]
+
+
+def score(path: Path, docs: str, met: Sequence[str] = ()) -> list[str]:
     """`graph_key_check --docs DOCS --counts-only` on a backup, as the command does, and its
-    counts-only lines back."""
+    counts-only lines back. `met`: the "met but not named" words (`met_words`)."""
     from dmbot.devtools import graph_key_check
 
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        code = graph_key_check.main([str(path), "--docs", docs, "--counts-only"])
+        code = graph_key_check.main([str(path), "--docs", docs, "--counts-only"], met=met)
     if code != 0:
         # (the checker's own one-line reason: it names a rule, never a name from the backup)
         why = err.getvalue().strip().splitlines()[:1]
@@ -687,15 +699,16 @@ def score(path: Path, docs: str) -> list[str]:
     return out.getvalue().splitlines()
 
 
-def score_numbers(path: Path, docs: str) -> dict[str, int]:
+def score_numbers(path: Path, docs: str, met: Sequence[str] = ()) -> dict[str, int]:
     """The answer-key check's totals as numbers (#3545's spread): entries and ties found, missing,
-    wrong and waiting over every group, and the extras. Counts only."""
+    wrong and waiting over every group, the extras, and the described rows found (#5055 D).
+    Counts only."""
     from collections import Counter
 
     from dmbot.campaigns.store import decode_backup
     from dmbot.devtools import graph_key_check as gkc
 
-    summary = gkc.summarize(gkc.check(decode_backup(path.read_bytes()), master_key(), docs))
+    summary = gkc.summarize(gkc.check(decode_backup(path.read_bytes()), master_key(), docs, met))
     out: dict[str, int] = {}
     for part in ("entries", "ties"):
         total: Counter[str] = Counter()
@@ -710,6 +723,9 @@ def score_numbers(path: Path, docs: str) -> dict[str, int]:
         })  # fmt: skip
     out["extra entries"] = sum(summary["extra_entries"].values())
     out["extra ties"] = int(summary["extra_ties"])
+    described = summary["described"]
+    if described.get("total"):  # (#5055 D: not name misses, so a line of their own)
+        out["described found"] = described.get(gkc.AS_ENTRY, 0) + described.get(gkc.ON_MET_LIST, 0)
     return out
 
 

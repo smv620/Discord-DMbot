@@ -169,6 +169,15 @@ class TheDoors(Reading):
         self.assertEqual(up["progress"]["counts"], {"words": 1200, "calls": 4})
         self.assertNotIn(WORDS, repr(up))
 
+    async def test_the_names_a_limit_left_out_come_back_as_a_count_only(self) -> None:
+        await self.add()
+        before = (await lore.read(self.web, self.session, self.cref, None))["upload"]
+        self.assertEqual(before["namesCut"], 0)
+        await self.sql("UPDATE lore_uploads SET names_cut = 7")
+        up = (await lore.read(self.web, self.session, self.cref, None))["upload"]
+        self.assertEqual(up["namesCut"], 7)
+        self.assertNotIn(WORDS, repr(up))
+
     async def progress_of(self) -> dict[str, Any]:
         read = await lore.read(self.web, self.session, self.cref, None)
         return dict(read["upload"]["progress"])
