@@ -45,6 +45,7 @@ import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 import SayIt from "./SayIt";
 import LazyPanel from "./LazyPanel";
+import { CARD_SUMMARY_LIVE } from "../content/card-summary-switch";
 
 /** The campaign's address, read from `/account/names/<server>.<campaign>`. */
 export function namesRefFromPath(path: string): string | null {
@@ -416,9 +417,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const everything = kindList.reduce((sum, k) => sum + k.count, 0);
   return (
     <div class="stack names-page">
-      <section class="stack" aria-labelledby="names-campaign">
+      <section class="stack" aria-label={data.campaign}>
         <CampaignNav api={api} campaignRef={ref} page="names" name={data.campaign} />
-        <h2 id="names-campaign">{data.campaign}</h2>
         <p class="muted small">{words.lead}</p>
         <a class="button secondary" href={`/account/web/${encodeURIComponent(ref)}`}>
           {words.webLink}
@@ -1100,6 +1100,7 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
         </form>
       )}
 
+      {CARD_SUMMARY_LIVE && <LazyPanel load={() => import("./CardSummary")} what="the card summary" props={{ card: row }} />}
       <form
         class="name-form"
         onSubmit={(e) => {

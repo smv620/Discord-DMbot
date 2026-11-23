@@ -137,9 +137,21 @@ class Settings:
     # asked in the claims call itself. Off until the DM's list of them (#4045) has merged
     # (Supervisor, 2026-11-10).
     met_unnamed_on: bool = False
+    # A character's card says who they are in one sentence, where they were first met and when last
+    # mentioned (#5050), made by a background job (DMBOT_CARD_SUMMARY, off until dev1 has read ten
+    # cards on the sample campaign and they are right).
+    card_summary_on: bool = False
     # #4229 1d: the session reader also asks which languages a character was heard speaking, each
     # a question for the DM (DMBOT_SESSION_LANGUAGES, off until dev1's language_cases counts)
     session_languages_on: bool = False
+    # docs/design/session_names.md slice 2: after a session, an AI reader lists the names said,
+    # judged by what is said about them, never by capitals; joined with the scan's suggestions
+    # (DMBOT_SESSION_NAMES, off until dev1's typed, no-capitals and spoken counts)
+    session_names_on: bool = False
+    # #5055 slice B (dev tools, server only): a folder where the after-session name step writes,
+    # for a sample campaign only, each candidate with the fixed reason it ended with (empty: off)
+    name_trace_dir: str = ""
+    name_trace_guild: int = 0  # the test server: the trace is written there only (#5055 B)
     # #4537 slice 6b: the session reader also hears a player character saying goodbye to the
     # party, each an after-session question for the DM, never a closed stretch
     # (DMBOT_PARTY_LEAVES, off until the sample's counts show no false goodbye questions)
@@ -586,9 +598,15 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
         raise ConfigError(
             'DMBOT_STORY_REVEALS_PRECHECK must be 1 (on) or 0 (off), got "' + precheck_raw + '".'
         )
+    card_raw = (get("DMBOT_CARD_SUMMARY") or "0").lower()
+    if card_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_CARD_SUMMARY must be 1 (on) or 0 (off), got "' + card_raw + '".')
     met_raw = (get("DMBOT_MET_UNNAMED") or "0").lower()
     if met_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_MET_UNNAMED must be 1 (on) or 0 (off), got "' + met_raw + '".')
+    names_raw = (get("DMBOT_SESSION_NAMES") or "0").lower()
+    if names_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_SESSION_NAMES must be 1 (on) or 0 (off), got "' + names_raw + '".')
     languages_raw = (get("DMBOT_SESSION_LANGUAGES") or "0").lower()
     if languages_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -852,7 +870,11 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
         map_layers_on=layers_raw in ("1", "true", "on"),
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
+        card_summary_on=card_raw in ("1", "true", "on"),
         session_languages_on=languages_raw in ("1", "true", "on"),
+        session_names_on=names_raw in ("1", "true", "on"),
+        name_trace_dir=(get("DMBOT_NAME_TRACE_DIR") or "").strip(),
+        name_trace_guild=_trace_guild(get("DMBOT_NAME_TRACE_GUILD")),
         party_leaves_on=leaves_raw in ("1", "true", "on"),
         party_join_on=party_join_raw in ("1", "true", "on"),
         weather_notes_on=weather_raw in ("1", "true", "on"),
@@ -1128,3 +1150,13 @@ def _continuity_levels(get: Callable[[str], str]) -> Levels:
             "smallest first."
         )
     return levels
+
+
+def _trace_guild(raw: str | None) -> int:
+    """DMBOT_NAME_TRACE_GUILD: the test server's number, or 0 (the trace is off)."""
+    text = (raw or "").strip()
+    if not text:
+        return 0
+    if not text.isdigit():
+        raise ConfigError('DMBOT_NAME_TRACE_GUILD must be a server number, got "' + text + '".')
+    return int(text)

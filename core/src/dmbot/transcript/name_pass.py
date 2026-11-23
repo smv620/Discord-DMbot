@@ -28,7 +28,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -147,6 +147,28 @@ def _near(lookup: CampaignLookup, spelling: str) -> tuple[list[Near], bool]:
             )
     ranked = sorted(best.values(), key=lambda n: -n.likeness)[:MAX_NEAR]
     return ranked, secret_close
+
+
+def secret_test(lookup: CampaignLookup) -> Callable[[str], bool]:
+    """Whether a spelling is close to a secret or DM-only name by sound and letters, as this pass's
+    own `_near` judges it, with the lookup's secret entries picked out once (the after-session name
+    step asks it for many spellings and drops such a name whole, design section 5)."""
+    hidden = lookup.hidden
+    secret = [e for e in lookup.names if not e.person and (e.secret or e.entity_id in hidden)]
+
+    def close(spelling: str) -> bool:
+        if not secret:
+            return False
+        mine = set(sound_keys(spelling))
+        for entry in secret:
+            likeness = alike(spelling, entry.text, NEAR_BY_SOUND)
+            if (mine & set(entry.codes) and likeness >= NEAR_BY_SOUND) or (
+                likeness >= NEAR_BY_LETTERS
+            ):
+                return True
+        return False
+
+    return close
 
 
 def _bit(line: str, spelling: str) -> str:

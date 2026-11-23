@@ -9,6 +9,7 @@ import { useRef, useState } from "preact/hooks";
 import { text } from "../content/recaps";
 import { ApiError, type AccountApi, type Recap } from "./api";
 import DraftPreview from "./DraftPreview";
+import SavingWait from "./SavingWait";
 import { keepFocus } from "./focus";
 
 export default function RecapUnchecked({
@@ -90,6 +91,7 @@ export default function RecapUnchecked({
       ) : (
         <p>{text.uncheckedKeepTrying}</p>
       )}
+      <SavingWait active={busy} stage={text.uncheckedWorking} whatToDo={text.uncheckedSlow} />
       {problem && (
         <p class="warn" role="alert">
           {problem}

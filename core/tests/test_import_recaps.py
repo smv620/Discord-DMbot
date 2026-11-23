@@ -567,6 +567,45 @@ class TheCrashAndTheNews(WithImports):
         self.assertIn("2 imported sessions", text)
         self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
 
+    async def test_names_a_cap_left_out_are_told_as_a_count_once(self) -> None:
+        # (#5055 A) the scan's and the story reader's limits are counted, never silent: one line in
+        # the import's notice, a count only (the DM Bot channel is read by the campaign's people)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        campaign.dm_bot_channel_id = 88
+        await bot.import_state.bump(GUILD, self.campaign.id, "names_cut", 12)
+        await bot._tell_import_news(GUILD, self.store)
+        channel, text = bot.post.await_args.args[:2]
+        self.assertEqual(channel, 88)
+        self.assertIn("As many as 12 more names were left out", text)
+        self.assertIn("➕ Add a name", text)
+        self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
+        bot.post.reset_mock()
+        await bot._tell_import_news(GUILD, self.store)  # (taken: told once)
+        bot.post.assert_not_awaited()
+
+    async def test_a_scan_given_back_and_run_again_tells_its_cut_once(self) -> None:
+        # (#5055 A) the cut is counted on the scan's success, so a retried scan is not counted twice
+        sid = await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        tries = [0]
+
+        async def scan(gid: int, ready: Any) -> list[str]:
+            await self.store.set_scan_cut(gid, ready.session_id, 12)
+            tries[0] += 1
+            if tries[0] == 1:
+                raise RuntimeError("down")  # given back after the cut was kept
+            return []
+
+        bot._scan_import = scan
+        await rounds(bot, 5)
+        told = [c.args[1] for c in bot.post.await_args_list if "more names were" in c.args[1]]
+        self.assertEqual(tries[0], 2)
+        self.assertEqual(len(told), 1)
+        self.assertIn("As many as 12 more names", told[0])
+        self.assertEqual(await self.store.scan_cut(GUILD, sid), 12)
+
     async def test_the_dm_is_told_once_when_a_name_check_was_given_up(self) -> None:
         await self.imported(1)
         bot, campaign = fake_bot(self.store)
