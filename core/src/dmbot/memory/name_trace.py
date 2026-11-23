@@ -5,9 +5,10 @@ sample run missed can be named and explained ("the reader never listed it", "too
 
 Dev tools only. Rows are written only when `DMBOT_NAME_TRACE_DIR` names a folder and
 `DMBOT_NAME_TRACE_GUILD` names the test server (server only, never in production use), and only
-for a sample campaign there (`sample_name.is_sample`): a real DM who gives a campaign the sample's
-name elsewhere is never traced. The people at the table are never traced either (the caller
-leaves their refusals out). Production keeps counts (the log); this file is where the public
+for a sample campaign there (`is_sample`, the same rule as `devtools.sample_name`): a real DM
+who gives a campaign the sample's name elsewhere is never traced. The people at the table are
+never traced either, and a name only a speaker who stopped being recorded said is one count row
+with no name (`reader_rows`). Production keeps counts (the log); this file is where the public
 sample's names go, on the server, never on GitHub. `why_missed` reads it.
 """
 
@@ -15,16 +16,30 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import Counter
 from collections.abc import Collection, Iterable, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from dmbot.devtools import sample_name
 from dmbot.memory import name_reader
 from dmbot.memory.models import name_key
 
 log = logging.getLogger(__name__)
+
+# The sample campaign's names, as `devtools.sample_name` has them. Copied, because the bot never
+# imports the dev tools (test_replay's isolation test); a test keeps the two the same.
+_OLD_SAMPLE = "test of the frostmaiden (sample)"
+_SAMPLE = re.compile(
+    r"^test of the frostmaiden \(sample [0-9]{1,4}[a-z]?(?:\.[1-9][0-9]?)?"
+    r"(?: (?:no capitals|spoken))?\)$"
+)
+
+
+def is_sample(name: str) -> bool:
+    """Exactly a sample campaign's name, never a look-alike."""
+    return name == _OLD_SAMPLE or _SAMPLE.fullmatch(name) is not None
+
 
 # Where a candidate came from
 SCAN = "scan"  # the capital-letter scan (`memory/scan.py`)
@@ -66,7 +81,7 @@ def write(
     tool, the step goes on without it. Returns the file written, or None."""
     if not folder or not test_guild or guild_id != test_guild:
         return None
-    if not sample_name.is_sample(campaign_name):
+    if not is_sample(campaign_name):
         return None
     try:
         path = Path(folder) / f"trace-{campaign_id}.jsonl"

@@ -178,3 +178,22 @@ class Consent(unittest.TestCase):
         self.assertEqual(
             [(r.name, r.reason, r.why) for r in rows], [("hrothgar", nt.JOINED, nr.INTRODUCED)]
         )
+
+
+class TheSampleRule(unittest.TestCase):
+    def test_the_trace_takes_exactly_the_names_the_sample_tools_take(self) -> None:
+        names = [
+            sample_name.OLD_NAME,
+            sample_name.name_for(41),
+            sample_name.name_for(41, 2),
+            sample_name.name_for(sample_name.parse_label("41b"), 2, "no-capitals"),
+            sample_name.name_for(9999, 99, "spoken"),
+            "test of the frostmaiden (sample 41) copy",
+            "Test of the frostmaiden (sample 41)",
+            "test of the frostmaiden (sample 41 typed)",
+            "test of the frostmaiden (sample 041)",
+            "Rime of the Frostmaiden",
+            "",
+        ]
+        for name in names:
+            self.assertEqual(nt.is_sample(name), sample_name.is_sample(name), name)
