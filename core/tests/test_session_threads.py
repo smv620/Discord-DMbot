@@ -186,6 +186,13 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.calls, 2)
         self.assertEqual(seen, [(1, 3), (2, 3)])  # (the limit stops it before the third)
 
+    async def test_a_step_that_fails_never_breaks_the_read(self) -> None:
+        async def step(part: int, parts: int) -> None:
+            raise RuntimeError("the display")
+
+        found, report = await self.run_with(_AI([ask()]), TALK, [{DM_ID, BEL}], step=step)
+        self.assertEqual((len(found), report.calls), (1, 1))
+
     async def test_out_of_funds_stops_it_and_a_failed_call_skips_one_window(self) -> None:
         from dmbot.ai import AIError, AIOutOfFunds
 

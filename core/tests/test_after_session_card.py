@@ -93,3 +93,30 @@ class TheCard(unittest.IsolatedAsyncioTestCase):
         self.assertIn("No change for", text)
         self.assertIn(card.STALL_NOTE, text)
         await c.finish()
+
+    async def test_notes_are_said_once_even_when_the_card_never_opened(self) -> None:
+        c = card.AfterSessionCard(self.post)
+        c.note(card.not_read(1))
+        await c.finish()
+        self.assertEqual(
+            self.posted,
+            [
+                f"📖 {card.DONE_BUT}\n"
+                "1 part of the session could not be read, so some names may be missing."
+            ],
+        )
+
+    async def test_a_hung_post_does_not_hold_up_the_read(self) -> None:
+        import asyncio
+        from unittest.mock import patch
+
+        async def hung(text: str) -> Any:
+            await asyncio.sleep(3600)
+
+        c = card.AfterSessionCard(hung)
+        with (
+            patch.object(card, "POST_TIMEOUT_S", 0.05),
+            self.assertLogs("dmbot.ui.after_session", level="WARNING"),
+        ):
+            await c.stage(card.STORY, 1, 2)
+        await c.finish()

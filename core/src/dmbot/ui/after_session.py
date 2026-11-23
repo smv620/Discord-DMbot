@@ -12,6 +12,7 @@ posted or edited is only logged.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -22,6 +23,7 @@ log = logging.getLogger(__name__)
 
 TITLE = "📖 DMbot is reading the session…"
 STALL_AFTER_S = 10 * 60  # one batch is one AI call (minutes at most): longer is said out loud
+POST_TIMEOUT_S = 10.0  # a hung send never holds up the read it reports on
 STALL_NOTE = "DMbot will move on by itself. Anything it could not read is listed at the end."
 DONE = "Finished reading the session."
 DONE_BUT = "Finished reading the session, but some parts could not be read."
@@ -60,7 +62,7 @@ class AfterSessionCard:
         try:
             if not self._tried:
                 self._tried = True
-                self._message = await self._post(TITLE)
+                self._message = await asyncio.wait_for(self._post(TITLE), POST_TIMEOUT_S)
                 if self._message is not None:
                     self._waiting = WaitingMessage(
                         self._edit,
@@ -83,6 +85,13 @@ class AfterSessionCard:
     async def finish(self) -> None:
         """End the card with the last word. Does nothing if it was never opened."""
         if self._waiting is None:
+            if self._notes:  # (never opened, but a part was not read: say so once, never silent)
+                try:
+                    text = "\n".join([f"📖 {DONE_BUT}", *self._notes])
+                    await asyncio.wait_for(self._post(text), POST_TIMEOUT_S)
+                except Exception as exc:
+                    log.warning("After-session card: could not say it (%s)", type(exc).__name__)
+                self._notes = []
             return
         try:
             await self._waiting.__aexit__(None, None, None)

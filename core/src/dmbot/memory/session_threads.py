@@ -222,7 +222,10 @@ async def run(
             report.stopped = "call limit"
             break
         if step is not None:
-            await step(n, len(every))
+            try:  # (a display never breaks the read)
+                await step(n, len(every))
+            except Exception as exc:
+                log.warning("Session threads: the step display failed (%s)", type(exc).__name__)
         agreed = await consenting()
         window = [s for s in window if s.user_id in agreed]  # (a stop removes the lines for good)
         context = [s for s in context if s.user_id in agreed]

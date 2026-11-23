@@ -3611,11 +3611,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await step()
                 except Exception:
                     log.exception("After the session: %s failed", name)
+                if name == "story threads":  # the last slow read: the card ends here, not later
+                    await self._end_after_card(table)
         finally:
-            card = getattr(table, "after_card", None)
-            if isinstance(card, after_session.AfterSessionCard):  # (the reads are over)
-                await card.finish()
-                table.after_card = None
+            await self._end_after_card(table)  # (the safety net: every read is over)
             leftover, table.asks = table.asks or [], None
             if leftover:  # the sending step itself failed: still ask, so nothing is lost
                 try:
@@ -10380,6 +10379,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             card = after_session.AfterSessionCard(post)
             table.after_card = card
         return card
+
+    async def _end_after_card(self, table: Table) -> None:
+        """The reads are over: the card says so, once, and the table lets it go."""
+        card = getattr(table, "after_card", None)
+        if isinstance(card, after_session.AfterSessionCard):
+            await card.finish()
+            table.after_card = None
 
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a live session: see `_extract_session`."""
