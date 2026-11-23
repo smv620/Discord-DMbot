@@ -188,6 +188,8 @@ class TheSampleRule(unittest.TestCase):
             sample_name.name_for(41, 2),
             sample_name.name_for(sample_name.parse_label("41b"), 2, "no-capitals"),
             sample_name.name_for(9999, 99, "spoken"),
+            sample_name.name_for(41, 3, "respelled"),  # (the dev-only fourth series, #5133)
+            "test of the frostmaiden (sample 41 respelt)",
             "test of the frostmaiden (sample 41) copy",
             "Test of the frostmaiden (sample 41)",
             "test of the frostmaiden (sample 41 typed)",
