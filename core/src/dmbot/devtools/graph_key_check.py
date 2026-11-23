@@ -97,8 +97,10 @@ PLACE_SLOTS = {
     "was_kept_in": (place_words.KEPT, True),
 }  # fmt: skip
 
-# The stand-in the "who plays" step makes for a player (`store._placeholder_name`, #1559).
-PLACEHOLDER = re.compile(r"Player \d{4}")
+# The stand-in the "who plays" step makes for a player (`store._placeholder_name`, #1559), and for
+# a player without Discord, "Player 3 (no Discord)" (#3690; dev1's unmatched list on #5055 showed
+# the four counted as extra names in every run).
+PLACEHOLDER = re.compile(r"Player \d{4}|Player \d+ \(no Discord\)")
 FOUND, WRONG, WAITING, MISSING = "found", "wrong_type", "waiting_only", "missing"
 # A kind of creature the rules already hold is left out of story memory on purpose
 # (`in_the_rules`, 2026-11-06 ruling on #3545): marked `"by_design": true` in the key, it is not a

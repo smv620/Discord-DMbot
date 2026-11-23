@@ -1,6 +1,6 @@
 {
  "campaign": "test of the frostmaiden (sample)",
- "version": 5,
+ "version": 6,
  "sources": {
   "lore": "https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing",
   "session": "https://docs.google.com/document/d/1BtHZ4O75886WHOoTq0FCPst2hdg7YLnsaCiI-kNsv-E/edit?usp=sharing"
@@ -355,7 +355,9 @@
   {
    "name": "Cerric's paternal grandfather",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Cerric Vanya'elen's paternal grandfather"
+   ],
    "note": "Unnamed. Died in a storm.",
    "docs": [
     "lore"
@@ -376,7 +378,8 @@
    "name": "Brewner's daughter",
    "kind": "person",
    "aliases": [
-    "Brewner's daughter (name unknown)"
+    "Brewner's daughter (name unknown)",
+    "Brewner's daughter, who led her father home"
    ],
    "note": "Unnamed. Leads Brewner home.",
    "docs": [
@@ -399,7 +402,8 @@
    "name": "The beggar woman",
    "kind": "person",
    "aliases": [
-    "beggar woman"
+    "beggar woman",
+    "beggar woman at the docks"
    ],
    "note": "Unnamed. Gives a prophecy.",
    "docs": [
@@ -514,7 +518,8 @@
    "name": "Explorer's League",
    "kind": "group",
    "aliases": [
-    "the Explorers' League"
+    "the Explorers' League",
+    "Explorer League"
    ],
    "note": "guild of explorers Guild of explorers.",
    "docs": [
@@ -780,7 +785,9 @@
   {
    "name": "Kelvin's Cairn",
    "kind": "place",
-   "aliases": [],
+   "aliases": [
+    "Kelvin Cairn"
+   ],
    "note": "",
    "docs": [
     "lore",
@@ -875,7 +882,9 @@
   {
    "name": "Aurora's Wind",
    "kind": "item",
-   "aliases": [],
+   "aliases": [
+    "Aurora"
+   ],
    "note": "Fizzlebomb's ship",
    "docs": [
     "lore"
