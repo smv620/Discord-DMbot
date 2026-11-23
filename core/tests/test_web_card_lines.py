@@ -32,12 +32,12 @@ class OnTheNamesPage(Base):
             self.g, self.one.id, self.mira, which="first", scene="the party arrived"
         )
 
-    async def page(self, who: Any, *, cards: bool = True) -> dict[str, dict[str, Any]]:
+    async def names(self, who: Any, *, cards: bool = True) -> dict[str, dict[str, Any]]:
         got = await all_names.read_page(self.web, who, self.cref, cards=cards)
         return {n["id"]: n for n in got["names"]}
 
     async def test_a_dm_reads_the_three_lines(self) -> None:
-        row = (await self.page(self.session))[self.mira]
+        row = (await self.names(self.session))[self.mira]
         self.assertEqual(row["who"], "A harbour official.")
         self.assertNotIn("whoPending", row)
         self.assertTrue(row["firstMet"].startswith("First met: Session 1, "))
@@ -45,11 +45,11 @@ class OnTheNamesPage(Base):
         self.assertTrue(row["lastMentioned"].startswith("Last mentioned: Session 1, "))
 
     async def test_with_the_switch_off_there_are_no_keys(self) -> None:
-        row = (await self.page(self.session, cards=False))[self.mira]
+        row = (await self.names(self.session, cards=False))[self.mira]
         self.assertNotIn("who", row)
 
     async def test_a_character_the_job_has_not_reached_has_no_keys(self) -> None:
-        others = [r for i, r in (await self.page(self.session)).items() if i != self.mira]
+        others = [r for i, r in (await self.names(self.session)).items() if i != self.mira]
         self.assertTrue(others)
         self.assertTrue(all("who" not in r for r in others))
 
@@ -64,11 +64,15 @@ class OnTheNamesPage(Base):
             cur = await conn.execute(
                 "SELECT dmbot_web_card_lines(%s, %s, %s) AS r", (self.g, self.one.id, [self.mira])
             )
-            mine = (await cur.fetchone())["r"]["cards"][self.mira]["lore"]
+            found = await cur.fetchone()
+            assert found is not None
+            mine = found["r"]["cards"][self.mira]["lore"]
             cur = await conn.execute(
                 "SELECT dmbot_web_card_lines(%s, %s, %s) AS r", (self.g, other, [self.mira])
             )
-            theirs = (await cur.fetchone())["r"]
+            other_row = await cur.fetchone()
+            assert other_row is not None
+            theirs = other_row["r"]
         self.assertEqual(mine["label"], "Harbour notes")
         self.assertEqual(mine["heading"], "The quay")
         self.assertGreater(mine["at"], 0)

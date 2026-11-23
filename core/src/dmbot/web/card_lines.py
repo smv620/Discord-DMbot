@@ -46,15 +46,7 @@ def lines_of(name: str, card: dict[str, Any] | None, numbers: dict[int, int]) ->
             scanned_at=card.get("scannedAt"),
         )
     card = card or {}
-    lore = card.get("lore")
-    made = card_view.view(
-        summary,
-        name,
-        numbers,
-        lore=(str(lore["label"]), str(lore.get("heading") or ""))
-        if isinstance(lore, dict)
-        else None,
-    )
+    made = card_view.view(summary, name, numbers, lore=_lore(card.get("lore")))
     out: dict[str, Any] = {"who": made.who}
     if made.who == words.STILL_WRITING:
         out["whoPending"] = True
