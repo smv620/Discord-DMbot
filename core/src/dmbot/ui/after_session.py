@@ -22,17 +22,22 @@ log = logging.getLogger(__name__)
 
 TITLE = "📖 DMbot is reading the session…"
 STALL_AFTER_S = 10 * 60  # one batch is one AI call (minutes at most): longer is said out loud
-STALL_NOTE = "DMbot goes on to the next step by itself; nothing is lost."
+STALL_NOTE = "DMbot will move on by itself. Anything it could not read is listed at the end."
 DONE = "Finished reading the session."
+DONE_BUT = "Finished reading the session, but some parts could not be read."
 
 STORY = "Reading the story"
 NAMES = "Reading names"
 THREADS = "Reading story threads"
 
 
-def not_read(stretches: int) -> str:
-    """A stretch a read could not do is counted, never shown as "nothing found"."""
-    return f"{stretches} stretch{'' if stretches == 1 else 'es'} of the names could not be read."
+def not_read(parts: int, what: str = "names") -> str:
+    """A part a read could not do is counted, never shown as "nothing found"; `what` says what may
+    be missing ("names", "story details" or "story threads")."""
+    return (
+        f"{parts} part{'' if parts == 1 else 's'} of the session could not be read, "
+        f"so some {what} may be missing."
+    )
 
 
 class AfterSessionCard:
@@ -81,7 +86,8 @@ class AfterSessionCard:
             return
         try:
             await self._waiting.__aexit__(None, None, None)
-            await self._edit("\n".join([f"📖 {DONE}", *self._notes]))
+            head = DONE_BUT if self._notes else DONE  # (the warning first, so "Finished" is not all
+            await self._edit("\n".join([f"📖 {head}", *self._notes]))  # that is read)
         except Exception as exc:
             log.warning("After-session card: could not end it (%s)", type(exc).__name__)
         finally:

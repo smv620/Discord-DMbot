@@ -44,9 +44,19 @@ class TheCard(unittest.IsolatedAsyncioTestCase):
         await c.finish()
         self.assertEqual(
             self.message.edits[-1],
-            f"📖 {card.DONE}\n2 stretches of the names could not be read.",
+            f"📖 {card.DONE_BUT}\n"
+            "2 parts of the session could not be read, so some names may be missing.",
         )
-        self.assertEqual(card.not_read(1), "1 stretch of the names could not be read.")
+        self.assertEqual(
+            card.not_read(1, "story threads"),
+            "1 part of the session could not be read, so some story threads may be missing.",
+        )
+
+    async def test_a_clean_read_ends_on_finished_alone(self) -> None:
+        c = card.AfterSessionCard(self.post)
+        await c.stage(card.STORY, 1, 1)
+        await c.finish()
+        self.assertEqual(self.message.edits[-1], f"📖 {card.DONE}")
 
     async def test_a_session_with_no_reads_posts_nothing(self) -> None:
         c = card.AfterSessionCard(self.post)
