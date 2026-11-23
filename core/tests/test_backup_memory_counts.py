@@ -157,6 +157,7 @@ class AFileRefusedSaysWhichTableBrokeIt(ABackupHoldsTheMemory):
         said = logged.output[0]
         self.assertIn("memory_aliases.created_at", said)
         self.assertIn("memory_beliefs.confidence", said)
+        self.assertIn("raised in _check_rows line", said)
         self.assertNotIn("not a time", said)
         self.assertNotIn("high", said.replace("highest", ""))
 
