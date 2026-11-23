@@ -48,7 +48,7 @@ class MoreNames:
         first row stays). Returns how many were new."""
         rows = [
             (
-                guild_id, campaign_id, session_id, name, key, min(max(1, n.times), TIMES_MAX),
+                session_id, name, key, min(max(1, n.times), TIMES_MAX),
                 [a.strip()[:NAME_MAX] for a in n.also[:ALSO_MAX]], int(self._now()),
             )
             for n in names
@@ -63,7 +63,7 @@ class MoreNames:
                     "INSERT INTO import_more_names (guild_id, campaign_id, session_id, name,"
                     " name_key, times, also, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
                     " ON CONFLICT DO NOTHING",
-                    row,
+                    (guild_id, campaign_id, *row),
                 )
                 made += int(cur.rowcount or 0)
         return made
