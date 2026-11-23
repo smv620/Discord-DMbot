@@ -199,6 +199,16 @@ Paste its lines on #3545: `kind_right`/`kind_wrong` (map, table, handout or othe
 
 ## Changes to the keys
 
+- **2026-11-23, wording from dev1's unmatched list (#5055, the standing instruction to take a run's better or equal wording).** dev1 listed, for 15 runs of deploys 40a, 40b and 41a, every stored entry the master key didn't match. Six were the key's own entry stored another way, so each gains that wording as another name:
+  - Kelvin's Cairn: "Kelvin Cairn", 15 of 15 runs.
+  - Explorer's League: "Explorer League", 15 of 15.
+  - Aurora's Wind: "Aurora", 15 of 15. The session calls the ship this.
+  - Cerric's paternal grandfather: "Cerric Vanya'elen's paternal grandfather", 6 of 15, kept unnamed.
+  - Brewner's daughter: "Brewner's daughter, who led her father home", 7 of 15, kept unnamed.
+  - The beggar woman: "beggar woman at the docks", 1 of 15.
+
+  The check now also counts "Player 3 (no Discord)", the stand-in for a player without Discord, as a placeholder and not an extra, as it already did for "Player 1234". Not added: "Valley" for Dwarven Valley (the name cut short, a reader miss, not a better wording); Goodberries (a spell: a filter miss); a dogsled stored as a person; one-run oddities. Entries found rise for these six, so name counts before and after this change are two series. Lore key version 6, session key version 4, master key version 6.
+
 - **2026-11-22, described rows (#5055 D, Supervisor's ruling):** in the session and master keys, four rows the story describes but never names are marked `described`, each with the words it is described by in `said_as`: The kennel, The windbreak shelter, Garret's old sled and Garret's clients. DMbot never makes a name out of a description, so the check no longer counts them as entries. They go on their own line, `Described, never named: found x of 4 (y as an entry, z on the met list)`. A row is found as an entry (named by the DM, or a person the story never named) or, for a being (a person, group or creature) only, on the "met but not named" list (`memory_met`, which holds only beings the party was with, and which a backup doesn't carry). Its ties are found by the same `said_as` words. The tie totals don't change, and the ties stay must-find: a row found only on the met list has no entry, so its ties stay missing until the DM names it. `sample_run` reads those words from the database and passes them in; the command takes `--met FILE`, a JSON list kept on the server. Entry totals drop by 4 in both keys, so the entry and name-miss counts before and after this change are two series. Session key version 3, master key version 5. The two barbarian rows were already `unnamed`, so they are unchanged.
 
 - **2026-11-17, the guess cases (#4655, quests slice 7a):** `guess_cases_lore.txt`, `guess_cases_session.txt` and `guess_cases_key.json` / `.md` added (invented, Supervisor's ruling), with the check's `readings` / `must_not_readings` rows and its `Readings:` line.
