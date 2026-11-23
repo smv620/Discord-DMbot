@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.devtools.graph_key_check import ENTRY_TYPES, _plain, _tables
+from dmbot.memory import trace_note
 from dmbot.memory.models import name_key
 
 REASON_MAX = 160  # one table row; the record keeps the whole reason on the server
@@ -214,10 +215,16 @@ def _not_stored_why(
     if trace is None:
         return "never stored (no name trace for this run)"
     found = [pair for k in keys for pair in trace.get(k, ())]
-    if not found:  # (the scan's own refusals are not traced yet: it may have seen and dropped it)
-        return "never stored: not offered by any reader (the scan's own refusals aren't traced)"
-    _place, last = max(found, key=lambda pair: pair[0])
-    return f"never stored: {last.source} ended it as {last.reason}"
+    if not found:  # (the lore read's pass 1, the scan and the name reader all list what they saw)
+        return "never stored: no reader listed it"
+    # (a later read's pass 1 lists again what an earlier step ended, so a `listed` row only
+    # answers when nothing ended the name: the pictures' read lists names the text read ended)
+    ended = [pair for pair in found if pair[1].reason != trace_note.LISTED]
+    _place, last = max(ended or found, key=lambda pair: pair[0])
+    if last.reason == trace_note.LISTED:
+        return "never stored: the lore read listed it in pass 1, but pass 2 gave no line for it"
+    into = f" ({last.why})" if last.reason == trace_note.FOLDED and last.why else ""
+    return f"never stored: {last.source} ended it as {last.reason}{into}"
 
 
 def _latest(rows: Sequence[Mapping[str, Any]]) -> Mapping[str, Any] | None:

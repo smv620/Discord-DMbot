@@ -1322,6 +1322,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "pack-update-",
             "heard-",
             "deed-",
+            "continuity-",
         )
     ):
         raise RecapError("not_found")
@@ -1381,6 +1382,15 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "error": got["error"],
             "code": counts.removeprefix("deed:") if counts.startswith("deed:") else None,
             "batch": int(made[0]) if got["state"] == "done" and made else None,
+        }
+    if str(got["action"]).startswith("continuity-"):
+        # the heads-ups (#3695): an ask says how many it found (`n:<count>`), an answer how it ended
+        # (`gone` or `refused` as the error); counts only, never a word
+        counts = str(got.get("counts") or "")
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "count": int(counts.removeprefix("n:")) if re.fullmatch(r"n:\d+", counts) else None,
         }
     if str(got["action"]).startswith("heard-"):
         # a waiting "Did they mean…?" answered (#4841 B1): which case it was, never a word

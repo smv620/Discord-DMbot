@@ -97,6 +97,13 @@ class Versions(unittest.TestCase):
         ):
             self.assertFalse(sample_name.is_sample(bad), bad)
 
+    def test_the_respelled_version_is_its_own_series_too(self) -> None:
+        # (#5133: dev only, until the spoken recording exists)
+        name = N(31, 2, "respelled")
+        self.assertEqual(name, "test of the frostmaiden (sample 31.2 respelled)")
+        self.assertTrue(sample_name.is_sample(name))
+        self.assertEqual(sample_name.version_of(name), "respelled")
+
     def test_a_version_run_keeps_the_same_deploys_other_version(self) -> None:
         have = [
             ("t1", N(31, 1)), ("t2", N(31, 2)), ("n1", N(31, 1, "no-capitals")), ("old", N(30, 1)),

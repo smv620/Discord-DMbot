@@ -432,8 +432,30 @@ class TheGoldenCost(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(budget.stopped)
         self.assertEqual(budget.spent, 0.0)  # (no call was made)
         self.assertTrue(any("stopped before a call that would pass $0.00" in r for r in rows))
+        self.assertTrue(any("(about $0.00 spent)" in r for r in rows))  # (the table says how far)
         self.assertTrue(any("0 of" in r for r in rows))
         self.assertEqual(len([r for r in rows if "STOPPED" in r]), 1)
+
+    def test_the_cap_counts_what_a_call_is_expected_to_write_not_its_limit(self) -> None:
+        # (#4879) a background call sends the tier's 16,000-token floor as its limit, but writes a
+        # few thousand: counting the limit stopped a $1 cap at about $0.03 of real spend
+        budget = run.Budget(0.10, {"m": (1.0, 15.0)})
+        budget.before("m", "s" * 30, "t" * 300, 16_000)  # (16,000 out would be $0.24: not counted)
+        self.assertFalse(budget.stopped)
+        budget.after("m", 1_000, 9_000)  # (this model wrote 9,000 tokens: $0.136 spent)
+        with self.assertRaises(run.SpendCap):
+            budget.before("m", "s", "t", 16_000)  # (already past the cap)
+        self.assertTrue(budget.stopped)
+
+    def test_after_a_long_answer_the_next_call_is_expected_to_write_as_much_again(self) -> None:
+        budget = run.Budget(0.20, {"m": (1.0, 15.0)})
+        budget.after("m", 100, 5_000)  # ($0.0751 spent; the next is expected to write 10,000)
+        with self.assertRaises(run.SpendCap):
+            budget.before("m", "x", "y", 16_000)  # (+$0.15 would pass $0.20)
+        small = run.Budget(0.20, {"m": (1.0, 15.0)})
+        small.after("m", 100, 1_000)  # (the floor of 4,000 applies: +$0.06)
+        small.before("m", "x", "y", 16_000)
+        self.assertFalse(small.stopped)
 
     async def test_a_cap_that_is_not_reached_changes_nothing(self) -> None:
         budget = run.Budget(1_000_000.0, self.PRICES)

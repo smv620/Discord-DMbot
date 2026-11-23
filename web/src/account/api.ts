@@ -2164,7 +2164,9 @@ export interface WorldPlaceNote {
   id: string;
   entityId: string;
   name: string;
-  layer: "terrain" | "climate" | "control";
+  layer: "terrain" | "climate" | "control" | "culture" | "population";
+  /** A named culture's name, for a culture row (#4412); absent or null otherwise. */
+  culture?: string | null;
   value: string;
   /** The table's own words, when the value is "other" (the same as Discord's card). */
   words: string;
@@ -2557,8 +2559,19 @@ export interface PlaceSpelling {
   /** The new spelling ("North Haven"). */
   spelling: string;
 }
+/** The three lines at the top of a character's card (#5051): sent to a DM only, and only while CARD_SUMMARY_LIVE. */
+export interface CardSummaryFields {
+  /** The sentence on who they are; null or absent while it is not written yet. */
+  who?: string | null;
+  /** True while DMbot is writing the sentence (`who` is then null). */
+  whoPending?: boolean;
+  /** A scene line on the first meeting, words only. */
+  firstMet?: string | null;
+  /** A scene line on the last mention, words only. */
+  lastMentioned?: string | null;
+}
 /** One name in a campaign's memory, as the Names page lists it (#2295). */
-export interface NameRow {
+export interface NameRow extends CardSummaryFields {
   id: string;
   name: string;
   /** The kind's key; its words are in the page's `kinds`. */
@@ -2869,7 +2882,7 @@ export interface SheetAnswer {
 }
 
 /** One NPC's page, as the players see it, plus the caller's own note (#2266). */
-export interface NpcPage {
+export interface NpcPage extends CardSummaryFields {
   id: string;
   name: string;
   kind: string;
@@ -4433,5 +4446,5 @@ export interface PlaceWorld {
 
 /** What the table may be told of a place's land, climate and ruler: words only, no DM-only mark and no group the reader may not know. */
 export interface PlaceWorldTable {
-  rows: { layer: "terrain" | "climate" | "control"; value: string; words: string; groupName: string | null; how: string; part: string }[];
+  rows: { layer: "terrain" | "climate" | "control" | "culture" | "population"; value: string; words: string; groupName: string | null; how: string; part: string; culture?: string | null }[];
 }
