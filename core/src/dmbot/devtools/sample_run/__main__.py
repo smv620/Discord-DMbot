@@ -672,6 +672,7 @@ async def run_many(args: argparse.Namespace, **kw: Any) -> int:
     from dmbot.devtools import common
 
     say: Callable[[str], None] = kw.get("say") or (lambda line: print(line, flush=True))
+    check_compare(args)  # (before anything is spent)
     n = max(1, args.repeat)
     if not args.yes or n == 1:
         return await run(args, **kw)
@@ -889,12 +890,6 @@ async def _finish(
     before = args.compare or _newest(folder, summary_glob(args.version))
     if before is not None:
         old_commit, old = spread.load(before)
-        old_version = spread.version_of(before)
-        if old_version != args.version:  # (only an explicit --compare can be another series)
-            raise SampleError(
-                f"--compare is a summary of the {old_version} session, not the {args.version} one:"
-                " the versions are never mixed"
-            )
         moved = spread.compare(stats, old)
         say(f"Since {old_commit or 'the last summary'}: " + ("nothing moved" if not moved else ""))
         for line in moved:
@@ -904,6 +899,24 @@ async def _finish(
             folder / summary_file(args.version, stamp), stats, commit=commit, version=args.version
         )
     return 1 if failed else 0
+
+
+def check_compare(args: argparse.Namespace) -> None:
+    """An explicit `--compare` must be a summary of the same version of the session: refused here,
+    before any run spends, never after (docs/design/session_names.md, section 8)."""
+    if args.compare is None:
+        return
+    from dmbot.devtools.sample_run import spread
+
+    try:
+        theirs = spread.version_of(args.compare)
+    except (OSError, ValueError) as exc:  # (the kind only: never the file's contents)
+        raise SampleError(f"--compare cannot be read ({type(exc).__name__})") from exc
+    if theirs != args.version:
+        raise SampleError(
+            f"--compare is a summary of the {theirs} session, not the {args.version} one:"
+            " the versions are never mixed"
+        )
 
 
 def summary_version(args: argparse.Namespace) -> str:

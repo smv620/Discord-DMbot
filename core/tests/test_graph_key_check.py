@@ -1220,3 +1220,11 @@ class WrongShape(unittest.TestCase):
     def test_two_parts_of_one_name_count_it_once(self) -> None:
         data = backup([("e1", "Dwarven", "place"), ("e2", "Valley", "place")], [])
         self.assertEqual(gkc.check(data, self.key()).wrong_shape, 1)
+
+    def test_an_article_alone_or_a_description_is_no_part(self) -> None:
+        key = {"nodes": [{"name": "Valley of the Dead", "kind": "place"}], "pairs": []}
+        data = backup([("e1", "The", "place")], [])
+        self.assertEqual(gkc.check(data, key).wrong_shape, 0)
+        unnamed = backup([("e2", "Dead", "person")], [])
+        unnamed["sections"]["memory"][0]["unnamed"] = True
+        self.assertEqual(gkc.check(unnamed, key).wrong_shape, 0)

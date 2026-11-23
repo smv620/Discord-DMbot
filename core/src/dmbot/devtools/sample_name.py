@@ -166,7 +166,10 @@ def slot_drops(
     after those deletions are fewer than `need`, the oldest kept deploy goes with all its runs,
     never the newest kept deploy (a deploy any of whose campaigns `deletable` refuses is left
     alone). Returns the extra campaign ids to delete, their names (oldest deploy first), and how
-    many runs there is room for (`need`, or fewer; 0 means none)."""
+    many runs there is room for (`need`, or fewer; 0 means none). The deploy being made is never
+    a candidate: its campaigns of another version of the session are kept whatever the slots
+    (docs/design/session_names.md, section 8), and "the newest kept deploy" is the newest other
+    one, as before the versions."""
     if free is None:
         return (), (), need
     room = free + len(kept.delete)
@@ -174,7 +177,7 @@ def slot_drops(
     by_deploy: dict[int, list[tuple[str, str]]] = {}
     for cid, name in existing:
         n = deploy_of(name)
-        if n is not None and cid in staying:
+        if n is not None and n != kept.deploy and cid in staying:
             by_deploy.setdefault(n, []).append((cid, name))
     order = sorted(by_deploy)  # oldest first
     extra_ids: list[str] = []

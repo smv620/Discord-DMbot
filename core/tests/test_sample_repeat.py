@@ -125,12 +125,19 @@ class Repeat(unittest.TestCase):
             _, said, _, _ = self.go(d, [0.5])
             self.assertTrue(any(line.startswith("Since typed1") for line in said))
 
-    def test_compare_with_another_versions_summary_is_refused(self) -> None:
-        with tempfile.TemporaryDirectory() as d:
+    def test_compare_with_another_versions_summary_is_refused_before_any_run(self) -> None:
+        calls: list[Any] = []
+
+        async def run(args: Any, **kw: Any) -> int:
+            calls.append(kw)
+            return 0
+
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(cli, "run", run):
             other = Path(d, "elsewhere.json")
             spread.save(other, spread.summarize([{"x": 1}]), commit="c", version="no-capitals")
             with self.assertRaisesRegex(Exception, "never mixed"):
-                self.go(d, [0.5], "--compare", str(other))
+                asyncio.run(cli.run_many(_args(d, "--compare", str(other)), say=lambda _: None))
+        self.assertEqual(calls, [])  # (nothing spent)
 
     def test_without_yes_it_is_one_run_that_spends_nothing(self) -> None:
         calls: list[Any] = []

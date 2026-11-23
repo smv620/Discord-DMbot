@@ -93,6 +93,21 @@ class Versions(unittest.TestCase):
         self.assertCountEqual(typed.delete, ["t1", "t2"])
         self.assertIn("n1", typed.keep)
 
+    def test_short_of_slots_an_older_deploys_rerun_never_drops_its_other_version(self) -> None:
+        # (the reviewer's case: typed 30 again with 3 runs and no free slot)
+        have = [("t33", N(33)), ("n30", N(30, None, "no-capitals")), ("t30", N(30))]
+        kept = sample_name.plan_keep(have, 30)
+        extra, _names, room = sample_name.slot_drops(have, kept, need=3, free=0)
+        self.assertNotIn("n30", extra)
+        self.assertEqual(extra, ())  # (33 is the newest other deploy: never touched)
+        self.assertEqual(room, 1)  # (only the typed 30 it replaces frees a slot)
+
+    def test_short_of_slots_the_newest_other_deploy_is_still_never_dropped(self) -> None:
+        have = [("t34", N(34)), ("n35", N(35, None, "no-capitals"))]
+        kept = sample_name.plan_keep(have, 35)
+        extra, _names, room = sample_name.slot_drops(have, kept, need=2, free=0)
+        self.assertEqual((extra, room), ((), 0))
+
 
 class Keeping(unittest.TestCase):
     def plan(self, numbers: list[int | None], deploy: int) -> sample_name.Kept:

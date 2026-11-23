@@ -510,6 +510,7 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     others = [r for r in graph.relations if str(r["predicate"]) != "plays"]
     linked = {str(r["subject_id"]) for r in others} | {str(r["object_id"]) for r in others}
     tied_clues = {str(r["subject_id"]) for r in graph.relations if r["predicate"] == "clue_to"}
+    named_extras: list[str] = []  # (stored names only, never a description: the wrong-shape count)
     for i, e in graph.entities.items():
         if i in matched_ids:
             continue
@@ -530,7 +531,8 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             continue  # (a clue tied to a thread is scored on the Clues line, #4624 6b)
         report.extra_entries[_kind_for(str(e["type"]))] += 1
         report.extra_list.append(listed)
-    report.wrong_shape = _wrong_shape(report.entries, names, report.extra_list)
+        named_extras.append(str(e["name"]))
+    report.wrong_shape = _wrong_shape(report.entries, names, named_extras)
     for name in key.get("must_not_names", ()):
         # (a must-not name is still found in a description too, as before; only one that is a
         # key `unnamed` entry's own description is right as a description, #3545)
@@ -1066,13 +1068,17 @@ def _kind_for(entry_type: str) -> str:
     return entry_type
 
 
+_ARTICLES = frozenset({"a", "an", "the"})
+
+
 def _wrong_shape(
-    rows: Sequence[Row], names: Mapping[str, Sequence[str]], extras: Sequence[tuple[str, ...]]
+    rows: Sequence[Row], names: Mapping[str, Sequence[str]], extras: Sequence[str]
 ) -> int:
-    """How many missed key entries have an extra stored whose words are some, never all, of one of
-    the entry's names: "Valley" or "Dwarven" for "Dwarven Valley" (an article never counts).
-    Each key entry counts once, however many parts of it are stored."""
-    parts = [frozenset(_plain(extra[-1]).split()) for extra in extras]
+    """How many missed key entries have an extra stored name whose words are some, never all, of
+    one of the entry's names: "Valley" or "Dwarven" for "Dwarven Valley". An article never counts,
+    so "The" alone is no part of "Valley of the Dead". Each key entry counts once, however many
+    parts of it are stored."""
+    parts = [frozenset(_plain(extra).split()) - _ARTICLES for extra in extras]
     parts = [p for p in parts if p]
     out = 0
     for r in rows:
