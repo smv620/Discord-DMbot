@@ -12314,9 +12314,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             scanned = set(lines)
             read_in = [x for x in heard_in if x.text in scanned]
             people = await self._people_keys(gid, users, cid)
+            # (an import's card shows the reader's stage, part n of m, #5091; a live session has no
+            # such line yet, #5124)
+            stage = self.import_job.store if import_scan and self.import_job is not None else None
+
+            async def moved(part: int, parts: int) -> None:
+                if stage is not None and session_id is not None:
+                    await stage.set_names(
+                        gid, session_id, "reading", int(time.time()), part=part, parts=parts
+                    )
+
             every, reader_kinds, trace, unread = await self._read_session_names(
-                gid, cid, read_in, people, every
+                gid, cid, read_in, people, every, progress=moved if stage is not None else None
             )
+            if stage is not None and session_id is not None and unread is not None:
+                try:
+                    await stage.set_names(gid, session_id, "read", int(time.time()), unread=unread)
+                except Exception as exc:  # (the card is a nicety: the names are suggested)
+                    log.warning("The import card's names stage failed (%s)", type(exc).__name__)
         if loose and unread is None:
             # The reader did not read (nothing to read, a plan without it, a failure): the scan
             # alone never decides with the loosened rule, so its usual list stands.
@@ -12485,6 +12500,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         heard_in: Sequence[Line],
         people: Collection[str],
         scan: list[Suggestion],
+        *,
+        progress: Callable[[int, int], Awaitable[None]] | None = None,
     ) -> tuple[list[Suggestion], dict[str, str], list[name_trace.Row], int | None]:
         """The name reader over the session's lines (docs/design/session_names.md, slice 2),
         joined with the scan's suggestions (`name_reader.join`). Never raises: no AI, a plan
@@ -12525,6 +12542,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     consenting=lambda: self.consent.consenting(gid),
                     max_tokens=OUTPUT_FLOOR,  # (background calls never send less, #2596)
                     rules=(campaign.target_ruleset, campaign.fallback_ruleset),
+                    progress=progress,
                 )
             kept, dropped = name_reader.tally(read.heard, {r.number: r.text for r in rows})
             joined, kinds = name_reader.join(scan, kept)

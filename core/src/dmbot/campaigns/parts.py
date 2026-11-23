@@ -73,6 +73,13 @@ _IMPORT_DROP = (
     "story_parts",
     "story_started_at",
     "story_moved_at",
+    # ...and where the name reader is (0606): a restored session starts blank too
+    "names_state",
+    "names_part",
+    "names_parts",
+    "names_started_at",
+    "names_moved_at",
+    "names_unread",
 )
 _SESSION_KEYS = ("session", "lines", "suggestions", "respells", "import")
 

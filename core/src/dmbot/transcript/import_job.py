@@ -328,6 +328,33 @@ class ImportStore:
                 (now, state, part, now, part, parts, state, guild_id, session_id),
             )
 
+    async def set_names(
+        self,
+        guild_id: int,
+        session_id: str,
+        state: str,
+        now: int,
+        *,
+        part: int | None = None,
+        parts: int | None = None,
+        unread: int | None = None,
+    ) -> None:
+        """Where the name reader of this import is (#5091, as `set_story` is for the story read):
+        'reading' (stretch `part` of `parts`) or 'read' (with how many stretches could not be read,
+        `unread`, which the card says plainly, never as "no names"). Counts and times only. It
+        started when it first went to 'reading' (or went back to an earlier stretch: a new read
+        after a restart); every call is a move."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET names_moved_at = %s,"
+                " names_started_at = CASE WHEN %s = 'reading' AND (names_state <> 'reading'"
+                " OR coalesce(%s, 0) < names_part) THEN %s ELSE names_started_at END,"
+                " names_part = coalesce(%s, names_part), names_parts = coalesce(%s, names_parts),"
+                " names_unread = coalesce(%s, names_unread),"
+                " names_state = %s WHERE guild_id = %s AND session_id = %s",
+                (now, state, part, now, part, parts, unread, state, guild_id, session_id),
+            )
+
     async def finish_scan(self, guild_id: int, session_id: str, ended: int) -> None:
         """The scan ran to `ended` (seconds): its window is closed."""
         async with self._db.guild(guild_id) as conn:
