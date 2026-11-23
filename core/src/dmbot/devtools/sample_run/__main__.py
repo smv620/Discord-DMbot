@@ -269,8 +269,6 @@ async def run(
     lore, windows, story, recap_calls = steps.estimate_cost(
         len(lore_text.split()), len(transcript.utterances), chars
     )
-    for line in describe_input(transcript, args.version):  # (counts, and the sample's names only)
-        say(line)
     say(plan.Cost(lore, windows, story, recap_calls if recap else 0).line())
     if not args.accept_all:
         calls = max(args.max_decisions, 0)
@@ -278,6 +276,8 @@ async def run(
             f"decisions: at most {calls} careful-model calls (#3900),"
             f" about ${decide_mod.estimate(calls):.2f}"
         )
+    for line in describe_input(transcript, args.version):  # (counts, and the sample's names only)
+        say(line)
     if not args.yes:
         say("Nothing was run. Add --yes to spend the money.")
         return 0
