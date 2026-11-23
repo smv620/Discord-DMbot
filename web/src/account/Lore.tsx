@@ -240,6 +240,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
         {done && (
           <div class="stack">
             <p role="status">{upload.namesFound + upload.linksFound === 0 ? words.foundNothing : words.found(upload.namesFound, upload.linksFound)}</p>
+            {(upload.namesCut ?? 0) > 0 && <p role="status">{words.cut(upload.namesCut ?? 0)}</p>}
             {upload.namesFound + upload.linksFound > 0 && (
               <>
                 {upload.choice === "smart" && <p>{words.guessed}</p>}
