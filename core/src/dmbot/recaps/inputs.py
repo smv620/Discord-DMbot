@@ -12,6 +12,7 @@ import logging
 from collections.abc import Collection, Iterator, Sequence
 from typing import Any, Literal
 
+from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.extractor import readable
 from dmbot.memory.models import name_key, spelling_key
 from dmbot.memory.secret_aloud import MIN_KEY as MIN_SECRET_LETTERS
@@ -231,6 +232,18 @@ def familiar_for(
     )
 
 
+def described_words(names: Any, allowed: Collection[str]) -> dict[str, str]:
+    """{name: how it reads in a sentence} for each described entry the recap may use (#5173): a
+    thing or a place with no name of its own reads "the gemstone mine", given to the writer the
+    way a character's familiar name is, so it is never written as a proper name."""
+    ok = set(allowed)
+    return {
+        e.name: in_sentence(e.name, True)
+        for e in getattr(names, "entities", {}).values()
+        if getattr(e, "described", False) and e.name in ok
+    }
+
+
 class NotLoaded(Exception):
     """The inputs of a recap could not be loaded, and which of the three it was (#2680): the
     campaign is not there (`campaign`), its names could not be read (`names`), or the campaign has
@@ -417,6 +430,7 @@ async def load_inputs_or_why(
     aliases, pcs, party = recap_people(names, allowed_now, members)
     previous = fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else ""
     familiar = familiar_for(names, allowed_now, lines, previous, aliases, shown)
+    familiar.update(described_words(names, allowed_now))
     return Inputs(
         lines=lines,
         dm_ids=set(campaign.dm_user_ids),

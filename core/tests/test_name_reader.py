@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import unittest
-from typing import Any
+from typing import Any, ClassVar
 
 from dmbot.memory import name_reader as nr
 
@@ -429,3 +429,41 @@ class TheBotStep(unittest.TestCase):
         )
         self.assertEqual(moves, [(1, 1)])
         card.stage.assert_awaited_once_with(after_session.NAMES, 1, 1)
+
+
+class SingledOut(unittest.TestCase):
+    """A thing or a place singled out with no name (#5173, slice 6): an item or a place only,
+    given without its article, and never a name of its own."""
+
+    LINES: ClassVar[dict[str, str]] = {
+        "1": "the gemstone mine is shut",
+        "2": "a woman with a sad look waits",
+        "3": "x",
+    }
+
+    def test_an_item_or_a_place_is_kept_without_its_article(self) -> None:
+        got = nr.parse(
+            answer(item("the gemstone mine", nr.SINGLED_OUT, [1], "place")), self.LINES, {}
+        )
+        self.assertEqual([(h.name, h.why) for h in got.heard], [("gemstone mine", "singled_out")])
+
+    def test_a_person_a_group_or_an_event_is_refused(self) -> None:
+        got = nr.parse(
+            answer(
+                item("woman with a sad look", nr.SINGLED_OUT, [2], "person"),
+                item("gemstone mine", nr.SINGLED_OUT, [1], "group"),
+                item("gemstone mine", nr.SINGLED_OUT, [1], "event"),
+            ),
+            self.LINES,
+            {},
+        )
+        self.assertEqual(got.heard, [])
+        self.assertEqual(got.refused[nr.BAD_KIND], 3)
+
+    def test_it_is_the_weakest_reason_and_needs_three_hearings(self) -> None:
+        self.assertEqual(nr.WHYS[-1], nr.SINGLED_OUT)
+        self.assertEqual(nr.HEARINGS[nr.SINGLED_OUT], 3)
+
+    def test_the_question_asks_for_it_and_its_version_moved(self) -> None:
+        self.assertIn('"singled_out"', nr.SYSTEM)
+        self.assertNotEqual(nr.PROMPT_VERSION, "names-1")

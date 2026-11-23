@@ -358,6 +358,7 @@ from dmbot.memory import (
     scan_kinds,
     scene_move_step,
     scene_step,
+    singled_out,
     time_limits,
     voyage,
     waiting_now,
@@ -12631,6 +12632,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         settled = name_groups.Settled()
         found_how: dict[str, name_groups.Group] = {}  # (3b: none with the switch off)
+        singled: list[name_reader.Found] = []  # the reader's singled-out things (#5173, slice 6)
         read: list[name_reader.Found] = []
         read_in: list[Line] = []  # the lines the reader read, numbered from 1 in this order
         unread: int | None = None  # the reader's batches not read; None: it did not read at all
@@ -12684,6 +12686,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     gid, cid, read_in, people, spelled,
                     card=card, progress=moved if stage is not None else None,
                 )  # fmt: skip
+                # A thing or a place singled out with no name (#5173) is decided apart, by
+                # `singled_out` below: it is a description, never grouped by sound with a name
+                singled = [f for f in read if f.why == name_reader.SINGLED_OUT]
                 # A reader that failed after it started leaves "stopped", never a "reading" that
                 # looks as if it still runs; one that never started leaves the stage empty.
                 ended = "read" if unread is not None else "stopped" if started else ""
@@ -12732,6 +12737,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     f.name, f.times, why=f.why, typed=typed_by_reader(f.lines), kind=f.kind
                 )
                 for f in read
+                if f.why != name_reader.SINGLED_OUT
             ]
             closeness = await self._name_closeness(gid, cid)
             heard_wrong: Callable[[str], name_scan.Match | None]
@@ -12755,6 +12761,40 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             split: list[Suggestion] = []
             if loose:  # "Wulfgar of Icewind Dale" is two names when the reader named a part of it
                 every, split = name_scan.split_joined(every, read_keys, skip)
+            if singled:
+                # Slice 6 (#5173, Supervisor's ruling): at most 3 a session, first among the
+                # session's 10 (so never on top of them, and never held for "More names": past 3
+                # they are dropped); the names they displace past the 10 wait as before.
+                picked = await self._singled_out(gid, cid, singled, read_in, skip)
+                for k in picked.kept:
+                    typed = sum(
+                        1 for n in k.lines if n.isdigit() and 0 < int(n) <= len(read_in)
+                        and read_in[int(n) - 1].typed
+                    )  # fmt: skip
+                    # (never "typed" as its how, even when a hearing was typed: the card must say
+                    # it is a description; the typed count still goes on the card)
+                    found_how[name_key(k.name)] = name_groups.Group(
+                        k.name, (), k.times, name_reader.SINGLED_OUT, False, k.kind,
+                        typed_times=typed,
+                    )  # fmt: skip
+                    if k.kind in LORE_KINDS:
+                        reader_kinds[k.name] = LORE_KINDS[k.kind]
+                mine = {name_key(k.name) for k in picked.kept}
+                every = [
+                    *(Suggestion(k.name, k.times) for k in picked.kept),
+                    *(s for s in every if name_key(s.name) not in mine),
+                ]
+                trace += [
+                    name_trace.Row(name_trace.READER, n, why, name_reader.SINGLED_OUT, times=t)
+                    for n, why, t in picked.refused
+                ]
+                if picked.shorter_returns:
+                    trace.append(
+                        name_trace.Row(
+                            name_trace.READER, "", singled_out.SHORTER_RETURN,
+                            times=picked.shorter_returns,
+                        )
+                    )  # fmt: skip
             # An ordinary word the reader didn't also find is never suggested by the scan alone
             # (design section 3). Its trace says when the reader could not say (a call's fault).
             why_ordinary = name_scan.ORDINARY_PART_READ if unread else name_scan.ORDINARY
@@ -12876,6 +12916,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # (a kind the campaign's ontology does not allow falls back to none: the card asks)
             for kind in dict.fromkeys((kinds.get(suggestion.name, "concept"), "concept")):
                 try:
+                    how = (found_how or {}).get(name_key(suggestion.name))
                     written = await self.memory.add_entity(
                         gid,
                         cid,
@@ -12884,6 +12925,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         source="scan",
                         description=f"Heard {suggestion.times} times",
                         session_started_at=session_at,
+                        # a description, not a name (#5173): it reads "the gemstone mine"
+                        described=how is not None and how.why == name_reader.SINGLED_OUT,
                     )
                     break
                 except MemoryRuleError as exc:
@@ -13071,6 +13114,32 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return text_names_a_secret(lookup, spelling) or close_to_secret(spelling)
 
         return heard_wrong, near_secret
+
+    async def _singled_out(
+        self,
+        gid: int,
+        cid: str,
+        found: Sequence[name_reader.Found],
+        read_in: Sequence[Line],
+        skip: Collection[str],
+    ) -> singled_out.Decided:
+        """Which of the reader's singled-out things and places are offered (#5173, slice 6;
+        `memory/singled_out.py`): the reader's lines by its numbers, the names never to suggest,
+        and the player characters, whose own gear is never singled out."""
+        assert self.memory is not None
+        try:
+            players = {
+                name_key(e.name)
+                for e in await self.memory.entities(gid, cid)
+                if e.is_player_character
+            }
+        except Exception as exc:  # (none known: a player's gear may then be asked about, once)
+            log.warning(
+                "Singled out: the player characters could not be read (%s)", type(exc).__name__
+            )
+            players = set()
+        texts = {str(i): x.text for i, x in enumerate(read_in, 1)}
+        return singled_out.decide(found, texts, set(skip), players)
 
     async def _read_session_names(
         self,

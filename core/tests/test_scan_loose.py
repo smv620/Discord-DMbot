@@ -330,6 +330,47 @@ class TheBotStep(unittest.TestCase):
                 sorted(self.run_step(stand_in(d, {"Hope": "creature"}))), ["Hope", "Vorna"]
             )
 
+    def test_a_thing_the_story_keeps_coming_back_to_is_offered_first_and_marked(self) -> None:
+        # (#5173, slice 6: decided apart from the names, first among the session's 10, written
+        # as a description, never on the reader's word: the mine is in two stretches)
+        from dmbot.bot import DMBot
+        from dmbot.memory import singled_out as so
+        from dmbot.memory.name_reader import SINGLED_OUT
+
+        texts = ["We call Vorna home.", "Vorna waves.", *(["The road is cold."] * 80)]
+        for at in (2, 40, 80):
+            texts[at] = "The gemstone mine is shut."
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            mine = Found("gemstone mine", "place", SINGLED_OUT, 3, ("3", "41", "81"))
+            door = Found("door", "place", SINGLED_OUT, 3, ("4", "5", "6"))
+
+            async def read(*_a: Any, **_k: Any) -> Any:
+                return [mine, door], [], 0
+
+            kwargs: list[dict[str, Any]] = []
+
+            async def add_entity(*_: Any, name: str, **kw: Any) -> Any:
+                bot.added.append(name)
+                kwargs.append({"name": name, **kw})
+                return SimpleNamespace(value=SimpleNamespace(id=f"e-{name}"))
+
+            async def entities(*_: Any) -> list[Any]:
+                return []
+
+            bot._read_session_names = read
+            bot.memory.add_entity = add_entity
+            bot.memory.entities = entities
+            bot._singled_out = lambda *a: DMBot._singled_out(bot, *a)
+            made = self.run_step(bot, texts)
+            self.assertEqual(made[0], "Gemstone mine")  # (first, one capital only)
+            marked = {k["name"]: k.get("described") for k in kwargs}
+            self.assertTrue(marked["Gemstone mine"])
+            self.assertFalse(marked.get("Vorna"))
+            self.assertIn((nt.READER, "door", so.ONE_STRETCH), self.ends(d))
+            group = bot._keep_found.await_args_list[0].args[4]
+            self.assertEqual(group.why, SINGLED_OUT)  # (what the card shows: name_found.how)
+
     def test_with_the_switch_off_the_scan_is_as_before(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self.run_step(stand_in(d, {"Hope": "creature"}, on=False)), ["Vorna"])

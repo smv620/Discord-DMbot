@@ -37,6 +37,7 @@ from dmbot.memory import (
     tags,
 )
 from dmbot.memory.backstory_keep import undo_batches
+from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
@@ -316,6 +317,10 @@ def _more(items: list[str], sep: str = ", ") -> str:
     return shown + (f" … and {len(items) - SHOWN} more" if len(items) > SHOWN else "")
 
 
+# A kept entry that is the story's description of a thing or a place, not a name (#5173)
+DESCRIBED_LINE = "\n📌 Described in the story, no name of its own."
+
+
 @dataclass(frozen=True)
 class Row:
     """One connection as the card reads it from this name's side."""
@@ -437,7 +442,9 @@ def _rows(
             # (a route's length DMbot only read is the DM's until kept: a player never sees it,
             # #4255)
             r = dataclasses.replace(r, **NO_LENGTH)
-        found.setdefault(words, []).append(Row(r.id, words, other.name, r.secret, r, after))
+        # (a description reads as the story said it, "the gemstone mine", #5173)
+        said = in_sentence(other.name, other.described)
+        found.setdefault(words, []).append(Row(r.id, words, said, r.secret, r, after))
     return [row for group in found.values() for row in group]
 
 
@@ -1102,6 +1109,8 @@ async def show_card(
         line = party_tell.card_line([(_md(n), k) for _, n, k in catch_up])
         if line and len(text) + len(line) <= CARD_MAX:
             text += line
+    if entity.described and len(text) + len(DESCRIBED_LINE) <= CARD_MAX:
+        text += DESCRIBED_LINE  # (a description, not a name: #5173; "Give it a name…" clears it)
     if secrets and (entity.status == PROPOSED or entity.unnamed):
         # The scene (#3596): DMbot's summary of who, where and what, for a question still open;
         # read after the sweep and the consent check, DM-only, "Where was it said?" is the source.

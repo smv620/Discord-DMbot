@@ -1177,6 +1177,21 @@ def heard_line(times: int, typed: int, also: Sequence[str], *, written: bool = F
     return f"Typed {_times(typed)} in chat{also_heard}{spelled}."
 
 
+SINGLED_OUT = "singled_out"  # how a singled-out thing or place was found (#5173; name_found.how)
+
+
+def singled_line(heard: str, times: int) -> str:
+    """The card's line for a thing or a place the story singles out with no name (#5173, as
+    ruled): "📌 Not a name, but the story keeps coming back to it: “gemstone mine” (heard 4
+    times)." The quote is the story's own words; counts only otherwise."""
+    words = " ".join(heard.split())
+    words = words[:1].lower() + words[1:]  # (as heard: the capital is only DMbot's proposal)
+    return (
+        f"📌 Not a name, but the story keeps coming back to it: \u201c{_md(words)}\u201d "
+        f"(heard {_times(max(times, 1))})."
+    )
+
+
 def heard_times(entity: Entity, found: Found | None = None) -> int:
     """How many times a waiting name was heard: the count kept with what made it a name (0611),
     else the one the after-session step wrote in its note ("Heard 5 times"), else 1."""
@@ -1244,6 +1259,7 @@ def suggestion_text(
     scene: str = "",
     players: str = "",  # the DM's card only: the caller checks the DM (SuggestionReview.prepare)
     counts: tuple[int, int] | None = None,  # (times heard, typed) when kept (#5133 3b): 3c's line
+    singled: bool = False,  # a thing or a place the story singled out, with no name (#5173)
 ) -> str:
     # A name read from the DM's writing was read, not heard.
     verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
@@ -1283,6 +1299,8 @@ def suggestion_text(
         # card with its own question, "Sounds like" or spelled out, keeps it, under this line)
         line = heard_line(*counts, also or [], written=verb == "written")
         heard = f": a new name? {line}" if match is None and not fix_to else f"\n{line}"
+        if singled:  # (it is no name: the card says so instead of asking "a new name?")
+            heard = f"\n{singled_line(entity.name, counts[0])}"
         others = ""
     read = f"\nDMbot's guess: {_bold_kind(kind)}." if kind else ""
     where = f"\n{places}" if places else ""  # where it was said (#2329), under the count
@@ -1357,6 +1375,13 @@ async def tagged_name(memory: MemoryStore, campaign: Campaign, entity: Entity) -
 def _and(items: list[str]) -> str:
     """ "A", "A and B", "A, B and C"."""
     return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+# The singled-out card's answers (#5173, as ruled; this card only)
+KEEP_IT = "✅ Keep it"
+KEEP_PICK = "Keep it? Pick what it is"
+GIVE_IT_A_NAME = "✏️ Give it a name…"
+NOT_WORTH_KEEPING = "🚫 Not worth keeping"
 
 
 def yes_spelled(name: str) -> str:
@@ -1735,6 +1760,7 @@ class SuggestionReview(_Menu):
         self.lore_kept = False  # the sentence from the DM's upload is held for it (#4227)
         self.spellings: list[str] = []
         self.found: Found | None = None  # what made the current one a name (#5133 3b), or None
+        self.singled = False  # a thing or place singled out, no name (#5173): its own answers
         self.kept: _Kept | None = None  # the last yes on a new card, until the next answer (3c-2b)
         self.ended = False  # the end's own steps (the walk's next part, an offer) ran once
         self._buttons()
@@ -1772,6 +1798,7 @@ class SuggestionReview(_Menu):
         ]
         self.spellings = [entity.name, *self.also]
         self.found = await _found(memory, campaign, entity)
+        self.singled = self.found is not None and self.found.how == SINGLED_OUT
         self.refs = []
         self.places = await self._places(interaction, campaign, memory, entity)
         self.entity_id = entity.id
@@ -1800,6 +1827,7 @@ class SuggestionReview(_Menu):
                 if self.found is not None
                 else None
             ),
+            singled=self.singled,
         )
         if self.group is not None:  # say which group, so "Yes, that group" has a "that"
             inside = _and([f"**{_md(logic.shorten(m, 40))}**" for m in self.group.members[:5]])
@@ -1898,16 +1926,22 @@ class SuggestionReview(_Menu):
         DMbot's guess, one press keeps it as that; without one, the kind menu is the yes."""
         name = self.name or "it"
         row = 0
+        # A thing or a place singled out with no name (#5173, as ruled): nothing is being
+        # spelled, so the three answers say so; "Give it a name…" makes it a real name
+        singled = self.singled
         if self.known_kind:
             self.add_item(
                 _Button(
-                    self._yes, label=yes_spelled(name), style=discord.ButtonStyle.success, row=0
+                    self._yes,
+                    label=KEEP_IT if singled else yes_spelled(name),
+                    style=discord.ButtonStyle.success,
+                    row=0,
                 )
             )
         else:
             self.kind = _Select(
                 self._kind_picked,
-                placeholder=logic.shorten(spelled_pick(name), 150),
+                placeholder=logic.shorten(KEEP_PICK if singled else spelled_pick(name), 150),
                 options=[
                     discord.SelectOption(label=label, value=kind) for kind, label in KINDS.items()
                 ],
@@ -1918,13 +1952,18 @@ class SuggestionReview(_Menu):
         self.add_item(
             _Button(
                 self._spelled_another,
-                label="✏️ Spelled another way…",
+                label=GIVE_IT_A_NAME if singled else "✏️ Spelled another way…",
                 style=discord.ButtonStyle.primary,
                 row=row,
             )
         )
         self.add_item(
-            _Button(self._no, label="🚫 Not a name", style=discord.ButtonStyle.secondary, row=row)
+            _Button(
+                self._no,
+                label=NOT_WORTH_KEEPING if singled else "🚫 Not a name",
+                style=discord.ButtonStyle.secondary,
+                row=row,
+            )
         )
         # Another kind than DMbot's guess (its own mark, so it never reads as another spelling),
         # and the answers for another time, on the next row; with no guess, "Later" goes up beside

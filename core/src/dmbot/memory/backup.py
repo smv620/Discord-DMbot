@@ -335,6 +335,7 @@ def _valid(column: str, value: object) -> bool:
         "setting",
         "srd",
         "length_approx",  # (a route's length said "about", #4255)
+        "described",  # (a description, not a name, #5173)
     ):
         return isinstance(value, bool)
     if column == "length_amount":  # a route's stated length (#4255)
@@ -938,6 +939,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "length_approx": False,
                 "length_from": None,
                 "players_text": None,  # from before the players' line (#2967)
+                "described": False,  # from before #5173: every entry's name was a name
                 **raw,
             }
             if "setting_from" not in raw:  # (from before #4173 slice 2b: a setting was the DM's)

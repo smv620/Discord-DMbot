@@ -614,7 +614,7 @@ def _entity(r: dict[str, Any]) -> Entity:
         form=r.get("form"), form_from=r.get("form_from"),
         length_words=r.get("length_words"), length_amount=r.get("length_amount"),
         length_unit=r.get("length_unit"), length_approx=bool(r.get("length_approx")),
-        length_from=r.get("length_from"),
+        length_from=r.get("length_from"), described=bool(r.get("described")),
     )  # fmt: skip
 
 
@@ -4918,8 +4918,10 @@ class MemoryStore:
         role: str | None = None,
         hidden_from_players: bool = False,
         session_started_at: int | None = None,
+        described: bool = False,
     ) -> Written[Entity]:
-        """A new person, place or thing, with its name as the first alias. `role`: for a
+        """A new person, place or thing, with its name as the first alias. `described`: a thing
+        or a place the session singled out with no name of its own (#5173). `role`: for a
         character, player character, NPC or god (the older kinds npc, player_character,
         deity and creature are read as a character with that role). `played_by`: the
         Discord user playing a player character. `hidden_from_players`: the DM's "Players don't
@@ -4942,7 +4944,7 @@ class MemoryStore:
             row = await _make_entity(
                 w, type=type, name=name, source=source, status=status, description=description,
                 played_by=played_by, role=role, hidden_from_players=hidden_from_players,
-                session_started_at=session_started_at,
+                session_started_at=session_started_at, described=described,
             )  # fmt: skip
             return Written(_entity(row), w.batch)
 
@@ -5750,6 +5752,11 @@ class MemoryStore:
                     "unnamed_what": None,
                     "description": description,
                 }
+                keep_old = False
+            if current.get("described"):
+                # The DM giving a description a name (#5173, "Give it a name…"): a name now, and
+                # the story's words for it ("Gemstone mine") are no spelling of that name.
+                changes["described"] = False
                 keep_old = False
             row = await w.update(ENTITIES, entity_id, changes)
             await _relabel_unnamed(
@@ -7646,6 +7653,10 @@ class MemoryStore:
         keep = await _entity_row(w, keep_id)
         gone = await _entity_row(w, gone_id)
         if keep["unnamed"] and not gone["unnamed"]:
+            keep_id, gone_id, keep, gone = gone_id, keep_id, gone, keep
+        elif keep.get("described") and not gone.get("described") and not gone["unnamed"]:
+            # A description joined with a real name (#5173): the name is kept, whichever way round
+            # the merge was asked, as for an unnamed person, so the mark goes with the description
             keep_id, gone_id, keep, gone = gone_id, keep_id, gone, keep
         elif (
             join_alias is None
@@ -12933,6 +12944,7 @@ async def _make_entity(
     role: str | None,
     hidden_from_players: bool,
     session_started_at: int | None,
+    described: bool = False,
 ) -> Any:
     """The writes that make a new entry (and its first alias), inside the caller's write: shared by
     `add_entity` and `link_new_event` so an entry and what hangs on it can be one change."""
@@ -12956,6 +12968,7 @@ async def _make_entity(
             "needs_look": False,
             "unique_item": None,
             "hidden_from_players": hidden_from_players,
+            "described": described,
         },
     )
     await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))

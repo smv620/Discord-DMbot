@@ -42,7 +42,7 @@ from dmbot.names import not_names
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "names-1"
+PROMPT_VERSION = "names-2"  # (2: "singled_out", #5173)
 BATCH_LINES = 60  # lines a call reads; a few before it go with it for context, never cited
 CONTEXT_LINES = 4
 MIN_SPLIT = 8  # a cut or overfull answer is asked again in halves, down to this many lines
@@ -55,9 +55,14 @@ INTRODUCED = "introduced"
 ADDRESSED = "addressed"
 PLACE = "place"
 SPOKEN_OF = "spoken_of"
-WHYS = (INTRODUCED, ADDRESSED, PLACE, SPOKEN_OF)
+# A thing or a place the story singles out with no name of its own ("gemstone mine"; #5173, slice
+# 6): the weakest reason, kept apart from the names (`memory/singled_out.py` decides on it)
+SINGLED_OUT = "singled_out"
+WHYS = (INTRODUCED, ADDRESSED, PLACE, SPOKEN_OF, SINGLED_OUT)
+SINGLED_KINDS = frozenset({"item", "place"})  # never a person, a group or an event (the ruling)
 # How many hearings each reason needs (design section 5): introduced by name, once
-HEARINGS = {INTRODUCED: 1, ADDRESSED: 2, PLACE: 2, SPOKEN_OF: 2}
+HEARINGS = {INTRODUCED: 1, ADDRESSED: 2, PLACE: 2, SPOKEN_OF: 2, SINGLED_OUT: 3}
+_ARTICLE = re.compile(r"^(?:a|an|the|this|that)\s+", re.IGNORECASE)
 
 # The fixed reasons a candidate ends with (design section 8; the trace's words)
 LISTED = "listed"  # kept: becomes a suggestion (after the joining and the DM's own lists)
@@ -89,6 +94,10 @@ show it is a name, with one of these words:
 - "addressed": someone is spoken to by it ("thank you, hrothgar").
 - "place": it is a place travelled to, come from, or pointed at ("we ride for bryn shander").
 - "spoken_of": it is talked about as one particular someone or something ("hrothgar owes us").
+- "singled_out": a particular thing or place the story treats as one of a kind but never names,
+  given in the lines' own words without "a", "an" or "the" ("gemstone mine", "azure tome"). Only
+  for an item or a place the story comes back to or builds on: never a person or a group, never
+  an everyday thing, and never a thing mentioned once in passing.
 
 Leave out: the names in <known>; the people playing; plain words used as plain words ("the
 dwarf", "a valley"); rules words (spells, conditions, a kind of monster as a kind); and anything
@@ -212,6 +221,12 @@ def check(
     why = _text(item.get("why")).casefold().replace(" ", "_")
     if why not in WHYS:
         return None, BAD_WHY
+    if why == SINGLED_OUT:
+        if kind not in SINGLED_KINDS:
+            return None, BAD_KIND  # (people and groups stay with the claims path, the ruling)
+        name = _ARTICLE.sub("", name)  # (the story's words, without the article: "gemstone mine")
+        if not name:
+            return None, NOT_IN_LINES
     cited = item.get("lines")
     numbers = [_text(n) for n in cited] if isinstance(cited, list) else []
     numbers = [n for n in dict.fromkeys(numbers) if n]
