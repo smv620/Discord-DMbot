@@ -489,7 +489,7 @@ describe("the parts and the pages in each (#2985)", () => {
   it("lists the pages of the part you are in under the tabs, and marks this page", async () => {
     render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="graph" />);
     await waitFor(() => expect(pagesOf().getAllByRole("link").length).toBeGreaterThan(1));
-    expect(pagesOf().getAllByRole("link").map((a) => a.textContent)).toEqual([w.pages.recaps, w.pages.timeline, w.pages.graph, w.pages.names, w.pages.transcripts]);
+    expect(pagesOf().getAllByRole("link").map((a) => a.textContent)).toEqual([w.pages.recaps, w.pages.timeline, w.pages.graph, w.pages.names, w.pages.transcripts, w.pages.maps]);
     const here = pagesOf().getAllByRole("link").filter((a) => a.getAttribute("aria-current"));
     expect(here.map((a) => a.textContent)).toEqual([w.pages.graph]);
     expect(here[0]!.getAttribute("aria-current")).toBe("page");
