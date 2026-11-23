@@ -12282,20 +12282,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # only when the reader found it too.
         tracing = bool(self.settings.name_trace_dir) and self.settings.name_trace_guild == gid
         loose = self.settings.session_names_on and bool(heard_in) and self.name_pass_ai is not None
-        scan_left: list[tuple[str, str]] | None = [] if tracing else None
-        # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
-        # (#394). Which known name each sounds like is worked out when the DM looks,
-        # never saved: names can change, or be made secret, before then.
-        every = group_alike(
-            find_new_names(lines, skip, unlimited=True, loose=loose, refusals=scan_left)
-        )
-        # The scan's own refusals, for the trace (dev tools): counts and the sample's names only
-        scan_rows = [name_trace.Row(name_trace.SCAN, n, why) for n, why in scan_left or ()]
-        scan_rows += [
-            name_trace.Row(name_trace.SCAN, other, name_scan.GROUPED)
-            for f in every
-            for other in f.also
-        ]
+
+        def scanned_names(loosened: bool) -> tuple[list[Suggestion], list[name_trace.Row]]:
+            # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
+            # (#394). Which known name each sounds like is worked out when the DM looks,
+            # never saved: names can change, or be made secret, before then.
+            left: list[tuple[str, str]] | None = [] if tracing else None
+            out = group_alike(
+                find_new_names(lines, skip, unlimited=True, loose=loosened, refusals=left)
+            )
+            # The scan's own refusals, for the trace (dev tools): the sample's names only
+            rows = [name_trace.Row(name_trace.SCAN, n, why) for n, why in left or ()]
+            rows += [
+                name_trace.Row(name_trace.SCAN, other, name_scan.GROUPED)
+                for f in out
+                for other in f.also
+            ]
+            return out, rows
+
+        every, scan_rows = scanned_names(loose)
         # The name reader (docs/design/session_names.md, slice 2; DMBOT_SESSION_NAMES): names
         # found from what is said about them, never from capitals, joined with the scan's before
         # the cap. Only lines with a stored speaker can be read (consent is asked per line).
@@ -12312,19 +12317,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             every, reader_kinds, trace, unread = await self._read_session_names(
                 gid, cid, read_in, people, every
             )
+        if loose and unread is None:
+            # The reader did not read (nothing to read, a plan without it, a failure): the scan
+            # alone never decides with the loosened rule, so its usual list stands.
+            loose = False
+            every, scan_rows = scanned_names(False)
+            scan_keys = {name_key(f.name) for f in every}
         # An ordinary word the reader didn't also find is never suggested by the scan alone
         # (design section 3), whether the reader ran or not. Its trace says when the reader
         # could not say (a call's fault, not the word's).
         read_keys = {name_key(n) for n in reader_kinds}
         ordinary = [f for f in every if f.ordinary and name_key(f.name) not in read_keys]
         every = [f for f in every if f not in ordinary]
-        why_ordinary = (
-            name_scan.ORDINARY_NOT_READ
-            if unread is None
-            else name_scan.ORDINARY_PART_READ
-            if unread
-            else name_scan.ORDINARY
-        )
+        why_ordinary = name_scan.ORDINARY_PART_READ if unread else name_scan.ORDINARY
         split: list[Suggestion] = []
         if loose:  # "Wulfgar of Icewind Dale" is two names when the reader named a part of it
             every, split = name_scan.split_joined(every, read_keys, skip)

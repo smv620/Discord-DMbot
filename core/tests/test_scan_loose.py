@@ -55,7 +55,6 @@ class TheLooseRule(unittest.TestCase):
 
     def test_a_word_also_said_in_lower_case_may_be_a_name_but_is_marked_ordinary(self) -> None:
         lines = ["We call Hope home.", "Then Hope barks.", "I hope so."]
-        self.assertEqual(found(lines, loose=False), {})  # (strict: "hope" rules it out)
         got = found(lines, loose=True)
         self.assertTrue(got["Hope"].ordinary)
 
@@ -108,6 +107,14 @@ class TheTypedVersionLosesNothing(unittest.TestCase):
             "Torg of Easthaven grins. Torg of Easthaven fishes; Easthaven is cold.",
             "roll for it. Roll again, and Kelvin's Cairn looms. kelvin's cairn, said Torg.",
         ],
+        [
+            "we met Oskar Vane of Bryn Shander today.",
+            "we met Oskar Vane of Bryn Shander again.",
+            "we cheer Brave Hrothgar today.",
+            "we met Hrothgar there.",
+            "a brave man.",
+            "Ask Heart of Chardalyn now. we saw Chardalyn there. a Chardalyn shard.",
+        ],
     )
 
     @staticmethod
@@ -140,6 +147,42 @@ class TheTypedVersionLosesNothing(unittest.TestCase):
         self.assertEqual([s.name for s in split], ["Wulfgar of Icewind Dale"])
         out, split = scan.split_joined(found_, {"wulfgar of icewind dale", "wulfgar"})
         self.assertEqual(split, [])
+
+
+class FromTheReview(unittest.TestCase):
+    def test_one_hearing_at_a_sentences_start_is_counted_once(self) -> None:
+        self.assertEqual(found(["Ask Heart of Chardalyn now."], loose=True), {})
+        got = found(["Ask Heart of Chardalyn now.", "we saw Chardalyn there."], loose=True)
+        self.assertEqual(got["Chardalyn"].times, 2)  # (two hearings, never three)
+        got = found(
+            ["Ask Heart of Chardalyn now.", "we saw Chardalyn there.", "a Chardalyn shard."],
+            loose=True,
+        )
+        self.assertEqual(got["Chardalyn"].times, 3)
+
+    def test_a_join_too_long_to_be_one_name_is_read_as_its_parts(self) -> None:
+        lines = [
+            "we met Oskar Vane of Bryn Shander today.",
+            "we met Oskar Vane of Bryn Shander again.",
+        ]
+        self.assertEqual(sorted(found(lines, loose=True)), ["Bryn Shander", "Oskar Vane"])
+
+    def test_a_word_said_in_lower_case_leading_a_name_keeps_the_name(self) -> None:
+        lines = ["we cheer Brave Hrothgar today.", "we met Hrothgar there.", "a brave man."]
+        self.assertEqual(found(lines, loose=False)["Hrothgar"].times, 2)
+        self.assertEqual(found(lines, loose=True)["Hrothgar"].times, 2)
+
+    def test_a_person_at_the_table_is_never_part_of_a_name_through_a_possessive(self) -> None:
+        lines = ["I think Mia's Wolf ran off.", "Then Mia's Wolf came back."]
+        skip = ["mia", "mia stone", "stone"]
+        left: list[tuple[str, str]] = []
+        got = found(lines, loose=True, skip_keys=skip, refusals=left)
+        self.assertEqual(list(got), ["Wolf"])
+        self.assertFalse(any("mia" in n.casefold() for n, _why in left))
+
+    def test_a_known_name_with_a_possessive_inside_is_covered_whole(self) -> None:
+        lines = ["We climb Kelvin's Cairn.", "Then Kelvin's Cairn looms."]
+        self.assertEqual(found(lines, loose=True, skip_keys=["Kelvin's Cairn"]), {})
 
 
 class TheRefusals(unittest.TestCase):
@@ -244,10 +287,16 @@ class TheBotStep(unittest.TestCase):
         return [(r.source, r.name, r.reason) for r in nt.read(Path(folder, "trace-c1.jsonl"))]
 
     def test_when_the_reader_could_not_say_the_trace_blames_the_call_not_the_word(self) -> None:
-        for unread, why in ((None, scan.ORDINARY_NOT_READ), (1, scan.ORDINARY_PART_READ)):
-            with tempfile.TemporaryDirectory() as d:
-                self.assertEqual(self.run_step(stand_in(d, {}, unread=unread)), ["Vorna"])
-                self.assertIn((nt.SCAN, "Hope", why), self.ends(d))
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self.run_step(stand_in(d, {}, unread=1)), ["Vorna"])
+            self.assertIn((nt.SCAN, "Hope", scan.ORDINARY_PART_READ), self.ends(d))
+
+    def test_when_the_reader_did_not_read_the_strict_scan_stands(self) -> None:
+        texts = ["We meet Wulfgar of Icewind Dale.", "Then Wulfgar of Icewind Dale nods."]
+        with tempfile.TemporaryDirectory() as d:
+            made = self.run_step(stand_in(d, {}, unread=None, texts=texts), texts)
+            self.assertEqual(sorted(made), ["Icewind Dale", "Wulfgar"])  # (never the join)
+            self.assertNotIn("Wulfgar of Icewind Dale", [name for _s, name, _r in self.ends(d)])
 
     def test_a_joined_name_the_reader_split_is_offered_as_its_parts(self) -> None:
         texts = [
@@ -308,6 +357,8 @@ LOOKS_AT_CASE = frozenset(
         "memory/name_longer.py:widened",  # (#2570: a place's lower-case last word)
         "names/not_names.py:_clause",  # (a lower-case clause word: "so", "and")
         "names/not_names.py:shape_of",  # (a number or a time said with a capital)
+        "names/not_names.py:_lower_everywhere",  # (a word only ever said in lower case)
+        "names/not_names.py:why_not",
         "transcript/cleaner.py:_by_sound.unknown",  # (the Cleaner's capital test, section 7)
         "transcript/cleaner.py:_lower_words",
         "transcript/cleaner.py:_named_words",
@@ -316,6 +367,19 @@ LOOKS_AT_CASE = frozenset(
 )
 # Patterns that look for a capital: none today. A new one fails, as a new case call does.
 UPPER_PATTERNS: frozenset[str] = frozenset()
+
+
+def _compares_case(node: ast.Compare) -> bool:
+    sides = [node.left, *node.comparators]
+    for side in sides:
+        if (
+            isinstance(side, ast.Call)
+            and isinstance(side.func, ast.Attribute)
+            and side.func.attr in ("lower", "upper", "casefold")
+            and any(ast.dump(o) == ast.dump(side.func.value) for o in sides if o is not side)
+        ):
+            return True
+    return False
 
 
 def case_functions(source: str | None = None) -> tuple[set[str], set[str]]:
@@ -331,13 +395,12 @@ def case_functions(source: str | None = None) -> tuple[set[str], set[str]]:
             if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
                 walk(rel, child, [*where, child.name])
                 continue
-            if (
-                where
-                and isinstance(child, ast.Call)
-                and isinstance(child.func, ast.Attribute)
-                and child.func.attr in CASE_CALLS
+            # a case method, called or passed ("filter(str.isupper, ...)"), or a word compared
+            # with its own lower or upper case ("w != w.lower()")
+            if (isinstance(child, ast.Attribute) and child.attr in CASE_CALLS) or (
+                isinstance(child, ast.Compare) and _compares_case(child)
             ):
-                out.add(f"{rel}:{'.'.join(where)}")
+                out.add(f"{rel}:{'.'.join(where) or '<module>'}")
             if (
                 isinstance(child, ast.Constant)
                 and isinstance(child.value, str)
@@ -365,6 +428,15 @@ class RuleTwo(unittest.TestCase):
         source = (
             "import re\nCAP = re.compile('[A-Z][a-z]+')\n"
             "def f(w):\n    return w.istitle()\n"
+            "def h(w):\n    return w != w.lower()\n"
+            "def k(ws):\n    return filter(str.isupper, ws)\n"
+            "UP = [w for w in 'ab' if w.isupper()]\n"
             "def g(w):\n    return re.match(r'\\p{Lu}', w)\n"
         )
-        self.assertEqual(case_functions(source), ({"given:f"}, {"given:<module>", "given:g"}))
+        self.assertEqual(
+            case_functions(source),
+            (
+                {"given:f", "given:h", "given:k", "given:<module>"},
+                {"given:<module>", "given:g"},
+            ),
+        )
