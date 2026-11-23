@@ -122,7 +122,13 @@ class TheRevealsCount(unittest.IsolatedAsyncioTestCase):
         async def who(_g: int, _c: str) -> object:
             return recorded
 
-        src = Sources(db=object(), memory=object(), recorded=who if recorded is not None else None)  # type: ignore[arg-type]
+        async def asked(_g: int, _c: str) -> bool:
+            return True
+
+        src = Sources(  # type: ignore[arg-type]
+            db=object(), memory=object(), recorded=who if recorded is not None else None,
+            reveals_on=asked,
+        )  # fmt: skip
         with patch("dmbot.memory.reveal_proposals.RevealProposals.count_waiting", count_waiting):
             got = await counts.count_kinds(src, 1, "c", only={kinds.REVEALS})
         return got[kinds.REVEALS].n, seen
@@ -700,11 +706,13 @@ class TheDeedsGate(unittest.IsolatedAsyncioTestCase):
         from dmbot.bot import DMBot
 
         bot = SimpleNamespace(
-            settings=SimpleNamespace(story_deeds_on=switch),
+            settings=SimpleNamespace(story_deeds_on=switch, story_reveals_on=switch),
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             plan_allows=AsyncMock(return_value=allowed),
         )
+        bot._story_asked = lambda sw, g, c: DMBot._story_asked(cast(DMBot, bot), sw, g, c)
         bot.deeds_on = lambda g, c: DMBot.deeds_on(cast(DMBot, bot), g, c)
+        bot.reveals_on = lambda g, c: DMBot.reveals_on(cast(DMBot, bot), g, c)
         return bot
 
     async def test_the_switch_off_is_no_and_asks_no_campaign(self) -> None:
@@ -727,3 +735,32 @@ class TheDeedsGate(unittest.IsolatedAsyncioTestCase):
     async def test_switch_on_with_story_memory_is_yes(self) -> None:
         bot = self.fake(switch=True, campaign=object(), allowed=True)
         self.assertTrue(await bot.deeds_on(7, "c"))
+
+    async def test_reveals_have_the_same_gate_with_their_own_switch(self) -> None:
+        off = self.fake(switch=False, campaign=object(), allowed=True)
+        self.assertFalse(await off.reveals_on(7, "c"))
+        lapsed = self.fake(switch=True, campaign=object(), allowed=False)
+        self.assertFalse(await lapsed.reveals_on(7, "c"))
+        on = self.fake(switch=True, campaign=object(), allowed=True)
+        self.assertTrue(await on.reveals_on(7, "c"))
+
+    async def test_a_reveals_count_is_zero_for_a_lapsed_plan_or_no_gate(self) -> None:
+        from unittest.mock import patch
+
+        async def count_waiting(_self: object, g: int, c: str, *, opted_in: object) -> int:
+            return 3
+
+        async def who(_g: int, _c: str) -> set[int]:
+            return {7}
+
+        async def yes(_g: int, _c: str) -> bool:
+            return True
+
+        async def no(_g: int, _c: str) -> bool:
+            return False
+
+        with patch("dmbot.memory.reveal_proposals.RevealProposals.count_waiting", count_waiting):
+            for gate, want in ((yes, 3), (no, 0), (None, 0)):
+                src = Sources(db=object(), memory=object(), recorded=who, reveals_on=gate)  # type: ignore[arg-type]
+                got = await counts.count_kinds(src, 1, "c", only={kinds.REVEALS})
+                self.assertEqual(got[kinds.REVEALS].n, want)
