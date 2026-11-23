@@ -137,6 +137,10 @@ class Settings:
     # asked in the claims call itself. Off until the DM's list of them (#4045) has merged
     # (Supervisor, 2026-11-10).
     met_unnamed_on: bool = False
+    # A character's card says who they are in one sentence, where they were first met and when last
+    # mentioned (#5050), made by a background job (DMBOT_CARD_SUMMARY, off until dev1 has read ten
+    # cards on the sample campaign and they are right).
+    card_summary_on: bool = False
     # #4229 1d: the session reader also asks which languages a character was heard speaking, each
     # a question for the DM (DMBOT_SESSION_LANGUAGES, off until dev1's language_cases counts)
     session_languages_on: bool = False
@@ -586,6 +590,9 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
         raise ConfigError(
             'DMBOT_STORY_REVEALS_PRECHECK must be 1 (on) or 0 (off), got "' + precheck_raw + '".'
         )
+    card_raw = (get("DMBOT_CARD_SUMMARY") or "0").lower()
+    if card_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_CARD_SUMMARY must be 1 (on) or 0 (off), got "' + card_raw + '".')
     met_raw = (get("DMBOT_MET_UNNAMED") or "0").lower()
     if met_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_MET_UNNAMED must be 1 (on) or 0 (off), got "' + met_raw + '".')
@@ -852,6 +859,7 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
         map_layers_on=layers_raw in ("1", "true", "on"),
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
+        card_summary_on=card_raw in ("1", "true", "on"),
         session_languages_on=languages_raw in ("1", "true", "on"),
         party_leaves_on=leaves_raw in ("1", "true", "on"),
         party_join_on=party_join_raw in ("1", "true", "on"),
