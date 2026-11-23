@@ -367,6 +367,7 @@ from dmbot.memory import (
 )
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
+from dmbot.memory import scan as name_scan
 from dmbot.memory import (
     sheets as sheets_memory,
 )
@@ -12275,10 +12276,26 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         skip = set(await self.memory.known_keys(gid, cid)) | await self._people_keys(
             gid, users, cid
         )
+        # Beside the name reader, the scan's rule is loosened (docs/design/session_names.md,
+        # section 3): a word also said in lower case may be a name, and a name may hold "of" or a
+        # possessive. The reader then judges: a name made only of ordinary words ("Hope") goes on
+        # only when the reader found it too.
+        tracing = bool(self.settings.name_trace_dir) and self.settings.name_trace_guild == gid
+        loose = self.settings.session_names_on and bool(heard_in) and self.name_pass_ai is not None
+        scan_left: list[tuple[str, str]] | None = [] if tracing else None
         # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
         # (#394). Which known name each sounds like is worked out when the DM looks,
         # never saved: names can change, or be made secret, before then.
-        every = group_alike(find_new_names(lines, skip, unlimited=True))
+        every = group_alike(
+            find_new_names(lines, skip, unlimited=True, loose=loose, refusals=scan_left)
+        )
+        # The scan's own refusals, for the trace (dev tools): counts and the sample's names only
+        scan_rows = [name_trace.Row(name_trace.SCAN, n, why) for n, why in scan_left or ()]
+        scan_rows += [
+            name_trace.Row(name_trace.SCAN, other, name_scan.GROUPED)
+            for f in every
+            for other in f.also
+        ]
         # The name reader (docs/design/session_names.md, slice 2; DMBOT_SESSION_NAMES): names
         # found from what is said about them, never from capitals, joined with the scan's before
         # the cap. Only lines with a stored speaker can be read (consent is asked per line).
@@ -12294,6 +12311,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             every, reader_kinds, trace = await self._read_session_names(
                 gid, cid, read_in, people, every
             )
+        # An ordinary word the reader didn't also find is never suggested by the scan alone
+        # (design section 3), whether the reader ran or not.
+        read_keys = {name_key(n) for n in reader_kinds}
+        ordinary = [f for f in every if f.ordinary and name_key(f.name) not in read_keys]
+        every = [f for f in every if f not in ordinary]
+        trace = [
+            *scan_rows,
+            *trace,
+            *(
+                name_trace.Row(name_trace.SCAN, f.name, name_scan.ORDINARY, times=f.times)
+                for f in ordinary
+            ),
+        ]
         found = every[:MAX_SUGGESTIONS]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
         asked = await self._take_name_asks(gid, cid, session_id) if session_id is not None else []
@@ -12317,8 +12347,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # the session each name is made in, for the split-party check (#4043): never a guess
         session_at = await self._session_start(gid, session_id)
         log.info(  # counts only
-            "Name scan: %d name(s) suggested, %d with a kind, %d without, %d past the limit",
-            len(found), len(kinds), len(found) - len(kinds), cut,
+            "Name scan: %d name(s) suggested, %d with a kind, %d without, %d past the limit,"
+            " %d ordinary word(s) the reader didn't find",
+            len(found), len(kinds), len(found) - len(kinds), cut, len(ordinary),
         )  # fmt: skip
         refused: set[str] = set()
         for suggestion in found:
@@ -12360,7 +12391,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
-        if self.settings.name_trace_dir and self.settings.name_trace_guild == gid:  # (#5055 B)
+        if tracing:  # (#5055 B)
             await self._write_name_trace(
                 gid,
                 cid,
