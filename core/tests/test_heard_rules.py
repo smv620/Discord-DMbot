@@ -56,6 +56,20 @@ class TheGuard(unittest.TestCase):
         self.assertEqual(got, ["Rothgar", "hroth gar"])
 
 
+class OnlyCapitals(unittest.TestCase):
+    """Supervisor's ruling on #5133: a one-word spelling that differs from the name only by
+    capitals makes no rule (an NPC called "Hope", heard as "hope", must never rewrite "I hope")."""
+
+    def test_hope_heard_only_as_hope_makes_no_rule(self) -> None:
+        self.assertTrue(hr.only_capitals("Hope", "hope"))
+        self.assertEqual(hr.may_be_rules("Hope", ["hope"], ["she said hope is gone"]), [])
+
+    def test_hrothgar_makes_none_while_hroth_gar_and_rothgar_do(self) -> None:
+        got = hr.may_be_rules("Hrothgar", ["hrothgar", "hroth gar", "Rothgar"], LINES)
+        self.assertEqual(got, ["hroth gar", "Rothgar"])
+        self.assertFalse(hr.only_capitals("Hrothgar", "hroth gar"))
+
+
 class TheReply(unittest.TestCase):
     def test_kept_and_what_now_reads_as_it(self) -> None:
         self.assertEqual(
@@ -165,6 +179,15 @@ class TheStore(MemoryTest):
         self.assertEqual(written.rules, ("Rothgar",))
         self.assertTrue({"Hroth", "Old Axe"} <= await self.names_of())
         self.assertEqual(set(await self.rules()), {"Rothgar"})
+
+    async def test_hope_heard_only_as_hope_keeps_the_name_and_makes_no_rule(self) -> None:
+        hope = await self.add("Hope", type="concept", source="scan", status=PROPOSED)
+        written = await self.memory.confirm_entity(
+            GUILD_A, self.c, hope, "npc", source=DM_SOURCE, heard=["hope"], may_rule=["hope"]
+        )
+        self.assertEqual(written.rules, ())
+        self.assertEqual(written.value.name, "Hope")
+        self.assertEqual(await self.rules(), {})
 
     async def test_without_heard_every_spelling_is_kept_as_today(self) -> None:
         written = await self.memory.confirm_entity(GUILD_A, self.c, self.e, "npc", source=DM_SOURCE)

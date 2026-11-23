@@ -25,6 +25,13 @@ from dmbot.names import not_names
 MIN_LETTERS = 3  # a rule for "Al" or "Ka" would rewrite too much
 
 
+def only_capitals(name: str, spelling: str) -> bool:
+    """A one-word spelling that differs from the name only by capitals ("hope" for an NPC called
+    "Hope") makes no rule (Supervisor, #5133): it would rewrite every "I hope", and the common
+    words and the lower-case test can't tell, since the name's own sightings are left out."""
+    return len(spelling.split()) == 1 and spelling.casefold() == name.casefold()
+
+
 def too_short(spelling: str) -> bool:
     return sum(c.isalnum() for c in spelling) < MIN_LETTERS
 
@@ -48,7 +55,7 @@ def may_be_rules(name: str, spellings: Sequence[str], lines: Sequence[str]) -> l
     seen: set[str] = set()
     for spelling in spellings:
         key = name_key(spelling)
-        if not key or key == own or key in seen:
+        if not key or key == own or key in seen or only_capitals(name, spelling):
             continue
         seen.add(key)
         if too_short(spelling) or ordinary(spelling, lines):

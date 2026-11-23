@@ -46,6 +46,7 @@ from dmbot.memory import (
     evidence,
     gate,
     graph_review,
+    heard_rules,
     kin,
     kind_offers,
     knowers,
@@ -5957,7 +5958,10 @@ class MemoryStore:
                 },
             )
             learned = await learn_names_in_scene(w, entity_id, scene) if scene is not None else 0
-            spelled = {name_key(h) for h in heard or ()} - {name_key(before["name"])}
+            # (never the name itself, nor a one-word spelling of it that differs by capitals only)
+            spelled = {
+                name_key(h) for h in heard or () if not heard_rules.only_capitals(before["name"], h)
+            } - {name_key(before["name"])}
             made = await self._heard_rules(w, entity_id, spelled, may_rule) if spelled else ()
             for alias in await w.select(
                 ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
