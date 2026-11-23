@@ -13,6 +13,7 @@ import { PAUSE_LIVE } from "../content/pause-switch";
 import { stageWords } from "../content/work-progress";
 import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
 import { MAP_CHECKS_LIVE } from "../content/map-checks-switch";
+import { RULES_CARDS_LIVE } from "../content/rules-cards-switch";
 import { SHARE_STORY_LIVE } from "../content/share-story-switch";
 import { FEATURES_LIST_LIVE } from "../content/features-list-switch";
 import { INVITE_LIVE } from "../content/invite-switch";
@@ -299,6 +300,9 @@ export default function CampaignSettings({
       )}
       {MAP_CHECKS_LIVE && s && s.mapChecks !== undefined && api.setCampaignSetting && (
         <LazyPanel load={() => import("./MapChecksPanel")} what="map checks" props={{ api, campaignRef, on: s.mapChecks }} />
+      )}
+      {RULES_CARDS_LIVE && s && s.rulesCards !== undefined && api.setCampaignSetting && (
+        <LazyPanel load={() => import("./RulesCardsPanel")} what="rules cards" props={{ api, campaignRef, on: s.rulesCards }} />
       )}
       {SHARE_STORY_LIVE && s && s.shareImprove !== undefined && api.setCampaignSetting && (
         <LazyPanel load={() => import("./ShareStoryPanel")} what="sharing the story" props={{ api, campaignRef, on: s.shareImprove }} />
