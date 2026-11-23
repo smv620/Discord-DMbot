@@ -11413,6 +11413,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ),
                 )
 
+    async def deeds_on(self, gid: int, cid: str) -> bool:
+        """Whether a campaign's deeds are asked about at all: the deeds switch is on and its plan
+        has story memory (the same rule as the after-session question and the deed card, #3175),
+        so a lapsed plan's leftover proposals are counted nowhere (#5105)."""
+        if not self.settings.story_deeds_on:
+            return False
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None:
+            return False
+        return await self.plan_allows("story", gid, campaign, fail_open=False)
+
     async def offer_deeds(self, table: Table) -> None:
         """After a session (#3175), only with DMBOT_STORY_DEEDS: one more question for the DM when
         the session reader noticed deeds the party did that mattered to someone and they wait to
@@ -14751,6 +14762,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 join_choices=self._work_out_join_choices,
                                 reveals_ask=self._work_out_reveals,
                                 reveals_drop=self._drop_reveal,
+                                deeds=self._answer_deed,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -15472,6 +15484,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if words is not None and words.who and words.what and words.how:
                 shown.append((proposal.id, words))  # (a line with a word missing is not shown)
         return await RevealsStore(db).replace(guild_id, campaign_id, user_id, shown)
+
+    async def _answer_deed(
+        self, guild_id: int, campaign_id: str, proposal_id: str, record: bool
+    ) -> tuple[str, int | None]:
+        """A deed answered from the website (#3591): the one function Discord's Record and Not
+        this buttons use, so every rule and the consent re-check are the card's own."""
+        return await deed_card.apply_answer(self, guild_id, campaign_id, proposal_id, record=record)
 
     async def _drop_reveal(self, guild_id: int, campaign_id: str, proposal_id: str) -> None:
         """An answered proposal leaves the website's kept lists at once (#3863)."""

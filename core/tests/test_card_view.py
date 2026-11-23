@@ -51,3 +51,26 @@ class TheLines(unittest.TestCase):
     def test_a_hidden_entry_says_how_it_is_written(self) -> None:
         got = card_view.view(summary(who=None), "Shafina", NUMBERS)
         self.assertEqual(got.who, "DMbot writes this line only from what your players may know.")
+
+
+class WhicheverCameFirst(unittest.TestCase):
+    def test_lore_read_before_the_first_session_is_the_first_line(self) -> None:
+        first = Mention(START + 100, 2, "the party reached the inn")
+        got = card_view.view(summary(first=first), "Shafina", NUMBERS, ("Notes", "Inn", START))
+        self.assertEqual(got.first, "First met: in your lore, *Notes*, under 'Inn'.")
+
+    def test_lore_read_after_the_first_session_leaves_the_session(self) -> None:
+        first = Mention(START, 2, "the party reached the inn")
+        got = card_view.view(summary(first=first), "Shafina", NUMBERS, ("Notes", "", START + 5))
+        self.assertTrue(got.first and got.first.startswith("First met: Session 1, "))
+
+    def test_only_in_the_lore_says_so_and_not_mentioned(self) -> None:
+        got = card_view.view(summary(), "Shafina", NUMBERS, ("Notes", "", START))
+        self.assertEqual(
+            got.lines(),
+            [
+                "A halfling innkeeper.",
+                "First met: in your lore, *Notes*.",
+                "Not mentioned at the table yet.",
+            ],
+        )

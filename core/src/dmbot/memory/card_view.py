@@ -36,9 +36,17 @@ def _line(label: str, mention: Mention | None, numbers: Mapping[int, int]) -> st
     )
 
 
-def view(summary: Summary | None, name: str, numbers: Mapping[int, int]) -> CardView:
-    """The lines for a DM. `numbers`: each session's number by its start. A character the job has
-    not reached yet reads "still writing", never a guess."""
+def view(
+    summary: Summary | None,
+    name: str,
+    numbers: Mapping[int, int],
+    lore: tuple[str, str, int] | None = None,
+) -> CardView:
+    """The lines for a DM. `numbers`: each session's number by its start. `lore`: the label,
+    heading and time of the upload they were first read from; it is the first line when it came
+    before the table's first mention (or the table never mentioned them), else the session is
+    (ruling on #5050: whichever came first). A character the job has not reached yet reads "still
+    writing", never a guess."""
     if summary is None:
         return CardView(card_lines.who_line(None, name, pending=True), None, None)
     who = card_lines.who_line(
@@ -47,6 +55,8 @@ def view(summary: Summary | None, name: str, numbers: Mapping[int, int]) -> Card
     if summary.scanned_at is None:
         return CardView(who, None, None)
     first = _line(card_lines.FIRST_MET, summary.first, numbers)
+    if lore and (summary.first is None or lore[2] < summary.first.session_at):
+        first = card_lines.lore_line(lore[0], lore[1])
     if summary.first is None and summary.last is None:
-        return CardView(who, None, card_lines.NEVER_AT_THE_TABLE)
+        return CardView(who, first, card_lines.NEVER_AT_THE_TABLE)
     return CardView(who, first, _line(card_lines.LAST_MENTIONED, summary.last, numbers))
