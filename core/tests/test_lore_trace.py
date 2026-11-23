@@ -277,11 +277,12 @@ class TheWrite(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as d:
             bot = self.bot(d, set())
-            self.assertFalse(nb._tracing(bot, SimpleNamespace(guild_id=5, id="c", name="Rime")))
-            self.assertFalse(nb._tracing(bot, SimpleNamespace(guild_id=6, id="c", name=SAMPLE)))
-            self.assertFalse(
-                nb._tracing(self.bot("", set()), SimpleNamespace(guild_id=5, id="c", name=SAMPLE))
-            )
+            real: Any = SimpleNamespace(guild_id=5, id="c", name="Rime")
+            elsewhere: Any = SimpleNamespace(guild_id=6, id="c", name=SAMPLE)
+            sample: Any = SimpleNamespace(guild_id=5, id="c", name=SAMPLE)
+            self.assertFalse(nb._tracing(bot, real))
+            self.assertFalse(nb._tracing(bot, elsewhere))
+            self.assertFalse(nb._tracing(self.bot("", set()), sample))  # (no folder)
 
 
 class WhyMissed(unittest.TestCase):
