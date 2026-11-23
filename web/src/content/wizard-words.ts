@@ -302,8 +302,8 @@ export const wizardWords = {
       house_unreadable: (n: number): string => `${n} ${n === 1 ? "house rules file" : "house rules files"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the House rules page.`,
       homebrew_unreadable: (n: number): string => `${n} ${n === 1 ? "homebrew file" : "homebrew files"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the Homebrew page.`,
       doc_link_failed: (n: number): string => `${n} ${n === 1 ? "link" : "links"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the campaign's pages.`,
-      // Not a failure (#5095): names past one document's limit, the Lore page's words with where to upload the parts.
-      names_cut: (n: number): string => `${n} more ${n === 1 ? "name was" : "names were"} left out. DMbot lists up to 200 names from one document. To get ${n === 1 ? "it" : "them"}, split the document and upload each part on the campaign's Lore page.`,
+      // Not a failure (#5095): names past one document's limit, the Lore page's words with where to upload the parts; "as many as" because the count is summed over the documents.
+      names_cut: (n: number): string => `As many as ${n} more ${n === 1 ? "name was" : "names were"} left out. DMbot lists up to 200 names from one document. To get ${n === 1 ? "it" : "them"}, split the document and upload each part on the campaign's Lore page.`,
       homebrew_link_failed: (n: number): string => `${n} homebrew ${n === 1 ? "link" : "links"} couldn't be read. Add ${n === 1 ? "it" : "them"} again from the Homebrew page.`,
     } as Record<string, (n: number) => string>,
     // How the DM is told (#4213): from the start of the run, not after a minute. A private message in Discord, no email.

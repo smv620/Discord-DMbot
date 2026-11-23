@@ -748,7 +748,7 @@ describe("the wizard", () => {
     expect(screen.getByText(w.finish.notes["homebrew_link_failed"]!(1))).toBeTruthy();
     // Names a limit left out (#5095): a note, not a failure, in the Lore page's words.
     expect(screen.getByText(w.finish.notes["names_cut"]!(7))).toBeTruthy();
-    expect(w.finish.notes["names_cut"]!(1)).toContain("1 more name was left out");
+    expect(w.finish.notes["names_cut"]!(1)).toContain("As many as 1 more name was left out");
     expect(screen.queryByText(/homebrew_|names_cut/)).toBeNull(); // (words and counts, never the raw note)
   });
 
