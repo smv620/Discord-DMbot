@@ -55,7 +55,7 @@ class TheScanAndThePress(NamesTest):
         await super().asyncSetUp()
         self.transcripts = TranscriptStore(self.db)
         self.bot.transcripts = self.transcripts
-        self.bot.import_job = SimpleNamespace(store=ImportStore(self.db))
+        self.bot.import_job = SimpleNamespace(store=ImportStore(self.db))  # type: ignore[assignment]
         await self.consent.grant(GUILD, DM)
         await self.consent.grant(GUILD, PLAYER)
         self.sid = await self.transcripts.open_session(GUILD, self.campaign.id, START)
