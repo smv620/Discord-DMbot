@@ -72,6 +72,7 @@ import type {
   Reading,
   Waiting,
   MyNpcNote,
+  CardSummaryFields,
   NpcPage,
   RuleDecision,
   RuleSharing,
@@ -1105,6 +1106,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const worldLevel = (name: string): string | null => (name === "Brynwater Crossing" ? "settlement" : name === "Saltmarsh" ? "region" : null);
   // A place's size, kind and setting (#4173), by the name's id: nothing is set until a DM sets it, except "Saltmarsh", which DMbot read as a town.
   const placeFacts = new Map<string, { level: string | null; levelFrom: "read" | "dm" | null; form: "water" | "route" | null; formFrom: "read" | "dm" | null; setting: boolean }>();
+  // The card summary (#5051): one character with all three lines, one lore-only, one still being written.
+  const cardSummaries: Record<string, CardSummaryFields> = {
+    "Mira Voss": {
+      who: "A ferrywoman who works the Brynwater crossing.",
+      firstMet: "First met: Session 3, 15 Nov: when the party reached the ferry landing at dusk.",
+      lastMentioned: "Last mentioned: Session 9, 21 Nov: in the argument over the ferry's price.",
+    },
+    "Aldric Thorn": {
+      who: "A ferryman on the Brynwater road, in the old ferry's records.",
+      firstMet: "First met: In your lore: Icewind Dale notes, under 'Brynwater Crossing'.",
+      lastMentioned: "Not mentioned at the table yet.",
+    },
+    "Old Pell": { who: null, whoPending: true },
+  };
   const factsOf = (n: NameRow) => {
     if (n.kind !== "place") return {};
     const f = placeFacts.get(n.id) ?? (n.name === "Saltmarsh" ? { level: "settlement", levelFrom: "read" as const, form: null, formFrom: null, setting: false } : { level: null, levelFrom: null, form: null, formFrom: null, setting: false });
@@ -3786,6 +3801,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         myNote: npcNotes.get(entry) ?? "",
         isDm,
         dmNote: isDm ? "Knows who burned the mill." : null,
+        // The card summary is the DM's alone (the API sends none to anyone else).
+        ...(isDm ? cardSummaries["Mira Voss"] : {}),
       };
     },
     async saveNpcNote(ref, entry, body): Promise<void> {
@@ -4238,7 +4255,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         // A DM's rows carry the main name's id and how it is said (#2317); a manager's do not.
         names: sorted
           .slice((query.page - 1) * pageSize, query.page * pageSize)
-          .map((n) => ({ ...n, others: [...n.others], ...factsOf(n), ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null, playersText: playersLines.get(n.id) ?? null } : {}) })),
+          .map((n) => ({ ...n, others: [...n.others], ...factsOf(n), ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null, playersText: playersLines.get(n.id) ?? null, ...(cardSummaries[n.name] ?? {}) } : {}) })),
         kinds,
         total: sorted.length,
         page: query.page,
