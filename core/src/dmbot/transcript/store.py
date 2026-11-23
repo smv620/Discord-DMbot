@@ -24,6 +24,7 @@ from dmbot.memory import (
     forget_readings,
     join_questions,
     met_store,
+    more_names,
     private_scene_store,
     secret_questions,
     thread_progress,
@@ -1337,6 +1338,7 @@ class TranscriptStore:
             await theatre_store.forget_session(conn, guild_id, session_id)
             await rel_store.forget_session(conn, guild_id, session_id)
             await met_store.forget_session(conn, guild_id, session_id)  # (the DM's words, #3172)
+            await more_names.forget_session(conn, guild_id, session_id)  # (heard there, #5055)
             await trait_offers.forget_session(conn, guild_id, session_id)  # (heard there, #4745)
             await join_questions.forget_session(conn, guild_id, session_id)  # (a goodbye, 0574)
             # (the private scenes found in its lines, #2996 rule 5: the DM's marks stay)

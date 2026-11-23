@@ -130,6 +130,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "memory_hand_over_both": 'the DM\'s "Yes, both have it" answers about a one-of-a-kind '
     "item (#4115): ids and a time, so DMbot doesn't ask about the same two holders again. An "
     "answer to a question, like name_not_same: a restored campaign may ask it once more",
+    "import_more_names": "names an imported session's name scan heard past its first 10, waiting "
+    "for the DM's 📝 More names (#5055 B): each row hangs off its session, which a restore makes "
+    "again under a new id. A restored campaign starts with none, as with any request still waiting",
     "memory_met": "beings the party met in play and nobody named yet, waiting for the DM to name "
     "one (#3172 slice 5): each row hangs off its session, which a restore makes again under a new "
     "id, and holds the DM's words and line numbers from it. A restored campaign starts with none, "

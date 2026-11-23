@@ -89,6 +89,7 @@ def view(guild_id: int, campaign_id: str, found: Mapping[str, Counted]) -> disco
     from dmbot.ui.family_ties import FamilyTiesButton
     from dmbot.ui.heard_review import HeardReviewButton
     from dmbot.ui.map_answer import OpenButton as MapsOpenButton
+    from dmbot.ui.more_names import MoreNamesButton
     from dmbot.ui.names import RecapNamesButton
     from dmbot.ui.party_join import JoinsOpenButton
     from dmbot.ui.party_leave import LeavesOpenButton
@@ -101,6 +102,8 @@ def view(guild_id: int, campaign_id: str, found: Mapping[str, Counted]) -> disco
     out = discord.ui.View(timeout=None)
     if kinds.NAMES in waiting:
         out.add_item(RecapNamesButton(guild_id, campaign_id))
+    if kinds.MORE_NAMES in waiting:
+        out.add_item(MoreNamesButton(campaign_id))
     if kinds.HEARD in waiting:
         out.add_item(HeardReviewButton(campaign_id))
     if kinds.LOOKALIKES in waiting:
