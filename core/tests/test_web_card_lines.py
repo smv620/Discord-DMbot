@@ -53,6 +53,36 @@ class OnTheNamesPage(Base):
         self.assertTrue(others)
         self.assertTrue(all("who" not in r for r in others))
 
+    async def test_the_lore_is_read_and_another_campaign_gives_nothing(self) -> None:
+        other = (await self.campaigns.create(self.g, "Elsewhere", 7)).id
+        await self.memory.record_name_sources(
+            self.g, self.one.id, [self.mira], upload_key="u1", label="Harbour notes",
+            headings={self.mira: "The quay"},
+        )  # fmt: skip
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_card_lines(%s, %s, %s) AS r", (self.g, self.one.id, [self.mira])
+            )
+            mine = (await cur.fetchone())["r"]["cards"][self.mira]["lore"]
+            cur = await conn.execute(
+                "SELECT dmbot_web_card_lines(%s, %s, %s) AS r", (self.g, other, [self.mira])
+            )
+            theirs = (await cur.fetchone())["r"]
+        self.assertEqual(mine, {"label": "Harbour notes", "heading": "The quay"})
+        self.assertIsNone(theirs)  # (not a DM of that campaign: the door gives nothing)
+
+    async def test_a_row_with_only_a_sentence_is_a_summary_not_still_writing(self) -> None:
+        got = card_lines.lines_of("Mira", {"who": "A harbour official."}, {})
+        self.assertEqual(got, {"who": "A harbour official."})
+
+    async def test_a_row_the_door_did_not_return_gets_no_key(self) -> None:
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await _scoped(conn, self.g)
+            rows = [{"id": self.someone, "name": "Someone"}]
+            await card_lines.attach(conn, self.g, self.one.id, rows)
+        self.assertEqual(rows, [{"id": self.someone, "name": "Someone"}])
+
     async def test_a_member_who_is_not_a_dm_is_given_nothing(self) -> None:
         async with self.web.user(self.player.user_id, session=self.player.id_hash) as conn:
             await _scoped(conn, self.g)

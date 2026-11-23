@@ -33,9 +33,10 @@ def lines_of(name: str, card: dict[str, Any] | None, numbers: dict[int, int]) ->
     """The keys to put on a row: `who` (always, one sentence or why there is none), `whoPending`
     (true while the job has not written it), and `firstMet` and `lastMentioned` when there is a
     line to say. A character only read from the lore has "First met: in your lore, …" instead."""
-    card = card or {}
+    # (a row the job kept is a summary however little it holds, as Discord reads it; no row is
+    # "still writing")
     summary = None
-    if card.get("madeAt") is not None or card.get("scannedAt") is not None or card.get("first"):
+    if card is not None:
         summary = Summary(
             who=card.get("who"),
             facts_key=None,
@@ -44,6 +45,7 @@ def lines_of(name: str, card: dict[str, Any] | None, numbers: dict[int, int]) ->
             last=_mention(card.get("last")),
             scanned_at=card.get("scannedAt"),
         )
+    card = card or {}
     lore = card.get("lore")
     made = card_view.view(
         summary,
@@ -86,10 +88,8 @@ async def attach(
             return
         numbers = {int(k): int(v) for k, v in (got.get("numbers") or {}).items()}
         for row in chunk:
-            row.update(
-                lines_of(
-                    str(row.get("name") or "this character"),
-                    got["cards"].get(str(row["id"])),
-                    numbers,
-                )
-            )
+            card = got["cards"].get(str(row["id"]))
+            if card is None:
+                continue  # (not a character the job has reached: the page draws nothing)
+            name = str(row.get("name") or "this character")
+            row.update(lines_of(name, card, numbers))

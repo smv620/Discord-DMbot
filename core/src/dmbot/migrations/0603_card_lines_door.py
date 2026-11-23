@@ -74,7 +74,7 @@ SQL = r"""
                 FROM (SELECT started_at, line_count,
                              row_number() OVER (ORDER BY started_at, id) AS number
                       FROM transcript_sessions
-                      WHERE campaign_id = c
+                      WHERE guild_id = g AND campaign_id = c
                         AND (line_count > 0 OR transcripts_deleted_at IS NOT NULL)) t
                 WHERE t.line_count > 0),
                 '{}'::jsonb));
