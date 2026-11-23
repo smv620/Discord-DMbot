@@ -24,8 +24,8 @@ OTHER = 4343
 EARLY = 100  # the session the earlier things were said in
 LATE = 500  # the session being checked
 KEYS = {
-    "id", "kind", "level", "name", "now", "earlier", "ended", "earlierSession", "quote",
-    "pinned", "learner", "listed", "choice",
+    "id", "kind", "level", "name", "now", "earlier", "earlierWords", "ended", "earlierSession",
+    "quote", "pinned", "learner", "listed", "choice",
 }  # fmt: skip
 
 
@@ -150,6 +150,7 @@ class ContinuityOnTheWeb(Web):
                     "subject": "Bram", "predicate": "carries", "detail": "",
                     "object": "Heartseeker", "label": None,
                 },
+                "earlierWords": "Bram carries Heartseeker",
                 "ended": None, "earlierSession": 2, "quote": "Bram carries Heartseeker",
                 "pinned": False, "learner": None, "listed": None, "choice": "story_changed",
             },
@@ -169,6 +170,7 @@ class ContinuityOnTheWeb(Web):
         (hit,) = (await self.read())["hits"]
         self.assertTrue(hit["pinned"])
         self.assertEqual(hit["earlier"]["label"], "keeps watch over")
+        self.assertTrue(hit["earlierWords"].startswith("Bram keeps watch over "))
         self.assertIsNone(hit["quote"])  # (no claim said the earlier fact: nothing to quote)
 
     async def test_a_player_a_stranger_and_another_campaigns_dm_get_not_allowed(self) -> None:

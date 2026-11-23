@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 _OLD_SAMPLE = "test of the frostmaiden (sample)"
 _SAMPLE = re.compile(
     r"^test of the frostmaiden \(sample [0-9]{1,4}[a-z]?(?:\.[1-9][0-9]?)?"
-    r"(?: (?:no capitals|spoken))?\)$"
+    r"(?: (?:no capitals|spoken|respelled))?\)$"
 )
 
 
