@@ -41,6 +41,8 @@ from dmbot.memory import (
     lore_read,
     map_fact_store,
     map_facts,
+    name_reader,
+    name_trace,
     party_icons,
     pdf_pictures,
     picture_read,
@@ -51,6 +53,7 @@ from dmbot.memory import (
     route_words,
     secret_questions,
     story_chain,
+    trace_note,
     traits_read,
     who_ask,
     who_resolve,
@@ -874,9 +877,13 @@ async def read_background(
         seeing = _Seeing()
         with credits.preparing(campaign.guild_id, campaign.id, "picture"):
             seeing.task = asyncio.create_task(_see_pictures(bot, upload, seeing.tick, started))
+    # The per-name trace (#5106, dev tools): only on the test server named for it and for a sample
+    # campaign, as the session's (`name_trace.write` checks both again).
+    tracing = _tracing(bot, campaign)
     with (
         credits.preparing(campaign.guild_id, campaign.id, "lore"),
         secret_questions.evidence(upload_label(upload.label, time.time())) as asked,
+        trace_note.collecting() if tracing else contextlib.nullcontext() as noted,
     ):
         try:
             done = await _read_background(
@@ -894,6 +901,8 @@ async def read_background(
         finally:
             if seeing is not None and seeing.task is not None:
                 seeing.task.cancel()  # (a no-op once it is done; else no call is left running)
+            if noted is not None:  # (also when the read failed: how far it got is the point)
+                await _write_lore_trace(bot, campaign, noted)
     # (its 🤫 questions are counted on its note and open from its button: slice 2)
     memory = bot.memory
     if asked and memory is not None:
@@ -969,6 +978,40 @@ async def _see_pictures(
     except Exception as exc:  # (a bug or a store failure: the pictures go, the text stays)
         log.warning("An upload's pictures couldn't be read (%s)", type(exc).__name__)
         return picture_vision.Seen(late=len(files))
+
+
+def _tracing(bot: Any, campaign: Campaign) -> bool:
+    settings = getattr(bot, "settings", None)
+    folder = getattr(settings, "name_trace_dir", "")
+    guild = getattr(settings, "name_trace_guild", 0)
+    return bool(folder) and guild == campaign.guild_id and name_trace.is_sample(campaign.name)
+
+
+async def _write_lore_trace(bot: Any, campaign: Campaign, noted: Sequence[trace_note.Note]) -> None:
+    """The lore read's rows of the per-name trace (#5106): where each name the read listed ended,
+    in order, so `why_missed` takes the last one. A name the campaign has is told apart from one
+    the DM said isn't a name. Never raises: the read is done without it."""
+    try:
+        rejected: Collection[str] = set()
+        if bot.memory is not None and any(r == trace_note.KNOWN for _n, r, _w in noted):
+            rejected = await bot.memory.rejected_keys(campaign.guild_id, campaign.id)
+        rows = [
+            name_trace.Row(
+                name_trace.LORE,
+                name,
+                name_reader.NOT_A_NAME
+                if reason == trace_note.KNOWN and name_key(name) in rejected
+                else reason,
+                why,
+            )
+            for name, reason, why in noted
+        ]
+        name_trace.write(
+            bot.settings.name_trace_dir, campaign.name, campaign.id, "lore", rows,
+            guild_id=campaign.guild_id, test_guild=bot.settings.name_trace_guild,
+        )  # fmt: skip
+    except Exception as exc:  # (a dev tool)
+        log.warning("Lore name trace failed: %s", type(exc).__name__)
 
 
 async def _read_background(
@@ -1093,8 +1136,18 @@ async def _read_background(
     # One place written two ways (#3037): in this read ("Northhaven", "North Haven") it is one
     # waiting place; against a place the campaign has, the new spelling is offered as its other
     # name (below) and not made a second place. Counts only in the log.
+    before = {name_key(f.name): f.name for f in found}
     found, folded = place_spellings_mod.fold_in_read(found)
+    in_read = {name_key(f.name) for f in found}
     place_spellings, place_names, found = await _near_places(memory, campaign, found)
+    # (the trace, #5106: a place written two ways in the read folds; one the campaign has written
+    # another way becomes that place's other name, a suggestion)
+    left = {name_key(f.name) for f in found}
+    for key, name in before.items():
+        if key not in in_read:
+            trace_note.note(name, trace_note.FOLDED)
+        elif key not in left:
+            trace_note.note(name, trace_note.PLACE_SPELLING)
     if folded or place_spellings:
         log.info(
             "Place spellings: %d folded in the read, %d offered as another name",
@@ -1525,6 +1578,8 @@ async def _store_held(
     for h in pictures.held:
         key = name_key(h.found.name)
         if not key or key in taken or key in notes:
+            if key in taken:  # (a name the campaign or this read has: the trace says so, #5106)
+                trace_note.note(h.found.name, trace_note.KNOWN)
             continue
         held.append(bg.Found(h.found.name, h.found.kind, (), (), "", ""))
         notes[key] = picture_read.held_note(h)
@@ -2774,6 +2829,7 @@ async def store(
             check_named(item.kind, item.name)
         except MemoryRuleError as exc:
             log.info("Skipped a name from a background: %s", exc)
+            trace_note.note(item.name, trace_note.STORE_REFUSED)
             continue
         note = f'{BACKGROUND}: "{item.quote}"' if item.quote else BACKGROUND
         if notes and name_key(item.name) in notes:  # (its own note: read from a picture, #4003)
@@ -2829,6 +2885,9 @@ async def store(
             )
             if refused is not None:
                 refused.update(left_out)
+            for item, why in zip(items, refusals, strict=True):
+                if why:  # (the rule's fixed label)
+                    trace_note.note(item.name, trace_note.STORE_REFUSED, why)
             keep = [i for i, r in enumerate(refusals) if not r]
             names, items = [names[i] for i in keep], [items[i] for i in keep]
     if not names:
@@ -2839,8 +2898,14 @@ async def store(
         )
     except MemoryRuleError as exc:
         log.info("Skipped the names from a background: %s", exc)
+        for item in items:
+            trace_note.note(item.name, trace_note.STORE_REFUSED)
         return stored
     for name, item, entity_id in zip(names, items, written.value, strict=False):
+        # (None: its key was taken meanwhile, or the entry is gone)
+        trace_note.note(
+            item.name, trace_note.STORE_REFUSED if entity_id is None else trace_note.STORED
+        )
         if entity_id is not None:
             stored.setdefault(name.type, []).append(entity_id)
             if made is not None:  # (each new name's key to its entry, for the NPC guesses)

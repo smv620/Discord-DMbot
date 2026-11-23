@@ -45,6 +45,7 @@ def is_sample(name: str) -> bool:
 SCAN = "scan"  # the capital-letter scan (`memory/scan.py`)
 READER = "reader"  # the name reader (`memory/name_reader.py`)
 ASKED = "name_pass"  # a word PlotBot's name pass was not sure of (#2628)
+LORE = "lore"  # the lore read (`lore_read`, `background`, `ui/name_background`: #5106)
 
 # How a candidate ended, beside the reader's own refusal reasons (`name_reader`)
 OFFERED = "offered"  # suggested to the DM

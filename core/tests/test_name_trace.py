@@ -84,7 +84,7 @@ class WhyMissed(unittest.TestCase):
         )
         self.assertEqual(
             self.why(["mira"], rows),
-            "never stored: not offered by any reader (the scan's own refusals aren't traced)",
+            "never stored: no reader listed it",
         )
         self.assertEqual(self.why(["mira"], None), "never stored (no name trace for this run)")
 
