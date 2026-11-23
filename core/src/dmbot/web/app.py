@@ -2092,6 +2092,7 @@ def create_app(
                 size=wanted,
                 unnamed=unnamed == "1",
                 sources=chosen or None,
+                cards=bool(getattr(settings, "card_summary_on", False)),
             )
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
