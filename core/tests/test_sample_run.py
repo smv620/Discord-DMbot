@@ -163,6 +163,16 @@ class Steps(DatabaseTest):
         self.assertNotIn(NAME, line)
         self.assertFalse(any(ch.isdigit() for ch in line))
 
+    async def test_a_run_for_40b_leaves_the_campaigns_of_40_alone(self) -> None:
+        # #5057: the label 40b is its own deploy; a re-run of 40b must not touch 40's campaign.
+        of_40 = await self.made(name=sample_name.name_for(sample_name.Label(40)))
+        await steps.fresh_campaign(
+            self.db, self.campaigns, GUILD, DM, deploy=sample_name.Label(40, "b"), say=self.say
+        )
+        self.assertIsNotNone(await self.campaigns.get(GUILD, of_40.id))
+        names = {c.name for c in await self.campaigns.list_campaigns(GUILD)}
+        self.assertIn(sample_name.name_for(sample_name.Label(40, "b")), names)
+
     async def test_the_newest_three_are_kept_and_the_older_ones_go(self) -> None:
         ids = {n: (await self.made(name=sample_name.name_for(n))).id for n in (27, 28, 29, 30)}
         await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
@@ -377,10 +387,12 @@ class Steps(DatabaseTest):
         )
         sleep = await self.sleep_then(
             "UPDATE lore_uploads SET state = 'done', stage = 'done', names_found = 40,"
-            " links_found = 55, words_done = 900, calls_made = 7"
+            " links_found = 55, words_done = 900, calls_made = 7, names_cut = 3"
         )
         got = await steps.wait_lore(self.db, GUILD, up, say=self.say, sleep=sleep, poll_s=0)
-        self.assertEqual(got, {"names": 40, "connections": 55, "words": 900, "calls": 7})
+        self.assertEqual(
+            got, {"names": 40, "connections": 55, "words": 900, "calls": 7, "names cut": 3}
+        )
         self.assertTrue(any("lore waiting" in line for line in self.said))
         self.assertNotIn("Ashen", "".join(self.said))  # counts only
 
@@ -578,10 +590,12 @@ class Steps(DatabaseTest):
         _camp, sid = await self.stored()
         sleep = await self.sleep_then(
             "UPDATE session_imports SET state = 'done', scan_finished = TRUE,"
-            " story_state = 'read', step_total = 2, step_done = 2, words_done = 11, calls_made = 1"
+            " story_state = 'read', step_total = 2, step_done = 2, words_done = 11, calls_made = 1,"
+            " scan_cut = 4, story_held = 2"
         )
         got = await steps.wait_import(self.db, GUILD, sid, say=self.say, sleep=sleep, poll_s=0)
-        self.assertEqual(got, {"lines": 2, "words": 11, "calls": 1, "story": "read"})
+        want = {"lines": 2, "words": 11, "calls": 1, "story": "read"}
+        self.assertEqual(got, {**want, "scan cut": 4, "reader held": 2})
 
     async def done_scan(self, story: str) -> None:
         async with self.db.guild(GUILD) as conn:

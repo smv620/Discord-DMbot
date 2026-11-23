@@ -328,6 +328,35 @@ class ImportStore:
                 (now, state, part, now, part, parts, state, guild_id, session_id),
             )
 
+    async def set_names(
+        self,
+        guild_id: int,
+        session_id: str,
+        state: str,
+        now: int,
+        *,
+        part: int | None = None,
+        parts: int | None = None,
+        unread: int | None = None,
+    ) -> None:
+        """Where the name reader of this import is (#5091, as `set_story` is for the story read):
+        'reading' (stretch `part` of `parts`), 'read' (with how many stretches could not be read,
+        `unread`, which the card says plainly, never as "no names") or 'stopped' (the reader failed
+        after it started). Counts and times only. It started when it first went to 'reading', or
+        when the first stretch is read again (a new read after a restart, even one that died in
+        its first stretch); every call is a move."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET names_moved_at = %s,"
+                " names_started_at = CASE WHEN %s = 'reading' AND (names_state <> 'reading'"
+                " OR coalesce(%s, 0) < names_part OR coalesce(%s, 0) = 1)"
+                " THEN %s ELSE names_started_at END,"
+                " names_part = coalesce(%s, names_part), names_parts = coalesce(%s, names_parts),"
+                " names_unread = coalesce(%s, names_unread),"
+                " names_state = %s WHERE guild_id = %s AND session_id = %s",
+                (now, state, part, part, now, part, parts, unread, state, guild_id, session_id),
+            )
+
     async def finish_scan(self, guild_id: int, session_id: str, ended: int) -> None:
         """The scan ran to `ended` (seconds): its window is closed."""
         async with self._db.guild(guild_id) as conn:
@@ -335,6 +364,36 @@ class ImportStore:
                 "UPDATE session_imports SET scan_to = %s, scan_finished = TRUE"
                 " WHERE session_id = %s",
                 (ended, session_id),
+            )
+
+    async def set_scan_cut(self, guild_id: int, session_id: str, n: int) -> None:
+        """How many names the name scan of this imported session left out past its limit (#5055
+        A). Set, not added: a scan given back and run again counts once. A count only."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET scan_cut = %s WHERE session_id = %s",
+                (max(n, 0), session_id),
+            )
+
+    async def scan_cut(self, guild_id: int, session_id: str) -> int:
+        """The count `set_scan_cut` kept (0 for none)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT scan_cut FROM session_imports WHERE session_id = %s", (session_id,)
+            )
+            row = await cur.fetchone()
+        return int(row["scan_cut"]) if row is not None else 0
+
+    async def add_story_held(self, guild_id: int, session_id: str, n: int) -> None:
+        """Count `n` new names the story reader held for a later session past its limit (#5055 A),
+        for the sample run. Added: a read stopped by its limit goes on from where it got to, so
+        each part counts its own. A live session has no row, so nothing is kept. A count only."""
+        if n <= 0:
+            return
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET story_held = story_held + %s WHERE session_id = %s",
+                (n, session_id),
             )
 
     async def release_scan(self, guild_id: int, session_id: str) -> int:

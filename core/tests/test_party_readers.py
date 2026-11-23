@@ -28,6 +28,9 @@ NOT_READERS = {
     # (#4537 6a) a death asks "is this a player character" and then `party_record.current_members`
     # for "in the party": the role is the character's kind, the party is the one function's
     "memory/states.py",
+    # (#5055 A) a tool's reason for a waiting entry: "this entry is a player character waiting for
+    # who plays it", the character's kind, never who is in the party
+    "devtools/why_missed.py",
 }
 
 # Files that test the role today, to be checked one by one (slice 5). Alphabetical. (#4537 3a:
