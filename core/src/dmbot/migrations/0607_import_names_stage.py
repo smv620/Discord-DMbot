@@ -1,4 +1,4 @@
-"""0606_import_names_stage
+"""0607_import_names_stage
 
 The name reader's stage on the import card (#5091, Supervisor's ruling): where the after-session
 name reader (docs/design/session_names.md, slice 2) is while an imported session's names are read.
