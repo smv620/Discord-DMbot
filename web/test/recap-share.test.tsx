@@ -426,9 +426,15 @@ describe("the working line while the share link is changed", () => {
       });
       fireEvent.click(screen.getByRole("button", { name: shareWords.make }));
       await act(async () => {
-        // A zero-length step first, so the page's effects start the quiet timer, then the minute.
+        // A zero-length step first, so the page's effects start the quiet timer, then just under the minute.
         await vi.advanceTimersByTimeAsync(0);
-        await vi.advanceTimersByTimeAsync(61_000);
+        await vi.advanceTimersByTimeAsync(59_000);
+      });
+      // Before the minute: the line is still the working one, not the slow one.
+      expect(screen.getByText(shareWords.workingStage)).toBeTruthy();
+      expect(screen.queryByText(shareWords.workingQuiet)).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
       });
       expect(screen.getByText(shareWords.workingQuiet)).toBeTruthy();
     } finally {
