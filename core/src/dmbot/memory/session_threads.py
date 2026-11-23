@@ -200,12 +200,14 @@ async def run(
     count_call: Callable[[], Awaitable[None]] | None = None,
     progress: Sequence[session_progress.KnownThread] = (),
     finders: session_progress.Finders | None = None,
+    step: Callable[[int, int], Awaitable[None]] | None = None,
 ) -> tuple[list[Suggestion], Report]:
     """Read the session's readable lines (`extractor.readable`, recap left out by the caller) for
     new threads, window by window. With `progress` (the open threads and their standing parts,
     #4522 5b), the same calls also read what the talk changed on them (`session_progress`), kept
     in `Report.progress`. `finders` (#4624 6c): who may have found a clue, for a "clue found"
-    line. Never raises: out of funds is reported as a stop."""
+    line. `step` is awaited with (window n, of m) before each window's call, so a live session
+    can show where the read is (#5124). Never raises: out of funds is reported as a stop."""
     from dmbot.ai import AIOutOfFunds
 
     report = Report()
@@ -214,10 +216,16 @@ async def run(
     instructions = SESSION_INSTRUCTIONS + (session_progress.INSTRUCTIONS if progress else "")
     schema = session_progress.schema(thread_read.SCHEMA) if progress else thread_read.SCHEMA
     out: list[Suggestion] = []
-    for window, context in windows(lines):
+    every = windows(lines)
+    for n, (window, context) in enumerate(every, 1):
         if report.calls >= max_calls:
             report.stopped = "call limit"
             break
+        if step is not None:
+            try:  # (a display never breaks the read)
+                await step(n, len(every))
+            except Exception as exc:
+                log.warning("Session threads: the step display failed (%s)", type(exc).__name__)
         agreed = await consenting()
         window = [s for s in window if s.user_id in agreed]  # (a stop removes the lines for good)
         context = [s for s in context if s.user_id in agreed]

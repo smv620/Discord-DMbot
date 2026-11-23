@@ -624,6 +624,7 @@ from dmbot.transcription.base import (
 from dmbot.transcription.factory import build_transcriber
 from dmbot.transcription.pipeline import TranscriptionPipeline, clip_budget_s, speech_sent_line
 from dmbot.ui import (
+    after_session,
     contradiction_notes,
     deed_card,
     dm_links,
@@ -3617,7 +3618,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await step()
                 except Exception:
                     log.exception("After the session: %s failed", name)
+                if name == "story threads":  # the last slow read: the card ends here, not later
+                    await self._end_after_card(table)
         finally:
+            await self._end_after_card(table)  # (the safety net: every read is over)
             leftover, table.asks = table.asks or [], None
             if leftover:  # the sending step itself failed: still ask, so nothing is lost
                 try:
@@ -10054,9 +10058,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if table.campaign_id is None or table.transcript_session_id is None:
             return
         gid = table.guild_id
+        card = DMBot._after_card(self, table)
+
+        async def window(part: int, parts: int) -> None:
+            await card.stage(after_session.THREADS, part, parts)
+
         await DMBot._read_threads(  # (by the class: the tests' stand-ins are not DMBots)
             self, gid, table.campaign_id, table.transcript_session_id,
             {table.dm_user_id, *table.dm_user_ids}, lambda: self.consent.consenting(gid),
+            step=window,
         )  # fmt: skip
 
     async def _read_threads(
@@ -10067,6 +10077,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         dm_ids: Collection[int],
         consenting: Callable[[], Awaitable[Collection[int]]],
         renew: Callable[[], Awaitable[Any]] | None = None,
+        step: Callable[[int, int], Awaitable[None]] | None = None,
     ) -> None:
         """The new story threads one stored session's talk starts (#4522, quests slice 5a;
         `memory.session_threads`), waiting on the 📜 card for the DM, with one counts line in the
@@ -10140,7 +10151,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ai, lines, dm_ids=dm_ids, entries=entries, names=names, have=have,
                     known=known, consenting=consenting, max_calls=allowed,
                     max_tokens=OUTPUT_FLOOR, count_call=count_call, progress=moving,
-                    finders=finders,
+                    finders=finders, step=step,
                 )  # fmt: skip
                 store = ThreadSuggestionStore(memory._db)
                 # (the consent re-check just before storing: who stopped meanwhile is never kept)
@@ -10362,6 +10373,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         "Who is this: couldn't post the joins line (%s)", type(exc).__name__
                     )
 
+    def _after_card(self, table: Table) -> after_session.AfterSessionCard:
+        """The one message that shows this session's after-session reads while they run (#5124):
+        made the first time a read asks for it, ended once by `_after_session`."""
+        card = getattr(table, "after_card", None)
+        if not isinstance(card, after_session.AfterSessionCard):
+            channel = getattr(table, "screen_channel_id", None)
+
+            async def post(text: str) -> Any:
+                return None if channel is None else await self.post_message(channel, text)
+
+            card = after_session.AfterSessionCard(post)
+            table.after_card = card
+        return card
+
+    async def _end_after_card(self, table: Table) -> None:
+        """The reads are over: the card says so, once, and the table lets it go."""
+        card = getattr(table, "after_card", None)
+        if isinstance(card, after_session.AfterSessionCard):
+            await card.finish()
+            table.after_card = None
+
     async def extract_claims(self, table: Table, ended_at: int) -> None:
         """After a live session: see `_extract_session`."""
         if (
@@ -10373,6 +10405,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             or table.transcript_session_id is None
         ):
             return  # (off means off: nothing is read or built)
+        card = DMBot._after_card(self, table)  # (by the class: the tests' stand-ins)
+
+        async def batch(part: int, parts: int) -> None:
+            await card.stage(after_session.STORY, part, parts)
+
         await self._extract_session(
             table.guild_id,
             table.campaign_id,
@@ -10380,6 +10417,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             dm_ids={table.dm_user_id, *table.dm_user_ids},
             tally=table.steward_tally,
             notice_channel=table.screen_channel_id,
+            progress=batch,
         )
 
     async def _map_measure(
@@ -12261,6 +12299,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         agreed: Collection[int] | None = None,
         game_only: bool = False,
         import_scan: bool = False,
+        card: after_session.AfterSessionCard | None = None,
     ) -> list[str]:
         """Suggest the names DMbot heard in `lines` but doesn't know, for the DM to check (the name
         scan of a live session's end and of an imported one, #2106). `users`: the people whose
@@ -12307,7 +12346,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             read_in = [x for x in heard_in if x.text in scanned]
             people = await self._people_keys(gid, users, cid)
             every, reader_kinds, trace = await self._read_session_names(
-                gid, cid, read_in, people, every
+                gid, cid, read_in, people, every, card=card
             )
         found = every[:MAX_SUGGESTIONS]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
@@ -12448,6 +12487,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         heard_in: Sequence[Line],
         people: Collection[str],
         scan: list[Suggestion],
+        *,
+        card: after_session.AfterSessionCard | None = None,
     ) -> tuple[list[Suggestion], dict[str, str], list[name_trace.Row]]:
         """The name reader over the session's lines (docs/design/session_names.md, slice 2),
         joined with the scan's suggestions (`name_reader.join`). Never raises: no AI, a plan
@@ -12488,7 +12529,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     consenting=lambda: self.consent.consenting(gid),
                     max_tokens=OUTPUT_FLOOR,  # (background calls never send less, #2596)
                     rules=(campaign.target_ruleset, campaign.fallback_ruleset),
+                    progress=(
+                        (lambda n, of: card.stage(after_session.NAMES, n, of)) if card else None
+                    ),
                 )
+            if card is not None and read.unread:  # (a stretch not read is said, never "no names")
+                card.note(after_session.not_read(read.unread))
             kept, dropped = name_reader.tally(read.heard, {r.number: r.text for r in rows})
             joined, kinds = name_reader.join(scan, kept)
             log.info(  # counts only (a stretch not read is never "no names")
@@ -12653,8 +12699,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     except Exception:
                         log.exception("Name pass: couldn't read the lines turned back")
             added = await self._propose_new_names(
-                gid, cid, lines, users, table.transcript_session_id, agreed=agreed
-            )
+                gid, cid, lines, users, table.transcript_session_id, agreed=agreed,
+                card=DMBot._after_card(self, table),
+            )  # fmt: skip
             log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
