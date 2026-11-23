@@ -27,19 +27,25 @@ log gets counts only, never a name or a word of the transcript.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from collections import Counter
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from dmbot.memory.background import KINDS, in_the_rules
 from dmbot.memory.claims import LINES_MAX, reads_like_instruction
 from dmbot.memory.models import NAME_MAX, name_key
-from dmbot.memory.scan import COMMON, GAME_TERMS
+from dmbot.memory.scan import COMMON, GAME_TERMS, Suggestion
 from dmbot.names import not_names
 
+log = logging.getLogger(__name__)
+
 PROMPT_VERSION = "names-1"
+BATCH_LINES = 60  # lines a call reads; a few before it go with it for context, never cited
+CONTEXT_LINES = 4
+MIN_SPLIT = 8  # a cut answer is asked again in halves, down to this many lines
 MAX_PER_ANSWER = 40  # names read from one batch's answer; any more are counted as refused
 NAME_WORDS = 6  # "Caer Dineval", "the Spine of the World"; a sentence is not a name
 KNOWN_SENT = 300  # known names sent with each batch so it can leave them out (the rest: by code)
@@ -65,6 +71,7 @@ INSTRUCTION = "instruction"
 TOO_LONG = "too_long"
 OVER_ANSWER = "over_answer"
 TOO_FEW = "too_few_hearings"
+STOPPED = "speaker_stopped"  # every line holding it is from someone who stopped being recorded
 
 SYSTEM = """You help a Dungeon Master keep track of the names in their tabletop game. You are given
 a stretch of what was said at the table, as numbered lines inside <transcript> tags. It was written
@@ -283,3 +290,162 @@ def tally(heard: Iterable[Heard]) -> tuple[list[Found], list[Outcome]]:
         kept.append(Found(spelled, kind, why, len(lines), lines))
     kept.sort(key=lambda f: (WHYS.index(f.why) != 0, -f.times, f.name.casefold()))
     return kept, dropped
+
+
+class Reply(Protocol):
+    @property
+    def text(self) -> str: ...
+    @property
+    def cut(self) -> bool: ...
+
+
+class Client(Protocol):
+    async def complete(self, system: str, text: str, *, max_tokens: int = ...) -> Reply: ...
+
+
+@dataclass(frozen=True, slots=True)
+class Row:
+    """One line the reader may read: its number in the session, who said it, and the words."""
+
+    number: str
+    user_id: int
+    dm: bool
+    text: str
+
+
+@dataclass(slots=True)
+class Read:
+    """What the reader made of a whole session: the checked names of every batch, the outcome of
+    every refused candidate (for the trace), counts by reason, the calls made, and the batches it
+    could not read (reported as not read, never as "no names")."""
+
+    heard: list[Heard] = field(default_factory=list)
+    outcomes: list[Outcome] = field(default_factory=list)
+    refused: Counter[str] = field(default_factory=Counter)
+    calls: int = 0
+    unread: int = 0
+    stopped_speaking: int = 0  # names dropped: a speaker of their lines stopped meanwhile
+
+
+def _ask(rows: Sequence[Row], context: Sequence[Row], known: Iterable[str]) -> str:
+    def line(r: Row) -> str:
+        text = " ".join(r.text.split()).replace("<", "‹").replace(">", "›")
+        return f"{r.number} {'DM' if r.dm else 'Player'}: {text}"
+
+    before = "\n".join(line(r) for r in context)
+    body = "\n".join(line(r) for r in rows)
+    lead = f"<before>\n{before}\n</before>\n" if before else ""
+    return f"{known_block(known)}\n{lead}<transcript>\n{body}\n</transcript>"
+
+
+async def read(
+    client: Client,
+    rows: Sequence[Row],
+    skip: Collection[str],
+    *,
+    known: Iterable[str],
+    consenting: Callable[[], Awaitable[Collection[int]]],
+    max_tokens: int,
+    rules: tuple[str, str] | None = None,
+    progress: Callable[[int, int], Awaitable[None]] | None = None,
+) -> Read:
+    """Read the session's `rows` batch by batch (design section 4). Who is recorded is asked
+    before each batch (a line of someone who stopped is never sent) and again after its answer (a
+    name only their lines hold is dropped). The lines before a batch go with it for context and
+    are never cited. A cut answer is asked again in halves; a batch that still fails is counted
+    `unread`, never as "no names". `progress` is awaited with (batch n, of m) before each one.
+    Counts only in the log."""
+    out = Read()
+    known = list(known)
+    starts = list(range(0, len(rows), BATCH_LINES))
+    for n, start in enumerate(starts, 1):
+        if progress is not None:
+            try:
+                await progress(n, len(starts))
+            except Exception as exc:  # (the wait's line is a nicety: never stops the read)
+                log.warning("Name reader: progress failed (%s)", type(exc).__name__)
+        await _read_part(client, rows, start, start + BATCH_LINES, skip, known, consenting,
+                         max_tokens, rules, out)  # fmt: skip
+    log.info(  # counts only
+        "Name reader: %d call(s), %d name(s) checked, %d refused, %d batch(es) not read",
+        out.calls, len(out.heard), sum(out.refused.values()), out.unread,
+    )  # fmt: skip
+    return out
+
+
+async def _read_part(
+    client: Client,
+    rows: Sequence[Row],
+    start: int,
+    end: int,
+    skip: Collection[str],
+    known: Sequence[str],
+    consenting: Callable[[], Awaitable[Collection[int]]],
+    max_tokens: int,
+    rules: tuple[str, str] | None,
+    out: Read,
+) -> None:
+    end = min(end, len(rows))  # (a short last batch is halved by the lines it has)
+    agreed = set(await consenting())
+    part = [r for r in rows[start:end] if r.user_id in agreed]
+    if not part:
+        return
+    context = [r for r in rows[max(0, start - CONTEXT_LINES) : start] if r.user_id in agreed]
+    out.calls += 1
+    try:
+        reply = await client.complete(SYSTEM, _ask(part, context, known), max_tokens=max_tokens)
+    except Exception as exc:  # (never fatal: the batch is reported as not read)
+        log.warning("Name reader: a call failed (%s)", type(exc).__name__)
+        out.unread += 1
+        return
+    if reply.cut and end - start > MIN_SPLIT:
+        middle = start + (end - start) // 2
+        await _read_part(client, rows, start, middle, skip, known, consenting, max_tokens, rules,
+                         out)  # fmt: skip
+        await _read_part(client, rows, middle, end, skip, known, consenting, max_tokens, rules,
+                         out)  # fmt: skip
+        return
+    got = parse(reply.text, {r.number: r.text for r in part}, skip, cut=reply.cut, rules=rules)
+    if got.unreadable:
+        out.unread += 1
+        return
+    still = set(await consenting())
+    speaker = {r.number: r.user_id for r in part}
+    for h in got.heard:
+        lines = tuple(n for n in h.lines if speaker.get(n) in still)
+        if not lines:
+            out.stopped_speaking += 1
+            out.outcomes.append(Outcome(h.name, STOPPED))
+            continue
+        out.heard.append(Heard(h.name, h.kind, h.why, lines))
+    out.outcomes.extend(got.outcomes)
+    out.refused.update(got.refused)
+
+
+def join(
+    scan: Sequence[Suggestion], found: Sequence[Found]
+) -> tuple[list[Suggestion], dict[str, str]]:
+    """The scan's suggestions and the reader's names as one list, one per name key (design
+    section 3: the scan is one source among several). A name both found keeps the scan's entry,
+    its times the larger of the two; a name only the reader found is added. Ordered by how sure
+    DMbot is (section 6): a name introduced first, then by times heard. Also returns the reader's
+    kind for each name it found, as the lore read's kind word (`background.KINDS`), so the scan's
+    own kind question is not asked for it."""
+    by_key = {name_key(s.name): s for s in scan}
+    introduced: set[str] = set()
+    kinds: dict[str, str] = {}
+    for f in found:
+        key = name_key(f.name)
+        if f.why == INTRODUCED:
+            introduced.add(key)
+        mine = by_key.get(key)
+        if mine is None:
+            by_key[key] = Suggestion(f.name, f.times)
+        elif f.times > mine.times:
+            by_key[key] = Suggestion(mine.name, f.times, mine.also)
+        kinds[by_key[key].name] = KINDS[f.kind]
+    joined = sorted(
+        by_key.values(),
+        key=lambda s: (name_key(s.name) not in introduced, -s.times, s.name.casefold()),
+    )
+    return joined, kinds

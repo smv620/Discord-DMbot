@@ -147,3 +147,106 @@ class Hearings(unittest.TestCase):
         self.assertEqual(
             [(f.name, f.why) for f in kept], [("vell", nr.INTRODUCED), ("targos", nr.PLACE)]
         )
+
+
+class FakeReply:
+    def __init__(self, text: str, cut: bool = False) -> None:
+        self.text, self.cut = text, cut
+
+
+class FakeClient:
+    """Answers each call from a function of the transcript it was sent."""
+
+    def __init__(self, answer_for: Any) -> None:
+        self.answer_for, self.sent = answer_for, []
+
+    async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> FakeReply:
+        self.sent.append(text)
+        return self.answer_for(text)
+
+
+def rows(*texts: tuple[int, str]) -> list[nr.Row]:
+    return [nr.Row(str(i), user, user == 1, text) for i, (user, text) in enumerate(texts, 1)]
+
+
+def run(client: FakeClient, lines: list[nr.Row], agreed: Any = (1, 2)) -> nr.Read:
+    import asyncio
+
+    calls = iter(agreed if isinstance(agreed, list) else [agreed] * 100)
+
+    async def consenting() -> set[int]:
+        return set(next(calls))
+
+    return asyncio.run(
+        nr.read(client, lines, set(), known=["Targos"], consenting=consenting, max_tokens=100)
+    )
+
+
+class TheReader(unittest.TestCase):
+    def test_a_name_heard_in_a_batch_comes_back_checked(self) -> None:
+        client = FakeClient(lambda _t: FakeReply(answer(item("hrothgar"))))
+        got = run(client, rows((1, "a dwarf called hrothgar steps out")))
+        self.assertEqual([h.name for h in got.heard], ["hrothgar"])
+        self.assertIn("<known>\nTargos\n</known>", client.sent[0])
+        self.assertEqual(got.calls, 1)
+
+    def test_a_line_of_someone_who_stopped_is_never_sent(self) -> None:
+        client = FakeClient(lambda _t: FakeReply(answer()))
+        run(client, rows((1, "a dwarf called hrothgar"), (3, "my secret line")), agreed=(1,))
+        self.assertNotIn("my secret line", client.sent[0])
+
+    def test_a_name_whose_speaker_stopped_meanwhile_is_dropped(self) -> None:
+        client = FakeClient(lambda _t: FakeReply(answer(item("hrothgar"))))
+        got = run(client, rows((2, "a dwarf called hrothgar")), agreed=[(1, 2), (1,)])
+        self.assertEqual((got.heard, got.stopped_speaking), ([], 1))
+        self.assertEqual(got.outcomes[0].reason, nr.STOPPED)
+
+    def test_a_cut_answer_is_asked_again_in_halves(self) -> None:
+        many = [(1, f"line {i} about hrothgar") for i in range(20)]
+
+        def answer_for(text: str) -> FakeReply:
+            body = text.split("<transcript>", 1)[1]
+            if body.count("about hrothgar") > 10:  # (the whole batch: cut off)
+                return FakeReply('{"names": [', cut=True)
+            return FakeReply(answer(item("hrothgar", "spoken_of", [1, 11])))
+
+        got = run(FakeClient(answer_for), rows(*many))
+        self.assertEqual(got.calls, 3)  # (one cut, then two halves)
+        self.assertEqual(got.unread, 0)
+
+    def test_an_unreadable_or_failed_batch_is_counted_not_read(self) -> None:
+        class Broken(FakeClient):
+            async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> FakeReply:
+                raise RuntimeError("down")
+
+        self.assertEqual(run(FakeClient(lambda _t: FakeReply("no")), rows((1, "x"))).unread, 1)
+        self.assertEqual(run(Broken(None), rows((1, "x"))).unread, 1)
+
+    def test_lines_before_a_batch_go_with_it_and_are_never_cited(self) -> None:
+        texts = [(1, f"line {i}") for i in range(nr.BATCH_LINES + 2)]
+        texts[nr.BATCH_LINES - 1] = (1, "a dwarf called hrothgar")  # (the last line of batch 1)
+
+        def answer_for(text: str) -> FakeReply:
+            return FakeReply(answer(item("hrothgar", lines=[nr.BATCH_LINES])))
+
+        got = run(FakeClient(answer_for), rows(*texts))
+        # (batch 2 sees it only as context: its citation is not a line of batch 2)
+        self.assertEqual(len(got.heard), 1)
+        self.assertEqual(got.refused[nr.BAD_LINES], 1)
+
+
+class TheJoin(unittest.TestCase):
+    def test_reader_names_join_the_scan_once_each_introduced_first(self) -> None:
+        from dmbot.memory.scan import Suggestion
+
+        scan = [Suggestion("Targos", 5), Suggestion("Hrothgar", 2, ("Roth",))]
+        found = [
+            nr.Found("hrothgar", "person", nr.SPOKEN_OF, 4, ("1", "2", "3", "4")),
+            nr.Found("mira", "person", nr.INTRODUCED, 1, ("9",)),
+        ]
+        joined, kinds = nr.join(scan, found)
+        self.assertEqual(
+            [(s.name, s.times, s.also) for s in joined],
+            [("mira", 1, ()), ("Targos", 5, ()), ("Hrothgar", 4, ("Roth",))],
+        )
+        self.assertEqual(kinds, {"Hrothgar": "npc", "mira": "npc"})
