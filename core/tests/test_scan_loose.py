@@ -333,19 +333,37 @@ class TheBotStep(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             self.assertEqual(self.run_step(stand_in(d, {"Hope": "creature"}, on=False)), ["Vorna"])
 
+    def test_with_the_switch_off_the_step_is_exactly_today_s(self) -> None:
+        # (Supervisor, on #5137: no real campaign's suggestions change until a scored run; two
+        # spellings heard once each are still too few, nothing is capitalised, no closeness read)
+        texts = ["Then we met Hrothgar at the gate.", "Later Rothgar drank alone.", "Vorna came.",
+                 "And Vorna left.", "we saw hrothgar again."]  # fmt: skip
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, on=False, texts=texts)
+            self.assertEqual(self.run_step(bot, texts), ["Vorna"])
+            bot._name_closeness.assert_not_awaited()
+            self.assertIn((nt.SCAN, "Rothgar", scan.TOO_FEW), self.ends(d))
+
     def test_two_spellings_heard_once_each_are_one_name_with_both(self) -> None:
         # (section 5: grouped before the "heard twice" test; before slice 3 both were lost)
         texts = ["Then we met Hrothgar at the gate.", "Later Rothgar drank alone."]
         with tempfile.TemporaryDirectory() as d:
-            bot = stand_in(d, {}, on=False, texts=texts)
+            bot = stand_in(d, {}, texts=texts)
             self.assertEqual(self.run_step(bot, texts), ["Hrothgar"])
             self.assertEqual([c.args[3] for c in bot.memory.add_alias.await_args_list], ["Rothgar"])
             self.assertIn((nt.SCAN, "Rothgar", ng.GROUPED), self.ends(d))
 
+    def test_with_the_switch_off_nothing_is_kept_for_the_card(self) -> None:
+        texts = ["Then we met Vorna at the gate.", "And Vorna left."]
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, on=False, texts=texts)
+            self.assertEqual(self.run_step(bot, texts), ["Vorna"])
+            bot._keep_found.assert_not_awaited()
+
     def test_each_suggestion_keeps_what_made_it_a_name(self) -> None:
         texts = ["Then we met Hrothgar at the gate.", "Later Rothgar drank alone."]
         with tempfile.TemporaryDirectory() as d:
-            bot = stand_in(d, {}, on=False, texts=texts)
+            bot = stand_in(d, {}, texts=texts)
             self.run_step(bot, texts)
             (call,) = bot._keep_found.await_args_list
             self.assertEqual(
@@ -355,7 +373,7 @@ class TheBotStep(unittest.TestCase):
     def test_a_name_close_to_a_secret_is_never_suggested(self) -> None:
         texts = ["Then we met Hrothgar at the gate.", "Later Rothgar drank alone."]
         with tempfile.TemporaryDirectory() as d:
-            bot = stand_in(d, {}, on=False, texts=texts)
+            bot = stand_in(d, {}, texts=texts)
             bot._name_closeness.return_value = (lambda _s: None, lambda s: s == "Rothgar")
             self.assertEqual(self.run_step(bot, texts), [])
             # (never named, even in the dev trace: one count row)
@@ -365,7 +383,7 @@ class TheBotStep(unittest.TestCase):
     def test_when_the_names_cannot_be_read_nothing_is_suggested(self) -> None:
         texts = ["Then we met Hrothgar at the gate.", "Later Hrothgar drank alone."]
         with tempfile.TemporaryDirectory() as d:
-            bot = stand_in(d, {}, on=False, texts=texts)
+            bot = stand_in(d, {}, texts=texts)
             bot._name_closeness.return_value = None
             self.assertEqual(self.run_step(bot, texts), [])
 
