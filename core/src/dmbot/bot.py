@@ -1055,6 +1055,21 @@ def _fixed(texts: list[str]) -> Callable[[], Awaitable[list[str]]]:
 
 
 @dataclass(frozen=True, slots=True)
+class EarlyRead:
+    """The name reader's reading of a session made before PlotBot's name pass (slice 4 of
+    docs/design/session_names.md, #5133), so the step uses it rather than reading again."""
+
+    read: tuple[name_reader.Found, ...]
+    trace: tuple[name_trace.Row, ...]
+    unread: int | None
+    read_in: tuple[Line, ...]
+
+    def spellings(self) -> list[Suggestion]:
+        """What it found, as candidates for the name pass."""
+        return [Suggestion(f.name, max(f.times, 1)) for f in self.read]
+
+
+@dataclass(frozen=True, slots=True)
 class HeardAnswer:
     """What answering a waiting "Did they mean…?" did (`DMBot.answer_waiting_coded`, #4841): the
     words Discord shows, whether the question is closed, and which case it was, for a page that
@@ -12409,6 +12424,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         hold: list[name_pass_logic.Report] | None = None,
         game_only: bool = False,
         recheck: Callable[[], Awaitable[Collection[int]]] | None = None,
+        extra: Sequence[Suggestion] = (),
+        asked: set[str] | None = None,
+        left_out: set[str] | None = None,
+        fixed_keys: set[str] | None = None,
     ) -> int:
         """PlotBot's name pass (#2628): once per session, when its transcript is complete and before
         its recap, a word the cleaner left as heard that PlotBot is sure means a name on the list
@@ -12419,11 +12438,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         it, and the import posts one report for all its sessions. `game_only`: read only the lines
         the off-topic filter kept as game talk, as the import's name scan does. `recheck`: who may
         still be read, asked again after the AI call; the server's consent unless given (an
-        import passes `recorded_in`, its own rule for who is recorded in it, #3962)."""
+        import passes `recorded_in`, its own rule for who is recorded in it, #3962). `extra` and
+        `asked` (slice 4 of docs/design/session_names.md, #5133): the name reader's spellings join
+        its candidates, and `asked` gets the keys it asked about (`name_pass_run.run`)."""
         fixed = 0
         try:
             fixed = await self._repair_names(
-                gid, cid, session_id, users, agreed, hold, game_only, recheck
+                gid,
+                cid,
+                session_id,
+                users,
+                agreed,
+                hold,
+                game_only,
+                recheck,
+                extra,
+                asked,
+                left_out,
+                fixed_keys,
             )
         except Exception:
             log.exception("The name pass failed")
@@ -12445,6 +12477,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         hold: list[name_pass_logic.Report] | None = None,
         game_only: bool = False,
         recheck: Callable[[], Awaitable[Collection[int]]] | None = None,
+        extra: Sequence[Suggestion] = (),
+        asked: set[str] | None = None,
+        left_out: set[str] | None = None,
+        fixed_keys: set[str] | None = None,
     ) -> int:
         if (
             self.transcripts is None
@@ -12472,7 +12508,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self.transcripts, lookup, ask, gid, cid, session_id,
             people=people, known=await self.memory.known_keys(gid, cid), agreed=agreed, now=now,
             forget_before=now - int(self.memory.keep_days * 86400), game_only=game_only,
-            consenting=recheck or (lambda: self.consent.consenting(gid)),
+            consenting=recheck or (lambda: self.consent.consenting(gid)), extra=extra, asked=asked,
+            left_out=left_out, fixed_keys=fixed_keys,
         )  # fmt: skip
         # The words PlotBot was not sure of, and the ones it says are new names, are name questions
         # for the DM, whatever the scan's own "heard twice" rule says; the recap is held until they
@@ -12578,12 +12615,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         game_only: bool = False,
         import_scan: bool = False,
         card: after_session.AfterSessionCard | None = None,
+        early: EarlyRead | None = None,
+        passed: Collection[str] = (),
+        pass_over: Collection[str] = (),
+        pass_fixed: Collection[str] = (),
     ) -> list[str]:
         """Suggest the names DMbot heard in `lines` but doesn't know, for the DM to check (the name
         scan of a live session's end and of an imported one, #2106). `users`: the people whose
         names are not story names. `session_id`: the stored transcript the lines came from, so
         each suggestion keeps where it was said (#2329). Returns the names proposed; nothing is
-        confirmed."""
+        confirmed. `early`: the name reader's reading before the name pass (slice 4), used instead
+        of reading again; `passed`: the keys the pass asked about, whose "sounds like a known name"
+        groups the pass has settled (fixed, or asked of the DM as its own questions); `pass_over`:
+        those past its limit, which keep the card and say so in the trace; `pass_fixed`: the
+        spellings the pass wrote over, gone from the lines, so the early reading's are dropped."""
         assert self.memory is not None
         # A character's first name said alone ("Claude" for Claude Ambere) is their short name
         # before the scan looks (#3880), so it is never offered as a new name.
@@ -12632,6 +12677,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         read_in: list[Line] = []  # the lines the reader read, numbered from 1 in this order
         unread: int | None = None  # the reader's batches not read; None: it did not read at all
         ordinary = 0
+        to_pass = 0  # groups left to the name pass (slice 4)
         if not self.settings.session_names_on:
             # The switch off (DMBOT_SESSION_NAMES): the step exactly as it was before slice 3, so
             # no real campaign's suggestions change until a scored run shows the typed series
@@ -12656,41 +12702,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # any count or cap. Only lines with a stored speaker can be read (consent is asked per
             # line).
             trace = []
-            if self.settings.session_names_on and heard_in:
-                # (exactly the lines the scan read: never a sidebar or off-topic line it left out,
-                # and on a put-back sweep only the lines put back, not the whole session again)
-                scanned = set(lines)
-                read_in = [x for x in heard_in if x.text in scanned]
-                people = await self._people_keys(gid, users, cid)
-                # (an import's card shows the reader's stage, part n of m, #5091; a live session's
-                # after-session card shows it through `card`, #5124)
-                stage = (
-                    self.import_job.store if import_scan and self.import_job is not None else None
+            if early is not None:  # (read before the name pass, slice 4: never read twice)
+                read, trace, unread, read_in = (
+                    # (a spelling the pass wrote over is no longer in the lines: never offered)
+                    [f for f in early.read if name_key(f.name) not in pass_fixed],
+                    list(early.trace),
+                    early.unread,
+                    list(early.read_in),
                 )
-                started = False  # a "reading" was written: a reader that then fails says "stopped"
-
-                async def moved(part: int, parts: int) -> None:
-                    nonlocal started
-                    if stage is not None and session_id is not None:
-                        started = True
-                        await stage.set_names(
-                            gid, session_id, "reading", int(time.time()), part=part, parts=parts
-                        )
-
-                read, trace, unread = await self._read_session_names(
-                    gid, cid, read_in, people, spelled,
-                    card=card, progress=moved if stage is not None else None,
+            elif self.settings.session_names_on and heard_in:
+                read, trace, unread, read_in = await self._run_reader(
+                    gid, cid, session_id, lines, users, heard_in, spelled,
+                    card=card, import_scan=import_scan,
                 )  # fmt: skip
-                # A reader that failed after it started leaves "stopped", never a "reading" that
-                # looks as if it still runs; one that never started leaves the stage empty.
-                ended = "read" if unread is not None else "stopped" if started else ""
-                if stage is not None and session_id is not None and ended:
-                    try:
-                        await stage.set_names(
-                            gid, session_id, ended, int(time.time()), unread=unread
-                        )
-                    except Exception as exc:  # (the card is a nicety: the names are suggested)
-                        log.warning("The import card's names stage failed (%s)", type(exc).__name__)
             if loose and unread is None:
                 # The reader did not read (nothing to read, a plan without it, a failure): the scan
                 # alone never decides with the loosened rule, so its usual list stands.
@@ -12744,6 +12768,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             settled = await asyncio.to_thread(
                 name_groups.settle, spellings, heard_wrong=heard_wrong, near_secret=near_secret
             )
+            # (slice 4: a group close to a known name whose every spelling the name pass settled
+            # is the pass's, never a second "Sounds like" question)
+            if passed:
+                to_pass = name_groups.leave_to_pass(settled, passed)
             every = [g.suggestion() for g in settled.offered]
             found_how = {name_key(g.name): g for g in settled.offered}  # (what made each a name)
             reader_kinds = {
@@ -12781,6 +12809,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     name_trace.Row(name_trace.SCAN, f.name, name_scan.SPLIT, times=f.times)
                     for f in split
                 ),
+                # (slice 4: close to a known name, past the pass's limit: the card asks it)
+                *(
+                    name_trace.Row(name_trace.SCAN, g.name, name_groups.PASS_OVER, times=g.times)
+                    for g in settled.offered
+                    if g.heard_wrong is not None
+                    and any(name_key(x) in pass_over for x in (g.name, *g.also))
+                ),
             ]
         found = every[:MAX_SUGGESTIONS]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
@@ -12807,9 +12842,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         log.info(  # counts only
             "Name scan: %d name(s) suggested, %d with a kind, %d without, %d past the limit,"
             " %d ordinary word(s) the reader didn't find, %d offered as maybe a known name,"
-            " %d spelling(s) held back as close to a secret",
+            " %d left to the name pass, %d spelling(s) held back as close to a secret",
             len(found), len(kinds), len(found) - len(kinds), cut, ordinary,
-            sum(1 for g in settled.offered if g.heard_wrong), settled.near_secret,
+            sum(1 for g in settled.offered if g.heard_wrong), to_pass, settled.near_secret,
         )  # fmt: skip
         refused: set[str] = set()
         for suggestion in found:
@@ -12872,6 +12907,110 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 {name_key(n) for n, _times in asked},
             )
         return added
+
+    async def _run_reader(
+        self,
+        gid: int,
+        cid: str,
+        session_id: str | None,
+        lines: Sequence[str],
+        users: Collection[int],
+        heard_in: Sequence[Line],
+        spelled: Sequence[Suggestion],
+        *,
+        card: after_session.AfterSessionCard | None,
+        import_scan: bool,
+    ) -> tuple[list[name_reader.Found], list[name_trace.Row], int | None, list[Line]]:
+        """The name reader over the lines the scan reads, with its stage on the card: (what it
+        found, its trace rows, the batches it did not read or None, the lines it read in their
+        order). Shared by the step and the read before the name pass (slice 4, #5133)."""
+        # (exactly the lines the scan read: never a sidebar or off-topic line it left out, and on
+        # a put-back sweep only the lines put back, not the whole session again)
+        scanned = set(lines)
+        read_in = [x for x in heard_in if x.text in scanned]
+        people = await self._people_keys(gid, users, cid)
+        # (an import's card shows the reader's stage, part n of m, #5091; a live session's
+        # after-session card shows it through `card`, #5124)
+        stage = self.import_job.store if import_scan and self.import_job is not None else None
+        started = False  # a "reading" was written: a reader that then fails says "stopped"
+
+        async def moved(part: int, parts: int) -> None:
+            nonlocal started
+            if stage is not None and session_id is not None:
+                started = True
+                await stage.set_names(
+                    gid, session_id, "reading", int(time.time()), part=part, parts=parts
+                )
+
+        read, trace, unread = await self._read_session_names(
+            gid, cid, read_in, people, spelled,
+            card=card, progress=moved if stage is not None else None,
+        )  # fmt: skip
+        # A reader that failed after it started leaves "stopped", never a "reading" that looks as
+        # if it still runs; one that never started leaves the stage empty.
+        ended = "read" if unread is not None else "stopped" if started else ""
+        if stage is not None and session_id is not None and ended:
+            try:
+                await stage.set_names(gid, session_id, ended, int(time.time()), unread=unread)
+            except Exception as exc:  # (the card is a nicety: the names are suggested)
+                log.warning("The import card's names stage failed (%s)", type(exc).__name__)
+        return read, trace, unread, read_in
+
+    async def _read_before_pass(
+        self,
+        gid: int,
+        cid: str,
+        session_id: str | None,
+        lines: Sequence[str],
+        users: Collection[int],
+        *,
+        agreed: Collection[int] | None,
+        game_only: bool = False,
+        card: after_session.AfterSessionCard | None = None,
+        import_scan: bool = False,
+    ) -> EarlyRead | None:
+        """Slice 4 of docs/design/session_names.md (#5133; Supervisor's ruling B): the name reader
+        reads the session before PlotBot's name pass, so the pass's candidates include the names it
+        found close to a known one, capitals or none; the name step then uses this same reading
+        (never a second AI call). Only with DMBOT_SESSION_NAMES on; None otherwise, or when there
+        is nothing to read: then the pass and the step are exactly as before. Never raises."""
+        if (
+            # (never raises: a settings object without the switch is the switch off)
+            not getattr(self.settings, "session_names_on", False)
+            or getattr(self, "name_pass_ai", None) is None
+            or session_id is None
+            or self.transcripts is None
+            or self.memory is None
+            or not lines
+        ):
+            return None
+        started = time.monotonic()
+        try:
+            heard_in = [
+                x
+                for x in await self.transcripts.lines(gid, session_id)
+                if (agreed is None or x.user_id in agreed) and (not game_only or x.topic == GAME)
+            ]
+            if not heard_in:
+                return None
+            skip = set(await self.memory.known_keys(gid, cid)) | await self._people_keys(
+                gid, users, cid
+            )
+            spelled = find_new_names(lines, skip, min_times=1, unlimited=True, loose=True)
+            read, trace, unread, read_in = await self._run_reader(
+                gid, cid, session_id, lines, users, heard_in, spelled,
+                card=card, import_scan=import_scan,
+            )  # fmt: skip
+        except Exception as exc:  # (the pass and the step go on as before)
+            log.warning(
+                "Name reader before the name pass failed after %.1f s (%s)",
+                time.monotonic() - started,
+                type(exc).__name__,
+            )
+            return None
+        # (how much later the name pass, and so the recap, starts: Supervisor asked, slice 4)
+        log.info("Name reader before the name pass: %.1f s", time.monotonic() - started)
+        return EarlyRead(tuple(read), tuple(trace), unread, tuple(read_in))
 
     async def _write_name_trace(
         self,
@@ -13217,13 +13356,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             users = speakers | agreed | {table.dm_user_id}
             users |= table.dm_user_ids
             repaired = False
+            early: EarlyRead | None = None
+            passed: set[str] = set()
+            over: set[str] = set()
+            written: set[str] = set()
             if table.transcript_session_id is not None:
                 await self.save_transcript(table)  # so every line is stored to point at
+                # The name reader first (slice 4, #5133; DMBOT_SESSION_NAMES): what it found close
+                # to a known name, capitals or none, joins the name pass's candidates
+                early = await self._read_before_pass(
+                    gid, cid, table.transcript_session_id, lines, users,
+                    agreed=agreed, card=DMBot._after_card(self, table),
+                )  # fmt: skip
                 # PlotBot's name pass (#2628), before the scan and the recap, so the names they
                 # use are the list's: a repaired spelling is read again from the stored lines.
                 fixed = await self.repair_names(
-                    gid, cid, table.transcript_session_id, users, agreed
-                )
+                    gid, cid, table.transcript_session_id, users, agreed,
+                    extra=early.spellings() if early is not None else (), asked=passed,
+                    left_out=over, fixed_keys=written,
+                )  # fmt: skip
                 if fixed and self.transcripts is not None:
                     try:
                         lines = [
@@ -13249,7 +13400,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         log.exception("Name pass: couldn't read the lines turned back")
             added = await self._propose_new_names(
                 gid, cid, lines, users, table.transcript_session_id, agreed=agreed,
-                card=DMBot._after_card(self, table),
+                card=DMBot._after_card(self, table), early=early, passed=passed, pass_over=over,
+                pass_fixed=written,
             )  # fmt: skip
             log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
             if self.lookup is not None and not any(
@@ -14898,6 +15050,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # PlotBot's name pass (#2628) for an imported session too, before the scan and the recap;
         # the lines are read again when it fixed something.
         held: list[name_pass_logic.Report] = []
+        # The name reader first (slice 4, #5133; DMBOT_SESSION_NAMES): what it found close to a
+        # known name, capitals or none, joins the name pass's candidates; the scan reuses it
+        early = await self._read_before_pass(
+            gid, ready.campaign_id, ready.session_id, [t for _, t in lines], users,
+            agreed=set(agreed), game_only=True, import_scan=True,
+        )  # fmt: skip
+        passed: set[str] = set()
+        over: set[str] = set()
+        written: set[str] = set()
         repaired = await self.repair_names(
             gid,
             ready.campaign_id,
@@ -14907,6 +15068,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             held,
             game_only=True,
             recheck=recorded,
+            extra=early.spellings() if early is not None else (),
+            asked=passed,
+            left_out=over,
+            fixed_keys=written,
         )
         await self._keep_import_reports(gid, ready.campaign_id, held)
         if repaired:
@@ -14933,7 +15098,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         }
         added = await self._propose_new_names(
             gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id,
-            agreed=set(agreed), game_only=True, import_scan=True,
+            agreed=set(agreed), game_only=True, import_scan=True, early=early, passed=passed,
+            pass_over=over, pass_fixed=written,
         )  # fmt: skip
         if self.import_state is not None:
             await self.import_state.add_strings(

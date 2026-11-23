@@ -282,6 +282,7 @@ class TheBotStep(unittest.TestCase):
         from dmbot.bot import DMBot
 
         bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+        bot._run_reader = lambda *a, **k: DMBot._run_reader(bot, *a, **k)  # (slice 4)
         return asyncio.run(DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1"))
 
     def ends(self, folder: str) -> list[tuple[str, str, str]]:
@@ -509,3 +510,89 @@ class RuleTwo(unittest.TestCase):
                 {"given:<module>", "given:g"},
             ),
         )
+
+
+class TheReaderBeforeThePass(unittest.TestCase):
+    """Slice 4 (docs/design/session_names.md, section 7; #5133, Supervisor's ruling B): the name
+    reader reads before PlotBot's name pass, the step reuses that reading, and a group close to a
+    known name that the pass asked about is the pass's, not a "Sounds like" card."""
+
+    def step(self, bot: Any, texts: list[str], **kw: Any) -> list[str]:
+        from dmbot.bot import DMBot
+
+        bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+        bot._run_reader = lambda *a, **k: DMBot._run_reader(bot, *a, **k)  # (slice 4)
+        return asyncio.run(DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1", **kw))
+
+    def test_with_the_switch_off_nothing_is_read_before_the_pass(self) -> None:
+        from dmbot.bot import DMBot
+
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {"Vorna": "person"}, on=False)
+            got = asyncio.run(
+                DMBot._read_before_pass(bot, 5, "c1", "s1", TEXTS, set(), agreed=None)
+            )
+        self.assertIsNone(got)
+
+    def test_with_the_switch_on_it_reads_once_and_the_step_reuses_it(self) -> None:
+        from dmbot.bot import DMBot
+
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {"Vorna": "person"})
+            bot._run_reader = lambda *a, **k: DMBot._run_reader(bot, *a, **k)
+            early = asyncio.run(
+                DMBot._read_before_pass(bot, 5, "c1", "s1", TEXTS, set(), agreed=None)
+            )
+            assert early is not None
+            self.assertEqual([s.name for s in early.spellings()], ["Vorna"])
+
+            async def never(*_a: Any, **_k: Any) -> Any:
+                raise AssertionError("the step read the session again")
+
+            bot._read_session_names = never
+            self.assertIn("Vorna", self.step(bot, TEXTS, early=early))
+
+    def test_a_known_name_s_group_the_pass_asked_about_is_not_offered(self) -> None:
+        texts = ["Then Rothgar came.", "And Rothgar left.", "Vorna came.", "And Vorna left."]
+        known = scan.Match("e1", "Hrothgar")
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            bot._name_closeness = AsyncMock(
+                return_value=(lambda s: known if "othgar" in s else None, lambda _s: False)
+            )
+            self.assertEqual(self.step(bot, texts, passed={"rothgar"}), ["Vorna"])
+            self.assertIn((nt.SCAN, "Rothgar", ng.TO_NAME_PASS), [
+                (r.source, r.name, r.reason) for r in nt.read(Path(d, "trace-c1.jsonl"))
+            ])  # fmt: skip
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            bot._name_closeness = AsyncMock(
+                return_value=(lambda s: known if "othgar" in s else None, lambda _s: False)
+            )
+            self.assertIn("Rothgar", self.step(bot, texts))  # (not asked: "Sounds like" as before)
+
+    def test_a_spelling_the_pass_wrote_over_is_never_offered(self) -> None:
+        # (the reviewer: the reading before the pass still holds it; the lines no longer do)
+        from dmbot.bot import DMBot, EarlyRead
+
+        texts = ["We met Strad at the gate.", "Then Vorna came.", "And Vorna left."]
+        found = (Found("Strad", "person", SPOKEN_OF, 2, ("1",)),
+                 Found("Vorna", "person", SPOKEN_OF, 2, ("2",)))  # fmt: skip
+        early = EarlyRead(found, (), 0, ())
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts[1:])
+            bot._run_reader = lambda *a, **k: DMBot._run_reader(bot, *a, **k)
+            got = self.step(bot, texts[1:], early=early, pass_fixed={"strad"})
+        self.assertEqual(got, ["Vorna"])
+
+    def test_a_known_name_s_group_past_the_pass_s_limit_keeps_its_card_and_says_so(self) -> None:
+        texts = ["Then Rothgar came.", "And Rothgar left."]
+        known = scan.Match("e1", "Hrothgar")
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            bot._name_closeness = AsyncMock(
+                return_value=(lambda s: known if "othgar" in s else None, lambda _s: False)
+            )
+            self.assertEqual(self.step(bot, texts, pass_over={"rothgar"}), ["Rothgar"])
+            ends = [(r.name, r.reason) for r in nt.read(Path(d, "trace-c1.jsonl"))]
+        self.assertIn(("Rothgar", ng.PASS_OVER), ends)

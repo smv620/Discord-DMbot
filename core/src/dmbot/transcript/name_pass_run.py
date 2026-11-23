@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from collections.abc import Awaitable, Callable, Collection
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from typing import TYPE_CHECKING, Any
 
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import name_key
+from dmbot.memory.scan import Suggestion
 from dmbot.transcript import name_pass as np
 from dmbot.transcript.respell import contains, respell
 from dmbot.transcript.topics import GAME
@@ -70,9 +71,22 @@ async def run(
     dry_run: bool = False,
     game_only: bool = False,
     consenting: Callable[[], Awaitable[Collection[int]]] | None = None,
+    extra: Sequence[Suggestion] = (),
+    asked: set[str] | None = None,
+    left_out: set[str] | None = None,
+    fixed_keys: set[str] | None = None,
 ) -> np.Report:
+    """`extra`: the name reader's spellings, joined to the scan's candidates (slice 4, #5133).
+    `asked`, when given, gets the key of every spelling the pass settled: written as a list name,
+    or asked of the DM as unsure or new (`_keep_name_asks`), so the name step leaves those to it.
+    Filled only once the pass has finished: a pass that fails part way leaves the name step's
+    questions as they were. A "sure" answer that wrote nothing (a hidden name in the way) is not
+    in it, so the card still asks. `left_out` gets the keys past its limit, which the card keeps;
+    `fixed_keys` the spellings written over, which the step no longer offers."""
     texts = await pass_lines(store, guild_id, session_id, agreed, game_only)
-    found = np.survey(texts, lookup, people)
+    found = np.survey(texts, lookup, people, extra)
+    if found.left_out:
+        log.info("Name pass: %d spelling(s) past the limit, left to the DM", len(found.left_out))
     if not found.items:
         return np.Report(guarded=found.guarded)
     # The words PlotBot was not sure of, and the ones it says are new names, are offered to the DM
@@ -117,10 +131,22 @@ async def run(
     log.info("Name pass: %d asked, %d sure", len(found.items), len(verdict.sure))  # counts only
     if cut:  # every word the cut answer did not reach is "unsure": safe, and now it shows (#2596)
         log.warning("Name pass: the answer was cut off (%d words asked)", len(found.items))
-    return np.Report(
+    report = np.Report(
         tuple(fixed),
         tuple(c for c in verdict.unsure if name_key(c.heard) not in skip),
         tuple(c for c in verdict.new if name_key(c.heard) not in skip),
         found.guarded,
         cut,
     )
+    # (slice 4, #5133: only now, after every write, what the pass settled is told to the step)
+    written = {name_key(form) for f in fixed for form, _n in f.forms}
+    if fixed_keys is not None:
+        fixed_keys.update(written)
+    if asked is not None:
+        asked.update(written)
+        asked.update(
+            name_key(s) for c in (*verdict.unsure, *verdict.new) for s in (c.heard, *c.also)
+        )
+    if left_out is not None:  # (past the limit: the name step's card asks the DM instead)
+        left_out.update(found.left_out)
+    return report

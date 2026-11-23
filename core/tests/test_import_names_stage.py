@@ -66,6 +66,7 @@ class TheStore(WithImports):
 class TheStep(unittest.TestCase):
     def run_step(self, bot: Any, *, import_scan: bool) -> None:
         bot._write_name_trace = AsyncMock()
+        bot._run_reader = lambda *a, **k: DMBot._run_reader(bot, *a, **k)  # (slice 4)
         asyncio.run(
             DMBot._propose_new_names(bot, 5, "c1", TEXTS, set(), "s1", import_scan=import_scan)
         )
