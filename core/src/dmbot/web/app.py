@@ -131,6 +131,7 @@ from dmbot.web import homebrew as homebrew_pages
 from dmbot.web import house_rules as house_rule_pages
 from dmbot.web import maps as map_pages
 from dmbot.web import recap_audio as audio_links
+from dmbot.web import rule_lookup as rule_lookup_pages
 from dmbot.web import transcripts as transcript_pages
 from dmbot.web.accounts import (
     account_email,
@@ -5434,6 +5435,32 @@ def create_app(
         session, _token = signed
         try:
             return await house_rule_pages.read_rules(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The rule lookup (#5156): a DM types a name, the same card `/dmbot rule` sends comes back. Read
+    # only; nothing is stored and the typed words are never logged.
+    rule_lookup_limit = RateLimit(10, count=20)
+
+    @app.post("/me/campaigns/{ref}/rule-lookup")
+    async def me_rule_lookup(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """`{"name": "Fireball"}` → `{"kind", "parts", "close"}`."""
+        session, _token = signed
+        if rule_lookup_limit.take(f"rule-lookup:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        length = request.headers.get("content-length", "")
+        if not length.isdecimal() or int(length) > rule_lookup_pages.BODY_MAX:
+            raise HTTPException(status_code=413, detail="too_big")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        typed = body.get("name") if isinstance(body, dict) else None
+        if not isinstance(typed, str):
+            raise HTTPException(status_code=422, detail="bad_text")
+        try:
+            return await rule_lookup_pages.look_up(db, session, ref, typed)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

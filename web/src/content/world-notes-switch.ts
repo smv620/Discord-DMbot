@@ -2,4 +2,4 @@
 // for the DM to keep or turn down. It stays off until core 0481 (the read door and the `world-keep` / `world-not` / `world-undo` actions)
 // and the web API's routes are deployed and dev1 has kept, turned down and undone one line of each kind. Flip it with docs/GO_LIVE.md,
 // "WORLD_NOTES_LIVE".
-export const WORLD_NOTES_LIVE = false;
+export const WORLD_NOTES_LIVE = true;
