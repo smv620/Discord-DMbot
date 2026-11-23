@@ -49,6 +49,7 @@ from dmbot.web import (
     campaign_delete,
     campaign_settings,
     campaign_visits,
+    continuity,
     deeds,
     discord_accounts,
     dm_players,
@@ -3345,6 +3346,45 @@ def create_app(
             body = None
         try:
             return {"answer": await deeds.queue_answer(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/continuity")
+    async def me_campaign_continuity(ref: str, signed: Signed) -> dict[str, Any]:
+        """The heads-ups the bot last worked out for the DM (#3695), as Discord's continuity card
+        words them: DM only."""
+        session, _token = signed
+        try:
+            return await continuity.read(db, session, ref, outside_engine=settings.outside_engine)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/continuity/ask", status_code=202)
+    async def me_campaign_continuity_ask(ref: str, signed: Signed) -> dict[str, str]:
+        """Ask the bot to work the heads-ups out now; polled at `.../web/answers/{answer}`
+        (carries how many it found)."""
+        session, _token = signed
+        try:
+            return {"answer": await continuity.ask(db, session, ref)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/continuity/answer", status_code=202)
+    async def me_campaign_continuity_answer(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"claim", "choice": "changed" | "not"}`; polled at `.../web/answers/{answer}` (`gone`
+        or `refused` when it did not apply)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await continuity.answer(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

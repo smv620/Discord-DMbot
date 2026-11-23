@@ -240,7 +240,9 @@ def stand_in(
         added.append(name)
         return SimpleNamespace(value=SimpleNamespace(id=f"e-{name}"))
 
-    async def read(_g: int, _c: str, _lines: Any, _people: Any, every: list[Suggestion]) -> Any:
+    async def read(
+        _g: int, _c: str, _lines: Any, _people: Any, every: list[Suggestion], **_kw: Any
+    ) -> Any:
         if unread is None:
             return every, {}, [], None
         listed = {s.name for s in every}
