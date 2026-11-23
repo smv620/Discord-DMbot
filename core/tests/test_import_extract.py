@@ -56,6 +56,24 @@ class TheStore(WithImports):
         )
         self.assertEqual([r.session_id for r in await self.store.unextracted(GUILD)], [late])
 
+    async def test_the_scan_cut_is_set_not_added_and_held_names_add_up(self) -> None:
+        # (#5055 A) counts the sample run reads after the notice is gone: a retried scan counts
+        # once; the story reader's held names add up part by part; a live session keeps none
+        sid = await self.imported(1)
+        await self.store.set_scan_cut(GUILD, sid, 3)
+        await self.store.set_scan_cut(GUILD, sid, 3)  # (the same scan, run again)
+        self.assertEqual(await self.store.scan_cut(GUILD, sid), 3)
+        await self.store.add_story_held(GUILD, sid, 2)
+        await self.store.add_story_held(GUILD, sid, 1)
+        await self.store.add_story_held(GUILD, "live-session", 4)  # (no import row: nothing)
+        self.assertEqual(await self.store.scan_cut(GUILD, "live-session"), 0)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT story_held FROM session_imports WHERE session_id = %s", (sid,)
+            )
+            r: Any = await cur.fetchone()
+        self.assertEqual(r["story_held"], 3)
+
     async def test_renewing_keeps_the_window_start_where_the_scan_began(self) -> None:
         sid = await self.imported(1)
         began = int(time.time()) - 600
@@ -139,6 +157,7 @@ def bot_for(store: Any, outcomes: list[str], **kw: Any) -> Any:
     )
     me._extract_imports_left = partial(BOT._extract_imports_left, me)
     me._tell_imports_left = partial(BOT._tell_imports_left, me)
+    me._import_open = partial(BOT._import_open, me)
     me._upkeep_channel = partial(BOT._upkeep_channel, me)
     return me
 

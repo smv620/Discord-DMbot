@@ -90,6 +90,25 @@ class InstallStore:
                 done += 1
         return done
 
+    async def left_among(self, guild_ids: Iterable[int]) -> set[int]:
+        """Which of these servers the bot has left (`left_at` set, never cleared by a rejoin). A
+        server with no row is not one it left: nothing says so. One small read for each server,
+        in the server's own scope; a failure for one server leaves it out of the answer, so a
+        database blip never makes the worker drop a server it should work."""
+        gone: set[int] = set()
+        for guild_id in guild_ids:
+            try:
+                async with self._db.guild(guild_id) as conn:
+                    cur = await conn.execute(
+                        "SELECT 1 FROM installs WHERE guild_id = %s AND left_at IS NOT NULL",
+                        (guild_id,),
+                    )
+                    if await cur.fetchone() is not None:
+                        gone.add(guild_id)
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("Couldn't read an install: %s", type(exc).__name__)
+        return gone
+
     async def left_except(self, guild_ids: Iterable[int]) -> int:
         """At start: every server that still shows the bot as there but is not in `guild_ids` was
         left while the bot was down. One narrow database function does it across servers

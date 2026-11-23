@@ -96,7 +96,7 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.ontology import ACTIVE, DISGUISED_AS, FALLBACK_PREDICATE, Ontology, check_named
 from dmbot.memory.pronouns import is_pronoun
-from dmbot.memory.store import MemoryStore, refusal_for_log
+from dmbot.memory.store import MemoryStore, name_refusal, refusal_for_log
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 from dmbot.mentions import NO_PINGS
 from dmbot.pictures.keeper import Context as PictureContext
@@ -179,7 +179,8 @@ def rights_text(pictures: bool = False) -> str:
         f"Use this for {NOT_A_BOOK}. (For a book or adventure, use the **Shared story** "
         "switch.)\n**Pressing 🤖 Find names says this is your own writing, and you may use "
         "it.** The text is sent once to Anthropic (an AI company) to be read. DMbot does not "
-        "keep it, only a short line beside each name until you answer it."
+        "keep it. It keeps a short line beside each name until you answer it, and, for you alone, "
+        "the document's name and the heading each name was found under."
         + (PICTURES_KEPT_NOTE if pictures else "")
     )
 
@@ -739,6 +740,7 @@ class BackgroundOffer(_Menu):
                     + secret_questions_ui.count_line(done.secret_questions)
                     + picture_held_line(len(done.picture_held))
                     + pictures_unread_line(done.pictures_unread, done.unread_pages)
+                    + names_over_cap_line(done.dropped)
                     + pictures_kept_line(
                         done.pictures_kept, done.pictures_not_kept, done.pictures_undo
                     )
@@ -1179,7 +1181,19 @@ async def _read_background(
     held_ids = await _store_held(memory, campaign, pictures, known, found, stored, upload.label)
     if owner_of is not None:
         await _owners_learn(memory, campaign, found, made_ids, world_names, owner_of)
-    await _record_sources(memory, campaign, stored, upload, label)
+    # (the heading each new name was read under, while the text is still here: kept with the
+    # upload's label for the character card, #5050; the text itself is never kept, #2167)
+    # (off the event loop: a long upload with many names is many passes over its text)
+    headings = await asyncio.to_thread(
+        lore_knowledge.first_headings,
+        upload.text,
+        {
+            made_ids[name_key(f.name)]: (f.name, *f.also)
+            for f in found
+            if name_key(f.name) in made_ids
+        },
+    )
+    await _record_sources(memory, campaign, stored, upload, label, headings)
     # ... and again for the people this read made ("Tran" for a new Tran Vosk), whatever the AI
     # listed (#3880).
     if short is not None:
@@ -1849,6 +1863,20 @@ def pictures_kept_line(n: int, missed: int = 0, undo: bool = False) -> str:
             "some under Pictures on the website to make room."
         )
     return line
+
+
+def names_over_cap_line(dropped: Mapping[str, int]) -> str:
+    """The note's line for names past the one-document limit (#5055 A, #5056 point 2; Supervisor's
+    ruling): how many more names the read found than DMbot lists, so a shorter list is never a
+    silent one. A count only, never a name. Pure."""
+    n = dropped.get(bg.NAMES_OVER_CAP, 0)
+    if not n:
+        return ""
+    more = "1 more name was" if n == 1 else f"{n} more names were"
+    return (
+        f"\n📄 {more} left out. DMbot lists up to {bg.MAX_NAMES} names from one document. To "
+        f"get {'it' if n == 1 else 'them'}, split the document and upload each part."
+    )
 
 
 def pictures_unread_line(n: int, pages: Sequence[int] = ()) -> str:
@@ -2701,6 +2729,7 @@ async def store(
     traits: Mapping[str, Sequence[Trait]] | None = None,
     made: dict[str, str] | None = None,
     notes: Mapping[str, str] | None = None,
+    refused: Counter[str] | None = None,
 ) -> dict[str, list[str]]:
     """Each name as a suggestion with its quote (never confirmed), its other spellings with it and
     a disguise kept as a secret name. One change for the whole list: one reload of the live names,
@@ -2713,6 +2742,8 @@ async def store(
     `fold_secret`: only when the DM chose "everyone knows it", a disguise the text gives is just
     another public name. `traits` (#2959 item 3): a new character's lineage and classes, by its
     name's key, written in the same change as the name.
+    `refused` (#5056): counted by the rule's fixed label, each name a rule refuses; it is left out
+    alone while the others are stored.
     `known_by` (the uploader's player character, #2935): a secret name the upload gives starts as
     known by that character, as a kept connection does; with none, it is the DM's alone. That is
     set after the names, in changes of its own: Undo of the names removes the name and, with it,
@@ -2721,7 +2752,9 @@ async def store(
     items: list[bg.Found] = []
     for item in found:
         try:
-            check_named(item.kind, item.name)  # one refused name must not stop the others
+            # one refused name must not stop the others; kept although `name_refusal` below checks
+            # this too: it runs before each name's note and place level are worked out
+            check_named(item.kind, item.name)
         except MemoryRuleError as exc:
             log.info("Skipped a name from a background: %s", exc)
             continue
@@ -2760,6 +2793,27 @@ async def store(
         )
         items.append(item)
     stored: dict[str, list[str]] = {}
+    # Each name checked as `add_names` will check it (#5056): one that a rule refuses is left out
+    # alone and counted by its rule, where it used to make the whole call raise and lose every
+    # name of the upload. (A stand-in store without the campaign's kinds skips this: `add_names`
+    # still checks, as before. The kinds are read before the write: one the DM switches off in
+    # between still makes `add_names` refuse the whole call, as before, and is logged below.)
+    ontology = getattr(memory, "ontology", None)
+    if names and ontology is not None:
+        onto = await ontology(campaign.guild_id, campaign.id)
+        refusals = [name_refusal(onto, n) for n in names]
+        left_out = Counter(r for r in refusals if r)
+        if left_out:
+            # (fixed labels and counts only: never a name from the DM's text)
+            log.info(
+                "Left out %d name(s) a rule refused: %s",
+                sum(left_out.values()),
+                ", ".join(f"{k}={v}" for k, v in sorted(left_out.items())),
+            )
+            if refused is not None:
+                refused.update(left_out)
+            keep = [i for i, r in enumerate(refusals) if not r]
+            names, items = [names[i] for i in keep], [items[i] for i in keep]
     if not names:
         return stored
     try:
@@ -2799,18 +2853,25 @@ async def _record_sources(
     stored: Mapping[str, Sequence[str]],
     upload: Upload,
     label: str,
+    headings: Mapping[str, str] | None = None,
 ) -> None:
     """Which upload made the names just stored (#3675 Part B), for the Names page's filter: the
     website's upload id when there is one, else the dated label the DM sees. Only names this read
     made (a name another entry already had is not this upload's). Never a reason to lose a name:
-    a failed write is logged by its type and the names stay."""
+    a failed write is logged by its type and the names stay. `headings`: by entry id, the section
+    each was read under (#5050), kept beside the label."""
     made = [i for ids in stored.values() for i in ids]
     record = getattr(memory, "record_name_sources", None)  # (a stand-in store may not have it)
     if not made or record is None:
         return
     try:
         await record(
-            campaign.guild_id, campaign.id, made, upload_key=upload.source_id or label, label=label
+            campaign.guild_id,
+            campaign.id,
+            made,
+            upload_key=upload.source_id or label,
+            label=label,
+            **({"headings": dict(headings)} if headings else {}),
         )
     except Exception as exc:  # the type only: a database error can quote a row
         log.warning("Couldn't record which upload the names came from (%s)", type(exc).__name__)
@@ -3209,6 +3270,7 @@ async def announce(
         card += done.knowledge_note
     # (#4003 slice b: on the DM's own card)
     card += pictures_unread_line(done.pictures_unread, done.unread_pages)
+    card += names_over_cap_line(done.dropped)
     card += pictures_kept_line(done.pictures_kept, done.pictures_not_kept, done.pictures_undo)
     card += maps_asked_line(done.maps_asked, done.maps_over, done.maps_unsent)
     if interaction.user.id in campaign.dm_user_ids:  # (a manager who isn't a DM: counts only)

@@ -45,7 +45,7 @@ from dmbot.dm_screen.recap_panel import PlanFacts, audio_how
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.import_state import QUEUED, UNHONOURED, ImportState
 from dmbot.logs import log_context
-from dmbot.memory import gate
+from dmbot.memory import extractor, gate
 from dmbot.memory.exposures import secret_connections
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -68,9 +68,11 @@ from dmbot.outbox import (
     RECAP_READY,
     RECAP_UNCHECKED,
     STORY_HELD_BACK,
+    STORY_JOINED,
     STORY_MET_LIST,
     STORY_RECAP_LINES,
     STORY_SECRET_COUNT,
+    STORY_THREADS,
     STORY_WEATHER,
     Outbox,
 )
@@ -146,6 +148,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.dm_screen.said_as_hears import HearStore
     from dmbot.dm_screen.said_as_listens import ListenStore
     from dmbot.dm_screen.web_settings import SettingStore
+    from dmbot.install_record import InstallStore
     from dmbot.mail import Mailer
     from dmbot.memory.exposures import ExposureStore
     from dmbot.memory.importance import ImportanceCache
@@ -205,6 +208,7 @@ CLIP_SWEEP_EVERY = (
     30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
 )
 RECAP_ROUND_S = 60
+WORK_GUILDS_KEEP_S = 30.0  # a worker works out its servers again after this long
 IMPORT_RECAP_TRIES = 3  # so is the start of an imported session's recap
 RECAP_RECALL_BUDGET = 3500  # characters of story memory PlotBot reads for one recap (#2254)
 PLOT_TALK_SWEEP_EVERY = 720  # rounds: about an hour at five seconds
@@ -257,6 +261,8 @@ class RecapFeatures:
         _audio_seen: dict[tuple[int, str, int], tuple[int, int]]
         _clip_sweep_rounds: int
         _group_locks: dict[str, asyncio.Lock]
+        _work_guilds: tuple[float, list[int]] | None
+        installs: InstallStore | None
         _group_made: dict[str, list[int]]
         _group_started: dict[tuple[int, str, str], float]
         import_state: ImportState | None
@@ -330,6 +336,9 @@ class RecapFeatures:
         ): ...
         async def fetch_user(self, user_id: int, /) -> discord.User: ...
         async def run_web_backups(self) -> None: ...
+        async def recount_heard(
+            self, gid: int, cid: str, session_at: int, retold: Collection[int] | None = None
+        ) -> int | None: ...
         async def deliver_story_recap_lines(
             self, gid: int, cid: str, payload: Mapping[str, Any]
         ) -> None: ...
@@ -343,6 +352,12 @@ class RecapFeatures:
             self, gid: int, cid: str, payload: Mapping[str, Any]
         ) -> None: ...
         async def deliver_story_weather(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
+        async def deliver_story_threads(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
+        async def deliver_story_joined(
             self, gid: int, cid: str, payload: Mapping[str, Any]
         ) -> None: ...
         async def deliver_import_clock_offer(
@@ -447,6 +462,8 @@ class RecapFeatures:
                                 STORY_MET_LIST: self.deliver_story_met_list,
                                 STORY_HELD_BACK: self.deliver_story_held_back,
                                 STORY_WEATHER: self.deliver_story_weather,
+                                STORY_THREADS: self.deliver_story_threads,
+                                STORY_JOINED: self.deliver_story_joined,
                             },
                             self.outbox_wake,
                         ),
@@ -1399,6 +1416,11 @@ class RecapFeatures:
             shown,
         )[0]
 
+    async def recap_split_made(self, gid: int, cid: str, session_at: int, split: sp.Split) -> None:
+        """A session's split was made (#3172 item d): count its names said again without the lines
+        the split calls last time's recap. The lines are numbered as the story reader's are."""
+        await self.recount_heard(gid, cid, session_at, extractor.recap_numbers(split.to_json()))
+
     async def recap_stored_split(self, gid: int, cid: str, session_at: int) -> sp.Split | None:
         """The split kept once for the session (#3298), or None when none is kept (the recap then
         makes it, as before). Read only; never raises."""
@@ -2196,9 +2218,22 @@ class RecapFeatures:
 
     async def work_guild_ids(self) -> list[int]:
         """The servers a background round works: the bot's own, and for the worker (no Discord
-        connection, so `guilds` is empty) every server that has a campaign (#3844)."""
+        connection, so `guilds` is empty) every server that has a campaign and that the bot has not
+        left (#3844, #5030): the bot's news covers only its own servers, so work for one it left
+        would cost AI calls for a campaign nobody can be told about. The answer is kept for a
+        short while, since every loop asks every round."""
         if self.headless:
-            return await self.campaigns.guilds_with_campaigns()
+            now = time.monotonic()
+            kept = getattr(self, "_work_guilds", None)
+            if kept is not None and now - kept[0] < WORK_GUILDS_KEEP_S:
+                return list(kept[1])
+            found = await self.campaigns.guilds_with_campaigns()
+            installs = getattr(self, "installs", None)
+            if installs is not None:
+                gone = await installs.left_among(found)
+                found = [g for g in found if g not in gone]
+            self._work_guilds = (now, found)
+            return list(found)
         return [g.id for g in self.guilds]
 
     async def run_recap_audio(self) -> None:

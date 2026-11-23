@@ -351,6 +351,9 @@ export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Parti
       )) as Blob,
     campaignPage: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}`)) as CampaignPage,
+    visitCampaign: async (ref) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/visit`, {});
+    },
     recapStyle: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/recap-style`)) as RecapStyle,
     changeRecapStyle: async (ref, action, arg = "") =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/recap-style`, { action, arg })) as { id: string },

@@ -15,6 +15,7 @@ import LazyPanel from "./LazyPanel";
 import WorkProgress from "./WorkProgress";
 import AddAll from "./AddAll";
 import { LorePdfButtons, LorePdfPicker, useLorePdf } from "./LorePdf";
+import CampaignNav from "./CampaignNav";
 
 /** The campaign's address, read from `/account/lore/<server>.<campaign>`. */
 export function campaignFromPath(path: string): string | null {
@@ -199,9 +200,12 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
   }
 
   const back = (
-    <p>
-      <a href={`/account/campaigns/${encodeURIComponent(ref)}`}>{words.back}</a>
-    </p>
+    <>
+      {ref && <CampaignNav api={api} campaignRef={ref} page="lore" name={null} />}
+      <p>
+        <a href={`/account/campaigns/${encodeURIComponent(ref)}`}>{words.back}</a>
+      </p>
+    </>
   );
 
   if (upload) {
@@ -236,6 +240,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
         {done && (
           <div class="stack">
             <p role="status">{upload.namesFound + upload.linksFound === 0 ? words.foundNothing : words.found(upload.namesFound, upload.linksFound)}</p>
+            {(upload.namesCut ?? 0) > 0 && <p role="status">{words.cut(upload.namesCut ?? 0)}</p>}
             {upload.namesFound + upload.linksFound > 0 && (
               <>
                 {upload.choice === "smart" && <p>{words.guessed}</p>}

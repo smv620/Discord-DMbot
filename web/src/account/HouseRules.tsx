@@ -17,6 +17,7 @@ import { RULE_SHARING_LIVE } from "../content/rule-sharing-switch";
 import { HOUSE_FILE_LIVE } from "../content/house-file-switch";
 import CampaignNav from "./CampaignNav";
 import LazyPanel from "./LazyPanel";
+import SavingWait from "./SavingWait";
 
 /** The campaign in the address: `/account/house-rules/<server>.<campaign>`, or null for the list. */
 export function refFromPath(path: string): string | null {
@@ -147,7 +148,6 @@ function Rules({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
             <a href="/account/house-rules">{text.allCampaigns}</a>
           </p>
           <CampaignNav api={api} campaignRef={campaignRef} page="houseRules" name={found.name} />
-          <h2>{found.name}</h2>
           <p class="small">{text.leadOneCampaign}</p>
           {found.rules.length === 0 ? (
             <p class="panel" role="status">
@@ -245,6 +245,7 @@ function Download({
     }
   }
   return (
+    <>
     <p>
       <button type="button" class="button secondary" onClick={() => void save()}>
         {state === "busy" ? text.downloading : text.download}
@@ -254,5 +255,7 @@ function Download({
         {state === "failed" ? text.downloadFailed : ""}
       </span>
     </p>
+    <SavingWait active={state === "busy"} stage={text.buildingFile} whatToDo={text.buildingSlow} />
+    </>
   );
 }

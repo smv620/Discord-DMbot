@@ -44,13 +44,33 @@ class TheLoops(unittest.IsolatedAsyncioTestCase):
             _recap_audio_loop=loop,
             _recap_jobs_loop=lambda: loop(),
             _import_loop=loop,
+            _card_loop=lambda: loop(),
+            settings=SimpleNamespace(card_summary_on=False),
         )
         got = worker.loops(bot)
-        self.assertEqual([name for name, _ in got], ["recap-text", "import-clean", "recap-audio"])
+        self.assertEqual(
+            [name for name, _ in got], ["recap-text", "import-clean", "import-scan", "recap-audio"]
+        )
         for _, coro in got:
             coro.close()
         bot.audio_worker = bot.recap_worker = bot.import_job = None
         self.assertEqual(worker.loops(bot), [])
+
+    def test_the_worker_runs_the_card_round_only_when_it_is_on(self) -> None:
+        async def loop(**kw: Any) -> None:
+            return None
+
+        bot = SimpleNamespace(
+            audio_worker=None,
+            recap_worker=None,
+            import_job=None,
+            _card_loop=lambda: loop(),
+            settings=SimpleNamespace(card_summary_on=True),
+        )
+        got = worker.loops(bot)
+        self.assertEqual([name for name, _ in got], ["card-sentences"])
+        for _, coro in got:
+            coro.close()
 
     def stub(self, *, worker_on: bool) -> Any:
         seen: list[dict[str, bool]] = []
@@ -435,10 +455,11 @@ class TheFairOrder(unittest.IsolatedAsyncioTestCase):
 
 
 class TheImportLoop(unittest.IsolatedAsyncioTestCase):
-    """Cleaning is the worker's half of the import loop; the follow-ups (scan, news) stay the bot's
-    (#4904): each half runs only where its flag is set, over the servers the database lists."""
+    """Cleaning and the scans are the worker's halves of the import loop (each in a loop of its
+    own); the news stays the bot's (#4904 3b-4c): each half runs only where its flag is set, over
+    the servers the database lists."""
 
-    async def one_round(self, clean: bool, followups: bool) -> list[str]:
+    async def one_round(self, clean: bool, followups: bool, scan: bool = False) -> list[str]:
         calls: list[str] = []
 
         class Store:
@@ -451,8 +472,8 @@ class TheImportLoop(unittest.IsolatedAsyncioTestCase):
             async def run_round(self, gid: int, at_once: int) -> None:
                 calls.append(f"clean {gid}")
 
-        async def follow(gid: int) -> int:
-            calls.append(f"follow {gid}")
+        async def follow(gid: int, *, scan: bool = True, news: bool = True) -> int:
+            calls.append(f"follow {gid} scan={scan} news={news}")
             return 0
 
         async def servers() -> list[int]:
@@ -471,10 +492,25 @@ class TheImportLoop(unittest.IsolatedAsyncioTestCase):
         bot.run_import_followups = follow
         bot.work_guild_ids = servers
         with patch("dmbot.bot.asyncio.sleep", sleep), self.assertRaises(asyncio.CancelledError):
-            await DMBot._import_loop(bot, clean=clean, followups=followups)
+            await DMBot._import_loop(bot, clean=clean, scan=scan, followups=followups)
         return calls
 
-    async def test_the_worker_cleans_and_the_bot_follows_up(self) -> None:
+    async def test_the_worker_cleans_and_scans_and_the_bot_tells_the_news(self) -> None:
         self.assertEqual(await self.one_round(True, False), ["resume 4", "clean 4"])
-        self.assertEqual(await self.one_round(False, True), ["follow 4"])
-        self.assertEqual(await self.one_round(True, True), ["resume 4", "clean 4", "follow 4"])
+        # (the worker's two loops: cleaning alone, and the scans alone)
+        self.assertEqual(
+            await self.one_round(False, False, scan=True), ["follow 4 scan=True news=False"]
+        )
+        # (the bot with the worker on: the news alone)
+        self.assertEqual(await self.one_round(False, True), ["follow 4 scan=False news=True"])
+        # (the bot with the worker off: everything, as before)
+        self.assertEqual(
+            await self.one_round(True, True, scan=True),
+            ["resume 4", "clean 4", "follow 4 scan=True news=True"],
+        )
+
+    async def test_with_the_worker_on_the_bot_runs_neither_cleaning_nor_scans(self) -> None:
+        # (the loop the bot starts: `clean` and `scan` both off with DMBOT_WORKER; see `bot.py`)
+        self.assertEqual(
+            await self.one_round(False, True, scan=False), ["follow 4 scan=False news=True"]
+        )

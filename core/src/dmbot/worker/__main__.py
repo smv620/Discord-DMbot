@@ -4,7 +4,8 @@ It builds the same stores and workers as the bot (`bot.build_bot(headless=True)`
 (no `DISCORD_TOKEN` is needed or used), works every server that has a campaign
 (`DMBot.work_guild_ids`, from the database), and runs only the loops that have moved to it. With
 `DMBOT_WORKER=0` it does nothing (the bot runs everything itself, which is the way back), and says
-so. Moved so far: the recap text jobs, the import cleaning and the recap audio job (the audio one
+so. Moved so far: the recap text jobs, the import cleaning, the import scans (the name scan, the
+story read and the recaps' start) and the recap audio job (the audio one
 at a time across processes by the database lease, part 1 of #2128). What a job wants said in
 Discord is written to the outbox (part 2) or left in the job's state for the bot's own notices; the
 worker never posts.
@@ -66,9 +67,14 @@ def loops(bot: Any) -> list[tuple[str, Coroutine[Any, Any, None]]]:
     if bot.recap_worker is not None:
         out.append(("recap-text", bot._recap_jobs_loop()))
     if bot.import_job is not None:
-        out.append(("import-clean", bot._import_loop(clean=True, followups=False)))
+        out.append(("import-clean", bot._import_loop(clean=True, scan=False, followups=False)))
+        # (its own loop: the name scan and the story read make AI calls that take minutes, and a
+        # DM's next file must not wait behind them to be cleaned)
+        out.append(("import-scan", bot._import_loop(clean=False, scan=True, followups=False)))
     if bot.audio_worker is not None:
         out.append(("recap-audio", bot._recap_audio_loop(job=True, notices=False)))
+    if bot.settings.card_summary_on:
+        out.append(("card-sentences", bot._card_loop()))
     return out
 
 

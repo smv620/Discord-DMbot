@@ -117,7 +117,8 @@ async def build_export(db: Database, session: Session, *, now: int) -> dict[str,
     characters: list[dict[str, Any]] = []
     async with db.user(session.user_id, session=session.id_hash) as conn:
         cur = await conn.execute(
-            "SELECT email, payment_email, created_at, last_sign_in_at, dmbot_id FROM web_users"
+            "SELECT email, payment_email, created_at, last_sign_in_at, dmbot_id, campaign_visits"
+            " FROM web_users"
             " WHERE user_id = %s",
             (session.user_id,),
         )
@@ -178,6 +179,13 @@ async def build_export(db: Database, session: Session, *, now: int) -> dict[str,
             "email": account["email"] if account else None,
             # The address the payment company has for your payments, if a payment has come.
             "paymentEmail": account["payment_email"] if account else None,
+            # When you last opened each of your campaigns on the website (#5037): a time for each,
+            # by the campaign's address. It only orders your campaign list.
+            "campaignVisits": {
+                str(k): _iso(int(v))
+                for k, v in ((account or {}).get("campaign_visits") or {}).items()
+                if isinstance(v, int) and not isinstance(v, bool)
+            },
             # Each Discord account this one moved from, and the email its move code went to.
             "previousDiscordIds": [
                 {

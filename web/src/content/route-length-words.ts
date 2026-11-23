@@ -1,0 +1,21 @@
+// The words of 🛣️ Length on a route (#4392): plain words, the same as Discord's (ui/connection_edit.py, place_size.py).
+export const routeLengthWords = {
+  line: (words: string): string => `🛣️ Length: ${words}`,
+  readNote: " (DMbot read this; tap 🛣️ Length to change)",
+  button: "🛣️ Length",
+  keepButton: "✅ Length is right",
+  formHeading: "How far is it?",
+  label: "In your words (leave empty to take it off)",
+  placeholder: "For example: two days by cart",
+  save: "Save",
+  saved: (words: string): string => `🛣️ Length saved: ${words}.`,
+  takenOff: "🛣️ Length taken off.",
+  kept: (words: string): string => `🛣️ Length kept: ${words}.`,
+  nothingChanged: "Nothing changed.",
+  undo: "↩️ Undo",
+  undone: "↩️ Undone.",
+  undoLate: "Couldn't undo that: something changed since.",
+  gone: "That route isn't there any more. Open the page again to see it as it is now.",
+  changed: "That length has changed. Open it again to see it.",
+  couldNot: "Couldn't do that just now. Nothing changed. Try again in a moment.",
+} as const;

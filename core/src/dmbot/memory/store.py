@@ -36,7 +36,7 @@ from typing import Any, LiteralString
 
 from psycopg import errors, sql
 
-from dmbot.db import Database, row_int
+from dmbot.db import Conn, Database, row_int
 from dmbot.memory import (
     as_of,
     beliefs,
@@ -133,6 +133,7 @@ from dmbot.memory.lookalikes import family_of
 from dmbot.memory.lookalikes import find as find_look_alikes
 from dmbot.memory.lookalikes import pair as not_same_pair
 from dmbot.memory.lookup import LookupData
+from dmbot.memory.lore_knowledge import SECTION_MAX
 from dmbot.memory.models import (
     AFFECTED,
     ALIAS_KINDS,
@@ -354,7 +355,8 @@ async def _copy_name_sources(w: Scope, from_id: str, to_ids: Sequence[str]) -> N
         return
     await w.conn.execute(
         "INSERT INTO memory_name_sources (guild_id, campaign_id, entity_id, upload_key, label,"
-        " created_at) SELECT s.guild_id, s.campaign_id, t.id, s.upload_key, s.label, s.created_at"
+        " created_at, heading)"
+        " SELECT s.guild_id, s.campaign_id, t.id, s.upload_key, s.label, s.created_at, s.heading"
         " FROM memory_name_sources s CROSS JOIN unnest(%s::text[]) AS t(id)"
         " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.entity_id = %s"
         " ON CONFLICT DO NOTHING",
@@ -6111,6 +6113,19 @@ class MemoryStore:
             await ClaimStore(self).keep_dm_claims_in(w, [str(i) for i in ids])
             return Written(len(ids), w.batch, split_counts=(heard, not_told))
 
+    async def rejected_keys(self, guild_id: int, campaign_id: str) -> set[str]:
+        """The names the DM said are not names ("Not a name"), as keys: a subset of `known_keys`,
+        so a reader can say why it left a name out (docs/design/session_names.md, slice 2)."""
+        async with self._read(guild_id, campaign_id) as scope:
+            cur = await scope.conn.execute(
+                "SELECT a.key FROM memory_aliases a JOIN memory_entities e"
+                " ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id"
+                " AND e.id = a.entity_id"
+                " WHERE a.guild_id = %s AND a.campaign_id = %s AND e.status = 'rejected'",
+                scope.ids,
+            )
+            return {str(r["key"]) for r in await cur.fetchall()}
+
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
         """Every name and word DMbot already has an answer for in this campaign, whatever
         the answer: names (rejected ones too, so "Not a name" sticks) and "keep as heard"
@@ -6187,24 +6202,35 @@ class MemoryStore:
         *,
         upload_key: str,
         label: str,
+        headings: Mapping[str, str] | None = None,
     ) -> int:
         """Remember the upload a read made these entries from (#3675 Part B), for the Names page's
         "found in this lore document" filter. `upload_key`: the website's lore upload id when there
         is one, else the label, so a re-read of the same upload is one row. The label is the DM's
         own name for the upload (it can name a private backstory), cut to the column's limit, and
-        is only ever given to the DM. Ids, the label and a time only. An entry that is gone by now
-        is left out quietly. Returns how many rows are new."""
+        is only ever given to the DM. `headings` (#5050): by entry id, the heading of the upload's
+        section the name was read under (`lore_knowledge.first_headings`), for the character
+        card's "In your lore: …, under '…'"; the DM's own words, so DM-only like the label; no key
+        when there was none. Ids, the label, a heading and a time only. An entry that is gone by
+        now is left out quietly. Returns how many rows are new."""
         # (`clean_text` refuses an empty text: no label records nothing, and no key is the label)
         label = clean_text(label)[:120] if label.strip() else ""
         upload_key = clean_text(upload_key)[:120] if upload_key.strip() else label
         ids = sorted(set(entity_ids))
         if not label or not ids:
             return 0
+        # (cut to the column's limit; a heading only ever comes from `Sections`, which keeps it
+        # under that, so this is a guard, not a rule)
+        heads = [
+            clean_text(h)[:SECTION_MAX] if (h := (headings or {}).get(i, "")).strip() else ""
+            for i in ids
+        ]
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "INSERT INTO memory_name_sources (guild_id, campaign_id, entity_id, upload_key,"
-                " label, created_at) SELECT %s, %s, id, %s, %s, %s FROM memory_entities"
-                " WHERE guild_id = %s AND campaign_id = %s AND id = ANY (%s)"
+                " label, created_at, heading) SELECT %s, %s, e.id, %s, %s, %s, h.heading"
+                " FROM memory_entities e JOIN unnest(%s::text[], %s::text[]) AS h(id, heading)"
+                " ON h.id = e.id WHERE e.guild_id = %s AND e.campaign_id = %s"
                 " ON CONFLICT DO NOTHING",
                 (
                     guild_id,
@@ -6212,9 +6238,10 @@ class MemoryStore:
                     upload_key,
                     label,
                     int(time.time()),
+                    ids,
+                    heads,
                     guild_id,
                     campaign_id,
-                    ids,
                 ),
             )
             return int(cur.rowcount)
@@ -6250,6 +6277,37 @@ class MemoryStore:
             return [
                 (str(r["upload_key"]), str(r["label"]), int(r["at"])) for r in await cur.fetchall()
             ]
+
+    async def lore_origin(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> tuple[str, str] | None:
+        """(the label, the heading or "") of the earliest upload one entry was read from, merged
+        entries' included as `name_uploads` follows them, for the character card's "In your lore:
+        *<label>*, under '<heading>'" (#5050); None when no upload made it. DM-only, like the
+        label."""
+        found = await self.lore_origin_at(guild_id, campaign_id, entity_id)
+        return None if found is None else (found[0], found[1])
+
+    async def lore_origin_at(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> tuple[str, str, int] | None:
+        """`lore_origin`, and when that upload was read (Unix seconds), so the card can say which
+        came first, the lore or the table (#5050 ruling)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "WITH RECURSIVE family(id) AS ("
+                " SELECT %s::text"
+                " UNION SELECT e.id FROM memory_entities e JOIN family f ON e.merged_into = f.id"
+                " WHERE e.guild_id = %s AND e.campaign_id = %s)"
+                " SELECT s.label, s.heading, s.created_at FROM memory_name_sources s JOIN family f"
+                " ON s.entity_id = f.id WHERE s.guild_id = %s AND s.campaign_id = %s"
+                " ORDER BY s.created_at, s.upload_key, (s.heading = ''), s.entity_id LIMIT 1",
+                (entity_id, guild_id, campaign_id, guild_id, campaign_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                return None
+            return str(row["label"]), str(row["heading"]), int(row["created_at"])
 
     async def link_source(
         self, guild_id: int, campaign_id: str, relation_id: str
@@ -9575,6 +9633,29 @@ class MemoryStore:
 
     # ---- mentions and corrections -------------------------------------------------------
 
+    async def replace_session_heard(
+        self, guild_id: int, campaign_id: str, session_started_at: int, heard: Sequence[Heard]
+    ) -> int:
+        """Put a session's counts of names said in the place of what was kept, in one transaction
+        (#3172 item d's correction pass): running it twice gives the same rows, and a failure
+        leaves the old counts. No rows (every line was retold) leaves the session with none.
+        How many rows were written. Observations, not edits, as `add_session_heard`."""
+        _check_time(session_started_at)
+        rows = [
+            h
+            for h in heard
+            if is_id(h.entity_id) and 0 < h.times <= 2**31 - 1 and 0 < h.speaker_id <= INT64_MAX
+        ]
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "DELETE FROM memory_heard WHERE guild_id = %s AND campaign_id = %s"
+                " AND session_started_at = %s",
+                (guild_id, campaign_id, session_started_at),
+            )
+            if not rows:
+                return 0
+            return await self._insert_heard(conn, guild_id, campaign_id, session_started_at, rows)
+
     async def add_session_heard(
         self, guild_id: int, campaign_id: str, session_started_at: int, heard: Sequence[Heard]
     ) -> int:
@@ -9595,30 +9676,42 @@ class MemoryStore:
         if not rows:
             return 0
         async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "INSERT INTO memory_heard"
-                " (guild_id, campaign_id, entity_id, session_started_at, speaker_id, times)"
-                " SELECT %s, %s, coalesce(e.merged_into, e.id), %s, h.speaker_id,"
-                " sum(h.times)"
-                " FROM unnest(%s::text[], %s::bigint[], %s::int[])"
-                " AS h(entity_id, speaker_id, times)"
-                " JOIN memory_entities e ON e.guild_id = %s AND e.campaign_id = %s"
-                " AND e.id = h.entity_id AND e.status IN ('proposed', 'confirmed', 'merged')"
-                " GROUP BY 3, 5"
-                " ON CONFLICT (guild_id, campaign_id, session_started_at, entity_id, speaker_id)"
-                " DO UPDATE SET times = memory_heard.times + EXCLUDED.times",
-                (
-                    guild_id,
-                    campaign_id,
-                    session_started_at,
-                    [h.entity_id for h in rows],
-                    [h.speaker_id for h in rows],
-                    [h.times for h in rows],
-                    guild_id,
-                    campaign_id,
-                ),
-            )
-            return cur.rowcount
+            return await self._insert_heard(conn, guild_id, campaign_id, session_started_at, rows)
+
+    async def _insert_heard(
+        self,
+        conn: Conn,
+        guild_id: int,
+        campaign_id: str,
+        session_started_at: int,
+        rows: Sequence[Heard],
+    ) -> int:
+        """The insert both writers share: a name merged meanwhile counts for the one it was
+        merged into, a removed one is skipped."""
+        cur = await conn.execute(
+            "INSERT INTO memory_heard"
+            " (guild_id, campaign_id, entity_id, session_started_at, speaker_id, times)"
+            " SELECT %s, %s, coalesce(e.merged_into, e.id), %s, h.speaker_id,"
+            " sum(h.times)"
+            " FROM unnest(%s::text[], %s::bigint[], %s::int[])"
+            " AS h(entity_id, speaker_id, times)"
+            " JOIN memory_entities e ON e.guild_id = %s AND e.campaign_id = %s"
+            " AND e.id = h.entity_id AND e.status IN ('proposed', 'confirmed', 'merged')"
+            " GROUP BY 3, 5"
+            " ON CONFLICT (guild_id, campaign_id, session_started_at, entity_id, speaker_id)"
+            " DO UPDATE SET times = memory_heard.times + EXCLUDED.times",
+            (
+                guild_id,
+                campaign_id,
+                session_started_at,
+                [h.entity_id for h in rows],
+                [h.speaker_id for h in rows],
+                [h.times for h in rows],
+                guild_id,
+                campaign_id,
+            ),
+        )
+        return cur.rowcount
 
     # `memory_mentions` holds pointers, never words (#2329): the after-session name scan keeps
     # where a suggested name was said (a line reference and the place in it, `memory/places.py`),
@@ -10490,6 +10583,43 @@ async def _sync_plays(w: Changes, character_id: str) -> None:
             (), None, None, None, None, False, w.now, PLAYS_VERSION,
         )  # fmt: skip
         await w.insert(RELATIONS, _relation_row(link))
+
+
+# Why `add_names` would refuse one name, by a fixed label (#5056): the lore read checks each name
+# with `name_refusal` first and leaves out only the one that fails, counted, where one refused
+# name used to make the whole call raise and lose every name of the upload.
+REFUSED_SPELLING, REFUSED_NAME, REFUSED_KIND, REFUSED_ROLE = "spelling", "name", "kind", "role"
+
+
+def name_refusal(onto: Ontology, n: NewName) -> str:
+    """ "" when `add_names` takes this name, else the fixed label of the rule it breaks: the same
+    checks, in the same order, as `_add_names` makes for each name (its spellings cleaned, the
+    name rule, its kind active in the campaign, its role, a player character still waiting).
+    Pure: no database. A name `add_names` would only leave out (its key in use) passes here; one
+    whose key is in use *and* has a bad other spelling is counted here as "spelling" though
+    `add_names` would have skipped it quietly (nothing is stored either way). Not covered, as the
+    lore read never sends them: the batch's own checks (source, status, `more`'s spellings)."""
+    try:
+        for t in (n.name, *n.others, *n.secrets):
+            lookup_key(clean_text(t))
+    except MemoryRuleError:
+        return REFUSED_SPELLING
+    try:
+        check_named(n.type, n.name)
+    except MemoryRuleError:
+        return REFUSED_NAME
+    try:
+        kind, role = resolve_kind(n.type, n.role)
+        onto.active_type(kind)
+    except MemoryRuleError:
+        return REFUSED_KIND
+    try:
+        _check_role(onto, kind, role, None)
+    except MemoryRuleError:
+        return REFUSED_ROLE
+    if role == PLAYER_CHARACTER and n.status != PROPOSED:
+        return REFUSED_ROLE
+    return ""
 
 
 def _check_role(onto: Ontology, type_key: str, role: str | None, played_by: int | None) -> None:

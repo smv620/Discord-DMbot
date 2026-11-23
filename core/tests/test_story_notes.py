@@ -11,9 +11,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from dmbot.bot import DMBot, _story_note
 from dmbot.outbox import (
     STORY_HELD_BACK,
+    STORY_JOINED,
     STORY_MET_LIST,
     STORY_RECAP_LINES,
     STORY_SECRET_COUNT,
+    STORY_THREADS,
     NotAnId,
     clean_payload,
 )
@@ -124,3 +126,37 @@ class TheHeldBackNames(IsolatedAsyncioTestCase):
             b.campaigns.get = AsyncMock(return_value=None)
             await b._say_story_note(GUILD, CID, STORY_HELD_BACK, {"sid": "a" * 32, "n": 2})
         sent.assert_not_awaited()
+
+
+class TheThreadsAndJoinsNotes(IsolatedAsyncioTestCase):
+    async def test_a_worker_queues_the_threads_line_as_a_row_of_counts_and_a_date(self) -> None:
+        b = bot(headless=True)
+        b._tell_threads = DMBot._tell_threads.__get__(b)
+        campaign = SimpleNamespace(id=CID, guild_id=GUILD)
+        await b._tell_threads(campaign, 2, "call limit", "the session of 1 Jan", 1, started_at=900)
+        args, kwargs = b.outbox.add_now.await_args
+        self.assertEqual(args[2], STORY_THREADS)
+        self.assertEqual(args[3], {"made": 2, "changes": 1, "stopped": True, "at": 900})
+        self.assertTrue(kwargs["unique"])
+        b.post.assert_not_awaited()
+
+    async def test_the_bot_posts_the_threads_line_itself_as_before(self) -> None:
+        b = bot(headless=False)
+        b._tell_threads = DMBot._tell_threads.__get__(b)
+        campaign = SimpleNamespace(id=CID, guild_id=GUILD)
+        await b._tell_threads(campaign, 2, "", "the session of 1 Jan", 0, started_at=900)
+        b.outbox.add_now.assert_not_awaited()
+        self.assertIn("2 possible story threads", b.post.await_args.args[1])
+
+    async def test_delivery_says_the_threads_line_with_its_button_and_the_joins_count(self) -> None:
+        b = bot(headless=False)
+        await b._say_story_note(
+            GUILD, CID, STORY_THREADS, {"made": 3, "changes": 0, "stopped": False, "at": 900}
+        )
+        self.assertIn("3 possible story threads", b.post.await_args.args[1])
+        self.assertIsNotNone(b.post.await_args.kwargs["view"])
+        await b._say_story_note(GUILD, CID, STORY_JOINED, {"sid": "a" * 32, "n": 2})
+        self.assertIn("matched 2 names on its own", b.post.await_args.args[1])
+        b.post = AsyncMock(return_value=False)
+        with self.assertRaises(RuntimeError):
+            await b._say_story_note(GUILD, CID, STORY_JOINED, {"sid": "a" * 32, "n": 2})

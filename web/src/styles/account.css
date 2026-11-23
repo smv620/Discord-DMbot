@@ -65,6 +65,10 @@
 
   /* The breadcrumb and the four tabs on every page of a campaign (#2461). The "›" is drawn by the
      style, so a screen reader hears the three names and the list itself, not a symbol. */
+  /* The campaign's name over every page of a campaign (#5038): its space is kept while the name loads. */
+  .account .campaign-title {
+    min-height: 1.2em;
+  }
   .account .campaign-nav {
     display: grid;
     gap: var(--space-2);

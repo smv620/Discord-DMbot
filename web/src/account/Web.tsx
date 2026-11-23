@@ -870,7 +870,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                   key={`${chosen.a}|${chosen.b}|${line?.open ?? ''}`}
                   load={() => (CONNECTION_PANEL_LIVE ? import("./WebConnectionPanel") : import("./WebLinePanel"))}
                   what="the connections"
-                  props={{ edge: chosen, nameOf, kindOf, canEdit, act, reveal, revealing, api, refId: ref, onClose: () => setLine(null), guard: leaveGuard, open: line?.open ?? null }}
+                  props={{ edge: chosen, nameOf, kindOf, canEdit, act, reveal, revealing, api, refId: ref, onClose: () => setLine(null), guard: leaveGuard, open: line?.open ?? null, reload: () => void refreshNow.current() }}
                 />
               )}
             </WebMap>

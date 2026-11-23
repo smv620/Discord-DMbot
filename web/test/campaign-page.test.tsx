@@ -73,7 +73,7 @@ describe("the page", () => {
         "/account/import/100.cmp1", // an import-enabled test server
         "/account/house-rules/100.cmp1", // read by the whole table
         "/account/homebrew/100.cmp1",
-        "/account/sharing", // a DM can share rules
+        "/account/sharing/100.cmp1", // a DM can share rules: the campaign's own page (#5039)
       ]),
     );
     // Words equal Discord's and the PLAN's (#2461 item 4).

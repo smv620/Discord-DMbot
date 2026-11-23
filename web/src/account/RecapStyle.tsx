@@ -8,6 +8,7 @@ import { RECAP_MUSTS_LIVE, recapStylePage as words, STYLE_EXAMPLE_WORDS, STYLE_M
 import { type AccountApi, ApiError, type RecapStyle, type RecapStyleAction } from "./api";
 import RecapMustsPanel from "./RecapMusts";
 import WorkProgress from "./WorkProgress";
+import CampaignNav from "./CampaignNav";
 
 /** The campaign's address, read from `/account/recap-style/<server>.<campaign>`. */
 export function campaignFromPath(path: string): string | null {
@@ -143,6 +144,7 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
 
   return (
     <div class="stack">
+      {ref && <CampaignNav api={api} campaignRef={ref} page="recapStyle" name={null} />}
       <p>
         <a href={`/account/campaigns/${encodeURIComponent(ref)}`}>{words.back}</a>
       </p>

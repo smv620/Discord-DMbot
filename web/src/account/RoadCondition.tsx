@@ -38,7 +38,7 @@ export default function RoadCondition({
   const [said, setSaid] = useState<Said | null>(null);
   // The last change's batch, and the line it replaced, so Undo puts that line back even after a re-read.
   const [undo, setUndo] = useState<{ batch: number | null; prev: Condition | undefined } | null>(null);
-  // What the DM just set, shown until the graph is read again (the connection panel has no re-read): `prev` is what it was before, for Undo.
+  // What the DM just set, shown until the graph is read again (the page reads it again after each change, #5035): `prev` is what it was before, for Undo.
   const [local, setLocal] = useState<{ cond: Condition | undefined; prev: Condition | undefined } | null>(null);
   useEffect(() => {
     setLocal(null);
