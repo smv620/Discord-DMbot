@@ -21,6 +21,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import (
+    AsyncIterator,
     Awaitable,
     Callable,
     Collection,
@@ -3527,7 +3528,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("contradiction grades", lambda: self.grade_contradictions(table)),
             ("after-session report", lambda: self.make_report(table)),
         ]
-        return self._or_worker(table, after_jobs.READS, "story reads (worker)", steps)
+        return DMBot._or_worker(self, table, after_jobs.READS, "story reads (worker)", steps)
 
     def _after_late(self, table: Table) -> list[tuple[str, Callable[[], Awaitable[Any]]]]:
         """Importance (#3172), then the new story threads (#4522): today's steps, or one step that
@@ -3536,7 +3537,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("importance", lambda: self.write_importance(table)),
             ("story threads", lambda: self.read_session_threads(table)),
         ]
-        return self._or_worker(table, after_jobs.LATE, "late reads (worker)", steps)
+        return DMBot._or_worker(self, table, after_jobs.LATE, "late reads (worker)", steps)
 
     def _or_worker(
         self,
@@ -3545,9 +3546,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         name: str,
         steps: list[tuple[str, Callable[[], Awaitable[Any]]]],
     ) -> list[tuple[str, Callable[[], Awaitable[Any]]]]:
-        if not self._worker_does_after_session():
+        if not DMBot._worker_does_after_session(self):
             return steps  # (the worker is off: exactly today's steps)
-        return [(name, lambda: self._hand_to_worker(table, block, steps))]
+        return [(name, lambda: DMBot._hand_to_worker(self, table, block, steps))]
 
     async def _hand_to_worker(
         self,
@@ -3556,9 +3557,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         steps: list[tuple[str, Callable[[], Awaitable[Any]]]],
     ) -> None:
         """Write the block's row and wait until the worker has done it, so the steps after it find
-        its results. If no worker takes it within `WORKER_TAKE_S` (it is down), the bot takes the
-        row itself and runs the steps as before, so a session's reads are never lost. A block the
-        worker failed is gone from the queue: the steps after it go on. Counts only in the log."""
+        its results. If no worker takes it within `WORKER_TAKE_S` (it is down), or the worker that
+        took it died and its lease ran out, the bot takes the row itself and runs the steps as
+        before (keeping the lease fresh while it does), so a session's reads are never lost and
+        never run twice at once. A block the worker failed, or whose row is gone (the campaign was
+        deleted or moved), ends the wait: the steps after it go on. Counts only in the log."""
         assert self.after_jobs is not None
         gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
         queue = self.after_jobs
@@ -3580,38 +3583,85 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             handed = False
         if not handed:
             return await locally()
+        # (the DM sees that something is reading, even though the bot only waits: #5126's card)
+        words = (
+            after_session.STORY_IN_WORKER
+            if block == after_jobs.READS
+            else after_session.LATE_IN_WORKER
+        )
+        await DMBot._after_card(self, table).stage(words)
+        who = f"bot-{uuid.uuid4().hex[:8]}"
         began = time.monotonic()
+        errors = 0
         while True:
-            state = await queue.state(gid, cid, sid, block)
-            if state in (after_jobs.DONE, after_jobs.FAILED):
-                if state == after_jobs.FAILED:
-                    log.warning("After the session: the worker's %s block failed", block)
-                return
-            waited = time.monotonic() - began
-            if (
-                state == after_jobs.WAITING
-                and waited >= WORKER_TAKE_S
-                and await queue.claim(gid, cid, sid, block, "bot")
-            ):
-                log.warning("After the session: no worker took %s; running it here", block)
-                try:
-                    await locally()
-                finally:
-                    await queue.finish(gid, cid, sid, block, "bot", ok=True)
-                return
-            if waited >= WORKER_WAIT_MAX_S:
+            try:
+                state = await queue.state(gid, cid, sid, block)
+                waited = time.monotonic() - began
+                if state in (None, after_jobs.DONE, after_jobs.FAILED):
+                    if state == after_jobs.FAILED:
+                        log.warning("After the session: the worker's %s block failed", block)
+                    return  # (None: the row is gone with its campaign)
+                # `claim` itself refuses a block a live lease holds, so a dead worker's block is
+                # taken here too and a slow one is left alone.
+                if waited >= WORKER_TAKE_S and await queue.claim(gid, cid, sid, block, who):
+                    log.warning("After the session: no worker has %s; running it here", block)
+                    async with self._after_lease(gid, cid, sid, block, who):
+                        await locally()
+                    await queue.finish(gid, cid, sid, block, who, ok=True)
+                    return
+                errors = 0
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # a database hiccup: look again, but not for ever
+                errors += 1
+                log.warning("After the session: waiting for %s (%s)", block, type(exc).__name__)
+                if errors >= 5:
+                    return
+            if time.monotonic() - began >= WORKER_WAIT_MAX_S:
                 log.warning("After the session: gave up waiting for the worker's %s block", block)
                 return
             await asyncio.sleep(WORKER_POLL_S)
 
+    @contextlib.asynccontextmanager
+    async def _after_lease(
+        self, gid: int, cid: str, sid: str, block: str, who: str
+    ) -> AsyncIterator[None]:
+        """Keep a block's lease fresh while its holder (the worker, or the bot's own fallback) runs
+        it, so a long read is never taken by a second copy. If the lease is found to be someone
+        else's (it was let go while this process was stalled), the run is stopped, never doubled.
+        A renewal that fails for a database reason is tried again at the next beat."""
+        assert self.after_jobs is not None
+        queue = self.after_jobs
+        runner = asyncio.current_task()
+
+        async def keep_fresh() -> None:
+            while True:
+                await asyncio.sleep(AFTER_LEASE_EVERY_S)
+                try:
+                    if not await queue.renew(gid, cid, sid, block, who) and runner is not None:
+                        log.warning("After the session: lost the lease on %s; stopping", block)
+                        runner.cancel()
+                        return
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    log.warning("After the session: lease renewal (%s)", type(exc).__name__)
+
+        renewing = asyncio.create_task(keep_fresh(), name="after-session-lease")
+        try:
+            yield
+        finally:
+            renewing.cancel()
+            await asyncio.gather(renewing, return_exceptions=True)
+
     async def _run_after_block(
         self, gid: int, cid: str, sid: str, dm_ids: Collection[int], block: str
-    ) -> None:
+    ) -> bool:
         """Run one handed-over block from ids alone (the worker's side, #4905): each step is today's
         id-based reader, in today's order, each in its own `try` so one failing never stops the
         next, and consent is asked again inside each as before. Notices go through the outbox
         (`_story_note`). The extractor's per-session tally is the bot's log only, so it is not
-        kept here."""
+        kept here. True when every step ran without an error."""
         consenting = partial(self.consent.consenting, gid)
         if block == after_jobs.READS:
             plan: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
@@ -3638,40 +3688,39 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ("importance", lambda: self._read_importance(gid, cid, sid)),
                 ("story threads", lambda: self._read_threads(gid, cid, sid, dm_ids, consenting)),
             ]
+        failed = 0
         for name, step in plan:
             try:
                 await step()
             except Exception as exc:  # the type only: never a word of the story
+                failed += 1
                 log.warning("After the session (worker): %s failed (%s)", name, type(exc).__name__)
+        return failed == 0
 
     async def _take_after_job(self, job: after_jobs.Job) -> None:
-        """The worker takes one block: claim it, keep its lease fresh while it runs, run it, end
-        it. A block someone else holds is left alone."""
+        """The worker takes one block: claim it (under an id of its own, so a replacement process
+        is never mistaken for it), keep its lease fresh while it runs, run it, end it. A block
+        someone else holds is left alone. A worker that is stopped mid-block (a deploy) gives the
+        block back, unfinished, for the next round; one whose lease was lost stops quietly."""
         assert self.after_jobs is not None
-        queue, who = self.after_jobs, "worker"
+        queue = self.after_jobs
+        who = f"worker-{uuid.uuid4().hex[:8]}"
         gid, cid, sid, block = job.guild_id, job.campaign_id, job.session_id, job.block
         if not await queue.claim(gid, cid, sid, block, who):
             return
-
-        async def keep_fresh() -> None:
-            while True:
-                await asyncio.sleep(AFTER_LEASE_EVERY_S)
-                await queue.renew(gid, cid, sid, block, who)
-
-        renewing = asyncio.create_task(keep_fresh(), name="after-session-lease")
         ok = False
         try:
             with log_context(guild_id=gid, campaign_id=cid):
-                await self._run_after_block(gid, cid, sid, job.dm_ids, block)
-            ok = True
+                async with self._after_lease(gid, cid, sid, block, who):
+                    ok = await self._run_after_block(gid, cid, sid, job.dm_ids, block)
+        except asyncio.CancelledError:
+            await queue.release(gid, cid, sid, block, who)  # (nothing if the lease is not ours)
+            raise
         except Exception as exc:
             log.warning(
                 "After the session (worker): %s block failed (%s)", block, type(exc).__name__
             )
-        finally:
-            renewing.cancel()
-            await asyncio.gather(renewing, return_exceptions=True)
-            await queue.finish(gid, cid, sid, block, who, ok=ok)
+        await queue.finish(gid, cid, sid, block, who, ok=ok)
 
     async def _after_session_loop(self) -> None:
         """The worker's loop for `after_session_jobs` (#4905): every few seconds, the blocks the
@@ -3681,8 +3730,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         while True:
             for gid in await self.work_guild_ids():
                 try:
-                    for job in await self.after_jobs.open(gid):
-                        await self._take_after_job(job)
+                    # (a few at once, so one campaign's long block never holds up another's past
+                    # the bot's take time)
+                    await asyncio.gather(
+                        *(self._take_after_job(j) for j in await self.after_jobs.open(gid, 3))
+                    )
                 except Exception:
                     log.exception("After the session (worker): a round failed for a server")
             await asyncio.sleep(AFTER_ROUND_S)
@@ -3731,7 +3783,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
             # The story read and what depends on it (where the story is, scenes, who is this,
             # contradiction grades, the report), as one block: the worker's with `DMBOT_WORKER`.
-            *self._after_reads(table, ended_at),
+            *DMBot._after_reads(self, table, ended_at),
             # The names the extractor proposed are name questions too (#2169): count again.
             ("recap names", lambda: self.recheck_recap_hold(table)),
             ("what was said", lambda: self.note_claims(table)),
@@ -3755,7 +3807,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # How much each entry the session touched matters, and its roles (#3172), then the new
             # story threads (#4522): after the posts the DM waits for, since nothing above reads a
             # rank, inside the extractor's call limit. One block: the worker's with `DMBOT_WORKER`.
-            *self._after_late(table),
+            *DMBot._after_late(self, table),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             # What maps posted during the session showed (#4259 8a), privately, once each
@@ -11019,8 +11071,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         speaker's consent for a step to depend on."""
         if table.campaign_id is None or table.transcript_session_id is None:
             return
-        await self._grade_contradictions_for(
-            table.guild_id, table.campaign_id, table.transcript_session_id
+        await DMBot._grade_contradictions_for(  # (by the class: the tests' stand-ins)
+            self, table.guild_id, table.campaign_id, table.transcript_session_id
         )
 
     async def _grade_contradictions_for(self, gid: int, cid: str, sid: str) -> None:

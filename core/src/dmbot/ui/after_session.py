@@ -31,6 +31,10 @@ DONE_BUT = "Finished reading the session, but some parts could not be read."
 STORY = "Reading the story"
 NAMES = "Reading names"
 THREADS = "Reading story threads"
+# While the worker does a block, the bot only waits for it: the stage says so (counts of parts come
+# with the next slice, when the worker reports them through the job's row).
+STORY_IN_WORKER = "Reading the story and what follows, in the background"
+LATE_IN_WORKER = "Reading what mattered and the story threads, in the background"
 
 
 def not_read(parts: int, what: str = "names") -> str:

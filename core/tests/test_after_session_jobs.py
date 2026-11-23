@@ -55,6 +55,14 @@ class TheQueue(MemoryTest):
             await self.queue.finish(GUILD_A, self.c, SESSION, "reads", "worker", ok=True)
         )
 
+    async def test_a_block_given_back_waits_again_and_only_its_holder_can_give_it(self) -> None:
+        await self.hand()
+        await self.queue.claim(GUILD_A, self.c, SESSION, "reads", "worker-1")
+        self.assertFalse(await self.queue.release(GUILD_A, self.c, SESSION, "reads", "worker-2"))
+        self.assertTrue(await self.queue.release(GUILD_A, self.c, SESSION, "reads", "worker-1"))
+        self.assertEqual(await self.queue.state(GUILD_A, self.c, SESSION, "reads"), "waiting")
+        self.assertTrue(await self.queue.claim(GUILD_A, self.c, SESSION, "reads", "worker-2"))
+
     async def test_a_failed_block_is_over_and_the_other_block_is_its_own(self) -> None:
         await self.hand()
         await self.hand(jobs.LATE)

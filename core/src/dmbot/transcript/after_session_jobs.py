@@ -111,6 +111,20 @@ class AfterSessionJobs:
             )
             return bool(cur.rowcount)
 
+    async def release(
+        self, guild_id: int, campaign_id: str, session_id: str, block: str, who: str
+    ) -> bool:
+        """Give a block back, unfinished, so the next round takes it again: for a holder that was
+        stopped (a deploy) before it was done. Nothing happens if the lease is no longer its."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE after_session_jobs SET state = 'waiting', claimed_by = '', lease_at = 0"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_id = %s AND block = %s"
+                " AND state = 'running' AND claimed_by = %s",
+                (guild_id, campaign_id, session_id, block, who[:40]),
+            )
+            return bool(cur.rowcount)
+
     async def finish(
         self,
         guild_id: int,

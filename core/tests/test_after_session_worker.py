@@ -23,6 +23,8 @@ class _Jobs:
         self.rows: dict[str, str] = {}
         self.added: list[tuple[str, tuple[int, ...]]] = []
         self.holder: dict[str, str] = {}
+        self.renewed: list[tuple[str, str]] = []
+        self.dead: set[str] = set()  # blocks whose running lease has run out
 
     async def add(self, g: int, c: str, s: str, block: str, dm_ids: Any) -> bool:
         self.rows.setdefault(block, jobs.WAITING)
@@ -33,12 +35,20 @@ class _Jobs:
         return self.rows.get(block)
 
     async def claim(self, g: int, c: str, s: str, block: str, who: str) -> bool:
-        if self.rows.get(block) != jobs.WAITING:
+        running_dead = self.rows.get(block) == jobs.RUNNING and block in self.dead
+        if self.rows.get(block) != jobs.WAITING and not running_dead:
             return False
         self.rows[block], self.holder[block] = jobs.RUNNING, who
         return True
 
-    async def renew(self, *a: Any) -> bool:
+    async def renew(self, g: int, c: str, s: str, block: str, who: str) -> bool:
+        self.renewed.append((block, who))
+        return self.holder.get(block) == who
+
+    async def release(self, g: int, c: str, s: str, block: str, who: str) -> bool:
+        if self.holder.get(block) != who or self.rows.get(block) != jobs.RUNNING:
+            return False
+        self.rows[block], self.holder[block] = jobs.WAITING, ""
         return True
 
     async def finish(self, g: int, c: str, s: str, block: str, who: str, *, ok: bool) -> bool:
@@ -58,6 +68,9 @@ def _bot(*, worker_on: bool, queue: _Jobs | None = None) -> Any:
     me._worker_does_after_session = partial(DMBot._worker_does_after_session, me)
     me._or_worker = partial(DMBot._or_worker, me)
     me._hand_to_worker = partial(DMBot._hand_to_worker, me)
+    me._after_lease = partial(DMBot._after_lease, me)
+    me._after_card = partial(DMBot._after_card, me)
+    me.post_message = mock.AsyncMock(return_value=None)
     for name in (
         "extract_claims",
         "walk_story_chain",
@@ -145,7 +158,8 @@ class WithTheWorkerOn(unittest.IsolatedAsyncioTestCase):
         with mock.patch.object(botmod, "WORKER_TAKE_S", 0):
             await hand()
         self.assertEqual(me.calls, ["write_importance", "read_session_threads"])
-        self.assertEqual((queue.holder[jobs.LATE], queue.rows[jobs.LATE]), ("bot", jobs.DONE))
+        self.assertTrue(queue.holder[jobs.LATE].startswith("bot-"))
+        self.assertEqual(queue.rows[jobs.LATE], jobs.DONE)
 
     async def test_a_failed_block_lets_the_steps_after_it_go_on(self) -> None:
         queue = _Jobs()
@@ -155,6 +169,89 @@ class WithTheWorkerOn(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("dmbot.bot", level="WARNING"):
             await hand()
         self.assertEqual(me.calls, [])
+
+
+class WithAWorkerThatDiesOrASlowOne(unittest.IsolatedAsyncioTestCase):
+    async def test_a_block_whose_worker_died_is_taken_over_by_the_bot(self) -> None:
+        queue = _Jobs()
+        me = _bot(worker_on=True, queue=queue)
+        ((_, hand),) = DMBot._after_late(me, _table())
+        await queue.add(1, "c", "s", jobs.LATE, {3})
+        queue.rows[jobs.LATE], queue.holder[jobs.LATE] = jobs.RUNNING, "worker-dead"
+        queue.dead.add(jobs.LATE)  # (its lease has run out)
+        with mock.patch.object(botmod, "WORKER_TAKE_S", 0):
+            await hand()
+        self.assertEqual(me.calls, ["write_importance", "read_session_threads"])
+        self.assertTrue(queue.holder[jobs.LATE].startswith("bot-"))
+
+    async def test_a_slow_worker_with_a_live_lease_is_left_alone_not_doubled(self) -> None:
+        queue = _Jobs()
+        me = _bot(worker_on=True, queue=queue)
+        ((_, hand),) = DMBot._after_late(me, _table())
+        await queue.add(1, "c", "s", jobs.LATE, {3})
+        queue.rows[jobs.LATE], queue.holder[jobs.LATE] = jobs.RUNNING, "worker-live"
+        ticks = [0]
+
+        async def tick(_: float) -> None:
+            ticks[0] += 1
+            if ticks[0] == 3:
+                queue.rows[jobs.LATE] = jobs.DONE
+
+        with (
+            mock.patch.object(botmod, "WORKER_TAKE_S", 0),
+            mock.patch.object(botmod.asyncio, "sleep", tick),
+        ):
+            await hand()
+        self.assertEqual(me.calls, [])  # (the worker's lease was live: the bot never ran it)
+
+    async def test_a_row_that_is_gone_ends_the_wait_at_once(self) -> None:
+        me = _bot(worker_on=True, queue=_Jobs())
+        ((_, hand),) = DMBot._after_late(me, _table())
+
+        class Vanishing(_Jobs):
+            async def state(self, *a: Any) -> str | None:
+                return None
+
+        me.after_jobs = Vanishing()
+        await hand()  # (does not hang for hours)
+        self.assertEqual(me.calls, [])
+
+    async def test_a_database_error_while_waiting_is_tried_again_then_given_up(self) -> None:
+        class Broken(_Jobs):
+            async def state(self, *a: Any) -> str | None:
+                raise RuntimeError("the database")
+
+        me = _bot(worker_on=True, queue=Broken())
+        ((_, hand),) = DMBot._after_late(me, _table())
+
+        async def quick(_: float) -> None:
+            return None
+
+        with (
+            mock.patch.object(botmod.asyncio, "sleep", quick),
+            self.assertLogs("dmbot.bot", level="WARNING") as logs,
+        ):
+            await hand()
+        self.assertNotIn("the database", " ".join(logs.output))
+
+    async def test_the_bots_own_run_keeps_the_lease_fresh(self) -> None:
+        import asyncio
+
+        queue = _Jobs()
+        me = _bot(worker_on=True, queue=queue)
+        ((_, hand),) = DMBot._after_late(me, _table())
+
+        async def slow(table: Any) -> None:
+            await asyncio.sleep(0.15)
+            me.calls.append("slow")
+
+        me.write_importance = slow
+        with (
+            mock.patch.object(botmod, "WORKER_TAKE_S", 0),
+            mock.patch.object(botmod, "AFTER_LEASE_EVERY_S", 0.03),
+        ):
+            await hand()
+        self.assertGreaterEqual(len(queue.renewed), 2)
 
 
 class TheWorkersSide(unittest.IsolatedAsyncioTestCase):
@@ -182,7 +279,7 @@ class TheWorkersSide(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_reads_block_runs_in_todays_order_from_ids_alone(self) -> None:
         me = self.worker()
-        await DMBot._run_after_block(me, 1, "c", "s", {3, 7}, jobs.READS)
+        self.assertTrue(await DMBot._run_after_block(me, 1, "c", "s", {3, 7}, jobs.READS))
         self.assertEqual(
             [c[0] for c in me.calls],
             ["_extract_session", "_walk_story_chain", "_write_scenes", "_write_who",
@@ -205,7 +302,8 @@ class TheWorkersSide(unittest.IsolatedAsyncioTestCase):
 
         me._write_scenes = boom
         with self.assertLogs("dmbot.bot", level="WARNING") as logs:
-            await DMBot._run_after_block(me, 1, "c", "s", {3}, jobs.READS)
+            ok = await DMBot._run_after_block(me, 1, "c", "s", {3}, jobs.READS)
+        self.assertFalse(ok)  # (the block is reported as not whole)
         self.assertEqual(me.calls[-1][0], "_make_report_for")
         self.assertNotIn("a word of the story", " ".join(logs.output))
         self.assertIn("RuntimeError", " ".join(logs.output))
@@ -215,6 +313,7 @@ class TheWorkersSide(unittest.IsolatedAsyncioTestCase):
         me = self.worker()
         me.after_jobs = queue
         me._run_after_block = partial(DMBot._run_after_block, me)
+        me._after_lease = partial(DMBot._after_lease, me)
         job = jobs.Job(1, "c", "s", jobs.LATE, (3,), "waiting")
         await queue.add(1, "c", "s", jobs.LATE, {3})
         queue.rows[jobs.LATE] = jobs.RUNNING  # (someone else holds it)
@@ -224,3 +323,37 @@ class TheWorkersSide(unittest.IsolatedAsyncioTestCase):
         await DMBot._take_after_job(me, job)
         self.assertEqual([c[0] for c in me.calls], ["_read_importance", "_read_threads"])
         self.assertEqual(queue.rows[jobs.LATE], jobs.DONE)
+
+    async def test_a_worker_stopped_mid_block_gives_it_back_for_the_next_round(self) -> None:
+        import asyncio
+
+        queue = _Jobs()
+        me = self.worker()
+        me.after_jobs = queue
+        me._after_lease = partial(DMBot._after_lease, me)
+
+        async def stopped(*a: Any, **kw: Any) -> bool:
+            raise asyncio.CancelledError  # (a deploy stops the worker's tasks)
+
+        me._run_after_block = stopped
+        await queue.add(1, "c", "s", jobs.LATE, {3})
+        job = jobs.Job(1, "c", "s", jobs.LATE, (3,), "waiting")
+        with self.assertRaises(asyncio.CancelledError):
+            await DMBot._take_after_job(me, job)
+        self.assertEqual(queue.rows[jobs.LATE], jobs.WAITING)  # (not failed: it is taken again)
+        self.assertEqual(queue.holder[jobs.LATE], "")
+
+    async def test_each_take_uses_an_id_of_its_own(self) -> None:
+        queue = _Jobs()
+        me = self.worker()
+        me.after_jobs = queue
+        me._run_after_block = partial(DMBot._run_after_block, me)
+        me._after_lease = partial(DMBot._after_lease, me)
+        job = jobs.Job(1, "c", "s", jobs.LATE, (3,), "waiting")
+        await queue.add(1, "c", "s", jobs.LATE, {3})
+        await DMBot._take_after_job(me, job)
+        first = queue.holder[jobs.LATE]
+        queue.rows[jobs.LATE] = jobs.WAITING
+        await DMBot._take_after_job(me, job)
+        self.assertTrue(first.startswith("worker-"))
+        self.assertNotEqual(first, queue.holder[jobs.LATE])
