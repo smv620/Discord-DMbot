@@ -49,6 +49,7 @@ from dmbot.web import (
     campaign_delete,
     campaign_settings,
     campaign_visits,
+    deeds,
     discord_accounts,
     dm_players,
     email_change,
@@ -3315,6 +3316,34 @@ def create_app(
             body = None
         try:
             return {"answer": await leave_questions.queue_answer(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/deeds")
+    async def me_campaign_deeds(ref: str, signed: Signed) -> dict[str, Any]:
+        """The deeds the party did that wait for the DM (#3591), as Discord's deed card shows
+        them: DM only."""
+        session, _token = signed
+        try:
+            return await deeds.read(db, session, ref, outside_engine=settings.outside_engine)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/deeds/answer", status_code=202)
+    async def me_campaign_deeds_answer(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"choice": "record" | "not", "deed"}` or `{"choice": "undo", "batch"}`; polled at
+        `.../web/answers/{answer}` (a recorded one carries its change number)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await deeds.queue_answer(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

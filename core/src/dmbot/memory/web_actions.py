@@ -43,6 +43,7 @@ from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, MAP_PICTURE_GONE, Chan
 from dmbot.memory._changes import NOT_FOUND as STORE_NOT_FOUND
 from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
 from dmbot.memory.claims import WAITING_NAME_REASON, ClaimStore
+from dmbot.memory.deed_proposals import GONE as DEED_PROPOSALS_GONE
 from dmbot.memory.link_words import predicate_for_either
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.map_fact_store import GONE as MAP_GONE
@@ -183,6 +184,7 @@ THREAD_NEW_ACTIONS = ("thread-new", "thread-due", "thread-party")  # (#3696 slic
 THREAD_LINK_ACTIONS = ("thread-link", "thread-led-to")  # an event, what led to what (slice 2d)
 REVEALS_ACTIONS = ("reveals-ask", "reveals-keep", "reveals-not")  # what they learned (#3863)
 LEAVE_ACTIONS = ("leave-yes", "leave-no")  # "Still in the party?" (#4895, party knowledge slice 6a)
+DEED_ACTIONS = ("deed-record", "deed-not", "deed-undo")  # deeds the party did (#3591)
 JOIN_ACTIONS = (  # the DM's join question (#4778) and "Let me choose" (#4799)
     "join-everyone", "join-party", "join-undo", "join-choices", "join-choose",
 )  # fmt: skip
@@ -546,6 +548,20 @@ class ActionStore:
             row = await cur.fetchone()
         return None if row is None else (str(row["action"]), str(row["text"]))
 
+    async def deed_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done `deed-record` made from the website
+        (#3591), so the page's Undo can only take back what they recorded themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = 'deed-record'"
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
     async def join_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int
     ) -> bool:
@@ -802,6 +818,7 @@ async def apply(
     join_choices: JoinChoicesFn | None = None,
     reveals_ask: RevealsAskFn | None = None,
     reveals_drop: RevealsDropFn | None = None,
+    deeds: DeedAnswerFn | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
@@ -862,6 +879,10 @@ async def apply(
         return await _reveals(memory, waiting, guild_id, cid, action, reveals_ask, reveals_drop)
     if action.action in LEAVE_ACTIONS:
         return await _leave(memory, guild_id, cid, action)
+    if action.action in DEED_ACTIONS:
+        if actions is None and action.action == "deed-undo":
+            return _failed(FAILED)
+        return await _deed(memory, actions, deeds, guild_id, cid, action)
     if action.action in THREAD_STATE_ACTIONS:
         return await _thread_state(memory, guild_id, cid, action)
     if action.action == THREAD_INVOLVE_ACTION:
@@ -1670,6 +1691,65 @@ async def _leave(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Out
     ):  # (AlreadyAnswered is one, and so is a character no longer in the party:
         return _failed(GONE)  # `gone` for both, as Discord answers both with "already answered")
     return _changed(done.batch)
+
+
+# A deed answered from the page (#3591): the bot's own function (`deed_card.apply_answer`, the one
+# place Discord's Record and Not this buttons go through), given the guild, the campaign, the
+# deed's id and whether to record it. It returns (words, change batch), which the page never gets:
+# only a short code and the batch. It raises `MemoryRuleError` (`deed_proposals.GONE` when the deed
+# is no longer waiting).
+DeedAnswerFn = Callable[[int, str, str, bool], Awaitable[tuple[str, int | None]]]
+UNKNOWN_NAME = (
+    "unknown_name"  # a name in the deed is not one DMbot knows yet (or the store said no)
+)
+
+
+async def _deed(
+    memory: MemoryStore,
+    actions: ActionStore | None,
+    answer: DeedAnswerFn | None,
+    guild_id: int,
+    cid: str,
+    a: Action,
+) -> Outcome:
+    """The DM's answer to one deed from the page (#3591), the same function as Discord's card
+    (consent is asked again inside it). A recorded deed is `deed:recorded` with its change for the
+    page's Undo, a turned-down one `deed:not`; one already answered, or whose speaker stopped being
+    recorded, is `gone`; a name DMbot does not know (or any other rule of the store) is
+    `unknown_name`, a code only, never the store's words (they quote the deed). `deed-undo` takes
+    back only a change this DM's own done `deed-record` made, read again here (a made-up number
+    must never reach `undo`), as the card's own Undo does (`source` DM); past the store's limit it
+    is `too_late`. Nothing here logs a word of the deed."""
+    if a.action == "deed-undo":
+        if actions is None or not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+            return _failed(GONE)
+        batch = int(a.text)
+        if not await actions.deed_batch_made(guild_id, cid, a.user_id, batch):
+            return _failed(GONE)
+        try:
+            await memory.undo(guild_id, cid, batch, source=DM)
+        except TooLateToUndo:
+            return _failed(TOO_LATE)
+        except MemoryRuleError as exc:
+            if str(exc) == ALREADY_UNDONE:
+                return Outcome()  # (taken back already: a retried Undo)
+            return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
+        return Outcome()
+    if answer is None:
+        return _failed(FAILED)
+    if not re.fullmatch(r"[0-9a-f]{32}", a.text):
+        return _failed(GONE)
+    record = a.action == "deed-record"
+    try:
+        _words, batch_made = await answer(guild_id, cid, a.text, record)
+    except MemoryRuleError as exc:
+        return _failed(GONE if str(exc) == DEED_PROPOSALS_GONE else UNKNOWN_NAME)
+    except Exception:
+        log.exception("A website answer to a deed failed")  # (the traceback, never the deed)
+        return _failed(FAILED)
+    if not record:
+        return Outcome(counts="deed:not")
+    return Outcome(counts="deed:recorded", batches=(batch_made,) if batch_made is not None else ())
 
 
 async def _thread_state(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Outcome:
