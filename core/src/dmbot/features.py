@@ -193,6 +193,7 @@ FEATURES: tuple[Feature, ...] = (
             "story_threads_on",
             "met_unnamed_on",
             "session_languages_on",
+            "session_names_on",
             "party_leaves_on",
             "private_scenes_on",
             "picture_names_on",
