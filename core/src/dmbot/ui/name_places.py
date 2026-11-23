@@ -169,9 +169,13 @@ async def first_places(
     spellings: Sequence[str],
     agreed: Collection[int],
     site_url: str = "",
+    *,
+    first: str | None = None,
 ) -> Places:
     """The card's two windows for these pointers (spread across the session, earliest first), and
-    what "More places" will show. Never raises: a card without places is still a card."""
+    what "More places" will show. `first`: the line that made it a name (#5133 3c, `name_found`),
+    shown first when it is one of them, read with who agrees now like the rest. Never raises: a
+    card without places is still a card."""
     # earliest session first, then in the order spoken
     parsed = [(at or 0, parse_ref(ref)) for ref, at in refs]
     pointers = [p for _at, p in sorted(
@@ -182,12 +186,27 @@ async def first_places(
     chosen = (
         pointers if len(pointers) <= SHOWN_AT_FIRST else [pointers[0], pointers[len(pointers) // 2]]
     )
-    rest = [p for p in pointers if p not in chosen]
+    lead = parse_ref(first) if first else None
     try:
         sessions = _Sessions(transcripts, guild_id)
-        texts, gone, number = await _windows(
-            guild, transcripts, guild_id, chosen, spellings, sessions, agreed
-        )
+        texts: list[str] = []
+        if lead is not None and lead in pointers:
+            # (the line first, when its speaker still agrees; when not, the card is as if it had
+            # none: left out with nothing in its place, never "the transcript is gone")
+            texts, _gone, number = await _windows(
+                guild, transcripts, guild_id, [lead], spellings, sessions, agreed
+            )
+        if texts and lead is not None:
+            chosen = [p for p in chosen if p != lead][: max(SHOWN_AT_FIRST - 1, 0)]
+            more, gone, _n = await _windows(
+                guild, transcripts, guild_id, chosen, spellings, sessions, agreed
+            )
+            texts += more
+            chosen = [lead, *chosen]
+        else:
+            texts, gone, number = await _windows(
+                guild, transcripts, guild_id, chosen, spellings, sessions, agreed
+            )
     except Exception:
         log.exception("Couldn't read where a suggested name was said")
         return Places()
@@ -196,6 +215,7 @@ async def first_places(
         if site_url and number is not None
         else ""
     )
+    rest = [p for p in pointers if p not in chosen]
     return Places(texts, gone, rest, link)
 
 

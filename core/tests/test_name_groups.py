@@ -194,3 +194,17 @@ class TheCapitals(unittest.TestCase):
         self.assertEqual(names(ng.settle([Spelling("de Vries", 2)]))[0][0], "de Vries")
         got = ng.settle([Spelling("mcgregor", 1, typed=1)])
         self.assertEqual(names(got)[0][0], "mcgregor")
+
+
+class TheTypedCount(unittest.TestCase):
+    def test_a_group_counts_its_typed_hearings_for_the_card(self) -> None:
+        got = ng.settle([Spelling("Rothgar", 3), Spelling("Hrothgar", 1, typed=1)])
+        self.assertEqual((got.offered[0].name, got.offered[0].typed_times), ("Hrothgar", 1))
+
+    def test_never_more_typed_than_heard(self) -> None:
+        # (one key only the reader found, one only the scan: each counted once in `times`)
+        got = ng.settle(
+            [Spelling("Hrothgar", 1, why=ng.INTRODUCED, typed=1), Spelling("Rothgar", 1, typed=1)]
+        )
+        group = got.offered[0]
+        self.assertLessEqual(group.typed_times, group.times)

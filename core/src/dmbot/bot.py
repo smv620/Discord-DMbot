@@ -12861,7 +12861,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     line = next((x for f in mine if f.why == how for x in cited(f)), None)
                 line = line or holding(heard_in)
             ref = line_ref(session_id, line.started_ms, line.user_id) if line else None
-            await NameFound(db).keep(gid, cid, entity_id, how, ref)
+            times, typed = (group.times, group.typed_times) if group is not None else (0, 0)
+            await NameFound(db).keep(gid, cid, entity_id, how, ref, times=times, typed=typed)
         except Exception as exc:  # (the card simply has no quote)
             log.warning("Couldn't keep what made a name a name (%s)", type(exc).__name__)
 
