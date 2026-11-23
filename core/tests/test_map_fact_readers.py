@@ -39,6 +39,8 @@ ALLOWED = {
     "migrations/0530_map_features.py": "a pin's foreign key to a row; nothing reads it (#4670)",
     "migrations/0531_map_pins_web.py": "a DM-only web door, read only: an area pin's words (#4672)",
     "migrations/0481_world_notes_door.py": "World notes, DM-only: NULL for anyone else (#4285)",
+    "migrations/0598_web_world_notes_cultures.py": "World notes, still DM-only: names a named "
+    "culture on its line (#5062)",
     "migrations/0593_web_world_notes_roads.py": "World notes, still DM-only: a known road's "
     "read condition too (#5003)",
     "migrations/0534_forget_map_reads.py": "account deletion: deletes and unpoints rows (#4693)",
