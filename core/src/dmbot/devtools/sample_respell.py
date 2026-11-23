@@ -25,6 +25,10 @@ RESPELLINGS: Mapping[str, tuple[str, ...]] = {
     "Bryn Shander": ("Bryn Shander", "Brin Shandar", "Bryn Shandar"),
     "Termalaine": ("Termalaine", "Termalane"),
     "Jebidiah": ("Jebidiah", "Jebediah"),  # (not folded today: one word, 0.875 alike)
+    # The two key names only the session holds (the lore doesn't know them): the ones the grouping
+    # must join, since the others above are names DMbot already has, heard wrong
+    "Dwarven Valley": ("Dwarven Valley", "Dwarvin Valley", "Dwarven Vally"),
+    "Clan Battlehammer": ("Clan Battlehammer", "Clan Battle hammer", "Clan Batlehammer"),
 }
 
 
