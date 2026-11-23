@@ -63,6 +63,30 @@ class CardSummaries:
             )
             return {str(r["entity_id"]): _summary(r) for r in await cur.fetchall()}
 
+    async def parts(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
+    ) -> dict[str, dict[str, object]]:
+        """What the campaign holds about each of these confirmed, unmerged entries that is safe for
+        the players to read (`dmbot_entity_parts`: it leaves out what the DM keeps secret and what
+        the players don't know yet): the card's sentence is built from this and nothing else, so
+        the same sentence is safe for the players' view later. One campaign's entries only."""
+        if not entity_ids:
+            return {}
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id, name, dmbot_entity_parts(guild_id, campaign_id, id) AS parts"
+                " FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = ANY(%s) AND status = 'confirmed' AND merged_into IS NULL",
+                (guild_id, campaign_id, list(entity_ids)),
+            )
+            # (the function gives nothing for an entry with no description: only its name is known)
+            return {
+                str(r["id"]): dict(r["parts"])
+                if r["parts"]
+                else {"name": r["name"], "description": "", "aliases": [], "links": []}
+                for r in await cur.fetchall()
+            }
+
     async def put_who(
         self, guild_id: int, campaign_id: str, entity_id: str, who: str, facts_key: str
     ) -> bool:
