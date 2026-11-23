@@ -1975,7 +1975,9 @@ export interface WebLink {
    * everyone at the table. Absent from an older API. */
   who?: "dm" | "some" | "all" | "common";
   /** The characters that know it, when `who` is "some". */
-  knownBy?: { id: string; name: string }[];
+  /** The characters that know it, when `who` is "some". `guess` is DMbot's guess of an NPC who knows it (#3940): the DM's
+   * view only, never a player's. */
+  knownBy?: { id: string; name: string; guess?: "sure" | "likely" }[];
   direction: "a-b" | "b-a" | "both";
   /** How a two-way connection reads with both names ("are rivals", "are friends or allies"), sent only when `direction` is
    * "both" (#4154, core #4166); the page writes "A ↔ B · <pairWords>". Absent from an older API. */
@@ -2145,7 +2147,9 @@ export type WebLinkChange =
   // "everyone" is the table's answer; the read side calls the same answer "all" (WebLink.who). The bot's door takes
   // these names with #3202, so this change is not sent while WHO_KNOWS_LIVE is off.
   // "common" is 🌍 Common knowledge (#4559): no characters, and the bot shows the names to the players first.
-  | { action: "who"; id: string; who: "dm" | "some" | "everyone" | "common"; characters?: string[] }
+  // `shown` is every character the picker's list showed while it was open (at most 50, the most recent): the bot never
+  // removes or confirms a guess the page did not show (#4968 ruling, core #4976). Omitted when the list showed nobody.
+  | { action: "who"; id: string; who: "dm" | "some" | "everyone" | "common"; characters?: string[]; shown?: string[] }
   | { action: "remove"; id: string; confirm: true }
   // Takes back an earlier edit by its `batch` (core #4156); `id` is any link of the pair, the route's path wants one.
   | { action: "undo"; id: string; batch: number };
@@ -2270,6 +2274,22 @@ export interface LeaveGroup {
   kind: "died" | "leave";
   characters: { id: string; name: string }[];
 }
+/** One deed the party did, waiting to be recorded (#3591): who did it, what, who it mattered to, how it landed, and its kind. */
+export interface DeedWaiting {
+  id: string;
+  doer: string;
+  text: string;
+  viewers: string[];
+  effect: string;
+  kind: string;
+}
+/** The deeds waiting (#3591): the count, and the oldest first (at most 50). */
+export interface DeedQuestions {
+  total: number;
+  deeds: DeedWaiting[];
+}
+/** Record or Not this one (by its id), or take a recorded one back by its batch (#3591). */
+export type DeedChange = { deed: string; answer: "record" | "not" } | { undo: number };
 /** One thing the characters learned, waiting to be kept (#3863 step 2): who, what, how, and whether a player or a guess is in it. */
 export interface RevealProposal {
   id: string;
@@ -3511,6 +3531,10 @@ export interface AccountApi {
   answerReveal?(ref: string, change: { id: string; answer: "keep" | "not" }): Promise<{ batch: number | null }>;
   /** "Left the party" or "Still in the party" for one character (#4895): `batch` is the change for Undo (use `answerJoin`'s undo). */
   answerLeave?(ref: string, change: { character: string; answer: "left" | "stays" }): Promise<{ batch: number | null }>;
+  /** The deeds the party did, waiting to be recorded (#3591): DM only; the door answers anyone else with nothing. */
+  deedQuestions?(ref: string): Promise<DeedQuestions>;
+  /** Record or Not this one, or take a recorded one back (#3591): `batch` is null when nothing changed. */
+  answerDeed?(ref: string, change: DeedChange): Promise<{ batch: number | null }>;
   /** The clean-up page's read (#3740): the groups not linked to a player character. A DM or game master only. */
   graphCleanup?(ref: string): Promise<CleanupView>;
   /** "Where was it said?" for one clean-up entry (#3767; core GET `.../web/cleanup/{id}/places`): the same places `NamePlaces` draws. A DM or game master only. */
@@ -4194,7 +4218,7 @@ export function withLinks<T extends object>(
 export interface ApiHelpers {
   call: (method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown, asFile?: boolean, raw?: Blob, anonymous?: boolean, kinds?: Record<string, ApiErrorKind>) => Promise<unknown>;
   restoreCall: ApiHelpers["call"];
-  waitForAnswer: (path: string, onLook?: (got: WebAnswer) => void, polls?: number) => Promise<WebAnswer>;
+  waitForAnswer: (path: string, onLook?: (got: WebAnswer) => void, polls?: number, extraKinds?: Record<string, ApiErrorKind>) => Promise<WebAnswer>;
   root: string;
   url: (path: string, body?: unknown) => Promise<string>;
 }
@@ -4202,7 +4226,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal", "changeRouteLength"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal", "changeRouteLength", "deedQuestions", "answerDeed"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "visitCampaign", "loreAdd", "loreRead", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
@@ -4317,7 +4341,8 @@ export function httpApi(
   /** Wait for the bot's answer to one queued edit, asking about once a second for up to a minute.
    * A failed look is not an answer (the bot may still apply the change); only "signed out" stops.
    * A change that is not done in time ends as "still-waiting", never as "nothing changed". */
-  async function waitForAnswer(path: string, onLook?: (got: WebAnswer) => void, polls = NAME_POLLS): Promise<WebAnswer> {
+  // `extraKinds` maps the codes this one answer can fail with (a deed's "refused", #3591) on top of the shared list.
+  async function waitForAnswer(path: string, onLook?: (got: WebAnswer) => void, polls = NAME_POLLS, extraKinds: Record<string, ApiErrorKind> = {}): Promise<WebAnswer> {
     for (let i = 0; i < polls; i++) {
       let got: WebAnswer | null = null;
       try {
@@ -4327,7 +4352,7 @@ export function httpApi(
         if (error instanceof ApiError && error.kind === "signed-out") throw error;
       }
       if (got?.state === "done") return got;
-      if (got?.state === "failed") throw new ApiError(errorKinds[got.error ?? ""] ?? "server");
+      if (got?.state === "failed") throw new ApiError(extraKinds[got.error ?? ""] ?? errorKinds[got.error ?? ""] ?? "server");
       if (i < polls - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
     }
     throw new ApiError("still-waiting");
