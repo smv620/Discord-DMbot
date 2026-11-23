@@ -2,9 +2,9 @@
 // @vitest-environment happy-dom
 // A recap DMbot couldn't check for 3 days (#2297, #2305): the DM reads the draft with the sentences
 // DMbot would have looked at twice marked, and may use it as it is. Nothing here is shared.
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import axe from "axe-core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, httpApi, type AccountApi, type Recap } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
@@ -190,3 +190,60 @@ describe("the real client", () => {
     await expect(api.approveUnchecked!("5.abc.1700", "h1")).rejects.toMatchObject({ kind });
   });
 });
+
+// The wait while the recap is approved as it is (#3347 row 7): shown while the press is with DMbot, a slow line after a minute.
+describe("the working line while the recap is approved as it is", () => {
+  it("shows the working line while the approval is with DMbot, and removes it when the answer comes", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((go) => {
+      release = go;
+    });
+    const api = pageWith(unchecked(), {
+      approveUnchecked: async () => {
+        await gate;
+        return { ...base, text: DRAFT.join(" ") };
+      },
+    });
+    render(<Recaps api={api} path={path} />);
+    fireEvent.click(await screen.findByRole("button", { name: text.uncheckedUse }));
+    expect(await screen.findByText(text.uncheckedWorking)).toBeTruthy();
+    release();
+    await waitFor(() => expect(screen.queryByText(text.uncheckedWorking)).toBeNull());
+  });
+
+  it("shows nothing when nothing is running", async () => {
+    render(<Recaps api={pageWith(unchecked())} path={path} />);
+    await screen.findByRole("button", { name: text.uncheckedUse });
+    expect(screen.queryByText(text.uncheckedWorking)).toBeNull();
+    expect(screen.queryByText(text.uncheckedSlow)).toBeNull();
+  });
+
+  it("says what to do when it is slow, and not before the minute", async () => {
+    // The fake clock is set before the page is drawn, as the other slow-line tests do, since the wait reads Date.now.
+    vi.useFakeTimers({ shouldAdvanceTime: false });
+    vi.setSystemTime(new Date(1_900_000_000 * 1000));
+    try {
+      render(<Recaps api={pageWith(unchecked(), { approveUnchecked: () => new Promise(() => undefined) })} path={path} />);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      fireEvent.click(screen.getByRole("button", { name: text.uncheckedUse }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(59_000);
+      });
+      expect(screen.getByText(text.uncheckedWorking)).toBeTruthy();
+      expect(screen.queryByText(text.uncheckedSlow)).toBeNull();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2_000);
+      });
+      expect(screen.getByText(text.uncheckedSlow)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
