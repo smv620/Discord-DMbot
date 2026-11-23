@@ -23,7 +23,9 @@ def answer(*items: dict[str, Any]) -> str:
     return json.dumps({"names": list(items)})
 
 
-def item(name: str, why: str = "introduced", lines: list[Any] | None = None, kind: str = "person"):
+def item(
+    name: str, why: str = "introduced", lines: list[Any] | None = None, kind: str = "person"
+) -> dict[str, Any]:
     return {"name": name, "kind": kind, "why": why, "lines": lines if lines is not None else [1]}
 
 
@@ -160,11 +162,13 @@ class FakeClient:
     """Answers each call from a function of the transcript it was sent."""
 
     def __init__(self, answer_for: Any) -> None:
-        self.answer_for, self.sent = answer_for, []
+        self.answer_for: Any = answer_for
+        self.sent: list[str] = []
 
     async def complete(self, system: str, text: str, *, max_tokens: int = 0) -> FakeReply:
         self.sent.append(text)
-        return self.answer_for(text)
+        reply: FakeReply = self.answer_for(text)
+        return reply
 
 
 def rows(*texts: tuple[int, str]) -> list[nr.Row]:
@@ -342,7 +346,7 @@ class TheBotStep(unittest.TestCase):
 
         from dmbot.bot import DMBot
 
-        lines = [SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out")]
+        lines: Any = [SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out")]
         return asyncio.run(DMBot._read_session_names(bot, 5, "c1", lines, set(), scan))
 
     def test_its_calls_are_charged_to_the_campaign_as_names(self) -> None:
