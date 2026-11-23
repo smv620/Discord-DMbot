@@ -13,6 +13,7 @@ from dmbot.memory import card_mentions
 from dmbot.memory.card_summaries import CardSummaries
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.recaps.card_beats import RecapBeats
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from tests.test_memory_names import DM, GUILD, PLAYER, NamesTest
@@ -114,7 +115,7 @@ class TheMentions(NamesTest):
             return SimpleNamespace(beats=beats if session_at == START else None)
 
         client = ai()
-        await self.go(client, [self.shafina], SimpleNamespace(get=get))
+        await self.go(client, [self.shafina], RecapBeats(SimpleNamespace(get=get)))
         got = await self.rows.get(GUILD, self.campaign.id, self.shafina)
         assert got is not None and got.first
         self.assertEqual(got.first.scene, "The party reached the Northlook inn in Bryn Shander")

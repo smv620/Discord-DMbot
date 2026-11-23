@@ -13152,6 +13152,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         assert self.memory is not None and self.transcripts is not None and self.lookup is not None
         assert self.recaps is not None
         from dmbot.memory.models import CONFIRMED
+        from dmbot.recaps.card_beats import RecapBeats
 
         cid = campaign.id
         version = await self.memory.version(gid, cid)
@@ -13179,7 +13180,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             done, gid, cid, version=version, sessions=sessions, agreed=agreed, entity_ids=ids,
             who=lambda i: card_job.refresh_who(summaries, ai, gid, cid, i),
             mentions=lambda batch, budget: card_mentions.refresh_mentions(
-                summaries, self.transcripts, self.recaps, self.lookup.get, recorded,
+                summaries, self.transcripts, RecapBeats(self.recaps), self.lookup.get, recorded,
                 ai, gid, cid, list(batch), budget,
             ),
         )  # fmt: skip

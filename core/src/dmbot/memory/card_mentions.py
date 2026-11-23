@@ -23,7 +23,6 @@ from dmbot.memory import card_lines, extractor, heard
 from dmbot.memory.card_job import Ask, read_sentence
 from dmbot.memory.card_summaries import CardSummaries, Mention
 from dmbot.memory.scene import mentions
-from dmbot.recaps import beats as recap_beats
 from dmbot.transcript.models import Line
 
 log = logging.getLogger(__name__)
@@ -57,7 +56,12 @@ class Sessions(Protocol):
 
 
 class Recaps(Protocol):
-    async def get(self, guild_id: int, campaign_id: str, session_at: int) -> Any: ...
+    """A session's recap beats (what happened and where, with line numbers), or none. The memory
+    package cannot read recaps itself (the layers contract): the bot hands in this reader."""
+
+    async def beats(
+        self, guild_id: int, campaign_id: str, session_at: int
+    ) -> Sequence[card_lines.SceneLike]: ...
 
 
 class Budget:
@@ -96,13 +100,6 @@ def around(lines: Sequence[Line], agreed: Collection[int], number: int) -> list[
     """The text of the countable lines within `WINDOW` of line `number`, in order: only what the
     live count would read, so a sidebar line or a person who stopped is never in a prompt."""
     return [line.text for n, line in heard.countable(lines, agreed) if abs(n - number) <= WINDOW]
-
-
-def beat_of(job: Any) -> list[recap_beats.Beat]:
-    """The beats a recap job kept, or none (no job, or a job with no beat sheet yet)."""
-    if job is None or not getattr(job, "beats", None):
-        return []
-    return recap_beats.from_json(job.beats)
 
 
 async def refresh_mentions(
@@ -200,11 +197,11 @@ async def _scene(
     fallback = FIRST_FALLBACK if which == "first" else LAST_FALLBACK
     if recaps is not None:
         try:
-            job = await recaps.get(guild_id, campaign_id, mention.session_at)
+            beats = await recaps.beats(guild_id, campaign_id, mention.session_at)
         except Exception as exc:  # the type only
             log.warning("Card scene: the recap could not be read (%s)", type(exc).__name__)
-            job = None
-        words = card_lines.scene_words(card_lines.scene_near(beat_of(job), mention.line))
+            beats = []
+        words = card_lines.scene_words(card_lines.scene_near(beats, mention.line))
         if words:
             return words
     window = around(lines, agreed, mention.line)
