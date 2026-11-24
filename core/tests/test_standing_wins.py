@@ -193,7 +193,7 @@ class TheStoreReader(NamesTest):
         links = await self.memory.relations(GUILD, self.campaign.id, entity_id=self.bel)
         scores = await self.scores(self.bel)
         dm = card_text(lookup.for_viewer(True), self.bel, links, secrets=True, standing=scores)
-        seen = lookup.for_viewer(False)
+        seen = lookup.for_viewer(False, frozenset({self.bel, self.cer}))  # (players know both)
         players = card_text(seen, self.bel, links, secrets=False, standing=scores, seen={self.bel})
         self.assertIn("knows (hostile)", dm or "")
         self.assertNotIn("friendly", dm or "")

@@ -134,6 +134,7 @@ from dmbot.ui.names import (
     known_as,
     scene_line,
     scene_of,
+    seen_for,
     sees_secrets,
     split_names,
 )
@@ -749,9 +750,10 @@ async def _names(interaction: discord.Interaction, campaign: Campaign) -> Campai
         await _tell(interaction, NOT_AVAILABLE)
         return None
     try:  # (without the clues only some people know, unless this person is a DM, #1649)
-        return (await cache.get(campaign.guild_id, campaign.id)).for_viewer(
-            sees_secrets(campaign, interaction.user.id)
-        )
+        dm = sees_secrets(campaign, interaction.user.id)
+        whole = await cache.get(campaign.guild_id, campaign.id)
+        # (anyone else: the names of what their own characters know, from the gate, #4802)
+        return whole.for_viewer(dm, await seen_for(interaction, campaign, dm))
     except Exception:
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
@@ -4143,7 +4145,15 @@ async def find_typeahead(
     if names is None:  # still loading: nothing this time, ready for the next keystroke
         return []
     secrets = sees_secrets(campaign, interaction.user.id)
-    names = names.for_viewer(secrets)
+    # Anyone else here is a server manager who isn't a DM (`typeahead_campaign`): one read of what
+    # they hold per keystroke, within the time Discord leaves; a slow one suggests nothing this
+    # time, as a cold copy does (#4802)
+    try:
+        seen = await asyncio.wait_for(seen_for(interaction, campaign, secrets), TYPEAHEAD_WAIT_S)
+    except Exception:
+        log.exception("Name type-ahead couldn't read what this person holds")
+        return []
+    names = names.for_viewer(secrets, seen)
     if current.strip():
         matches = find(names, current, secrets=secrets)
     else:
