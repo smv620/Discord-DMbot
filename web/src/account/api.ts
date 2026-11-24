@@ -1065,7 +1065,7 @@ export interface NameCheck {
 /** What made a waiting name a name (#5144). `heard` is Discord's heard line as plain text; `line` is the one line that made it
  * a name, or null when none is kept or its speaker no longer agrees. */
 export interface NameFound {
-  how: "introduced" | "typed" | "addressed" | "place" | "spoken_of" | "scan";
+  how: "introduced" | "typed" | "addressed" | "place" | "spoken_of" | "scan" | "singled_out";
   times: number;
   typed: number;
   /** Every other spelling heard, in order (the card names three, then "and N more"; `heard` already says so). */
@@ -2597,6 +2597,9 @@ export interface NameRow extends CardSummaryFields {
   secret: boolean;
   /** "Players don't know this one yet" on the whole entry (#2321); what the secret switch sets. */
   hidden?: boolean;
+  /** A thing or place the story keeps coming back to but never names, kept without a name of its own (#5175; core's `described`).
+   * Missing from an older API and while the reader is off. */
+  described?: boolean;
   /** A place's size (#4173): plane, world, region, settlement, district, street, building or room; null when it has none. Only places have one. */
   placeLevel?: string | null;
   /** Who set it: "read" (DMbot read it from the lore's words) or "dm"; null when there is no size. */
