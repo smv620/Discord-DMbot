@@ -19,6 +19,12 @@ costs a little, so that is the gate, not `--dry-run`): the tool only says how ma
 to ask about (a number, no words), from the same lines and the same people as the live pass. There
 is no cleaner step in the tool on purpose: a stored session's cleaned text is already what the
 live pass reads, so running the cleaner again would not change what the pass sees.
+`--reader` (with `--yes`: it calls the AI too) runs the name reader first, as a live session does
+with DMBOT_SESSION_NAMES on (`DMBot._read_before_pass`, slice 4, #5133), and passes its spellings to
+the pass as `extra`, so the dry run's candidates are a live session's (#5163). Without it the pass
+reads the capital-letter scan's candidates only, as with the switch off. (The people at the table
+are the campaign's people and each word of their names, as this tool always used; the bot also
+counts Discord display names. The plan's AI check is the bot's alone.)
 `--game-only` is for an imported session (the off-topic filter's lines are left out, as the
 import does). A run without `--dry-run` writes the fixes into the cleaned text, with
 the same Undo numbers as a live session (the DM sees them on the DM screen only for a live
@@ -37,10 +43,16 @@ import asyncio
 import os
 import sys
 import time
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
+from functools import partial
 from typing import Any
 
+from dmbot.memory import name_reader
+from dmbot.memory.name_reader import Read
+from dmbot.memory.scan import Suggestion
 from dmbot.transcript import name_pass as np
+from dmbot.transcript.models import Line
+from dmbot.transcript.topics import GAME, OFF_TOPIC
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -52,7 +64,75 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--game-only", action="store_true", help="an imported session: skip off-topic lines"
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--reader",
+        action="store_true",
+        help="run the name reader first, as with DMBOT_SESSION_NAMES on (with --yes)",
+    )
+    args = parser.parse_args(argv)
+    if args.reader and not args.yes:  # (before any database or AI: it calls the AI)
+        parser.error("--reader calls the AI, so it needs --yes")
+    return args
+
+
+def reader_lines(stored: Sequence[Line], agreed: Collection[int], game_only: bool) -> list[Line]:
+    """The stored lines the name reader reads, as near as stored lines get to what the bot gives
+    it (#5163): a live session's heard lines (`table.heard`: spoken and typed, never the DM sidebar,
+    never what the off-topic filter left out), or an import's game talk (`import_job.scan_lines`);
+    only people who still count as recorded. (A live session's `table.heard` also leaves out a line
+    the filter had not labelled yet when the session ended; a stored line has its label.)"""
+    return [
+        x
+        for x in stored
+        if x.user_id in agreed
+        and not x.sidebar
+        and (x.topic == GAME if game_only else x.topic != OFF_TOPIC)
+    ]
+
+
+def recorded_check(
+    game_only: bool,
+    consenting: Callable[[], Awaitable[Collection[int]]],
+    recorded_in: Callable[[], Awaitable[Collection[int]]],
+) -> Callable[[], Awaitable[Collection[int]]]:
+    """Who the reader asks again between batches: on an import, the import's own rule
+    (`recorded_in`, #3305, as the bot's import reads since #5184), the same as the lines it was
+    given, so a speaker only the uploader confirmed is not dropped after the first batch; on a
+    live session, who still agrees."""
+    return recorded_in if game_only else consenting
+
+
+async def reader_spellings(
+    read: Callable[..., Awaitable[Read]],
+    lines: Sequence[Line],
+    *,
+    known: set[str],
+    rejected: set[str],
+    people: set[str],
+    dms: set[int],
+    rules: tuple[str, str],
+    consenting: Callable[[], Awaitable[Collection[int]]],
+    max_tokens: int,
+) -> tuple[list[Suggestion], int]:
+    """The name reader's spellings for the pass, as `DMBot._read_before_pass` makes them (slice 4,
+    #5133): `lines` (`reader_lines`) numbered from 1, the same names to skip and why, and each name
+    it kept as a candidate heard at least once (`EarlyRead.spellings`). `read`: `name_reader.read`
+    with its AI bound. Returns the spellings and the stretches not read (a count: a stretch not
+    read is never "no names")."""
+    rows = [
+        name_reader.Row(str(i), x.user_id, x.user_id in dms, x.text) for i, x in enumerate(lines, 1)
+    ]
+    if not rows:
+        return [], 0
+    skip = {k: name_reader.KNOWN_NAME for k in known}
+    skip.update({k: name_reader.NOT_A_NAME for k in rejected})
+    skip.update({k: name_reader.AT_TABLE for k in people})
+    got = await read(
+        rows, skip, known=sorted(known - rejected), consenting=consenting,
+        max_tokens=max_tokens, rules=rules,
+    )  # fmt: skip
+    kept, _dropped = name_reader.tally(got.heard, {r.number: r.text for r in rows}, every=True)
+    return [Suggestion(f.name, max(f.times, 1)) for f in kept], got.unread
 
 
 def output(report: np.Report, *, dry_run: bool) -> list[str]:
@@ -86,7 +166,14 @@ async def main_async(args: argparse.Namespace) -> int:
         lookup = await LookupCache(memory).get(args.guild, session.campaign_id)
         # What the live pass is given: the people who still agree, and the names of the people at
         # the table (their words are not story names), so the numbers are the live pass's.
-        agreed = await ConsentStore(db).consenting(args.guild)
+        # (an import counts as recorded who its uploader confirmed, `recorded_in`, as the bot's
+        # import does, #3305; a live session, who still agrees)
+        consent = ConsentStore(db)
+        agreed: Collection[int] = (
+            await consent.recorded_in(args.guild, session.campaign_id)
+            if args.game_only
+            else await consent.consenting(args.guild)
+        )
         people = set(lookup.people_by_key)
         for key in list(people):
             people.update(key.split())
@@ -110,18 +197,50 @@ async def main_async(args: argparse.Namespace) -> int:
             print(f"name_pass: {exc}", file=sys.stderr)
             return 2
         ai = AnthropicClient(key, models)
-        client = ai.tier(FEATURE_TIERS[Feature.NAME_PASS], Feature.NAME_PASS)
+        try:  # (the client is closed whatever happens after it opens)
+            # (the bot's tier also caches its system prompt: a cost difference, never a count one)
+            client = ai.tier(FEATURE_TIERS[Feature.NAME_PASS], Feature.NAME_PASS)
+            known = await memory.known_keys(args.guild, session.campaign_id)
+            extra: list[Suggestion] = []
+            if args.reader:
+                from dmbot.ai import OUTPUT_FLOOR
+                from dmbot.campaigns.store import CampaignStore
 
-        async def ask(system: str, question: str) -> Any:
-            return await client.complete(system, question, max_tokens=2000, schema=np.SCHEMA)
+                campaign = await CampaignStore(db).get(args.guild, session.campaign_id)
+                if campaign is None:
+                    print("name_pass: the session's campaign is gone", file=sys.stderr)
+                    return 2
+                # (a reader that fails stops the tool, where the bot's goes on with no extra:
+                # a dry run should say so, not quietly differ. The plan's AI check is the
+                # bot's, not the tool's: dev1 runs it on campaigns that have one.)
+                stored = await transcripts.lines(args.guild, args.session)
+                extra, unread = await reader_spellings(
+                    partial(name_reader.read, client),
+                    reader_lines(stored, agreed, args.game_only),
+                    known=set(known),
+                    rejected=set(await memory.rejected_keys(args.guild, session.campaign_id)),
+                    people=people,
+                    dms=set(campaign.dm_user_ids),
+                    rules=(campaign.target_ruleset, campaign.fallback_ruleset),
+                    consenting=recorded_check(
+                        args.game_only,
+                        lambda: consent.consenting(args.guild),
+                        lambda: consent.recorded_in(args.guild, session.campaign_id),
+                    ),
+                    max_tokens=OUTPUT_FLOOR,
+                )
+                # (counts only: the spellings are transcript words, never in the counts line)
+                print(f"Name reader: {len(extra)} spelling(s) found, {unread} stretch(es) not read")
 
-        try:
+            async def ask(system: str, question: str) -> Any:
+                return await client.complete(system, question, max_tokens=2000, schema=np.SCHEMA)
+
             now = int(time.time())
             report = await name_pass_run.run(
                 transcripts, lookup, ask, args.guild, session.campaign_id, args.session,
-                people=people, known=await memory.known_keys(args.guild, session.campaign_id),
-                agreed=agreed, now=now, forget_before=now - int(memory.keep_days * 86400),
-                dry_run=args.dry_run, game_only=args.game_only,
+                people=people, known=known, agreed=agreed, now=now,
+                forget_before=now - int(memory.keep_days * 86400),
+                dry_run=args.dry_run, game_only=args.game_only, extra=extra,
             )  # fmt: skip
         finally:
             await ai.close()
