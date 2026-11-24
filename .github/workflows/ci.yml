@@ -265,8 +265,10 @@ jobs:
         # -n 4: one worker per core of the 4-core runner (measured). Each database test builds its
         # own schema (core/tests/pg.py, random name) and migrations lock per schema, so workers
         # never share state.
-        # --durations lists every test that took a second or more, kept as an artifact per part, so
-        # the split can be balanced by measured time (#5228). Nothing is skipped, deselected or
+        # --durations lists every test that took 50 ms or more, kept as an artifact per part: the
+        # many quick ones add up, and a split measured only on the slow ones left the parts unequal
+        # (10 to 18 minutes on development's run of 2026-11-24, #5228), so the split can be balanced
+        # by measured time. Nothing is skipped, deselected or
         # xfailed. Coverage (#1858) is a report, not a gate, and measuring it slows every test, so
         # a pull request's branch skips it; development, beta and main keep it (coverage.xml).
         run: |
@@ -276,7 +278,7 @@ jobs:
             refs/heads/development|refs/heads/beta|refs/heads/main)
               cov="--cov=dmbot --cov-report=term-missing:skip-covered --cov-report=xml" ;;
           esac
-          pytest -q --tb=short -rfE -n 4 --durations=0 --durations-min=1.0 $cov 2>&1 | tee pytest.log || {
+          pytest -q --tb=short -rfE -n 4 --durations=0 --durations-min=0.05 $cov 2>&1 | tee pytest.log || {
             # One multi-line annotation, so failures are readable without the raw log.
             summary=$(grep -E "^(FAILED|ERROR) |^E  |^[^ ].*\.py:[0-9]+: " pytest.log | head -80 | sed -e 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
             echo "::error title=pytest failures::${summary}"
