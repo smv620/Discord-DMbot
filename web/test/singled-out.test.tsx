@@ -89,6 +89,26 @@ describe("a singled-out thing on the name card", () => {
     expect(spy).toHaveBeenCalledWith(draft.ref, "c".repeat(32), { action: "not_a_name" });
   });
 
+  it("the naming form says give a name, not change the words", async () => {
+    render(<RecapNameChecks api={singledApi()} refId={draft.ref} />);
+    await screen.findByRole("heading", { name: nw.heading });
+    const card = within(row("The gemstone mine"));
+    expect(card.getByRole("button", { name: fw.singled.giveNameFor("The gemstone mine") }).textContent).toBe(fw.singled.giveNameUse);
+    expect(card.queryByRole("button", { name: nw.changeFor("The gemstone mine") })).toBeNull();
+  });
+
+  it("with no guess the kind picker's yes still says Keep it", async () => {
+    const api = singledApi();
+    const real = api.nameChecks!.bind(api);
+    api.nameChecks = async (...a) => {
+      const got = await real(...a);
+      return { ...got, names: got.names.map((n) => (n.found ? { ...n, found: { ...n.found, guess: null } } : n)) };
+    };
+    render(<RecapNameChecks api={api} refId={draft.ref} />);
+    await screen.findByRole("heading", { name: nw.heading });
+    expect(within(row("The gemstone mine")).getByRole("button", { name: fw.singled.keepItFor("The gemstone mine") })).toBeTruthy();
+  });
+
   it("another kind of found name keeps its usual words", async () => {
     render(<RecapNameChecks api={singledApi("introduced")} refId={draft.ref} />);
     await screen.findByRole("heading", { name: nw.heading });
@@ -114,12 +134,30 @@ describe("a kept one on the Names page", () => {
   it("says it is described in the story, with no name of its own", async () => {
     const api = mockApi("table");
     const real = api.allNames!.bind(api);
+    let first = "";
     api.allNames = async (...a) => {
       const got = await real(...a);
+      first = got.names[0]!.name;
       return { ...got, names: got.names.map((n, i) => (i === 0 ? { ...n, described: true } : n)) };
     };
     render(<Names api={api} path="/account/names/100.cmp1" />);
     await screen.findByRole("list", { name: nameWords.listLabel });
-    expect(await screen.findAllByText(fw.singled.described)).toHaveLength(1);
+    const lines = await screen.findAllByText(fw.singled.described);
+    expect(lines).toHaveLength(1);
+    // (on the first row, the one marked described, and on no other)
+    expect(lines[0]!.closest("li")?.textContent).toContain(first);
+  });
+
+  it("says nothing of it while its switch is off", async () => {
+    live.singled = false;
+    const api = mockApi("table");
+    const real = api.allNames!.bind(api);
+    api.allNames = async (...a) => {
+      const got = await real(...a);
+      return { ...got, names: got.names.map((n) => ({ ...n, described: true })) };
+    };
+    render(<Names api={api} path="/account/names/100.cmp1" />);
+    await screen.findByRole("list", { name: nameWords.listLabel });
+    expect(screen.queryByText(fw.singled.described)).toBeNull();
   });
 });
