@@ -1059,6 +1059,9 @@ export interface NameCheck {
   isList?: boolean;
   /** Known groups the list may be: `members` already belong to the group, `others` do not (#3406). */
   groups?: NameGroupHint[];
+  /** The one known name this waiting name sounds like, or null when there is none clear (#5215, core's `card_match`: confirmed, never secret
+   * names only; `spelled` is true when someone spelled it out at the table). The card then asks "Sounds like X. The same, or new?". Missing from an older API. */
+  soundsLike?: { id: string; name: string; spelled?: boolean } | null;
   /** DMbot's best guess at what this name is, a kind key, or null when it has none (#5218; core's `guess_kind` on every waiting name).
    * The kind menu starts on it when it is one of the list's kinds. Missing from an older API. */
   guess?: string | null;
