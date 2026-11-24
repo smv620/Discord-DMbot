@@ -15,7 +15,7 @@ They say what is decided. What is built and switched on is in
 | [`mapbot_layers.md`](mapbot_layers.md) | MapBot: maps kept as maps after a right-to-use yes; positions per map, with each map's own scale and north; distances, directions and travel-time suggestions; the layers (terrain, climate, route condition, control, culture, population) in `map_facts`; which map tools DMbot reads from | **Binding** (revision 2, #4274). Issue #4236 |
 | `quests.md` | Quests and story threads: readers suggest them from lore and sessions; objectives, complications, rewards promised and given, help given or lent, and time limits as rows beside the thread; branches; clues and "clues found"; time limits on the game clock | **In review** (#4450). Issue #4448 |
 | `session_tagger.md` | One small model tags each part of a session with the kinds of thing in it; each reader reads only its own parts; every tag is accounted for, so the DM can be told what was checked | **In review** (#4455) |
-| `session_names.md` | Finding names in what was said: an AI reader finds names from the words around them, a capital letter is only a hint, spellings that sound alike are one name, and the DM confirms the spelling. Scored on the sample session as typed, with no capitals, and spoken | **In review** |
+| `session_names.md` | Finding names in what was said: an AI reader finds names from the words around them, a capital letter is only a hint, spellings that sound alike are one name, and the DM confirms the spelling. Scored on the sample session as typed, with no capitals, and spoken | **Binding** (revision 1, #5087); revision 2 in review. Issues #5055, #5133, #5173 |
 
 **The rules they share:**
 
