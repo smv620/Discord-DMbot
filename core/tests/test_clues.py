@@ -293,8 +293,10 @@ class Clues(ConfirmedMemoryTest):
     async def view(self, secrets: bool) -> Any:
         from dmbot.memory.lookup import CampaignLookup
 
+        # (a manager who isn't a DM and plays no one holds the common knowledge, from the gate)
+        seen = None if secrets else await self.memory.entries_seen_by(GUILD_A, self.c, 987_654)
         return CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c)).for_viewer(
-            secrets
+            secrets, seen
         )
 
     async def test_a_manager_who_is_not_a_dm_finds_the_clue_nowhere(self) -> None:

@@ -748,10 +748,20 @@ async def _names(interaction: discord.Interaction, campaign: Campaign) -> Campai
     if cache is None:
         await _tell(interaction, NOT_AVAILABLE)
         return None
+    memory = _memory(interaction)
     try:  # (without the clues only some people know, unless this person is a DM, #1649)
-        return (await cache.get(campaign.guild_id, campaign.id)).for_viewer(
-            sees_secrets(campaign, interaction.user.id)
+        dm = sees_secrets(campaign, interaction.user.id)
+        whole = await cache.get(campaign.guild_id, campaign.id)
+        # (anyone else sees the names of what their own characters know, from the gate, #4537 5b;
+        # no store to ask: nothing is held, failing closed, #4802)
+        seen = (
+            None
+            if dm
+            else frozenset()
+            if memory is None
+            else await memory.entries_seen_by(campaign.guild_id, campaign.id, interaction.user.id)
         )
+        return whole.for_viewer(dm, seen)
     except Exception:
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
@@ -4143,7 +4153,19 @@ async def find_typeahead(
     if names is None:  # still loading: nothing this time, ready for the next keystroke
         return []
     secrets = sees_secrets(campaign, interaction.user.id)
-    names = names.for_viewer(secrets)
+    memory = _memory(interaction)
+    try:  # (anyone else: what their own characters know, from the gate, #4537 5b, #4802)
+        seen = (
+            None
+            if secrets
+            else frozenset()
+            if memory is None
+            else await memory.entries_seen_by(campaign.guild_id, campaign.id, interaction.user.id)
+        )
+    except Exception:
+        log.exception("Name type-ahead failed")
+        return []
+    names = names.for_viewer(secrets, seen)
     if current.strip():
         matches = find(names, current, secrets=secrets)
     else:

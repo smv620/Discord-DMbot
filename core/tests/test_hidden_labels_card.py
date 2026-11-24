@@ -26,7 +26,9 @@ class OnTheCard(ConfirmedMemoryTest):
 
     async def card(self, secrets: bool) -> str:
         view = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
-        shown: Any = view.for_viewer(secrets)
+        # (a manager who isn't a DM and plays no one holds the common knowledge, from the gate)
+        seen = None if secrets else await self.memory.entries_seen_by(GUILD_A, self.c, 987_654)
+        shown: Any = view.for_viewer(secrets, seen)
         connections = await self.memory.relations(GUILD_A, self.c, entity_id=self.mira)
         held = frozenset(
             shown.entities
