@@ -1059,6 +1059,21 @@ export interface NameCheck {
   isList?: boolean;
   /** Known groups the list may be: `members` already belong to the group, `others` do not (#3406). */
   groups?: NameGroupHint[];
+  /** How the session-names reader found this name (#5144, core #5182): present only for a name it found; missing from an older API. */
+  found?: NameFound;
+}
+/** What made a waiting name a name (#5144). `heard` is Discord's heard line as plain text; `line` is the one line that made it
+ * a name, or null when none is kept or its speaker no longer agrees. */
+export interface NameFound {
+  how: "introduced" | "typed" | "addressed" | "place" | "spoken_of" | "scan";
+  times: number;
+  typed: number;
+  /** Every other spelling heard, in order (the card names three, then "and N more"; `heard` already says so). */
+  also: string[];
+  heard: string;
+  /** DMbot's guess, a kind key, or null when it has none. */
+  guess: string | null;
+  line: { speaker: string; at: number; text: string } | null;
 }
 /** A group DMbot already knows that a list of names may be (#3406). */
 export interface NameGroupHint {
