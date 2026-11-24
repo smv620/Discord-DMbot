@@ -8,6 +8,9 @@
 import NamePlaces from "./NamePlaces";
 import { campaignRefOf } from "./RecapNames";
 import PlayersKnow from "./PlayersKnow";
+import { NAME_FOUND_LIVE } from "../content/name-found-switch";
+import { SINGLED_OUT_LIVE } from "../content/singled-out-switch";
+import { nameFoundWords as fw } from "../content/name-found-words";
 import SceneLine from "./SceneLine";
 import { useEffect, useRef, useState } from "preact/hooks";
 
@@ -348,6 +351,14 @@ function NameRow({
   const [asking, setAsking] = useState(false);
   const [groupName, setGroupName] = useState("");
   const longer = (name.longerNames ?? []).slice(0, 3);
+  // How the session-names reader found this name (#5144): its guess is only offered when the list knows that kind.
+  const found = name.found;
+  const foundOn = NAME_FOUND_LIVE && found !== undefined;
+  // A thing the story keeps coming back to (#5175): the same card, with its own three answers.
+  const singled = foundOn && SINGLED_OUT_LIVE && found?.how === "singled_out";
+  const guessLabel = found?.guess ? (list.kinds.find((k) => k.key === found.guess)?.label ?? "") : "";
+  // With no guess to offer as Keep it, the kind picker's yes says it instead (never two Keep its).
+  const keepFallback = singled && guessLabel === "";
   // The card keeps its id when its words change (here or in Discord), so the box follows the stored name.
   const shownName = useRef(name.name);
   useEffect(() => {
@@ -360,6 +371,25 @@ function NameRow({
     <li>
       <div class="panel stack" role="group" aria-labelledby={`${id}-name`} id={itemDomId(name.id)} tabIndex={-1}>
         <strong id={`${id}-name`}>{name.name}</strong>
+        {foundOn && found && (
+          <>
+            <p class="small">{found.heard}</p>
+            {guessLabel !== "" && <p class="small">{fw.guess(guessLabel)}</p>}
+            {found.line && (
+              <p class="small">
+                <strong>{fw.lineLabel}</strong> {fw.line(found.line.speaker, found.line.text)}
+              </p>
+            )}
+            {/* DMbot's own guess is one tap; the kind list below stays for "something else" until slice B (#5144) reshapes the row. */}
+            {guessLabel !== "" && (
+              <div class="row">
+                <button type="button" class="button" disabled={busy} aria-label={singled ? fw.singled.keepItFor(name.name) : fw.yesSpelledFor(name.name)} onClick={() => onSend({ action: "confirm", kind: found.guess ?? "" })}>
+                  {singled ? fw.singled.keepIt : name.name.length > fw.longName ? fw.yesSpelling : fw.yesSpelled(name.name)}
+                </button>
+              </div>
+            )}
+          </>
+        )}
         {name.note && (
           <p class="small muted">
             {noteSaysWhere(name.note) ? "" : `${words.noteFrom} `}
@@ -379,11 +409,11 @@ function NameRow({
               </option>
             ))}
           </select>
-          <button type="button" class="button" disabled={busy || kind === ""} aria-label={words.yesWith(name.name)} onClick={() => onSend({ action: "confirm", kind })}>
-            {words.yes}
+          <button type="button" class="button" disabled={busy || kind === ""} aria-label={keepFallback ? fw.singled.keepItFor(name.name) : words.yesWith(name.name)} onClick={() => onSend({ action: "confirm", kind })}>
+            {keepFallback ? fw.singled.keepIt : words.yes}
           </button>
-          <button type="button" class="button secondary" disabled={busy} aria-label={words.notANameFor(name.name)} onClick={() => onSend({ action: "not_a_name" })}>
-            {words.notAName}
+          <button type="button" class="button secondary" disabled={busy} aria-label={singled ? fw.singled.notWorthFor(name.name) : words.notANameFor(name.name)} onClick={() => onSend({ action: "not_a_name" })}>
+            {singled ? fw.singled.notWorth : words.notAName}
           </button>
         </div>
         {NAME_CHANGE_WORDS_LIVE && (
@@ -399,23 +429,23 @@ function NameRow({
               </div>
             )}
             <details open={changing} onToggle={(e) => setChanging((e.target as HTMLDetailsElement).open)}>
-              <summary>{words.changeUse}</summary>
+              <summary>{singled ? fw.singled.giveName : words.changeUse}</summary>
               <fieldset class="stack" disabled={busy}>
-                <legend>{words.changeLabel}</legend>
-                <p class="small muted">{words.changeHint}</p>
+                <legend>{singled ? fw.singled.giveNameLabel : words.changeLabel}</legend>
+                {!singled && <p class="small muted">{words.changeHint}</p>}
                 <div class="row">
                   <label for={`${id}-words`} class="visually-hidden">
-                    {words.changeLabel}
+                    {singled ? fw.singled.giveNameLabel : words.changeLabel}
                   </label>
-                  <input id={`${id}-words`} type="text" maxLength={NAME_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={wholeName} onInput={(e) => { const typed = (e.target as HTMLInputElement).value; setWholeName(typed); if (typed.trim() === "") setHeard(""); }} />
+                  <input id={`${id}-words`} type="text" placeholder={singled ? fw.singled.giveNamePlaceholder : undefined} maxLength={NAME_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={wholeName} onInput={(e) => { const typed = (e.target as HTMLInputElement).value; setWholeName(typed); if (typed.trim() === "") setHeard(""); }} />
                   <button
                     type="button"
                     class="button secondary"
                     disabled={wholeName.trim() === "" || wholeName.trim() === name.name}
-                    aria-label={words.changeFor(name.name)}
+                    aria-label={singled ? fw.singled.giveNameFor(name.name) : words.changeFor(name.name)}
                     onClick={() => onSend({ action: "change_words", words: wholeName.trim(), ...(heard !== "" ? { heard } : {}) })}
                   >
-                    {words.changeUse}
+                    {singled ? fw.singled.giveNameUse : words.changeUse}
                   </button>
                 </div>
               </fieldset>

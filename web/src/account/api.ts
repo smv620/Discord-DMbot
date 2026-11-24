@@ -1059,6 +1059,21 @@ export interface NameCheck {
   isList?: boolean;
   /** Known groups the list may be: `members` already belong to the group, `others` do not (#3406). */
   groups?: NameGroupHint[];
+  /** How the session-names reader found this name (#5144, core #5182): present only for a name it found; missing from an older API. */
+  found?: NameFound;
+}
+/** What made a waiting name a name (#5144). `heard` is Discord's heard line as plain text; `line` is the one line that made it
+ * a name, or null when none is kept or its speaker no longer agrees. */
+export interface NameFound {
+  how: "introduced" | "typed" | "addressed" | "place" | "spoken_of" | "scan" | "singled_out";
+  times: number;
+  typed: number;
+  /** Every other spelling heard, in order (the card names three, then "and N more"; `heard` already says so). */
+  also: string[];
+  heard: string;
+  /** DMbot's guess, a kind key, or null when it has none. */
+  guess: string | null;
+  line: { speaker: string; at: number; text: string } | null;
 }
 /** A group DMbot already knows that a list of names may be (#3406). */
 export interface NameGroupHint {
@@ -2582,6 +2597,9 @@ export interface NameRow extends CardSummaryFields {
   secret: boolean;
   /** "Players don't know this one yet" on the whole entry (#2321); what the secret switch sets. */
   hidden?: boolean;
+  /** A thing or place the story keeps coming back to but never names, kept without a name of its own (#5175; core's `described`).
+   * Missing from an older API and while the reader is off. */
+  described?: boolean;
   /** A place's size (#4173): plane, world, region, settlement, district, street, building or room; null when it has none. Only places have one. */
   placeLevel?: string | null;
   /** Who set it: "read" (DMbot read it from the lore's words) or "dm"; null when there is no size. */
@@ -2998,7 +3016,8 @@ export interface QuestionCampaign {
   guesses?: number;
 }
 export interface CampaignNameChecks {
-  recaps: { ref: string; at: number; count: number }[];
+  /** `other` is the one group of names no recap has linked (#5186, core #5203): last in the list, its ref ends in `.0` and opens the same card. Missing from an older API. */
+  recaps: { ref: string; at: number; count: number; other?: boolean }[];
 }
 export interface QuestionCounts {
   campaigns: QuestionCampaign[];
