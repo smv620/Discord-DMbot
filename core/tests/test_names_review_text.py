@@ -211,7 +211,7 @@ class TheHeardLine(unittest.TestCase):
         )
         self.assertNotIn("Also heard as", kept)
         self.assertNotIn("Is this a name in your game?", kept)
-        self.assertIn("Pick what it is to add it, or press 🚫 Not a name.", kept)  # (no guess)
+        self.assertNotIn("Pick what it is", kept)  # (no guess: the kind menu says it, #5133 3c-2a)
         today = ui.suggestion_text(suggested("Hrothgar"), 1, also=["Rothgar"])
         self.assertIn("Also heard as **Rothgar**: saved with it.", today)
         self.assertIn("Is this a name in your game?", today)
@@ -259,6 +259,106 @@ class TheOrder(unittest.TestCase):
         found = self.found("scan")
         ordered = sorted([a, b], key=lambda e: ui._surest(e, found))
         self.assertEqual([e.name for e in ordered], ["Ostrin", "Vorna"])
+
+
+class TheNewCardsAnswers(unittest.TestCase):
+    """#5133 slice 3c-2a: the buttons and words Supervisor ruled for the new card."""
+
+    def view(self, kind: str = "") -> Any:
+        from dmbot.memory.name_found import Found
+
+        view = ui.SuggestionReview("c" * 32, ["a" * 32])
+        view.found = Found("introduced", None, 0, 2)
+        view.name = "Hrothgar"
+        view.known_kind = kind
+        view._buttons()
+        return view
+
+    def rows(self, view: Any) -> list[tuple[str, int]]:
+        return [(getattr(b, "label", None) or b.placeholder, b.row) for b in view.children]
+
+    def test_with_a_guess_yes_spelled_another_way_or_not_a_name(self) -> None:
+        self.assertEqual(
+            self.rows(self.view("npc")),
+            [
+                ("✅ Yes, spelled Hrothgar", 0),
+                ("✏️ Spelled another way…", 0),
+                ("🚫 Not a name", 0),
+                ("🏷️ Something else", 1),
+                ("🔗 Same as a known name…", 1),
+                ("⏳ Later", 1),
+            ],
+        )
+
+    def test_with_no_guess_the_kind_menu_is_the_yes(self) -> None:
+        self.assertEqual(
+            self.rows(self.view()),
+            [
+                ("Spelled Hrothgar? Pick what it is", 0),
+                ("✏️ Spelled another way…", 1),
+                ("🚫 Not a name", 1),
+                ("🔗 Same as a known name…", 2),
+                ("⏳ Later", 1),
+            ],
+        )
+
+    def test_change_the_words_is_folded_into_spelled_another_way(self) -> None:
+        labels = [r[0] for r in self.rows(self.view("npc"))]
+        self.assertNotIn("✏️ Change the words", labels)
+
+    def test_a_long_name_says_this_spelling(self) -> None:
+        self.assertEqual(ui.yes_spelled("Hrothgar"), "✅ Yes, spelled Hrothgar")
+        self.assertEqual(ui.yes_spelled("Lord Dagult Neverember"), "✅ Yes, this spelling")
+        self.assertEqual(
+            ui.spelled_pick("Lord Dagult Neverember"), "This spelling? Pick what it is"
+        )
+        self.assertLessEqual(len(ui.yes_spelled("Hrothgar")), ui.REVIEW_LABEL_MAX)
+
+    def test_a_card_with_its_own_question_keeps_its_buttons(self) -> None:
+        view = self.view("npc")
+        view.match = Match("b" * 32, "Hrothgard")
+        view._buttons()
+        self.assertEqual(self.rows(view)[0], ("✅ It's Hrothgard", 0))
+
+    def test_not_a_name_says_every_spelling_it_won_t_ask_about(self) -> None:
+        self.assertEqual(
+            ui.not_a_name_note(["Hrothgar", "Rothgar", "hroth gar"]),
+            "🚫 Not a name. DMbot won't ask about Hrothgar, Rothgar or hroth gar again.",
+        )
+        self.assertEqual(
+            ui.not_a_name_note(["Hrothgar"]), "🚫 Not a name. DMbot won't ask about Hrothgar again."
+        )
+        self.assertEqual(
+            ui.not_a_name_note(["Hrothgar", "Rothgar", "Hrotgar", "hroth gar"]),
+            "🚫 Not a name. DMbot won't ask about Hrothgar, Rothgar or 2 more spellings again.",
+        )
+
+    def test_kept_says_as_what(self) -> None:
+        self.assertEqual(ui.kept_note("Hrothgar", "npc", []), "✅ Kept **Hrothgar** as an NPC.")
+        self.assertEqual(
+            ui.kept_note("Hrothgar", "place", ["Rothgar"]),
+            "✅ Kept **Hrothgar** (also **Rothgar**) as a place.",
+        )
+
+    def test_dmbot_s_guess_is_right_under_the_title(self) -> None:
+        text = ui.suggestion_text(
+            suggested("Hrothgar"), 1, kind="place", scene="By the gate.", counts=(2, 0)
+        )
+        first, second = text.split("\n")[:2]
+        self.assertTrue(first.startswith("📝 **Hrothgar**: a new name?"))
+        self.assertEqual(second, "DMbot's guess: a **place**.")
+
+    def test_a_name_the_campaign_has_says_how_to_join_them(self) -> None:
+        self.assertEqual(
+            ui.already_a_name("hrothgar", "Hrothgar"),
+            "**Hrothgar** is already a name in this campaign. "
+            "Press 🔗 Same as a known name… to join them.",
+        )
+        self.assertEqual(
+            ui.already_a_name("Hroth", "Hrothgar the Bold"),
+            "**Hroth** is already a name for **Hrothgar the Bold**. "
+            "Press 🔗 Same as a known name… to join them.",
+        )
 
 
 if __name__ == "__main__":

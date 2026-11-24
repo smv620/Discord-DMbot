@@ -11745,6 +11745,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         so a lapsed plan's leftover proposals are counted nowhere (#5105)."""
         return await self._story_asked(self.settings.story_deeds_on, gid, cid)
 
+    async def heads_up_count(self, gid: int, cid: str) -> int:
+        """How many continuity heads-ups wait for the DM now (#5147): what `ContinuityStore.check`
+        would list, with who agrees read now and the settings' levels; no AI call. Only with the
+        story extractor on and a plan with story memory (the same gate as the after-session check).
+        Any error counts 0 and logs the type only."""
+        try:
+            if self.memory is None or not await self._story_asked(
+                self.settings.story_extractor_on, gid, cid
+            ):
+                return 0
+            report = await ContinuityStore(self.memory).check(
+                gid,
+                cid,
+                opted_in=await self.consent.consenting(gid),
+                levels=self.settings.continuity,
+            )
+            return len(report.conflicts)
+        except Exception as exc:
+            log.warning("Heads-ups count failed (%s)", type(exc).__name__)
+            return 0
+
     async def reveals_on(self, gid: int, cid: str) -> bool:
         """The same for what the characters learned (#2996, #5109): its switch and the plan's
         story memory, so a lapsed plan's leftover proposals are counted nowhere."""
@@ -12829,6 +12850,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         added = await self._add_scan_names(
             gid, cid, found, kinds,
             session_id=session_id, heard_in=heard_in, session_at=session_at, refused=refused,
+            found_how=found_how, read_in=read_in, read=read,
         )  # fmt: skip
         if tracing:  # (#5055 B)
             await self._write_name_trace(
@@ -12857,11 +12879,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         heard_in: Sequence[Line],
         session_at: int | None,
         refused: set[str] | None = None,
+        found_how: Mapping[str, name_groups.Group] | None = None,
+        read_in: Sequence[Line] = (),
+        read: Sequence[name_reader.Found] = (),
     ) -> list[str]:
         """Make each suggestion a name to check, as the scan does: proposed, source scan, "Heard N
         times", its other spellings as aliases, and where it was said when the lines are given.
         Shared by the scan and "📝 More names" (#5055 B). Returns the names made; `refused`, when
-        given, gets the key of each the store refused (for the scan's trace)."""
+        given, gets the key of each the store refused (for the scan's trace). `found_how`,
+        `read_in` and `read` are the scan's own (what made each a name, for the 3b card); "More
+        names" gives none, so its names are found by the scan (#5168: they were the scan's locals,
+        out of reach here once the two were split)."""
         assert self.memory is not None
         added: list[str] = []
         for suggestion in found:
@@ -12889,7 +12917,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.settings.session_names_on:  # (what made it a name: for the 3c card, 3b)
                 await self._keep_found(
                     gid, cid, session_id, written.value.id,
-                    found_how.get(name_key(suggestion.name)),
+                    (found_how or {}).get(name_key(suggestion.name)),
                     [suggestion.name, *suggestion.also], heard_in, read_in, read,
                 )  # fmt: skip
             if heard_in and session_id is not None:

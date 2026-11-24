@@ -625,8 +625,11 @@ class ThePath(NamesTest):
             self.assertNotIn(card.subject, line)  # (the log never has the names)
             self.assertNotIn(card.object, line)
             said = press.followup.send.await_args.args[0]
-            self.assertIn("couldn't keep that one", said)
-            self.assertNotIn("companion", said)  # (the card says what to do, not the rule's words)
+            if raised == COMPANION_TARGET:  # (#5164: a companion refusal says why, and what to do)
+                self.assertIn(f"can't keep that one. {COMPANION_TARGET}", said)
+            else:  # (any other: what to do, never a message built from a value)
+                self.assertIn("couldn't keep that one", said)
+                self.assertNotIn(card.subject, said)
         self.assertEqual(await self.relations(), [])  # (nothing was kept)
         self.assertEqual(len(await self.waiting()), 3)  # (and it stays waiting)
 
@@ -953,6 +956,24 @@ class ThePath(NamesTest):
         said = it.followup.send.await_args.args[0]
         self.assertNotIn("raw words", said)
         self.assertIn("the ❌ button", said)
+        self.assertEqual(len(await self.waiting()), 3)
+
+    async def test_a_companion_refusal_says_why_and_what_to_do(self) -> None:
+        # (#5164: "couldn't keep that one" alone left the DM guessing)
+        from dmbot.memory.store import COMPANION_NOT_NPC
+
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        it = self.it()
+        refused = MemoryRuleError(COMPANION_NOT_NPC)
+        with patch.object(self.memory, "add_relation", side_effect=refused):
+            await self.button(view, "✅ Add it").callback(it)
+        said = it.followup.send.await_args.args[0]
+        self.assertEqual(
+            said,
+            f"DMbot can't keep that one. {COMPANION_NOT_NPC} Press ❌ Leave it out to move on.",
+        )
         self.assertEqual(len(await self.waiting()), 3)
 
     # ---- a lasting way back, and what the wiring must keep ------------------------------------

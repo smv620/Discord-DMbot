@@ -425,6 +425,9 @@ LOOKS_AT_CASE = frozenset(
         # (#5133, the Expert and Supervisor: the spelling proposed for the DM to confirm gets
         # capitals when none was heard; it shapes the proposal and decides nothing)
         "memory/name_groups.py:proposed",
+        # (#5133 slice 3c-2b: the guard on a "change to" rule refuses a spelling said in lower case
+        # elsewhere; it only ever stops a rule, never makes a name)
+        "memory/scan.py:ordinary_in",
         "names/not_names.py:_clause",  # (a lower-case clause word: "so", "and")
         "names/not_names.py:shape_of",  # (a number or a time said with a capital)
         "names/not_names.py:_lower_everywhere",  # (a word only ever said in lower case)

@@ -53,6 +53,8 @@ class Sources:
     # is offered no deeds, as the deed card and the after-session question already say
     reveals_on: Callable[[int, str], Awaitable[bool]] | None = None  # the same, for reveals (#5109)
     deeds_on: Callable[[int, str], Awaitable[bool]] | None = None
+    # how many continuity heads-ups wait for one campaign's DM (the bot's `heads_up_count`, #5147)
+    heads_ups: Callable[[int, str], Awaitable[int]] | None = None
 
 
 async def count_kinds(
@@ -287,6 +289,14 @@ async def _deeds(src: Sources, g: int, c: str) -> Counted:
     )
 
 
+async def _heads_ups(src: Sources, g: int, c: str) -> Counted:
+    """Continuity heads-ups waiting for the DM (#5147): the bot's own count, which is zero while
+    the story extractor is off or the plan has no story memory."""
+    if src.heads_ups is None:
+        return Counted(0)
+    return Counted(max(0, int(await src.heads_ups(g, c))))
+
+
 async def _maps(src: Sources, g: int, c: str) -> Counted:
     """Maps a player kept that no DM has answered yet (`MapStore.waiting_for_a_dm`)."""
     if src.maps is None:
@@ -314,6 +324,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,
     kinds.DEEDS: _deeds,
+    kinds.HEADS_UPS: _heads_ups,
     kinds.PLOT: _plot,
     kinds.RECAP_APPROVE: _recap_approve,
     kinds.RULES: _rules,

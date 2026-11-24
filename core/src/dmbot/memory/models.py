@@ -697,6 +697,8 @@ class Written[T]:
     # tell the DM; "" otherwise. (`confirm_kinds` counts both in `split_counts`.)
     split: str = ""
     split_counts: tuple[int, int] = (0, 0)
+    # The heard spellings a yes turned into "change to" rules (#5133 slice 3c-2b), for the reply.
+    rules: tuple[str, ...] = ()
 
 
 # Names one merge takes: the bot, the website and the database door agree (#2426).
