@@ -8,6 +8,8 @@
 import { plotThreadsWords } from "../content/plot-threads-words";
 import type { PlanId } from "../content/pricing";
 import type {
+  ContinuityHit,
+  ContinuityHits,
   DeedQuestions,
   DeedWaiting,
   AccountApi,
@@ -708,7 +710,19 @@ function pretendReveals(): RevealProposal[] {
   ];
 }
 
-// The "Still in the party?" questions waiting in a pretend campaign (#4895): one death, one goodbye with two in it.
+/** Six heads-ups from this session in the pretend campaign (#3695): a clash, an ended one, a pinned one, a secret clue with a list and one without, and one more clash. */
+function pretendContinuity(): ContinuityHit[] {
+  const at = { subject: "", relationship: "", object: "", details: "" };
+  const now = (subject: string, relationship: string, object: string) => ({ ...at, subject, relationship, object });
+  return [
+    { id: "c1".repeat(16), kind: "clash", level: "probable", name: "Captain Brask", now: now("Captain Brask", "is", "at the ferry"), earlier: null, earlierWords: "Brask is in the keep", ended: null, earlierSession: 2, quote: "Brask was in the keep", pinned: false, learner: null, listed: null, choice: "story_changed" },
+    { id: "c2".repeat(16), kind: "ended", level: "likely", name: "Old Pell", now: now("Old Pell", "is", "alive"), earlier: null, earlierWords: null, ended: "dead", earlierSession: 1, quote: "Pell died at the mill", pinned: false, learner: null, listed: null, choice: "alive_after_all" },
+    { id: "c3".repeat(16), kind: "clash", level: "possible", name: "Tamsin Reed", now: now("Tamsin Reed", "lives", "in Greywatch"), earlier: null, earlierWords: "Tamsin lives in the hills", ended: null, earlierSession: null, quote: null, pinned: true, learner: null, listed: null, choice: "still_here" },
+    { id: "c4".repeat(16), kind: "knows_a_secret", level: "likely", name: "the cellar key", now: now("Mira Voss", "knows", "the cellar key"), earlier: null, earlierWords: null, ended: null, earlierSession: null, quote: null, pinned: false, learner: "Brewner", listed: ["Mira Voss"], choice: "they_learned_it" },
+    { id: "c5".repeat(16), kind: "knows_a_secret", level: "probable", name: "the mill plan", now: now("Aldric Thorn", "knows", "the mill plan"), earlier: null, earlierWords: null, ended: null, earlierSession: null, quote: null, pinned: false, learner: null, listed: null, choice: "they_learned_it" },
+    { id: "c6".repeat(16), kind: "clash", level: "possible", name: "Sister Ilse", now: now("Sister Ilse", "is", "in the crypt"), earlier: null, earlierWords: "Ilse left the abbey", ended: "destroyed", earlierSession: 3, quote: null, pinned: false, learner: null, listed: null, choice: "story_changed" },
+  ];
+}
 /** Two deeds the party did in the pretend campaign (#3591): ids are 32 hex characters, as the page sends them. */
 function pretendDeeds(): (DeedWaiting & { done: boolean })[] {
   return [
@@ -716,6 +730,7 @@ function pretendDeeds(): (DeedWaiting & { done: boolean })[] {
     { id: "b2".repeat(16), doer: "Captain Brask", text: "turned away the ferrymen at dusk", viewers: ["Old Pell", "Tamsin Reed"], effect: "Annoyed them", kind: "", done: false },
   ];
 }
+// The "Still in the party?" questions waiting in a pretend campaign (#4895): one death, one goodbye with two in it.
 function pretendLeaveGroups(): LeaveGroup[] {
   return [
     { group: "dead-okthandom", kind: "died", characters: [{ id: "lv-okthandom", name: "Okthandom" }] },
@@ -1451,6 +1466,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const leaveState: Record<string, LeaveGroup[]> = {};
   // The deeds the party did, per campaign (#3591): one still waiting, one already recorded (its change can be taken back).
   const deedState: Record<string, { deeds: (DeedWaiting & { done: boolean })[]; undo: Map<number, string>; batch: number }> = {};
+  // The heads-ups from this session, per campaign (#3695): six, one of each form, so the panel shows five and then "more waiting".
+  const continuityState: Record<string, ContinuityHit[]> = {};
+  const continuityOf = (ref: string) => (continuityState[ref] ??= pretendContinuity());
   const deedsOf = (ref: string) => (deedState[ref] ??= { deeds: pretendDeeds(), undo: new Map(), batch: 0 });
   // What the characters learned, waiting, by campaign (#3863 step 2). A keep or a not takes its proposal out of the list.
   const revealState: Record<string, RevealProposal[]> = {};
@@ -4095,6 +4113,32 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-allowed");
       return structuredClone((leaveState[ref] ??= pretendLeaveGroups()));
+    },
+    async continuityHits(ref): Promise<ContinuityHits> {
+      calls.push(`continuityHits:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const hits = continuityOf(ref);
+      return { total: hits.length, hits: hits.slice(0, 50) };
+    },
+    async askContinuity(ref): Promise<{ count: number }> {
+      calls.push(`askContinuity:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return { count: continuityOf(ref).length };
+    },
+    async answerContinuity(ref, change): Promise<void> {
+      calls.push(`answerContinuity:${ref}:${change.claim}:${change.choice}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const hits = continuityOf(ref);
+      const at = hits.findIndex((h) => h.id === change.claim);
+      if (at < 0) throw new ApiError("gone");
+      // Story changed and Wasn't real both settle the heads-up; the page then reads the list again.
+      hits.splice(at, 1);
     },
     async deedQuestions(ref): Promise<DeedQuestions> {
       calls.push(`deedQuestions:${ref}`);
