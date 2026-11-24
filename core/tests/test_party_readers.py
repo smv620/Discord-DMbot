@@ -53,6 +53,7 @@ FILES: tuple[str, ...] = (
     "memory/knowers.py",
     "memory/lore_read.py",
     "memory/name_list.py",
+    "memory/name_words.py",  # the guess rule moved here from ui/names.py (#5144)
     "memory/ontology.py",
     "memory/party.py",
     "memory/place_words.py",

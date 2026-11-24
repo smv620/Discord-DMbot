@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.memory.models import NAME_MAX, MemoryRuleError, lookup_key
 from dmbot.memory.name_longer import MAX_OFFERED, longer_names
@@ -20,7 +21,7 @@ from dmbot.memory.places import LINE_CHARS, cut, find_in, trimmed
 from dmbot.names import not_names
 from dmbot.recaps import name_answers
 from dmbot.recaps.notify import job_ref
-from dmbot.web import name_groups, players_lines, recaps, relationships, scenes
+from dmbot.web import name_found, name_groups, players_lines, recaps, relationships, scenes
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
@@ -73,7 +74,9 @@ async def read_campaign_checks(db: Database, session: Session, ref: str) -> dict
     }
 
 
-async def read_checks(db: Database, session: Session, ref: str) -> dict[str, Any]:
+async def read_checks(
+    db: Database, session: Session, ref: str, *, outside_engine: str | None = None
+) -> dict[str, Any]:
     """The recap's names to check, the known names to pick from, and the kinds. Only a DM of the
     campaign; anyone else gets "not found"."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -100,6 +103,12 @@ async def read_checks(db: Database, session: Session, ref: str) -> dict[str, Any
         ]
         for card in waiting:  # (in this same read, so every door answers from one moment)
             await _with_groups(conn, gid, cid, card)
+        # What made each name a name (#5144): how it was heard, DMbot's guess, the line.
+        cur = await conn.execute(
+            "SELECT dmbot_recap_name_found(%s, %s, %s, %s, %s) AS r",
+            (gid, cid, at, TERMS_VERSION, outside_engine),
+        )
+        name_found.attach(waiting, (await cur.fetchone() or {}).get("r") or {})
         # The scene kept for each waiting name (#3644): the DM's alone, through the DM-only door.
         await scenes.attach(conn, gid, cid, waiting)
         # The players' line a shared lore upload filled in (#3833): the DM's alone, as above.
