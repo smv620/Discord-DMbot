@@ -259,3 +259,52 @@ class TheYes(TheFoundCard):
         tools = na.HeardTools(TranscriptStore(self.db), FakeConsent(ALICE.id))
         why = await na.apply(self.memory, GUILD, {ALICE.id}, answer, kept, self.answers, tools)
         self.assertEqual((why, kept.batch), ("", None))
+
+
+class TheGuessOnEveryName(TheFoundCard):
+    """DMbot's best guess rides on every waiting name, found row or not (#5218)."""
+
+    async def propose(self, name: str, **kw: object) -> str:
+        written = await self.memory.add_entity(
+            GUILD,
+            self.one.id,
+            name=name,
+            description="Read from the story",
+            **kw,  # type: ignore[arg-type]
+        )
+        await self.answers.link(GUILD, self.one.id, AT, [written.value.id])
+        return written.value.id
+
+    async def guesses(self) -> dict[str, object]:
+        names = (await self.listed())["names"]
+        assert all("guess" in n for n in names)
+        return {n["name"]: n["guess"] for n in names}
+
+    async def test_an_npc_from_the_story_reader_guesses_npc_with_no_found_row(self) -> None:
+        await self.propose("Cerric", type="character", role="npc", source="extractor")
+        await self.propose("Thornwick", type="place", source="extractor")
+        got = await self.guesses()
+        self.assertEqual((got["Cerric"], got["Thornwick"]), ("npc", "place"))
+        names = (await self.listed())["names"]
+        self.assertTrue(all("found" not in n for n in names))
+
+    async def test_the_scans_concept_fallback_and_a_player_character_have_no_guess(self) -> None:
+        await self.propose("Ferrin", type="concept", source="scan")
+        await self.propose("Mira", type="character", role="player_character", source="extractor")
+        await self.propose("Odd", type="character", role="npc", source="dm")  # (not a reader's)
+        got = await self.guesses()
+        self.assertEqual((got["Ferrin"], got["Mira"], got["Odd"]), (None, None, None))
+
+    async def test_a_name_with_a_found_row_carries_the_same_guess_inside_found_too(self) -> None:
+        place = await self.propose("Thornwick", type="place", source="scan")
+        await self.keep(place, "place", None, times=3)
+        (card,) = (await self.listed())["names"]
+        self.assertEqual((card["guess"], card["found"]["guess"]), ("place", "place"))
+
+
+class TheCardGuess(unittest.TestCase):
+    def test_the_story_reader_counts_for_the_card_but_not_for_auto_accept(self) -> None:
+        self.assertEqual(name_words.card_guess("extractor", "character", "npc"), "npc")
+        self.assertEqual(name_words.guess_kind("extractor", "character", "npc"), "")
+        self.assertEqual(name_words.card_guess("dm", "place", None), "")
+        self.assertEqual(name_words.card_guess("scan", "concept", None), "")
