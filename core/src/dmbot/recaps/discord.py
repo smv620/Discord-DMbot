@@ -2017,6 +2017,7 @@ class RecapFeatures:
                         source="scan",
                         description="Used in a recap",
                         session_started_at=job.session_at,  # (the split-party check, #4043)
+                        fold=True,  # (a known name but for a final "s": joined, #5215 slice 3)
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a name from the recap: %s", exc)

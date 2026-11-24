@@ -13398,6 +13398,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         described=(described or {}).get(name_key(suggestion.name))
                         if how is not None and how.why == name_reader.SINGLED_OUT
                         else None,
+                        # (a known name but for a final "s": made and joined at once, for the
+                        # DM's Check guesses, #5215 slice 3)
+                        fold=True,
                     )
                     break
                 except MemoryRuleError as exc:

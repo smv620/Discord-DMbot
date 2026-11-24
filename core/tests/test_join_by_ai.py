@@ -361,3 +361,80 @@ class AFinalS(Base):
         gone = await self.waiting_name("Explorer League", "concept")
         with self.assertRaises(MemoryRuleError):
             await self.memory.join_by_ai(self.g, self.one.id, league, gone, any_kind=True)
+
+
+class FoldAtTheRead(Base):
+    """#5215 slice 3: a reader's waiting name that is one known entry but for a final "s" is made
+    and joined in one transaction (`add_entity(fold=True)`), the join its own batch for Check
+    guesses; Undo ("Not the same") gives it back as its own waiting name, never joined again."""
+
+    async def found(self, name: str, kind: str = "concept") -> Any:
+        return await self.memory.add_entity(
+            self.g, self.one.id, type=kind, name=name, source="scan", fold=True
+        )
+
+    async def test_made_and_joined_at_once_and_listed_for_the_dm(self) -> None:
+        league = await self.add("Explorer's League", "faction")
+        made = await self.found("Explorer League")
+        self.assertEqual(made.value.merged_into, league)
+        self.assertEqual((await self.aliases_of(league))["Explorer League"], PROPOSED)
+        joins = await self.memory.waiting_joins(self.g, self.one.id)
+        self.assertEqual([(j.keep_id, j.gone_id) for j in joins], [(league, made.value.id)])
+
+    async def test_never_used_until_kept(self) -> None:
+        # (the cleaner, the recap, the sidebar and the name pass read the campaign's names through
+        # the lookup, where a waiting spelling is never a confirmed name of the entry)
+        league = await self.add("Explorer's League", "faction")
+        await self.found("Explorer League")
+        view = CampaignLookup.build(await self.memory.lookup_data(self.g, self.one.id))
+        heard = [e for e in view.exact("Explorer League") if e.entity_id == league]
+        self.assertTrue(heard)
+        self.assertFalse(any(e.confirmed for e in heard))
+        self.assertTrue(all(e.confirmed for e in view.exact("Explorer's League")))
+
+    async def test_undo_gives_it_back_as_its_own_waiting_name_never_joined_again(self) -> None:
+        league = await self.add("Explorer's League", "faction")
+        made = await self.found("Explorer League")
+        (join,) = await self.memory.waiting_joins(self.g, self.one.id)
+        await self.memory.undo(self.g, self.one.id, join.batch)
+        row = await self.row(made.value.id)
+        self.assertEqual((row["status"], row["merged_into"]), ("proposed", None))
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.join_by_ai(self.g, self.one.id, league, made.value.id, any_kind=True)
+
+    async def test_two_fits_or_a_secret_fit_stay_ordinary_waiting_names(self) -> None:
+        await self.add("Explorer's League", "faction")
+        await self.add("Explorers Leagues", "faction")
+        self.assertIsNone((await self.found("Explorer League")).value.merged_into)
+        hand = await self.add("Silver Hand", "faction")
+        await self.memory.add_alias(
+            self.g, self.one.id, hand, "Silver Hands Guild", kind="full", source=DM,
+            status=CONFIRMED, secret=True,
+        )  # fmt: skip
+        await self.add("Silver Hand Guild", "faction")
+        self.assertIsNone((await self.found("Silver Hand Guilds")).value.merged_into)
+
+    async def test_a_failed_join_leaves_nothing(self) -> None:
+        from unittest.mock import patch
+
+        await self.add("Explorer's League", "faction")
+
+        async def broken(*_a: Any, **_k: Any) -> None:
+            raise RuntimeError("down")
+
+        with patch.object(type(self.memory), "_merge_in", broken), self.assertRaises(RuntimeError):
+            await self.found("Explorer League")
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_entities WHERE name = 'Explorer League'"
+            )
+            counted = await cur.fetchone()
+            assert counted is not None
+            self.assertEqual(counted["n"], 0)
+
+    async def test_without_fold_nothing_is_joined(self) -> None:
+        await self.add("Explorer's League", "faction")
+        made = await self.memory.add_entity(
+            self.g, self.one.id, type="concept", name="Explorer League", source="scan"
+        )
+        self.assertIsNone(made.value.merged_into)
