@@ -1070,14 +1070,10 @@ class HeardAnswer:
     reason: str = ""
 
 
-def _untold(
-    lines: Sequence[str], heard_in: Sequence[Line], said_by: Sequence[int] | None = None
-) -> bool:
+def _untold(lines: Sequence[str], heard_in: Sequence[Line]) -> bool:
     """Whether a line the scan read has no stored copy to say who said it (#5190): a failed
     save, or two speakers saying the same words with one copy stored. Counted, so one stored copy
-    never vouches for two. Never, when the lines come with their speakers (`said_by`, #5199)."""
-    if said_by is not None:
-        return False
+    never vouches for two. (Lines that come with their speakers, #5199, never need it.)"""
     stored = Counter(x.text for x in heard_in if not getattr(x, "sidebar", ""))
     return bool(Counter(lines) - stored)
 
@@ -12664,9 +12660,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         matching words; without it (or with a count that doesn't match) the words are matched, as
         before. Returns the names proposed; nothing is confirmed."""
         if said_by is not None and len(said_by) != len(lines):
-            log.warning("Name scan: speakers don't match the lines; matched by words instead")
+            log.warning(  # counts only
+                "Name scan: %d speaker(s) for %d line(s); matched by words instead",
+                len(said_by), len(lines),
+            )  # fmt: skip
             said_by = None
-        said_by = list(said_by) if said_by is not None else None
 
         def recorded_now() -> Awaitable[Collection[int]]:
             return recheck() if recheck is not None else self.consent.consenting(gid)
@@ -13056,7 +13054,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         nothing rather than risk it. `said_by`: each line's speaker (#5199): then a stopped
         speaker's lines come out by who said them, and none is ever unsure."""
         keep = keep or {}
-        by = list(said_by) if said_by is not None else None
+        by = list(said_by) if said_by is not None else None  # (a copy: the caller's stays)
         now = set(await recorded())
         same = (list(names), list(lines), by, list(heard_in), list(read))
         if by is not None:

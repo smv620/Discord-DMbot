@@ -786,12 +786,61 @@ class TheBotStep(unittest.TestCase):
         self.assertEqual(self.step_said_by(bot, texts, [2, 2, 1, 1], session_id=None), ["Mira"])
 
     def test_with_speakers_the_same_words_said_twice_lose_only_the_stopped_copy(self) -> None:
-        # (#5199: "Vorna" heard once from each; the one who stays leaves a single hearing, too few)
+        # (#5199: "Vorna" heard once from each, both stored; the one who stays leaves a single
+        # hearing, too few. Without speakers this was unsure and suggested nothing, #5190)
         texts = ["We met Vorna today.", "We met Vorna today.", "We saw Mira today.",
                  "Then Mira left."]  # fmt: skip
         bot = self.late(texts, "nobody")
+        by = [2, 1, 1, 1]
+
+        async def lines(*_: Any) -> list[Any]:
+            return [SimpleNamespace(user_id=u, text=t, topic="game", typed=False)
+                    for u, t in zip(by, texts, strict=True)]  # fmt: skip
+
+        bot.transcripts = SimpleNamespace(lines=lines)
         self.stop_in(bot, "drop_language_suggestions")
-        self.assertEqual(self.step_said_by(bot, texts, [2, 1, 1, 1]), ["Mira"])
+        self.assertEqual(self.step_said_by(bot, texts, by), ["Mira"])
+
+    def test_with_speakers_a_stop_during_the_writes_writes_no_more(self) -> None:
+        # (#5199: between writes, the speakers' own question is asked, even for a line the
+        # stored transcript holds differently, as after a fix made live)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left, as fixed live."]  # fmt: skip
+        bot = self.late([*texts[:3], "Then Mira left."], "nobody")
+        written: list[str] = []
+        real = bot.memory.add_entity
+
+        async def add_entity(*a: Any, name: str, **k: Any) -> Any:
+            written.append(name)
+            bot.consent.consenting.return_value = {1}  # (speaker 2 stops during the first write)
+            return await real(*a, name=name, **k)
+
+        bot.memory.add_entity = add_entity
+        made = self.step_said_by(bot, texts, [2, 2, 1, 1])
+        self.assertEqual(len(written), 1)
+        self.assertEqual(made, written)
+
+    def test_with_speakers_a_stop_during_the_reader_takes_their_lines_out(self) -> None:
+        # (#5199: after the reader, by speaker; none of their lines was saved, so the stored
+        # transcript alone could not say they spoke)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left, as fixed live.",
+                 "We saw Mira today.", "Then Mira left."]  # fmt: skip
+        bot = self.late(texts[2:], "nobody", on=True)  # (none of speaker 2's lines was saved)
+        real = bot._read_session_names
+
+        async def read(*a: Any, **k: Any) -> Any:
+            bot.consent.consenting.return_value = {1}  # (speaker 2 stops while the reader reads)
+            return await real(*a, **k)
+
+        bot._read_session_names = read
+        self.assertEqual(self.step_said_by(bot, texts, [2, 2, 1, 1]), ["Mira"])
+        sent = bot._scan_kinds.await_args.args[3]
+        self.assertFalse(any("Vorna" in t for t in sent))
+        # (taken out right after the reader, so the dev trace is of what is left and is written;
+        # a stop caught only later leaves no trace)
+        names = [n for _s, n, _r in self.ends(bot.settings.name_trace_dir)]
+        self.assertIn("Mira", names)
+        self.assertNotIn("Vorna", names)
 
     def test_speakers_that_do_not_match_the_lines_are_not_used(self) -> None:
         # (#5199: a count that doesn't match falls back to matching words, as before)
