@@ -3450,9 +3450,9 @@ export interface AccountApi {
    * `bad-present`. */
   setBeatPresent?(recapRef: string, n: number, present: string[]): Promise<RecapBeat>;
   /** "📝 More names" on the Questions page (#5081, core #5055 B): queued for the bot, a DM only, one press makes at most 300
-   * names to check. Resolves with the names now waiting and the names still behind the button. `onLook` hears the shared
-   * progress of the wait. A refusal is an `ApiError` (`not-found`, `too-soon`). Missing from an older API. */
-  moreNames?(campaignRef: string, onLook?: (progress: JobProgress | null) => void): Promise<{ made: number; left: number }>;
+   * names to check. Resolves with the names now waiting and the names still behind the button. `onLook` hears how far it is (counts only,
+   * `{done, total}` with no stage: core's names-more answer sends no more). A refusal is an `ApiError` (`not-found`, `too-soon`). Missing from an older API. */
+  moreNames?(campaignRef: string, onLook?: (progress: { done: number; total: number } | null) => void): Promise<{ made: number; left: number }>;
   /** What the name pass fixed in this recap's session (DMs only; #2645). Missing from an older API. */
   namesFixed?(recapRef: string): Promise<NamesFixed>;
   /** Undo one fix, queued for the bot like the DM screen's Undo; resolves with how many lines were put back.

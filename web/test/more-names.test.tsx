@@ -45,6 +45,20 @@ describe("the button", () => {
     expect(button.disabled).toBe(false);
   });
 
+  it("shows how far along it is from core's counts (done and total, no stage)", async () => {
+    const api = mockApi("table");
+    let finish: (v: { made: number; left: number }) => void = () => {};
+    api.moreNames = (_ref, onLook) => {
+      onLook?.({ done: 20, total: 120 });
+      return new Promise((ok) => (finish = ok));
+    };
+    render(<MoreNames api={api} campaignRef="100.cmp1" />);
+    fireEvent.click(screen.getByRole("button", { name: w.button }));
+    expect(await screen.findByText(/20 of 120/)).toBeTruthy();
+    finish({ made: 1, left: 0 });
+    await screen.findByText(new RegExp(w.result(1, 0).slice(0, 20)));
+  });
+
   it("says why when it is refused, and when it fails", async () => {
     const api = mockApi("table");
     api.moreNames = vi.fn().mockRejectedValueOnce(new ApiError("only-dm")).mockRejectedValueOnce(new ApiError("too-soon")).mockRejectedValueOnce(new ApiError("server"));

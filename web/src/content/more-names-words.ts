@@ -4,7 +4,7 @@ export const moreNamesWords = {
   button: "📝 More names",
   /** What the button does, said once under it. */
   lead: "Turn the names waiting from your imported sessions into names to check.",
-  stage: { waiting: "Waiting for DMbot", working: "Adding names" } as Record<string, string>,
+  unit: "names",
   working: "Adding names to check…",
   slow: "This is taking a while. It carries on by itself: you can leave this page.",
   /** The result line, as Discord's reply says it (made = names now waiting in the check; left = still behind the button). */

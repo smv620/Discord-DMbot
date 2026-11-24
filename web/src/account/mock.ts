@@ -2115,8 +2115,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (campaignRef.includes("player")) throw new ApiError("not-found");
-      const now = Math.floor(Date.now() / 1000);
-      onLook?.({ stage: "working", startedAt: now - 2, updatedAt: now - 1, serverNow: now, state: "running" });
+      onLook?.({ done: 20, total: 120 }); // (core's real shape: counts, no stage)
       // The pretend bot makes 12 and 40 still wait; asking again finds none.
       const first = !moreNamesPressed.has(campaignRef);
       moreNamesPressed.add(campaignRef);

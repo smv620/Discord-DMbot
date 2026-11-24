@@ -97,9 +97,11 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     moreNames: async (campaignRef, onLook) => {
       const queued = (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/more-names`, {})) as { answer?: string } | null;
       if (!queued?.answer) throw new ApiError("server");
-      const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(campaignRef)}/web/answers/${encodeURIComponent(queued.answer)}`, (look) =>
-        onLook?.(sharedOf(look.progress)),
-      );
+      // Core sends `progress: {done, total}` with no stage for this one, so `sharedOf` would drop it: read the counts.
+      const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(campaignRef)}/web/answers/${encodeURIComponent(queued.answer)}`, (look) => {
+        const p = look.progress as { done?: unknown; total?: unknown } | null | undefined;
+        onLook?.(p && typeof p.done === "number" && typeof p.total === "number" && p.total > 0 ? { done: p.done, total: p.total } : null);
+      });
       // A done answer without its counts is not a success to report ("No more names are waiting" would be false).
       if (typeof got.made !== "number" || typeof got.left !== "number") throw new ApiError("server");
       return { made: got.made, left: got.left };
