@@ -156,11 +156,6 @@ class Picking(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.picks(PLAYER, field), [])
         self.assertEqual(self.picks(DM, None), [])
 
-    def test_the_label_follows_the_state(self) -> None:
-        self.assertEqual(
-            self.picks(DM, SettingField(None, None, False))[0].item.label, "Choose a world"
-        )
-
     def test_no_setting_says_choose_a_world(self) -> None:
         item = self.picks(DM, SettingField(None, None, False))[0].item
         self.assertEqual(item.label, "Choose a world")
@@ -176,6 +171,12 @@ class Picking(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(label), 80)
         self.assertTrue(label.endswith("…"))
 
+    def test_a_space_at_the_cut_is_kept_so_the_length_is_still_80(self) -> None:
+        name = "a" * 78 + " " + "b" * 10
+        label = self.picks(DM, SettingField(PLACE, name, False))[0].item.label
+        self.assertEqual(label, "a" * 78 + " …")
+        self.assertEqual(len(label), 80)
+
     def test_a_guessed_setting_is_not_shown_as_chosen(self) -> None:
         self.assertEqual(
             self.picks(DM, SettingField(PLACE, "Faerûn", True))[0].item.label, "Choose a world"
@@ -189,7 +190,7 @@ class Picking(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(len(keep), 1)
 
-    def test_after_a_pick_the_redrawn_card_shows_the_new_name(self) -> None:
+    def test_a_card_drawn_with_the_picked_world_shows_its_name(self) -> None:
         # (a pick is drawn again with the new field, so the button shows the picked world)
         self.assertEqual(
             self.picks(DM, SettingField(PLACE, "Faerûn", False))[0].item.label, "Faerûn"

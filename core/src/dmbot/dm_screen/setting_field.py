@@ -188,11 +188,7 @@ class PickButton(
     def __init__(self, campaign_id: str, *, world: str | None = None) -> None:
         # (Discord cuts labels at 80 characters, so a long world name is cut here with an ellipsis;
         # a button rebuilt after a restart is only a handle, its label comes from the message)
-        label = (
-            CHOOSE_LABEL
-            if not world
-            else (world if len(world) <= 80 else world[:79].rstrip() + "…")
-        )
+        label = CHOOSE_LABEL if not world else (world if len(world) <= 80 else world[:79] + "…")
         super().__init__(
             discord.ui.Button(
                 label=label,
