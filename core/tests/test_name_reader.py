@@ -451,6 +451,33 @@ class TheBotStep(unittest.TestCase):
         self.assertIn(("", nr.STOPPED), [(r.name, r.reason) for r in trace])
         self.assertNotIn("vorna", [r.name for r in trace])
 
+    def test_an_import_reads_and_counts_by_its_own_recorded_check(self) -> None:
+        """#5184: an import judges who is recorded with `recorded_in` (#3305), which includes a
+        speaker the uploader confirmed; the reader and its re-check use the caller's check, not
+        `consenting` (here: nobody but speaker 1 agreed in Discord)."""
+        import asyncio
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        bot = self.bot(FakeClient(lambda _t: FakeReply(answer(item("hrothgar", lines=[2])))))
+
+        async def recorded() -> set[int]:
+            return {1, 2}
+
+        lines: Any = [
+            SimpleNamespace(user_id=1, text="we walk on"),
+            SimpleNamespace(user_id=2, text="a dwarf called hrothgar steps out"),
+        ]
+        found, _trace, _unread = asyncio.run(
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), [], recorded=recorded)
+        )
+        self.assertEqual([(f.name, f.lines) for f in found], [("hrothgar", ("2",))])
+        found, _trace, _unread = asyncio.run(  # (no check given: `consenting`, speaker 1 only)
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), [])
+        )
+        self.assertEqual(found, [])
+
     def test_a_failure_gives_no_names_and_the_scans_list_stands(self) -> None:
         from dmbot.memory.scan import Suggestion
 
