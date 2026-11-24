@@ -112,6 +112,19 @@ class TheAsk(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ai.complete.await_count, 1)
         self.assertEqual(got, {"N0": "place"})
 
+    async def test_a_stop_before_a_cut_answer_s_second_half_sends_it_no_lines(self) -> None:
+        # (#5190: the halves of a cut answer are calls too, each asked about first)
+        replies = [Reply('{"kinds": [', True), Reply(answer(("Greyfen", "place")), False)]
+        ai = SimpleNamespace(complete=AsyncMock(side_effect=replies))
+        answers = iter([True, True, False])
+
+        async def still() -> bool:
+            return next(answers)
+
+        got = await host(ai)(1, "c", ["Greyfen", "Oskar"], [], still=still)
+        self.assertEqual(ai.complete.await_count, 2)  # (the whole batch, then its first half)
+        self.assertEqual(got, {"Greyfen": "place"})
+
     async def test_with_nobody_stopped_every_batch_is_asked(self) -> None:
         names = [f"N{i}" for i in range(scan_kinds.PER_CALL + 1)]
         ai = SimpleNamespace(complete=AsyncMock(return_value=Reply(answer(), False)))
