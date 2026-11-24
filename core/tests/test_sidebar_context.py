@@ -18,7 +18,7 @@ from dmbot.sidebar import context
 from dmbot.sidebar.answer import Sidebar
 from tests.pg import DatabaseTest
 from tests.sidebar_brevity_cases import reply
-from tests.test_memory_lookup import BELLEROS, CERRIC, data
+from tests.test_memory_lookup import BELLEROS, CERRIC, alias, data, entity
 from tests.test_sidebar_answer import FakeAI, house
 
 INDEX = srd()
@@ -469,6 +469,34 @@ class MentionedNames(unittest.TestCase):
         (line,) = context.mentioned_names("what about Cerric", lookup)
         self.assertNotIn("Linked to", line)
         self.assertNotIn("Belleros", line)
+
+    @staticmethod
+    def mine() -> CampaignLookup:
+        """A campaign with one thing that has no name of its own (#5173): "the gemstone mine"."""
+        mine = "d" * 32
+        return CampaignLookup.build(
+            data(
+                entities=(*data().entities, replace(entity(mine, "Gemstone mine"), type="place",
+                                                    described="gemstone mine")),
+                aliases=(*data().aliases, alias(mine, "Gemstone mine")),
+            )
+        )  # fmt: skip
+
+    def test_a_described_entry_reads_as_the_story_said_it_to_the_dm(self) -> None:
+        # (#5179: in the DM's sidebar context, never "Gemstone mine" like a name)
+        (line,) = context.mentioned_names("where is the gemstone mine", self.mine())
+        self.assertTrue(line.startswith("the gemstone mine ("), line)
+        self.assertNotIn("Gemstone mine", line)
+
+    def test_a_described_entry_reads_as_the_story_said_it_to_the_table(self) -> None:
+        # (#5179: a table question's context, read by everyone at the table)
+        prompt = context.build(
+            "where is the gemstone mine", target="2024", fallback="2014", index=INDEX,
+            house_rules=[], lookup=self.mine(), scene="", table=True,
+        ).prompt  # fmt: skip
+        self.assertIn("AUDIENCE: THE TABLE", prompt)
+        self.assertIn("the gemstone mine (", prompt)
+        self.assertNotIn("Gemstone mine", prompt)
 
     def test_no_lookup_no_names(self) -> None:
         self.assertEqual(context.mentioned_names("what about Belleros", None), [])

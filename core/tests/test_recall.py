@@ -345,6 +345,18 @@ class Recalling(MemoryTest):
         after = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
         self.assertIn("Mira and Ulfgar are connected (“works for”)", after)
 
+    async def test_a_described_entry_reads_as_the_story_said_it(self) -> None:
+        """#5179: a thing or a place with no name of its own (#5173) is given to the AI as "the
+        gemstone mine", in its own entry and in a fact, for the DM screen and the players alike,
+        never as "Gemstone mine" like a name."""
+        mine = await self.add("Gemstone mine", type="place", described="gemstone mine")
+        await self.fact(self.cerric, "located_in", mine, from_session_at=S1)
+        for audience in (DM_SCREEN, PLAYERS):
+            text = self.texts(await self.recall(audience, "Cerric", hops=1))
+            self.assertIn("the gemstone mine (", text, audience)  # (its own entry)
+            self.assertIn(" the gemstone mine", text.replace("the gemstone mine (", ""), audience)
+            self.assertNotIn("Gemstone mine", text, audience)
+
     async def test_a_campaigns_own_two_way_kind_keeps_its_label(self) -> None:
         """#4388: its rows carry the two-way mark now; the AI still reads the kind's own words."""
         from dmbot.memory.ontology import PredicateTerm
