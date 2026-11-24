@@ -8,6 +8,10 @@ export const NAME_MAX_LETTERS = 100; // core's NAME_MAX; the door still checks
 
 export const nameCheckWords = {
   heading: "Names to check",
+  // A person the story never named is called "unnamed - their description" (core/memory/unnamed.py); the card shows the description
+  // alone with this quiet note after it (#5218), as the Names page shows such people.
+  unnamedPrefix: "unnamed - ",
+  noNameYet: "(no name yet)",
   lead: "DMbot isn't sure about these names. Tell it what each one is. Your recap stays as it is. You can also answer in Discord with 📝 Check new names.",
   yes: "Yes, it's right",
   kind: "What is it?",

@@ -1059,6 +1059,9 @@ export interface NameCheck {
   isList?: boolean;
   /** Known groups the list may be: `members` already belong to the group, `others` do not (#3406). */
   groups?: NameGroupHint[];
+  /** DMbot's best guess at what this name is, a kind key, or null when it has none (#5218; core's `guess_kind` on every waiting name).
+   * The kind menu starts on it when it is one of the list's kinds. Missing from an older API. */
+  guess?: string | null;
   /** How the session-names reader found this name (#5144, core #5182): present only for a name it found; missing from an older API. */
   found?: NameFound;
 }
