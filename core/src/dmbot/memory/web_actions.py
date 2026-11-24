@@ -14,6 +14,7 @@ whatever happened, and a claimed row that stalled is picked up again.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 import time
@@ -187,6 +188,7 @@ THREAD_NEW_ACTIONS = ("thread-new", "thread-due", "thread-party")  # (#3696 slic
 THREAD_LINK_ACTIONS = ("thread-link", "thread-led-to")  # an event, what led to what (slice 2d)
 REVEALS_ACTIONS = ("reveals-ask", "reveals-keep", "reveals-not")  # what they learned (#3863)
 CONTINUITY_ACTIONS = ("continuity-ask", "continuity-answer")  # the heads-ups (#3695 half 1)
+MORE_NAMES_ACTION = "names-more"  # 📝 More names: the scan's waiting names (#5081, #5055 B)
 LEAVE_ACTIONS = ("leave-yes", "leave-no")  # "Still in the party?" (#4895, party knowledge slice 6a)
 DEED_ACTIONS = ("deed-record", "deed-not", "deed-undo")  # deeds the party did (#3591)
 JOIN_ACTIONS = (  # the DM's join question (#4778) and "Let me choose" (#4799)
@@ -825,6 +827,7 @@ async def apply(
     deeds: DeedAnswerFn | None = None,
     continuity_ask: ContinuityAskFn | None = None,
     continuity_answer: ContinuityAnswerFn | None = None,
+    more_names: MoreNamesFn | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
@@ -885,6 +888,8 @@ async def apply(
         return await _reveals(memory, waiting, guild_id, cid, action, reveals_ask, reveals_drop)
     if action.action in CONTINUITY_ACTIONS:
         return await _continuity(guild_id, cid, action, continuity_ask, continuity_answer)
+    if action.action == MORE_NAMES_ACTION:
+        return await _more_names(more_names, actions, guild_id, cid, action)
     if action.action in LEAVE_ACTIONS:
         return await _leave(memory, guild_id, cid, action)
     if action.action in DEED_ACTIONS:
@@ -1683,6 +1688,11 @@ RevealsDropFn = Callable[[int, str, str], Awaitable[None]]
 # claim id, "c" or "n") -> APPLIED, GONE (not waiting any more, or someone who said it stopped) or
 # REFUSED (a rule refused it; still waiting).
 ContinuityAskFn = Callable[[int, str, int], Awaitable[int]]
+# 📝 More names (#5081): (server, campaign, progress(done, of)) -> (names made, names still
+# waiting): the bot's `add_more_names`, which Discord's button calls too.
+MoreNamesFn = Callable[
+    [int, str, Callable[[int, int], Awaitable[None]] | None], Awaitable[tuple[int, int]]
+]
 ContinuityAnswerFn = Callable[[int, str, str, str], Awaitable[str]]
 APPLIED = "applied"
 CHOSE_MAX = 10  # characters named in one pick's answer (the answer is 200 characters at most)
@@ -1972,6 +1982,30 @@ async def _reveals(
     if a.action == "reveals-keep" and batch is None:
         return _failed(NOTHING_LEFT)
     return Outcome(batches=(batch,) if batch is not None else ())
+
+
+async def _more_names(
+    more: MoreNamesFn | None, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """📝 More names from the page (#5081): the bot's own `add_more_names`, the call Discord's
+    button makes, so both make the same names to check. The sender is a DM of the campaign (checked
+    above). The answer is `made:<N> left:<M>`, counts only; the page's wait shows how far it has got
+    (`progress`, never needed for the work, so a failure to write it is let go). A failure leaves
+    every name waiting (`add_more_names` puts back what it had not made)."""
+    if more is None:
+        return _failed(FAILED)
+
+    async def moved(done: int, total: int) -> None:
+        if actions is not None:
+            with contextlib.suppress(Exception):
+                await actions.progress(guild_id, a, done, total)
+
+    try:
+        made, left = await more(guild_id, cid, moved)
+    except Exception as exc:  # (the type only: the names are the campaign's words)
+        log.warning("More names from the page failed (%s)", type(exc).__name__)
+        return _failed(FAILED)
+    return Outcome(counts=f"made:{made} left:{left}")
 
 
 async def _continuity(
