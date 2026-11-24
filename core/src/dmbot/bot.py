@@ -12883,8 +12883,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # typed counts and for where a name was said are only those of people still
                 # recorded. (`read_in` keeps its numbering: the reader's lines are already checked.)
                 agreed_now = set(await recorded_now())
-                gone = any(x.user_id not in agreed_now for x in heard_in) or any(
-                    u not in agreed_now for u in said_by or ()
+                gone = (
+                    any(x.user_id not in agreed_now for x in heard_in)
+                    or any(u not in agreed_now for u in said_by or ())
+                    # (the early reading's own lines too: safe even when the stored lines could
+                    # not be read again and the speakers didn't match the lines)
+                    or any(x.user_id not in agreed_now for x in read_in)
                 )
                 if gone:
                     # (one rule for taking a stopped speaker out, shared with the late checks:
