@@ -20,6 +20,7 @@ from tests.test_web_imports import (
     MIRA,
     TOMAS,
     WithImports,
+    files,
 )
 
 SESSION = [{"file": "a.txt", "date": "2026-09-14", "order": 1}]
@@ -140,6 +141,42 @@ class Confirming(WithImports):
         self.assertIn((speaker["user_id"], "I hold the rope, said Greg."), await self.lines())
         [record] = await self.rows("import_consents")
         self.assertEqual((record["user_id"], record["lines"]), (speaker["user_id"], 1))
+
+    async def test_a_second_import_checks_and_keeps_the_same_speaker_without_discord(self) -> None:
+        # #5140: a player the campaign already keeps without Discord, confirmed again (the DM's
+        # "I confirm … agreed" box) by name: the check must pass and the import must keep them.
+        mapping: dict[str, Any] = {"Mira (mira_v)": str(MIRA), GHOST: {"confirmed": True}}
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", WITH_GHOST))
+        [first] = await self.rows("campaign_speakers")
+        checked = await imports.check(
+            self.web, self.session, self.ref_c, files(("a.txt", WITH_GHOST)), mapping, **self.kw
+        )
+        kept = {r["label"]: r["kept"] for r in checked["files"][0]["speakers"]}
+        self.assertEqual(kept[GHOST], 1)
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", WITH_GHOST))
+        [second] = await self.rows("campaign_speakers")
+        self.assertEqual(second["user_id"], first["user_id"])  # (the same person, not a second)
+
+    async def test_two_kept_players_without_discord_confirmed_again_check_and_import(self) -> None:
+        # #5140, dev1's case: two players the campaign keeps as "Player N (no Discord)", both
+        # confirmed with the DM's tick, in a second file. Labels like these have a bracket part.
+        one, two = "Player 1 (no Discord)", "Player 2 (no Discord)"
+        text = CRAIG + f"{one}: I hold the rope.\n{two}: I light the lamp.\n"
+        mapping: dict[str, Any] = {
+            "Mira (mira_v)": str(MIRA),
+            one: {"confirmed": True},
+            two: {"confirmed": True},
+        }
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", text))
+        kept = await self.rows("campaign_speakers")
+        self.assertEqual(len(kept), 2)
+        checked = await imports.check(
+            self.web, self.session, self.ref_c, files(("a.txt", text)), mapping, **self.kw
+        )
+        by_label = {r["label"]: r["kept"] for r in checked["files"][0]["speakers"]}
+        self.assertEqual((by_label[one], by_label[two]), (1, 1))
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", text))
+        self.assertEqual(len(await self.rows("campaign_speakers")), 2)  # (reused, not doubled)
 
     async def test_a_speaker_without_discord_is_named_in_the_session_and_its_transcript(
         self,
