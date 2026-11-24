@@ -14,4 +14,18 @@ export const nameFoundWords = {
   yesSpelling: "✅ Yes, this spelling",
   /** Names longer than this get the short yes. */
   longName: 24,
+  /** A thing or place the story keeps coming back to but never names (#5175, slice 6): its three answers, for that question only. */
+  singled: {
+    keepIt: "✅ Keep it",
+    giveName: "✏️ Give it a name…",
+    notWorth: "🚫 Not worth keeping",
+    keepItFor: (name: string): string => `Keep it: ${name}`,
+    notWorthFor: (name: string): string => `Not worth keeping: ${name}`,
+    giveNameFor: (name: string): string => `Give it a name: ${name}`,
+    giveNameLabel: "Its name in your game",
+    giveNamePlaceholder: "For example: the Glittering Deep",
+    giveNameUse: "Give it a name",
+    /** On a kept one's row: it is described in the story and has no name of its own. */
+    described: "🔖 Described in the story, no name of its own.",
+  },
 } as const;
