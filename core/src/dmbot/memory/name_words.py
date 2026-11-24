@@ -68,11 +68,15 @@ def surest(how: str | None, times: int, created_at: int, name: str) -> tuple[int
     return (0 if how in SURE_HOWS else 1, -times, created_at, name)
 
 
-def guess_kind(source: str, type_: str, role: str | None) -> str:
+def guess_kind(
+    source: str, type_: str, role: str | None, *, extra_sources: tuple[str, ...] = ()
+) -> str:
     """The kind a suggestion was given when it was read (npc, place…), or "" when it has none to
     confirm as (an idea, or nothing guessed): from the DM's background (#2167) or the name scan
-    (#2937). The rule `ui/names.background_kind` and the website's card both use."""
-    if source not in (BACKGROUND_SOURCE, "scan"):  # marked by where it came from
+    (#2937). `extra_sources` adds readers whose kind the card may start on but that nothing is
+    done automatically from (`card_guess`); `ui/names.background_kind`, which auto-accept also
+    asks, keeps just the two."""
+    if source not in (BACKGROUND_SOURCE, "scan", *extra_sources):  # marked by where it came from
         return ""
     if type_ == "character":
         # (read from a text that says so, #3553; confirmed with its player)
@@ -128,3 +132,10 @@ def rules_note(
     when = "in this session's transcript and from now on" if fixed == "fixed" else "from now on"
     spelled = and_list([italic(r) for r in rules])
     return f"{head}. {spelled} now {verb} as {plain(name)}, {when}."
+
+
+def card_guess(source: str, type_: str, role: str | None) -> str:
+    """The kind a name's card starts on (#5218): `guess_kind`, and the story reader's too, which
+    auto-accept does not act on. Discord's card and the website's both use it, so the one tap on
+    Yes means the same in both."""
+    return guess_kind(source, type_, role, extra_sources=("extractor",))
