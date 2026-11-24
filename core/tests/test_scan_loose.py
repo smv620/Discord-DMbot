@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 from unittest.mock import AsyncMock
 
 from dmbot.memory import name_groups as ng
@@ -283,7 +284,17 @@ class TheBotStep(unittest.TestCase):
         from dmbot.bot import DMBot
 
         bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
-        bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)  # (#5055 B)
+        given: list[Any] = []  # (the suggestions written, with their counts)
+
+        def add(*a: Any, **k: Any) -> Any:
+            given[:] = a[2]
+            return DMBot._add_scan_names(bot, *a, **k)  # (#5055 B)
+
+        bot._add_scan_names = add
+        bot.given = given
+        bot._names_still_recorded = lambda *a, **k: DMBot._names_still_recorded(
+            bot, *a, **k
+        )  # (#5187)
         return asyncio.run(DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1"))
 
     def ends(self, folder: str) -> list[tuple[str, str, str]]:
@@ -428,10 +439,199 @@ class TheBotStep(unittest.TestCase):
 
             bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
             bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)
+            bot._names_still_recorded = lambda *a, **k: DMBot._names_still_recorded(bot, *a, **k)
             made = asyncio.run(
                 DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1", recheck=recorded)
             )
             self.assertEqual(made, ["Vorna"])
+
+    def test_a_speaker_who_stops_late_is_never_sent_to_the_kinds_ai(self) -> None:
+        # (#5187: who is recorded is asked again right before the kinds AI, after the step's last
+        # awaits; switch off too, the live path)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        for on in (True, False):
+            with self.subTest(switch=on), tempfile.TemporaryDirectory() as d:
+                bot = stand_in(d, {}, on=on, texts=texts)
+                stops = bot.consent.consenting
+
+                async def lines(*_: Any) -> list[Any]:
+                    return [SimpleNamespace(user_id=2 if "Vorna" in t else 1, text=t,
+                                            topic="game", typed=False) for t in texts]  # fmt: skip
+
+                bot.transcripts = SimpleNamespace(lines=lines)
+                bot.consent.consenting.return_value = {1, 2}
+
+                async def asks(*_: Any, stops: Any = stops) -> list[Any]:
+                    stops.return_value = {1}  # (speaker 2 stops during a late await)
+                    return []
+
+                bot._take_name_asks = asks
+                self.assertEqual(self.run_step(bot, texts), ["Mira"])
+                sent = bot._scan_kinds.await_args.args[3]
+                self.assertFalse(any("Vorna" in t for t in sent))
+
+    def test_with_no_stored_transcript_a_late_stop_suggests_nothing(self) -> None:
+        # (#5187: who said what can't be told apart, so nothing goes out this time)
+        from dmbot.bot import DMBot
+
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, on=False)
+            bot.consent.consenting.return_value = {1, 2}  # (both recorded until the late await)
+
+            async def stop(*_: Any) -> None:  # (a step's await, before anything is sent)
+                bot.consent.consenting.return_value = {1}
+
+            bot.drop_language_suggestions = stop
+            bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+            bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)
+            bot._names_still_recorded = lambda *a, **k: DMBot._names_still_recorded(bot, *a, **k)
+            made = asyncio.run(
+                DMBot._propose_new_names(bot, 5, "c1", TEXTS, set(), None, agreed={1, 2})
+            )
+            self.assertEqual(made, [])
+            bot._scan_kinds.assert_not_awaited()
+
+    def test_a_name_inside_a_kept_word_is_not_kept_by_it(self) -> None:
+        # (#5187: "Ash", said only by a speaker who stopped, is not kept by "crash" in someone
+        # else's line: the scan is run again on the lines left, whole words only)
+        texts = ["Then we met Ash at the gate.", "And Ash left.", "We heard a crash.",
+                 "Another crash, then Mira came.", "So Mira left."]  # fmt: skip
+        for on in (True, False):
+            with self.subTest(switch=on), tempfile.TemporaryDirectory() as d:
+                bot = stand_in(d, {}, on=on, texts=texts)
+                stops = bot.consent.consenting
+
+                async def lines(*_: Any) -> list[Any]:
+                    return [SimpleNamespace(user_id=2 if "Ash" in t else 1, text=t,
+                                            topic="game", typed=False) for t in texts]  # fmt: skip
+
+                async def closeness(*_: Any, stops: Any = stops) -> Any:
+                    stops.return_value = {1}  # (speaker 2 stops before anything is taken)
+                    return (lambda _s: None, lambda _s: False)
+
+                bot.transcripts = SimpleNamespace(lines=lines)
+                bot.consent.consenting.return_value = {1, 2}
+                if on:  # (before anything is taken or held)
+                    bot._name_closeness = closeness
+                else:  # (the switch off has no closeness step: just before the kinds AI)
+
+                    async def asks(*_: Any, stops: Any = stops) -> list[Any]:
+                        stops.return_value = {1}
+                        return []
+
+                    bot._take_name_asks = asks
+                self.assertEqual(self.run_step(bot, texts), ["Mira"])
+                sent = bot._scan_kinds.await_args.args[3]
+                self.assertFalse(any("Ash" in t for t in sent))
+
+    def test_with_everyone_still_recorded_nothing_is_taken_out(self) -> None:
+        # (#5187: the late checks change nothing when nobody stopped; never "unsure")
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, on=False, texts=texts)
+            self.assertEqual(sorted(self.run_step(bot, texts)), ["Mira", "Vorna"])
+            sent = bot._scan_kinds.await_args.args[3]
+            self.assertEqual(list(sent), texts)
+
+    def late(self, texts: list[str], said_by_2: str, *, on: bool = False) -> Any:
+        """A stand-in where speaker 2 said the lines holding `said_by_2`; both recorded at first."""
+        bot = stand_in(tempfile.mkdtemp(), {}, on=on, texts=texts)
+
+        async def lines(*_: Any) -> list[Any]:
+            return [SimpleNamespace(user_id=2 if said_by_2 in t else 1, text=t, topic="game",
+                                    typed=False) for t in texts]  # fmt: skip
+
+        bot.transcripts = SimpleNamespace(lines=lines)
+        bot.consent.consenting.return_value = {1, 2}
+        return bot
+
+    def stop_in(self, bot: Any, step: str, then: Any = None) -> None:
+        """Speaker 2 stops while the bot awaits `step` (which then returns `then`)."""
+
+        async def stops(*_: Any, **__: Any) -> Any:
+            bot.consent.consenting.return_value = {1}
+            return then
+
+        setattr(bot, step, stops)
+
+    def test_a_name_that_lost_a_hearing_must_still_be_heard_twice(self) -> None:
+        # (#5187: "Vorna" was heard twice only with the stopped speaker's line; once is too few)
+        texts = ["Then we met Vorna at the gate.", "Ask Vorna, said she.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts, "Ask Vorna")
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.run_step(bot, texts), ["Mira"])
+
+    def test_a_group_keeps_its_count_when_someone_else_stops(self) -> None:
+        # (#5187: the spellings of one name are counted together, as the grouping counts them)
+        texts = ["We met Oskar Vane at dawn.", "Oskar Vane smiled.", "Then Vane left.",
+                 "Later Vane came back.", "And Kesh spoke.", "So Kesh left."]  # fmt: skip
+        unstopped = self.late(texts, "Kesh")
+        self.assertEqual(sorted(self.run_step(unstopped, texts)), ["Kesh", "Oskar Vane"])
+        bot = self.late(texts, "Kesh")
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.run_step(bot, texts), ["Oskar Vane"])
+        before = [(f.name, f.times) for f in unstopped.given if f.name == "Oskar Vane"]
+        self.assertEqual([(f.name, f.times) for f in bot.given], before)
+
+    def test_a_stop_before_the_names_are_written_writes_none_of_theirs(self) -> None:
+        # (#5187: the third check, after the kinds AI and the session's start)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts, "Vorna")
+        self.stop_in(bot, "_session_start")
+        self.assertEqual(self.run_step(bot, texts), ["Mira"])
+
+    def test_the_name_pass_s_words_are_put_back_when_nothing_is_suggested(self) -> None:
+        # (#5187: with no stored transcript a stop suggests nothing; the words wait, never lost)
+        from dmbot.bot import DMBot
+
+        bot = stand_in(tempfile.mkdtemp(), {}, on=False)
+        bot.consent.consenting.return_value = {1, 2}
+        bot.transcripts = None
+        self.stop_in(bot, "_take_name_asks", then=[("Glimmerfen", 1)])
+        bot._keep_name_asks = AsyncMock()
+        bot._write_name_trace = AsyncMock()
+        bot._names_still_recorded = lambda *a, **k: DMBot._names_still_recorded(bot, *a, **k)
+        made = asyncio.run(
+            DMBot._propose_new_names(bot, 5, "c1", TEXTS, set(), "s1", agreed={1, 2})
+        )
+        self.assertEqual(made, [])
+        bot._keep_name_asks.assert_awaited_once_with(5, "c1", "s1", [("Glimmerfen", 1)])
+
+    def test_a_name_pass_word_survives_a_late_stop(self) -> None:
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts, "Vorna")
+        self.stop_in(bot, "_take_name_asks", then=[("Glimmerfen", 1)])
+        self.assertEqual(sorted(self.run_step(bot, texts)), ["Glimmerfen", "Mira"])
+
+    def test_more_names_never_holds_a_stopped_speaker_s_name(self) -> None:
+        # (#5187: past the 10, an import's names are held; checked after the name pass's words)
+        names = [f"Zor{c}ak" for c in "bcdfghjklmn"]  # (11 names, each said twice)
+        texts = [f"We met {n} at dawn." for n in names] + [f"Then {n} left." for n in names]
+        texts += ["And Quillon spoke.", "So Quillon left."]
+        bot = self.late(texts, "Quillon")
+        bot.import_job = SimpleNamespace(store=AsyncMock())
+        self.stop_in(bot, "_take_name_asks", then=[])
+        from dmbot.bot import DMBot
+
+        bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+        bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)
+        bot._names_still_recorded = lambda *a, **k: DMBot._names_still_recorded(bot, *a, **k)
+        bot.memory._db = object()
+        held = AsyncMock()
+        with mock.patch("dmbot.bot.MoreNames", return_value=SimpleNamespace(hold=held)):
+            made = asyncio.run(
+                DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1", import_scan=True)
+            )
+        self.assertNotIn("Quillon", made)
+        call = held.await_args
+        held_names = [h.name for h in call.args[3]] if call is not None else []
+        self.assertNotIn("Quillon", held_names)
+        self.assertEqual(len(made) + len(held_names), 11)
 
     def test_after_the_reader_a_stopped_speakers_lines_are_never_kept(self) -> None:
         # (#5178: who is recorded is asked again after the reader; nobody now, so no line of the
