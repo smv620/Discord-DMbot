@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Final
 
 NAMES: Final = "names"
+MORE_NAMES: Final = "more_names"  # an import's names past the scan's 10, waiting (#5055 B)
 HEARD: Final = "heard"
 LOOKALIKES: Final = "lookalikes"
 CONNECTIONS: Final = "connections"
@@ -29,10 +30,12 @@ REVEALS: Final = "reveals"  # what the characters learned, waiting to be kept (#
 DEEDS: Final = (
     "deeds"  # deeds the party did that mattered to someone, waiting to be recorded (#3591, #3590)
 )
+HEADS_UPS: Final = "heads_ups"  # continuity heads-ups waiting for the DM (#3695, #5147)
 
 # In the order the list shows them (the ones people answer most first).
 ORDER: Final[tuple[str, ...]] = (
     NAMES,
+    MORE_NAMES,
     HEARD,
     LOOKALIKES,
     CONNECTIONS,
@@ -45,6 +48,7 @@ ORDER: Final[tuple[str, ...]] = (
     JOINS,
     LEAVES,
     DEEDS,
+    HEADS_UPS,
     REVEALS,
     MAPS,
     CLAIMS,
@@ -56,6 +60,7 @@ ORDER: Final[tuple[str, ...]] = (
 
 LABELS: Final[dict[str, str]] = {
     NAMES: "New names to check",
+    MORE_NAMES: "More names from your sessions",
     HEARD: "Did they mean…?",
     LOOKALIKES: "Names that look alike",
     CONNECTIONS: "Connections waiting",
@@ -68,6 +73,7 @@ LABELS: Final[dict[str, str]] = {
     JOINS: "New in the party",
     LEAVES: "Still in the party?",
     DEEDS: "Deeds to record",
+    HEADS_UPS: "Heads-ups",
     REVEALS: "Things the characters learned",
     MAPS: "Maps waiting for your yes",
     CLAIMS: "Facts to check",

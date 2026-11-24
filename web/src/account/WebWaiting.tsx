@@ -50,6 +50,12 @@ const startCap = (line: string): string => line.charAt(0).toUpperCase() + line.s
 const bracketOf = (b: Waiting["backstory"][number]): string => (b.handOver && b.handOverName ? handBracket(b.handOver, b.handOverName) : "");
 /** The "Proposed:" line (#4429): on an update only the words that differ from "Now" are bold and the names are plain; on a new card the names are
  * bold and the connection plain, as nothing is compared. */
+/** What a "travels with" connection or claim means (#5165): core's own words, first letter capitalised, ending in a full stop. */
+function MeansLine({ means }: { means?: string | undefined }) {
+  const text = means?.trim();
+  if (!text) return null;
+  return <p class="small muted">{`${text.charAt(0).toUpperCase()}${text.slice(1)}${text.endsWith(".") ? "" : "."}`}</p>;
+}
 function proposedOf(b: WaitingBackstory, hand: string) {
   if (!b.now) {
     return (
@@ -557,6 +563,7 @@ export default function WebWaiting({
           {list.claims.filter((c) => !c.choices?.length).map((c) => (
             <div key={c.id} class="panel" id={itemDomId(c.id)} tabIndex={-1}>
               <p id={`wc-${c.id}`}>{c.statement}</p>
+              <MeansLine means={c.means} />
               {FIRST_FEELING_LIVE && c.startingFeeling && (
                 <p class="small">
                   {feelingParts(c.startingFeeling).map((part, i) => (part.bold ? <strong key={i}>{part.text}</strong> : part.text))}
@@ -655,6 +662,7 @@ export default function WebWaiting({
                   <div key={b.id} class="panel" id={itemDomId(b.id)} tabIndex={-1}>
                     {b.now && <p class="small">{w.nowLine(b.subject, b.now.how, b.object)}</p>}
                     <p id={`wb-${b.id}`}>{proposedOf(b, handOf(b) ? ` (${handOf(b)})` : "")}</p>
+                    <MeansLine means={b.means} />
                     {b.check && <p class="small muted">{w.checkLine(b.check)}</p>}
                     {b.guess && <p class="small">{w.guessLine(b.guess)}</p>}
                     {b.quote && <p class="muted small">{w.fromText(b.quote)}</p>}

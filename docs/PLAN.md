@@ -3025,8 +3025,10 @@ reads the campaign memory and never changes it.
 `dmbot.transcript.cleaner`, run on every written-down line with no wait, so the
 consent check just made still holds:
 - **Silent fixes only, of three kinds:** the same letters spelled another way
-  ("Kazeth" → "Ka'zeth"; a word in lower case keeps its capitals, so "the bell" never
-  becomes "Bell"); a spelling the DM fixed ("Sara" → Cerric); and an unknown
+  ("Kazeth" → "Ka'zeth"; a word in lower case gets a name's capitals only when the name is
+  one confirmed, non-secret word that is no ordinary English word, game term or kind of
+  creature, so "hrothgar" becomes "Hrothgar" but "the bell" never becomes "Bell"; Supervisor,
+  2026-11-24, #5154, SCOWL 60 word list); a spelling the DM fixed ("Sara" → Cerric); and an unknown
   capitalized word, or up to 3 of them in a row ("Ka Zeth"), that sounds like exactly
   one confirmed name (`lookup.by_sound`) and is spelled much like it (at least 0.7
   alike). Matching reuses `scene.find_mentions` and the lookup's sound codes.

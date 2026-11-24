@@ -15,7 +15,7 @@ import discord
 
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory import places
-from dmbot.transcript.models import Line
+from dmbot.transcript.models import Line, line_ref
 from dmbot.transcript.store import Around, TranscriptStore
 from dmbot.ui import logic, name_places
 from dmbot.ui import names as ui
@@ -388,3 +388,47 @@ class Cards(NamesTest):
             [getattr(b, "label", "") for b in view.children if "places" in getattr(b, "label", "")],
             [],
         )
+
+
+class TheLineThatMadeItAName(unittest.IsolatedAsyncioTestCase):
+    """#5133 slice 3c: the line that made it a name is the card's first window, read with who
+    agrees now like every other; when its speaker no longer agrees, or it is not among the
+    pointers, the card is as it would be without it."""
+
+    async def places(self, first: str | None, agreed: set[int]) -> Any:
+        from types import SimpleNamespace
+
+        from dmbot.transcript.store import Around
+        from dmbot.ui import name_places as np
+
+        said = {1000: "we passed the gate", 2000: "hrothgar waved", 3000: "a dwarf called hrothgar"}
+
+        class Transcripts:
+            async def session(self, _g: int, _s: str) -> Any:
+                return SimpleNamespace(number=1, started_at=0, deleted_at=None)
+
+            async def around(self, _g: int, _s: str, at: int, who: int, ok: Any) -> Any:
+                return Around(None, (who, said[at]), None) if who in ok else None
+
+        # (speaker 8 said the line that made it a name; speaker 7 the others)
+        refs = [(line_ref("s1", at, 8 if at == 3000 else 7), None) for at in (1000, 2000, 3000)]
+        stand_in: Any = Transcripts()
+        return await np.first_places(
+            None, stand_in, 5, "c1", refs, ["hrothgar"], agreed, first=first
+        )
+
+    async def test_it_comes_first(self) -> None:
+        got = await self.places(line_ref("s1", 3000, 8), {7, 8})
+        self.assertIn("a dwarf called", got.windows[0])
+        self.assertEqual(len(got.windows), 2)
+
+    async def test_its_speaker_must_still_agree_and_nothing_takes_its_place(self) -> None:
+        got = await self.places(line_ref("s1", 3000, 8), {7})
+        self.assertFalse(any("a dwarf called" in w for w in got.windows))
+        self.assertEqual(len(got.windows), 2)  # (the card's usual windows)
+        self.assertFalse(got.gone)  # (never "the transcript is gone" for it)
+
+    async def test_a_line_not_among_the_pointers_changes_nothing(self) -> None:
+        without = await self.places(None, {7, 8})
+        other = await self.places(line_ref("s2", 9000, 8), {7, 8})
+        self.assertEqual(other.windows, without.windows)

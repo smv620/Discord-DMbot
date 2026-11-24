@@ -131,6 +131,7 @@ from dmbot.web import homebrew as homebrew_pages
 from dmbot.web import house_rules as house_rule_pages
 from dmbot.web import maps as map_pages
 from dmbot.web import recap_audio as audio_links
+from dmbot.web import rule_lookup as rule_lookup_pages
 from dmbot.web import transcripts as transcript_pages
 from dmbot.web.accounts import (
     account_email,
@@ -158,8 +159,8 @@ from dmbot.web.listen import MAX_CLIP_BYTES, queue_listen, read_listen, wait_for
 from dmbot.web.me import build_me
 from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.name_checks import answer as answer_name_check
+from dmbot.web.name_checks import queue_more_names, read_campaign_checks, read_checks
 from dmbot.web.name_checks import read_answer as read_name_answer
-from dmbot.web.name_checks import read_campaign_checks, read_checks
 from dmbot.web.names import list_names, set_said_as, suggest_said_as
 from dmbot.web.names_fixed import queue_undo_polled as queue_names_fixed_undo_polled
 from dmbot.web.names_fixed import read_names_fixed
@@ -1276,7 +1277,7 @@ def create_app(
     async def me_recap_name_checks(ref: str, signed: Signed) -> dict[str, Any]:
         session, _token = signed
         try:
-            return await read_checks(db, session, ref)
+            return await read_checks(db, session, ref, outside_engine=settings.outside_engine)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -1287,7 +1288,9 @@ def create_app(
     async def me_recap_name_check(ref: str, entity_id: str, signed: Signed) -> dict[str, Any]:
         session, _token = signed
         try:
-            return await read_one_name_check(db, session, ref, entity_id)
+            return await read_one_name_check(
+                db, session, ref, entity_id, outside_engine=settings.outside_engine
+            )
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -3484,6 +3487,17 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/more-names", status_code=202)
+    async def me_campaign_more_names(ref: str, signed: Signed) -> dict[str, str]:
+        """📝 More names (#5081): turns the names an imported session's scan held back into names
+        to check, as Discord's button does; polled at `.../web/answers/{answer}`. DM only."""
+        session, _token = signed
+        try:
+            return {"answer": await queue_more_names(db, session, ref)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/campaigns/{ref}/plot-threads/link", status_code=202)
     async def me_campaign_plot_thread_link(
         ref: str, request: Request, signed: Signed
@@ -5434,6 +5448,32 @@ def create_app(
         session, _token = signed
         try:
             return await house_rule_pages.read_rules(db, session, ref)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The rule lookup (#5156): a DM types a name, the same card `/dmbot rule` sends comes back. Read
+    # only; nothing is stored and the typed words are never logged.
+    rule_lookup_limit = RateLimit(10, count=20)
+
+    @app.post("/me/campaigns/{ref}/rule-lookup")
+    async def me_rule_lookup(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """`{"name": "Fireball"}` → `{"kind", "parts", "close"}`."""
+        session, _token = signed
+        if rule_lookup_limit.take(f"rule-lookup:{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        length = request.headers.get("content-length", "")
+        if not length.isdecimal() or int(length) > rule_lookup_pages.BODY_MAX:
+            raise HTTPException(status_code=413, detail="too_big")
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        typed = body.get("name") if isinstance(body, dict) else None
+        if not isinstance(typed, str):
+            raise HTTPException(status_code=422, detail="bad_text")
+        try:
+            return await rule_lookup_pages.look_up(db, session, ref, typed)
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

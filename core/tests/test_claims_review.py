@@ -408,6 +408,25 @@ class Review(ConfirmedMemoryTest):
         await view._answer_all(secret=False)(it)
         self.assertEqual(view.last_bulk, [("x", 1)])
 
+    async def test_a_companion_refusal_says_why_and_what_to_press(self) -> None:
+        # (#5164: the question stays, and the DM is told why and which button leaves it out)
+        from dmbot.memory.store import COMPANION_TARGET
+
+        await self.ask(said("Bram", "carries", "Heartseeker"))
+        it = self.interaction()
+        view = claims_review.ClaimsReview(self.c, GUILD_A)
+        await view.current_text(it)
+
+        async def refuse(self_: Any, *a: Any, **k: Any) -> Any:
+            raise MemoryRuleError(COMPANION_TARGET)
+
+        with patch.object(ClaimStore, "confirm", refuse):
+            await view._decide(it, view.page[0].id, True)
+        self.assertEqual(
+            it.sent[-1],
+            f"{COMPANION_TARGET} Press {claims_review.NO} with its number to leave it out.",
+        )
+
     async def test_a_long_reason_is_cut_in_the_summary(self) -> None:
         it, view = await self.page(said("Bram", "carries", "Heartseeker"))
 

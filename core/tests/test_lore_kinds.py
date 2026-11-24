@@ -161,6 +161,68 @@ class TheEnds(NamesTest):
         self.assertEqual(len(got), 1)  # (the NPC end is dropped and counted)
         self.assertEqual(lost["bad_kind"], 1)
 
+    async def player_characters(self, *named: tuple[str, int]) -> None:
+        for name, player in named:
+            await self.memory.add_entity(
+                GUILD, self.campaign.id, name=name, type="character", role="player_character",
+                played_by=player, status=CONFIRMED, source="dm",
+            )  # fmt: skip
+
+    async def test_two_player_characters_are_never_asked_to_travel_together(self) -> None:
+        # (#5164, the owner's case: the store would refuse it on yes)
+        await self.player_characters(("Cerric", 101), ("Bree", 102))
+        lost = await self.queue(
+            bg.Connection("Bree", "travels_with", "Cerric", "Bree goes everywhere with Cerric")
+        )
+        self.assertEqual(await self.waiting(), [])
+        self.assertEqual(lost["bad_kind"], 1)
+
+    async def test_a_player_character_named_first_is_asked_the_right_way_round(self) -> None:
+        await self.make_names(("Glyph", "character", "npc"))
+        await self.player_characters(("Cerric", 101))
+        lost = await self.queue(
+            bg.Connection("Cerric", "travels_with", "Glyph", "Cerric never goes far without Glyph")
+        )
+        self.assertEqual(await self.waiting(), [("Glyph", "travels_with", "Cerric")])
+        self.assertEqual(lost["bad_kind"], 0)
+
+    async def test_a_kept_companion_named_the_other_way_round_is_not_asked_again(self) -> None:
+        made = await self.make_names(("Glyph", "character", "npc"))
+        await self.player_characters(("Cerric", 101))
+        ids = {e.name: e.id for e in await self.memory.entities(GUILD, self.campaign.id)}
+        await self.memory.add_relation(
+            GUILD, self.campaign.id, made["Glyph"], "travels_with", ids["Cerric"],
+            source="dm", confidence=1.0, status=CONFIRMED,
+        )  # fmt: skip
+        await self.queue(
+            bg.Connection("Cerric", "travels_with", "Glyph", "Cerric never goes far without Glyph")
+        )
+        self.assertEqual(await self.waiting(), [])
+
+    async def test_said_both_ways_round_in_one_read_is_one_question(self) -> None:
+        await self.make_names(("Glyph", "character", "npc"))
+        await self.player_characters(("Cerric", 101))
+        await self.queue(
+            bg.Connection("Glyph", "travels_with", "Cerric", "Glyph goes everywhere with Cerric"),
+            bg.Connection("Cerric", "travels_with", "Glyph", "Cerric never goes far without Glyph"),
+        )
+        self.assertEqual(await self.waiting(), [("Glyph", "travels_with", "Cerric")])
+
+    async def test_the_card_says_what_travels_with_means(self) -> None:
+        await self.make_names(("Glyph", "character", "npc"))
+        await self.player_characters(("Cerric", 101))
+        await self.queue(
+            bg.Connection("Glyph", "travels_with", "Cerric", "Glyph goes everywhere with Cerric")
+        )
+        it = self.it()
+        await ui_bg.offer_ready(it, self.campaign.id)
+        view = it.followup.send.await_args.kwargs["view"]
+        self.assertIn(
+            "**Glyph** travels with **Cerric**: a companion who goes along, like a hireling, a"
+            " familiar or a rescued prisoner.",
+            view.text(),
+        )
+
     async def test_a_document_never_points_a_companion_at_the_party(self) -> None:
         await self.make_names(("Glyph", "character", "npc"), ("The party", "faction", None))
         lost = await self.queue(

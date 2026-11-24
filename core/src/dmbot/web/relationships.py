@@ -24,9 +24,10 @@ from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.memory import gate, kin, knowers, party_icons, reputation_words, web_actions
-from dmbot.memory.claims import Extracted, condition_of
+from dmbot.memory.claims import Extracted, condition_of, says_travels_with
 from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import (
+    TRAVELS_WITH_MEANS,
     back_after,
     back_words,
     for_reader,
@@ -1323,9 +1324,27 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "heard-",
             "deed-",
             "continuity-",
+            "names-more",
         )
     ):
         raise RecapError("not_found")
+    if got["action"] == "names-more":
+        # 📝 More names (#5081): how many names now wait in the name check and how many are still
+        # behind the button, as Discord says it; counts only, with the wait shown (the wait rule)
+        counts = str(got.get("counts") or "")
+        sized = re.fullmatch(r"made:(\d+) left:(\d+)", counts)
+        waited = _reading_answer(got)
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "made": int(sized[1]) if sized and got["state"] == "done" else None,
+            "left": int(sized[2]) if sized and got["state"] == "done" else None,
+            "waits": waited["waits"],
+            "progress": {
+                "done": int(got.get("progressDone") or 0),
+                "total": int(got.get("progressTotal") or 0),
+            },
+        }
     if str(got["action"]).startswith(
         ("thread-", "part-", "branch-", "lang-", "secret-", "progress-", "clue-")
     ):
@@ -1662,6 +1681,16 @@ def _can_be_secret(row: dict[str, Any]) -> bool:
     return condition_of(said) is None
 
 
+def companion_means(*, predicate: str = "", relationship: str = "") -> dict[str, str]:
+    """`{"means": …}` for a connection or a claim that says a companion travels with someone, else
+    nothing (#5165, the website half of #5164). The words are the shared constant Discord's cards
+    use, never a copy, so the two places cannot drift. A waiting connection says its `predicate`
+    (the key); a waiting claim says its `relationship` (the session's own words)."""
+    if predicate == "travels_with" or (relationship and says_travels_with(relationship)):
+        return {"means": TRAVELS_WITH_MEANS}
+    return {}
+
+
 def _claim_statement(row: dict[str, Any]) -> str:
     """A claim as one plain line, "Mira Voss knows Far Hall" (the DM's page shows the line and the
     session's date; the words are the claim's own, as the DM screen shows them)."""
@@ -1753,6 +1782,7 @@ async def read_waiting(
             "details": split_effect_note(str(c.get("details") or ""))[0],  # (never the note)
             "statement": _claim_statement(c),
             "canSecret": _can_be_secret(c),
+            **companion_means(relationship=str(c.get("relationship") or "")),
             "startingFeeling": feelings.get(str(c["id"])),
             **({"choices": choices[str(c["id"])]} if str(c["id"]) in choices else {}),
         }
@@ -1769,6 +1799,7 @@ async def read_waiting(
                 feeling=True,  # (the waiting page is the DM's alone)
             ),
             "check": check_words(b.get("decided")),
+            **companion_means(predicate=str(b["predicate"])),
             **_held_words(b),
         }
         for b in got["backstory"]
