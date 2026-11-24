@@ -743,6 +743,64 @@ class TheBotStep(unittest.TestCase):
         vane = [(f.name, f.also) for f in bot.given if "Vane" in (f.name, *f.also)]
         self.assertEqual(vane, [("Vane", ())])
 
+    def step_said_by(
+        self, bot: Any, texts: list[str], said_by: list[int], session_id: str | None = "s1"
+    ) -> list[str]:
+        from dmbot.bot import DMBot
+
+        given: list[Any] = []
+
+        def add(*a: Any, **k: Any) -> Any:
+            given[:] = a[2]
+            return DMBot._add_scan_names(bot, *a, **k)
+
+        bot._add_scan_names = add
+        bot.given = given
+        bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+        bot._names_still_recorded = lambda *a, **k: DMBot._names_still_recorded(bot, *a, **k)
+        return asyncio.run(
+            DMBot._propose_new_names(
+                bot, 5, "c1", texts, set(), session_id, agreed={1, 2}, said_by=said_by
+            )
+        )
+
+    def test_with_speakers_a_line_fixed_live_never_makes_a_stop_unsure(self) -> None:
+        # (#5199: each line comes with who said it, so a stored copy that reads differently, as
+        # after a fix made live, needs no match: the stopped speaker's lines come out by speaker)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left, as fixed live."]  # fmt: skip
+        bot = self.late([*texts[:3], "Then Mira left."], "Vorna")
+        self.stop_in(bot, "drop_language_suggestions")
+        made = self.step_said_by(bot, texts, [2, 2, 1, 1])
+        self.assertEqual(made, ["Mira"])
+        sent = bot._scan_kinds.await_args.args[3]
+        self.assertFalse(any("Vorna" in t for t in sent))
+
+    def test_with_speakers_and_no_stored_transcript_the_rest_are_still_suggested(self) -> None:
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = stand_in(tempfile.mkdtemp(), {}, on=False, texts=texts)
+        bot.consent.consenting.return_value = {1, 2}
+        bot.transcripts = None
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.step_said_by(bot, texts, [2, 2, 1, 1], session_id=None), ["Mira"])
+
+    def test_with_speakers_the_same_words_said_twice_lose_only_the_stopped_copy(self) -> None:
+        # (#5199: "Vorna" heard once from each; the one who stays leaves a single hearing, too few)
+        texts = ["We met Vorna today.", "We met Vorna today.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts, "nobody")
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.step_said_by(bot, texts, [2, 1, 1, 1]), ["Mira"])
+
+    def test_speakers_that_do_not_match_the_lines_are_not_used(self) -> None:
+        # (#5199: a count that doesn't match falls back to matching words, as before)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts, "Vorna")
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.step_said_by(bot, texts, [1]), ["Mira"])
+
     def test_after_the_reader_a_stopped_speakers_lines_are_never_kept(self) -> None:
         # (#5178: who is recorded is asked again after the reader; nobody now, so no line of the
         # session is stored as where a name was said)
