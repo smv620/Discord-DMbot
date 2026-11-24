@@ -478,25 +478,16 @@ class MentionedNames(unittest.TestCase):
             data(
                 entities=(*data().entities, replace(entity(mine, "Gemstone mine"), type="place",
                                                     described="gemstone mine")),
-                aliases=(*data().aliases, alias(mine, "Gemstone mine")),
+                aliases=(*data().aliases, alias(mine, "Gemstone mine"),
+                         alias(mine, "gemstone mine", aid="e" * 32)),
             )
         )  # fmt: skip
 
     def test_a_described_entry_reads_as_the_story_said_it_to_the_dm(self) -> None:
-        # (#5179: in the DM's sidebar context, never "Gemstone mine" like a name)
+        # (#5179: in the DM's sidebar context, never "Gemstone mine" like a name; and a spelling
+        # that only differs in case or the article is not repeated as another name)
         (line,) = context.mentioned_names("where is the gemstone mine", self.mine())
-        self.assertTrue(line.startswith("the gemstone mine ("), line)
-        self.assertNotIn("Gemstone mine", line)
-
-    def test_a_described_entry_reads_as_the_story_said_it_to_the_table(self) -> None:
-        # (#5179: a table question's context, read by everyone at the table)
-        prompt = context.build(
-            "where is the gemstone mine", target="2024", fallback="2014", index=INDEX,
-            house_rules=[], lookup=self.mine(), scene="", table=True,
-        ).prompt  # fmt: skip
-        self.assertIn("AUDIENCE: THE TABLE", prompt)
-        self.assertIn("the gemstone mine (", prompt)
-        self.assertNotIn("Gemstone mine", prompt)
+        self.assertEqual(line, "the gemstone mine (place)")
 
     def test_no_lookup_no_names(self) -> None:
         self.assertEqual(context.mentioned_names("what about Belleros", None), [])

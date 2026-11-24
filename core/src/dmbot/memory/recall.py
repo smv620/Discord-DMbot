@@ -431,7 +431,9 @@ class RecallService:
                 (*scope.ids, [ROSTER_GROUP_LINK, *ROSTER_TIES], ids, ids),
             )
             relations = [r for r in await cur.fetchall() if str(r["source"]) not in PLAN_SOURCES]
-        names = {i: str(e["name"]) for i, e in shown.items()}
+        # (the names in a tie or a group read as in a sentence: a described entry as the story
+        # said it, #5179; the entry's own `name` below stays its stored name, the sort key)
+        names = {i: _said(e) for i, e in shown.items()}
         groups: dict[str, list[str]] = {}
         ties: dict[str, list[str]] = {}
         for r in relations:
@@ -469,7 +471,7 @@ class RecallService:
                 "group" if is_group
                 else ROLE_LABELS.get(str(role), "") if role else ""
             ) or onto.types[kind_key].label  # fmt: skip
-            own = names[entity_id]
+            own = str(e["name"])
             others = [t for t in dict.fromkeys(aliases.get(entity_id, [])) if t != own]
             g = list(dict.fromkeys(groups.get(entity_id, [])))
             t = list(dict.fromkeys(ties.get(entity_id, [])))

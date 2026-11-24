@@ -30,7 +30,7 @@ from dmbot.campaigns.models import FALLBACK_NONE
 from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED, Entity
+from dmbot.memory.models import CONFIRMED, Entity, name_key
 from dmbot.memory.recall import Recall
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import FollowedRule
@@ -858,6 +858,8 @@ def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
                 and n.confirmed
                 and not n.person
                 and n.text != entity.name
+                # (a described entry's own words in another case are not another name, #5179)
+                and not (entity.described and n.key == name_key(entity.name))
                 and n.key not in secret_keys
             ]
             if others:
