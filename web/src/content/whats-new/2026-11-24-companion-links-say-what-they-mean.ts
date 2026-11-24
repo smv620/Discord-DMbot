@@ -5,5 +5,5 @@ export const entry: Item = {
   title: "Companion links say what they mean",
   what: "A connection that says someone travels with the party now explains what a companion is, as in Discord.",
   order: 159,
-  held: "Held with the Story Graph's waiting list, until that is switched on (#5165).",
+  held: "Held until it has been seen working on the test server (#5165).",
 };
