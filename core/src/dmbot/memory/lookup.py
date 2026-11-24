@@ -24,6 +24,7 @@ import time
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Iterable
 from dataclasses import dataclass, field
+from pathlib import PurePath
 from typing import Protocol
 
 from dmbot.memory import notify
@@ -242,7 +243,7 @@ class CampaignLookup:
             caller = sys._getframe(1).f_code  # (which caller forgot `seen`: its name, no data)
             raise ValueError(
                 f"for_viewer: a read for someone who isn't a DM gave no `seen` "
-                f"({caller.co_filename.rsplit('/', 1)[-1]}:{caller.co_name}, "
+                f"({PurePath(caller.co_filename).name}:{caller.co_name}, "
                 f"{len(self.entities)} entries)"
             )
         held = frozenset(seen)

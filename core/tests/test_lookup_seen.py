@@ -155,3 +155,14 @@ class TheNames(Party):
         self.assertTrue(shown <= set(held), shown)
         self.assertEqual(harbour, [])  # (the name she doesn't hold is never suggested)
         self.assertIn(self.npc, whole.entities)
+        # A DM sees no less: the whole lookup, with no read of what they hold
+        dm = next(iter(campaign.dm_user_ids))
+        for load in (name_card._names, name_lists._names):
+            with self.subTest(dm=load.__module__):
+                got = await load(self.interaction(dm), campaign)
+                assert got is not None
+                self.assertEqual(got.entities.keys(), whole.entities.keys())
+        # With no story store to ask, nothing is held (failing closed)
+        bare = self.interaction(CARA)
+        bare.client.memory = None
+        self.assertEqual(await name_lists.seen_for(bare, campaign, False), frozenset())

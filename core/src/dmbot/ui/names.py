@@ -145,6 +145,21 @@ def _memory(interaction: discord.Interaction) -> MemoryStore | None:
     return _bot(interaction).memory
 
 
+async def seen_for(
+    interaction: discord.Interaction, campaign: Campaign, dm: bool
+) -> frozenset[str] | None:
+    """What this person may read the names of, for `CampaignLookup.for_viewer` (#4537 5b,
+    #4802): None for a DM (everything); anyone else holds what their own characters know, from
+    the gate (`entries_seen_by`). With no story store to ask, nothing is held (failing closed: the
+    people at the table still show)."""
+    if dm:
+        return None
+    memory = _memory(interaction)
+    if memory is None:
+        return frozenset()
+    return await memory.entries_seen_by(campaign.guild_id, campaign.id, interaction.user.id)
+
+
 def _md(text: str) -> str:
     """A name as typed or heard, shown as-is (no stray bold or italics)."""
     return discord.utils.escape_markdown(text)
