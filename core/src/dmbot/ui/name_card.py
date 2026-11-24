@@ -4148,8 +4148,12 @@ async def find_typeahead(
     # Anyone else here is a server manager who isn't a DM (`typeahead_campaign`): one read of what
     # they hold per keystroke, within the time Discord leaves; a slow one suggests nothing this
     # time, as a cold copy does (#4802)
-    try:
-        seen = await asyncio.wait_for(seen_for(interaction, campaign, secrets), TYPEAHEAD_WAIT_S)
+    try:  # (a DM reads everything: nothing to wait for)
+        seen = (
+            None
+            if secrets
+            else await asyncio.wait_for(seen_for(interaction, campaign, secrets), TYPEAHEAD_WAIT_S)
+        )
     except Exception:
         log.exception("Name type-ahead couldn't read what this person holds")
         return []
