@@ -2360,18 +2360,31 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
             reason: null,
             stage: state === "done" ? ("done" as const) : ("cleaning" as const),
             clock: clockOf(file),
-            // The name reader's stage on this session (#5127): part 3 of 8, still reading.
-            names: {
-              stage: "reading_names" as const,
-              done: 3,
-              total: 8,
-              unit: "parts" as const,
-              startedAt: now - 20,
-              updatedAt: now - 2,
-              serverNow: now,
-              state: "running" as const,
-              reason: null,
-            },
+            // The name reader's stage on this session (#5127): part 3 of 8 while the import runs, then read once it is done.
+            names:
+              state === "done"
+                ? {
+                    stage: "names_read" as const,
+                    done: 8,
+                    total: 8,
+                    unit: "parts" as const,
+                    startedAt: now - 20,
+                    updatedAt: now - 2,
+                    serverNow: now,
+                    state: "done" as const,
+                    reason: null,
+                  }
+                : {
+                    stage: "reading_names" as const,
+                    done: 3,
+                    total: 8,
+                    unit: "parts" as const,
+                    startedAt: now - 20,
+                    updatedAt: now - 2,
+                    serverNow: now,
+                    state: "running" as const,
+                    reason: null,
+                  },
           },
           {
             file: "session-2-2026-09-21.txt",
