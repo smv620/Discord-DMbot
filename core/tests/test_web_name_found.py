@@ -44,10 +44,9 @@ class TheFoundCard(WithChecks):
                 )
 
     async def card(self, *, outside: str | None = None) -> dict[str, Any]:
-        (card,) = (
-            await web_checks.read_checks(self.web, self.session, self.ref, outside_engine=outside)
-        )["names"]
-        return card
+        got = await web_checks.read_checks(self.web, self.session, self.ref, outside_engine=outside)
+        (card,) = got["names"]
+        return dict(card)
 
     async def one_line(self) -> str:
         harrow = await self.suggest("Harrow")
@@ -55,7 +54,9 @@ class TheFoundCard(WithChecks):
         await self.keep(harrow, "introduced", ref, times=2)
         return harrow
 
-    async def keep(self, entity: str, how: str, ref: str | None, *, times: int, typed: int = 0):
+    async def keep(
+        self, entity: str, how: str, ref: str | None, *, times: int, typed: int = 0
+    ) -> None:
         await NameFound(self.db).keep(
             GUILD, self.one.id, entity, how, ref, times=times, typed=typed
         )
