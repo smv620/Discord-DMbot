@@ -1239,7 +1239,6 @@ class NameCards(NamesTest):
         self.assertTrue(full.secret_neighbours)  # the DM's view has the secret link
         self.assertEqual(full.for_viewer(True).secret_neighbours, full.secret_neighbours)
         # Nothing here is DM-only, so this is the early-return path that must still blank it.
-        self.assertFalse(full.hidden)
         held = frozenset(full.entities)  # (a player who holds every entry: still no secret link)
         self.assertEqual(full.for_viewer(False, held).secret_neighbours, {})
         self.assertNotIn(

@@ -218,15 +218,6 @@ class CampaignLookup:
             {k: frozenset(v) for k, v in hidden_links.items()},
         )
 
-    @property
-    def hidden(self) -> frozenset[str]:
-        """What the campaign's DMs alone may see: the clues only some people know (#1649), the
-        entries the DM marked "Players don't know yet" (#2321), and the story threads (#1662)
-        and deeds (#1732), which are the DM's plot notes."""
-        return frozenset(
-            e.id for e in self.entities.values() if e.unseen_by_players or e.type in DM_ONLY_TYPES
-        )
-
     def for_viewer(self, secrets: bool, seen: Collection[str] | None = None) -> CampaignLookup:
         """What a person who may not see secrets gets to read, in every list, search, card and
         file: the names of the entries they hold (`seen`, from `MemoryStore.entries_seen_by`: what
