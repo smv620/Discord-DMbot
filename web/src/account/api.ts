@@ -2998,7 +2998,8 @@ export interface QuestionCampaign {
   guesses?: number;
 }
 export interface CampaignNameChecks {
-  recaps: { ref: string; at: number; count: number }[];
+  /** `other` is the one group of names no recap has linked (#5186, core #5203): last in the list, its ref ends in `.0` and opens the same card. Missing from an older API. */
+  recaps: { ref: string; at: number; count: number; other?: boolean }[];
 }
 export interface QuestionCounts {
   campaigns: QuestionCampaign[];
