@@ -292,7 +292,9 @@ export default function CampaignSettings({
             <span class="block">
               {s.world === null ? words.world.none : s.world.guessed ? words.world.guessed(s.world.name) : words.world.chosen(s.world.name)}
             </span>
-            {s.world !== null && s.world.guessed && <span class="small muted block">{words.world.inDiscord}</span>}
+            {(s.world === null || s.world.guessed) && (
+              <span class="small muted block">{s.world === null ? words.world.chooseInDiscord : words.world.keepInDiscord}</span>
+            )}
           </li>
         )}
         {discordOnly.map((key) => (

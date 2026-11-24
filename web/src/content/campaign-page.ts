@@ -97,8 +97,10 @@ export const campaignPage = {
     label: "World",
     chosen: (name: string): string => name,
     none: "Not chosen yet",
-    guessed: (name: string): string => `DMbot guessed ${name}: keep it?`,
-    inDiscord: "Keep it or pick another in Discord.",
+    guessed: (name: string): string => `DMbot guessed ${name}`,
+    // Where to do what this page can't (Discord's own button names on the ⚙️ settings card).
+    chooseInDiscord: "Choose a world in Discord: 🌍 Choose a world on the ⚙️ settings card.",
+    keepInDiscord: "Keep it, or choose another, in Discord on the ⚙️ settings card.",
   },
   visibility: {
     // Discord's own button names (dm_screen/messages.py VISIBILITY_BUTTONS).

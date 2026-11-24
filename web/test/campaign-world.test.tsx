@@ -25,23 +25,27 @@ describe("the world line", () => {
     await open({ id: "w".repeat(32), name: "Faerûn", guessed: false });
     expect(screen.getByText(w.world.label)).toBeTruthy();
     expect(screen.getByText("Faerûn")).toBeTruthy();
-    expect(screen.queryByText(w.world.inDiscord)).toBeNull();
+    expect(screen.queryByText(w.world.chooseInDiscord)).toBeNull();
+    expect(screen.queryByText(w.world.keepInDiscord)).toBeNull();
   });
 
   it("says not chosen yet when there is none", async () => {
     await open(null);
     expect(screen.getByText(w.world.none)).toBeTruthy();
+    expect(screen.getByText("Choose a world in Discord: 🌍 Choose a world on the ⚙️ settings card.")).toBeTruthy();
   });
 
   it("says DMbot only guessed it, and where to keep it", async () => {
     await open({ id: "w".repeat(32), name: "Faerûn", guessed: true });
-    expect(screen.getByText("DMbot guessed Faerûn: keep it?")).toBeTruthy();
-    expect(screen.getByText(w.world.inDiscord)).toBeTruthy();
+    expect(screen.getByText("DMbot guessed Faerûn")).toBeTruthy();
+    expect(screen.getByText("Keep it, or choose another, in Discord on the ⚙️ settings card.")).toBeTruthy();
+    expect(screen.queryByText(w.world.chooseInDiscord)).toBeNull();
   });
 
   it("shows nothing from an older API that sends no world", async () => {
     await open(undefined);
     expect(screen.queryByText(w.world.label)).toBeNull();
     expect(screen.queryByText(w.world.none)).toBeNull();
+    expect(screen.queryByText(w.world.chooseInDiscord)).toBeNull();
   });
 });
