@@ -355,6 +355,7 @@ from dmbot.memory import (
     plan_reader,
     report_make,
     role_match,
+    s_join,
     scan_kinds,
     scene_move_step,
     scene_step,
@@ -10592,6 +10593,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         returns (asked again after the call: a live session's agreed people, an import's
         `recorded_in`), `renew` after each counted call, the DM's own ranking (hidden entries may
         be a choice; the answers are DM-only), counts only in the log."""
+        # (#5215 slice 2: no AI, so ahead of the who step's own switches; joined names are no
+        # longer open, so the ranking never asks about them)
+        await self._join_final_s(gid, cid, sid)
         if (
             not self.settings.story_who_on
             or not self.settings.story_extractor_on
@@ -10715,6 +10719,52 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     log.warning(
                         "Who is this: couldn't post the joins line (%s)", type(exc).__name__
                     )
+
+    async def _join_final_s(self, gid: int, cid: str, sid: str) -> int:
+        """#5215 slice 2: each waiting name of two or more words that is exactly one known name but
+        for a final "s" ("Explorer League" for "Explorer's League") is joined to it through
+        `join_by_ai`, so the DM checks it in **Check guesses** (✅ or ↩️ Undo) instead of being
+        asked again every session. Only with DMBOT_STORY_WHO_APPLY (DMbot joining a name itself,
+        #3602). No AI and no transcript: names only. Never raises; returns how many were joined."""
+        if not self.settings.story_who_apply_on or self.memory is None:
+            return 0
+        memory = self.memory
+        joined = refused = 0
+        try:
+            waiting = [
+                e
+                for e in await memory.entities(gid, cid, statuses=("proposed",))
+                if who_step.is_open_name(e) and len(e.name.split()) >= s_join.JOIN_WORDS
+            ]
+            for entity in waiting:
+                rows = await memory.sound_alikes(gid, cid, name_scan.card_sound_keys(entity.name))
+                target = s_join.join_target(entity.name, (r for r in rows if r[0] != entity.id))
+                if target is None:
+                    continue
+                try:
+                    await memory.join_by_ai(gid, cid, target, entity.id, any_kind=True)
+                    joined += 1
+                except MemoryRuleError:
+                    refused += 1  # (a limit, or it changed since: the card asks, as before)
+        except Exception as exc:  # the names stay waiting, asked as before
+            log.warning("Final-s joins failed (%s)", type(exc).__name__)
+        log.info("Final-s joins: %d joined, %d refused", joined, refused)  # counts only
+        if joined:
+            campaign = await self.campaigns.get(gid, cid)
+            joins_to = self._upkeep_channel(campaign)[0] if campaign is not None else None
+            if joins_to is not None:
+                from dmbot.ui.joined_review import summary_line  # (the ui imports this module)
+
+                try:  # the same count line as the who step's own joins (#3874)
+                    note = {"sid": sid, "n": joined}
+                    if not await _story_note(self, gid, cid, STORY_JOINED, note):
+                        await self.post(
+                            joins_to,
+                            f"{summary_line(joined)} Press **Check guesses** in **/dmbot names**.",
+                        )
+                except Exception as exc:
+                    log.warning("Final-s joins: couldn't post the line (%s)", type(exc).__name__)
+        return joined
 
     def _after_card(self, table: Table) -> after_session.AfterSessionCard:
         """The one message that shows this session's after-session reads while they run (#5124):

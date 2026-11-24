@@ -318,3 +318,21 @@ class TheDmsCheck(Base):
         with self.assertRaises((MemoryRuleError, TooLateToUndo)):
             await self.memory.undo(self.g, self.one.id, done.batch)
         self.assertEqual((await self.aliases_of(tam))["The Ferry Lady"], CONFIRMED)
+
+
+class AFinalS(Base):
+    """#5215 slice 2: a name that is a known one but for a final "s" may join across kinds (the
+    waiting kind is the reader's guess); every other limit holds."""
+
+    async def test_a_different_kind_joins_only_for_a_final_s(self) -> None:
+        league = await self.add("Explorer's League", "faction")
+        gone = await self.waiting_name("Explorer League", "concept")
+        self.assertEqual(await self.refusal(league, gone), AI_JOIN_REFUSED)
+        done = await self.memory.join_by_ai(self.g, self.one.id, league, gone, any_kind=True)
+        self.assertEqual(done.value.id, league)
+        self.assertEqual((await self.aliases_of(league))["Explorer League"], PROPOSED)
+
+    async def test_every_other_limit_still_holds(self) -> None:
+        gone = await self.waiting_name("Rook Cousins", "concept")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.join_by_ai(self.g, self.one.id, self.rook, gone, any_kind=True)

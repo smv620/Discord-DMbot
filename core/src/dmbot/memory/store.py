@@ -10137,7 +10137,13 @@ class MemoryStore:
     # ---- undo -------------------------------------------------------------------------
 
     async def join_by_ai(
-        self, guild_id: int, campaign_id: str, keep_id: str, gone_id: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        keep_id: str,
+        gone_id: str,
+        *,
+        any_kind: bool = False,
     ) -> Written[Entity]:
         """DMbot's own answer to "Who is this?" (#3602): a waiting name is another name of a
         confirmed entry of the same kind. The DM never said it, so this is the one narrow case
@@ -10148,11 +10154,15 @@ class MemoryStore:
         different kinds; never a split, a merge of two confirmed entries or a removal. All of it
         is read again inside the write, at the moment of use. The moved names stay *waiting* (no
         `confirm_keys`), so players, the recap and table answers do not use the spelling until the
-        DM confirms it; it is one change, so one Undo takes it all back."""
+        DM confirms it; it is one change, so one Undo takes it all back.
+
+        `any_kind`: a name of two or more words that is the known one but for a final "s" (#5215,
+        slice 2): its waiting kind is only the reader's guess, so a different kind doesn't refuse
+        it. Every other limit holds."""
         async with self._write(guild_id, campaign_id, WHO_SOURCE) as w:
             keep = await _entity_row(w, keep_id)
             gone = await _entity_row(w, gone_id)
-            why = await _ai_join_refusal(w, keep, gone)
+            why = await _ai_join_refusal(w, keep, gone, any_kind=any_kind)
             if why:
                 raise MemoryRuleError(why)
             kept = await self._merge_in(
@@ -12024,7 +12034,9 @@ def _split_counts(split: Sequence[str]) -> tuple[int, int]:
     return (split.count("group"), split.count("unknown"))
 
 
-async def _ai_join_refusal(w: Changes, keep: dict[str, Any], gone: dict[str, Any]) -> str:
+async def _ai_join_refusal(
+    w: Changes, keep: dict[str, Any], gone: dict[str, Any], *, any_kind: bool = False
+) -> str:
     """ "" when DMbot may join `gone` (a waiting name) onto `keep` (a confirmed entry) by itself,
     else the refusal (one fixed sentence: it names no entry, so no secret can leak through it).
     A waiting name read from a session is normally still hidden from the players, so that flag is
@@ -12045,8 +12057,8 @@ async def _ai_join_refusal(w: Changes, keep: dict[str, Any], gone: dict[str, Any
             return AI_JOIN_REFUSED
     if keep["hidden_from_players"]:
         return AI_JOIN_REFUSED
-    if keep["type"] != gone["type"] or keep["role"] != gone["role"]:
-        return AI_JOIN_REFUSED
+    if (keep["type"] != gone["type"] and not any_kind) or keep["role"] != gone["role"]:
+        return AI_JOIN_REFUSED  # (any_kind: the waiting kind is the reader's guess, #5215)
     if await name_scene(w, gone) is not None:
         return AI_JOIN_REFUSED  # said only in a split scene: who knows it is the DM's (#4043)
     ids = [keep["id"], gone["id"]]
