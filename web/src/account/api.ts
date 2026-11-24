@@ -1059,6 +1059,21 @@ export interface NameCheck {
   isList?: boolean;
   /** Known groups the list may be: `members` already belong to the group, `others` do not (#3406). */
   groups?: NameGroupHint[];
+  /** How the session-names reader found this name (#5144, core #5182): present only for a name it found; missing from an older API. */
+  found?: NameFound;
+}
+/** What made a waiting name a name (#5144). `heard` is Discord's heard line as plain text; `line` is the one line that made it
+ * a name, or null when none is kept or its speaker no longer agrees. */
+export interface NameFound {
+  how: "introduced" | "typed" | "addressed" | "place" | "spoken_of" | "scan" | "singled_out";
+  times: number;
+  typed: number;
+  /** Every other spelling heard, in order (the card names three, then "and N more"; `heard` already says so). */
+  also: string[];
+  heard: string;
+  /** DMbot's guess, a kind key, or null when it has none. */
+  guess: string | null;
+  line: { speaker: string; at: number; text: string } | null;
 }
 /** A group DMbot already knows that a list of names may be (#3406). */
 export interface NameGroupHint {
@@ -1596,6 +1611,11 @@ export interface ImportProgress {
     /** The read of this session's connections (#3307), in the shared shape: stage `reading_connections` (piece n of m),
      * `waiting_for_limit` (carries on by itself) or `connections_read`. Null until it starts; missing from an older API. */
     story?: JobProgress | null;
+    /** The name reader's stage for this session (#5127, the web half of #5091): `reading_names` (part n of m), `names_read` or
+     * `names_stopped`. Null when the reader is off; missing from an older API. */
+    names?: JobProgress | null;
+    /** How many stretches of this session could not be read for names (0 when none; #5127). */
+    namesUnread?: number;
   }[];
 }
 
@@ -2159,7 +2179,9 @@ export interface WorldPlaceNote {
   id: string;
   entityId: string;
   name: string;
-  layer: "terrain" | "climate" | "control";
+  layer: "terrain" | "climate" | "control" | "culture" | "population";
+  /** A named culture's name, for a culture row (#4412); absent or null otherwise. */
+  culture?: string | null;
   value: string;
   /** The table's own words, when the value is "other" (the same as Discord's card). */
   words: string;
@@ -2598,6 +2620,9 @@ export interface NameRow extends CardSummaryFields {
   secret: boolean;
   /** "Players don't know this one yet" on the whole entry (#2321); what the secret switch sets. */
   hidden?: boolean;
+  /** A thing or place the story keeps coming back to but never names, kept without a name of its own (#5175; core's `described`).
+   * Missing from an older API and while the reader is off. */
+  described?: boolean;
   /** A place's size (#4173): plane, world, region, settlement, district, street, building or room; null when it has none. Only places have one. */
   placeLevel?: string | null;
   /** Who set it: "read" (DMbot read it from the lore's words) or "dm"; null when there is no size. */
@@ -2805,6 +2830,8 @@ export const READING_POLLS = 150;
 export interface WebAnswer {
   state: "waiting" | "working" | "done" | "failed";
   error?: string | null;
+  /** "📝 More names" (#5081): the names now waiting in the check, and how many still wait behind the button. */
+  made?: number | null;
   /** A "Let me choose" pick (#4891): what it gave, how much more, and whether it answered the question. */
   chose?: { id: string; count: number }[] | null;
   choseMore?: number | null;
@@ -2937,6 +2964,8 @@ export interface WaitingClaim {
   at?: number | null;
   /** Set while a name in it could be two entries (Family ties, #3463): the questions still to answer. */
   choices?: WaitingChoice[];
+  /** What "travels with" means, when this claim says a companion goes along (#5165, core #5164's words); missing for any other. */
+  means?: string;
   /** The first meeting's reminder, in Discord's marks (`**name**` bold, a backslash escapes); shown only with FIRST_FEELING_LIVE (#4942). */
   startingFeeling?: string | null;
 }
@@ -2948,6 +2977,8 @@ export interface WaitingChoice {
 }
 export interface WaitingBackstory {
   id: string;
+  /** What "travels with" means, when this connection is that one (#5165); missing for any other. */
+  means?: string;
   subject: string;
   object: string;
   /** The connection in words, "knows" or "grew up in". */
@@ -3012,7 +3043,8 @@ export interface QuestionCampaign {
   guesses?: number;
 }
 export interface CampaignNameChecks {
-  recaps: { ref: string; at: number; count: number }[];
+  /** `other` is the one group of names no recap has linked (#5186, core #5203): last in the list, its ref ends in `.0` and opens the same card. Missing from an older API. */
+  recaps: { ref: string; at: number; count: number; other?: boolean }[];
 }
 export interface QuestionCounts {
   campaigns: QuestionCampaign[];
@@ -3463,6 +3495,10 @@ export interface AccountApi {
    * names, each one of the recap's `characters`. Refusals: `not-found`, `stale`, `not-allowed`,
    * `bad-present`. */
   setBeatPresent?(recapRef: string, n: number, present: string[]): Promise<RecapBeat>;
+  /** "📝 More names" on the Questions page (#5081, core #5055 B): queued for the bot, a DM only, one press makes at most 300
+   * names to check. Resolves with the names now waiting and the names still behind the button. `onLook` hears how far it is (counts only,
+   * `{done, total}` with no stage: core's names-more answer sends no more). A refusal is an `ApiError` (`not-found`, `too-soon`). Missing from an older API. */
+  moreNames?(campaignRef: string, onLook?: (progress: { done: number; total: number } | null) => void): Promise<{ made: number; left: number }>;
   /** What the name pass fixed in this recap's session (DMs only; #2645). Missing from an older API. */
   namesFixed?(recapRef: string): Promise<NamesFixed>;
   /** Undo one fix, queued for the bot like the DM screen's Undo; resolves with how many lines were put back.
@@ -4266,7 +4302,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal", "changeRouteLength", "deedQuestions", "answerDeed", "continuityHits", "askContinuity", "answerContinuity"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "moreNames", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal", "changeRouteLength", "deedQuestions", "answerDeed", "continuityHits", "askContinuity", "answerContinuity"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "visitCampaign", "loreAdd", "loreRead", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
@@ -4468,5 +4504,5 @@ export interface PlaceWorld {
 
 /** What the table may be told of a place's land, climate and ruler: words only, no DM-only mark and no group the reader may not know. */
 export interface PlaceWorldTable {
-  rows: { layer: "terrain" | "climate" | "control"; value: string; words: string; groupName: string | null; how: string; part: string }[];
+  rows: { layer: "terrain" | "climate" | "control" | "culture" | "population"; value: string; words: string; groupName: string | null; how: string; part: string; culture?: string | null }[];
 }

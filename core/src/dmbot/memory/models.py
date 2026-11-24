@@ -400,6 +400,11 @@ class Entity:
     length_unit: str | None = None
     length_approx: bool = False
     length_from: str | None = None
+    # A description, not a name (#5173): a thing or a place the story singles out and keeps coming
+    # back to. None for a name; otherwise the words exactly as the story said them, without an
+    # article ("gemstone mine", "Easthaven ferry"), written into a sentence as "the gemstone mine"
+    # (`entity_words.in_sentence`). Back to None when the DM gives it a name.
+    described: str | None = None
 
     @property
     def setting_guessed(self) -> bool:
@@ -697,6 +702,8 @@ class Written[T]:
     # tell the DM; "" otherwise. (`confirm_kinds` counts both in `split_counts`.)
     split: str = ""
     split_counts: tuple[int, int] = (0, 0)
+    # The heard spellings a yes turned into "change to" rules (#5133 slice 3c-2b), for the reply.
+    rules: tuple[str, ...] = ()
 
 
 # Names one merge takes: the bot, the website and the database door agree (#2426).

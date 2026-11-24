@@ -214,6 +214,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
                 story_family_only=False,
                 story_extractor_max_calls=480,
                 story_extractor_max_calls_day=960,
+                name_trace_dir="",  # (#5123: no trace here, as on the live server)
             ),
             extractor_ai=object(),
             memory=object(),
@@ -236,6 +237,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         me._extract_session = partial(BOT._extract_session, me)  # (extract_claims calls it)
         me.members = None  # (no directory: the cache answers, as before)
         me._people_keys = partial(BOT._people_keys, me)
+        me._story_trace_start = partial(BOT._story_trace_start, me)  # (#5123: off, returns None)
         return me
 
     def table(self) -> Any:

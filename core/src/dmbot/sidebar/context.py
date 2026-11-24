@@ -27,9 +27,10 @@ from functools import cache
 from pathlib import Path
 
 from dmbot.campaigns.models import FALLBACK_NONE
+from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED, Entity
+from dmbot.memory.models import CONFIRMED, Entity, name_key
 from dmbot.memory.recall import Recall
 from dmbot.rules.book_rank import book_is_legacy, book_wins
 from dmbot.rules.followed import FollowedRule
@@ -846,7 +847,8 @@ def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
     secret_keys = {n.key for n in lookup.names if n.secret}  # in any entry: never given as a name
     lines: list[str] = []
     for entity_id, entity in _mentioned(question, lookup):
-        line = f"{entity.name} ({kind_phrase(entity)})"
+        # (a thing or a place with no name reads as the story said it: "the gemstone mine", #5179)
+        line = f"{in_sentence(entity.name, entity.described)} ({kind_phrase(entity)})"
         if entity_id not in secret_entities:  # an identity the DM is hiding: the name, no more
             others = [
                 n.text
@@ -856,6 +858,8 @@ def mentioned_names(question: str, lookup: CampaignLookup | None) -> list[str]:
                 and n.confirmed
                 and not n.person
                 and n.text != entity.name
+                # (a described entry's own words in another case are not another name, #5179)
+                and not (entity.described and n.key == name_key(entity.name))
                 and n.key not in secret_keys
             ]
             if others:

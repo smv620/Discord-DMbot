@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory import heard_rules
 from dmbot.memory._changes import NOT_FOUND
 from dmbot.memory.models import (
     CONFIRMED,
@@ -30,8 +31,10 @@ from dmbot.memory.models import (
     lookup_key,
     name_key,
 )
+from dmbot.memory.name_found import Found
 from dmbot.memory.name_longer import widens
 from dmbot.memory.store import NOT_A_LIST, SPELLING_TAKEN, MemoryStore
+from dmbot.recaps import heard_fix
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +65,9 @@ ANSWERED = "answered"  # undo, after a part was answered or the names changed
 NOT_DM = "not_dm"  # the sender is not a DM of the campaign any more
 SPLIT, JOIN_GROUP, MAKE_GROUP, UNDO = "split", "join_group", "make_group", "undo"
 KEPT_ACTIONS = (SPLIT, JOIN_GROUP, MAKE_GROUP)  # a finished one stays as a `done` row for its Undo
+# A yes that made rules (#5144) stays as a `done` row for its Undo too: only a `confirm` that set a
+# batch is kept (a plain yes still leaves no row), so listing it here changes nothing for those.
+UNDOABLE = (*KEPT_ACTIONS, "confirm")
 NEW_ACTIONS = (*KEPT_ACTIONS, UNDO)
 
 PLAYER_CHARACTER = "player_character"  # who plays them is asked in Discord, not on the page
@@ -78,6 +84,16 @@ class Answer:
     target_id: str = ""
     text: str = ""
     claimed_at: int = 0  # this worker's claim: only it may finish the row
+
+
+@dataclass(frozen=True, slots=True)
+class HeardTools:
+    """What the new card's yes needs besides the store (#5144): the transcripts, to fix the
+    session's lines, and the consent record, to read them for the rule guard. The bot passes its
+    own; with none, a yes is today's yes."""
+
+    transcripts: Any
+    consent: Any
 
 
 @dataclass(slots=True)
@@ -111,7 +127,16 @@ class AnswerStore:
                 " ON CONFLICT DO NOTHING",
                 (guild_id, campaign_id, session_at, guild_id, campaign_id, ids),
             )
-            return int(cur.rowcount)
+            made = int(cur.rowcount)
+            if session_at != 0:
+                # (a name the "no recap" list took before this recap linked it is on this recap's
+                # list now, and only there: #5186)
+                await conn.execute(
+                    "DELETE FROM recap_name_checks WHERE guild_id = %s AND campaign_id = %s"
+                    " AND session_at = 0 AND entity_id = ANY(%s)",
+                    (guild_id, campaign_id, ids),
+                )
+            return made
 
     async def link_like(
         self, guild_id: int, campaign_id: str, from_entity: str, entity_ids: Sequence[str]
@@ -130,6 +155,22 @@ class AnswerStore:
                 " AND e.guild_id = k.guild_id AND e.campaign_id = k.campaign_id"
                 " AND e.id = ANY(%s) ON CONFLICT DO NOTHING",
                 (guild_id, campaign_id, from_entity, ids),
+            )
+            return int(cur.rowcount)
+
+    async def link_orphans(self, guild_id: int) -> int:
+        """Keep every proposed name that no recap has linked at session 0, "no recap" (#5186), so
+        the website's list can open it as it opens a recap's: the same list, card and answers,
+        which all go by this link. Ids only; repeats change nothing. Returns how many were new."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "INSERT INTO recap_name_checks (guild_id, campaign_id, session_at, entity_id)"
+                " SELECT e.guild_id, e.campaign_id, 0, e.id FROM memory_entities e"
+                " WHERE e.guild_id = %s AND e.status = 'proposed' AND e.merged_into IS NULL"
+                " AND NOT EXISTS (SELECT 1 FROM recap_name_checks k WHERE k.guild_id = e.guild_id"
+                " AND k.campaign_id = e.campaign_id AND k.entity_id = e.id)"
+                " ON CONFLICT DO NOTHING",
+                (guild_id,),
             )
             return int(cur.rowcount)
 
@@ -190,19 +231,19 @@ class AnswerStore:
 
     async def done_for(
         self, guild_id: int, campaign_id: str, entity_id: str, batch: int
-    ) -> tuple[str, str | None] | None:
-        """The finished split or group answer of this name with this batch: (its action, the list
-        as it was), or None."""
+    ) -> tuple[str, str | None, str] | None:
+        """The finished split, group or yes answer of this name with this batch: (its action, the
+        list as it was or what made the name a name, its note), or None."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT action, undo_name FROM name_answers"
+                "SELECT action, undo_name, note FROM name_answers"
                 " WHERE guild_id = %s AND campaign_id = %s"
                 " AND entity_id = %s AND batch = %s AND state = 'done'"
                 " AND action = ANY(%s) ORDER BY created_at DESC LIMIT 1",
-                (guild_id, campaign_id, entity_id, batch, list(KEPT_ACTIONS)),
+                (guild_id, campaign_id, entity_id, batch, list(UNDOABLE)),
             )
             row = await cur.fetchone()
-        return None if row is None else (str(row["action"]), row["undo_name"])
+        return None if row is None else (str(row["action"]), row["undo_name"], str(row["note"]))
 
     async def drop_done(self, guild_id: int, campaign_id: str, entity_id: str, batch: int) -> None:
         """The answer that was taken back goes, so it can't be taken back twice."""
@@ -210,7 +251,7 @@ class AnswerStore:
             await conn.execute(
                 "DELETE FROM name_answers WHERE guild_id = %s AND campaign_id = %s"
                 " AND entity_id = %s AND batch = %s AND state = 'done' AND action = ANY(%s)",
-                (guild_id, campaign_id, entity_id, batch, list(KEPT_ACTIONS)),
+                (guild_id, campaign_id, entity_id, batch, list(UNDOABLE)),
             )
 
     async def sweep(self, guild_id: int) -> int:
@@ -230,6 +271,7 @@ async def apply(
     answer: Answer,
     kept: Kept | None = None,
     answers: AnswerStore | None = None,
+    heard: HeardTools | None = None,
 ) -> str:
     """Do one answer the way Discord's name check does. Returns "" when it worked, or the
     reason word. Nothing here logs the DM's words. The sender is checked at the moment of use
@@ -238,7 +280,7 @@ async def apply(
         return NOT_DM if answer.action in NEW_ACTIONS else NOT_ALLOWED
     cid = answer.campaign_id
     if answer.action == UNDO:
-        return await _undo(memory, answers, guild_id, answer)
+        return await _undo(memory, answers, guild_id, answer, heard)
     entity = await memory.entity(guild_id, cid, answer.entity_id)
     if entity is None or entity.status != PROPOSED:
         return GONE
@@ -251,6 +293,11 @@ async def apply(
             if answer.kind == PLAYER_CHARACTER:
                 return BAD_KIND  # who plays them is asked in Discord
             try:
+                found = (await memory.name_found(guild_id, cid, [entity.id])).get(entity.id)
+                if heard is not None and found is not None:
+                    return await _confirm_found(
+                        memory, guild_id, cid, entity, answer, found, heard, kept
+                    )
                 await memory.confirm_entity(guild_id, cid, entity.id, answer.kind, source="dm")
             except MemoryRuleError:
                 return BAD_KIND
@@ -298,6 +345,96 @@ async def apply(
             return FAILED
     except MemoryRuleError:
         return GONE  # the name changed under us (answered in Discord a moment ago)
+    return ""
+
+
+NOTE_ROOM = 200  # the note column's own limit
+FOUND_SEP = "|"
+
+
+def yes_note(fixed: str, kind: str, name: str, rules: Sequence[str]) -> str:
+    """What a yes that made rules keeps on its row, in the words the page reads back (#5144):
+    `fixed|kind|name|rule|rule…`, counts and the DM's own spellings, cut so it fits the column:
+    whole rules only, the later ones left off (the page says how many were made from the batch)."""
+    head = FOUND_SEP.join((fixed, kind, name[:NAME_MAX]))
+    out = head
+    for rule in rules:
+        if len(out) + 1 + len(rule) > NOTE_ROOM:
+            break
+        out += FOUND_SEP + rule
+    return out
+
+
+def read_yes_note(note: str) -> tuple[str, str, str, list[str]] | None:
+    """`yes_note` read back: (fixed, kind, name, rules), or None for any other note."""
+    parts = note.split(FOUND_SEP)
+    if len(parts) < 3 or parts[0] not in (heard_fix.FIXED, heard_fix.LATER, heard_fix.FAILED):
+        return None
+    return parts[0], parts[1], parts[2], [p for p in parts[3:] if p]
+
+
+def found_text(found: Found) -> str:
+    """What made the name a name, to keep for the Undo: `how|times|typed|line_ref`."""
+    return FOUND_SEP.join((found.how, str(found.times), str(found.typed), found.line_ref or ""))
+
+
+def read_found(text: str) -> tuple[str, str | None, int, int] | None:
+    parts = text.split(FOUND_SEP, 3)
+    if len(parts) != 4 or not (parts[1].isdigit() and parts[2].isdigit()):
+        return None
+    return parts[0], parts[3] or None, int(parts[1]), int(parts[2])
+
+
+async def _confirm_found(
+    memory: MemoryStore,
+    guild_id: int,
+    cid: str,
+    entity: Any,
+    answer: Answer,
+    found: Found,
+    heard: HeardTools,
+    kept: Kept | None,
+) -> str:
+    """The new card's yes (#5133 slice 3c-2b, #5144) for a name with a found row, the very calls
+    of Discord's `_confirm_as`: the other spellings it was heard as become "change to" rules in the
+    same change when this session's lines could be read, and the session's cleaned transcript
+    follows under the same batch for an entry the table may read about. One batch, one Undo (the
+    row stays as `done` with it). A name with no other spelling still gets its batch. Raises
+    `MemoryRuleError` as `confirm_entity` does."""
+    own = name_key(entity.name)
+    also = [
+        a.text for a in await memory.aliases(guild_id, cid, entity_id=entity.id) if a.key != own
+    ]
+    session = heard_fix.session_of_ref(found.line_ref)
+    spellings: list[str] | None = None
+    may: list[str] = []
+    if not also:
+        spellings = []  # (nothing else heard: no rule, but the yes still gets its Undo)
+    else:
+        lines = await heard_fix.session_lines(
+            heard.transcripts, heard.consent, guild_id, cid, session
+        )
+        if lines is not None:  # (lines unread: today's yes, every spelling kept as a name)
+            spellings = list(also)
+            may = heard_rules.may_be_rules(entity.name, spellings, lines)
+    written = await memory.confirm_entity(
+        guild_id, cid, entity.id, answer.kind, source="dm", heard=spellings, may_rule=may
+    )
+    if spellings is None or written.batch is None or kept is None:
+        return ""
+    how = await heard_fix.fix_transcript(
+        heard.transcripts,
+        memory,
+        guild_id,
+        cid,
+        entity_id=entity.id,
+        session_id=session,
+        batch=written.batch,
+        rules=written.rules,
+    )
+    kept.batch = written.batch
+    kept.undo_name = found_text(found)[:300]
+    kept.note = yes_note(how, answer.kind, entity.name, written.rules)
     return ""
 
 
@@ -384,19 +521,25 @@ async def _split_or_group(
 
 
 async def _undo(
-    memory: MemoryStore, answers: AnswerStore | None, guild_id: int, answer: Answer
+    memory: MemoryStore,
+    answers: AnswerStore | None,
+    guild_id: int,
+    answer: Answer,
+    heard: HeardTools | None = None,
 ) -> str:
-    """Take back a finished split or group of this name by its batch (the answer's target): a
+    """Take back a finished split, group or yes of this name by its batch (the answer's target): a
     split with `undo_split` (the waiting claims it set aside come back), a group with the store's
-    own undo. Refused as `not_found` when no such finished answer is here (already taken back, or
-    swept) and as `answered` when the store refuses (a part was answered, or the names changed)."""
+    own undo, and a yes that made rules (#5144) the way Discord's ↩️ does: the name waits again,
+    the session's lines go back as they were, and what made it a name is kept again. Refused as
+    `not_found` when no such finished answer is here (already taken back, or swept) and as
+    `answered` when the store refuses (a part was answered, or the names changed)."""
     if answers is None or not answer.target_id.isdigit():
         return NOT_FOUND_WORD
     batch = int(answer.target_id)
     found = await answers.done_for(guild_id, answer.campaign_id, answer.entity_id, batch)
     if found is None:
         return NOT_FOUND_WORD
-    action, undo_name = found
+    action, undo_name, note = found
     try:
         if action == SPLIT:
             await memory.undo_split(guild_id, answer.campaign_id, batch, undo_name or "")
@@ -404,9 +547,41 @@ async def _undo(
             await memory.undo(guild_id, answer.campaign_id, batch)
     except MemoryRuleError:  # (TooLateToUndo too: a part was answered, or the names changed)
         return ANSWERED
+    if action == "confirm":
+        await _undo_yes(memory, guild_id, answer, batch, undo_name or "", note, heard)
     # (the batch number is unique in a campaign, so deleting by it takes only this answer's row)
     await answers.drop_done(guild_id, answer.campaign_id, answer.entity_id, batch)
     return ""
+
+
+async def _undo_yes(
+    memory: MemoryStore,
+    guild_id: int,
+    answer: Answer,
+    batch: int,
+    found_text_: str,
+    note: str,
+    heard: HeardTools | None,
+) -> None:
+    """The rest of a yes's Undo: this session's lines put back when it had made rules, and what
+    made the name a name kept again (the yes's trigger dropped it). The name is back already, so
+    neither may fail the Undo: each is logged by its type and left."""
+    cid = answer.campaign_id
+    parsed = read_yes_note(note)
+    if heard is not None and parsed is not None and parsed[3]:
+        try:
+            await heard.transcripts.undo_respell(guild_id, cid, batch)
+        except Exception as exc:
+            log.warning("Undo of a yes: the lines did not go back (%s)", type(exc).__name__)
+    again = read_found(found_text_)
+    if again is not None:
+        how, line_ref, times, typed = again
+        try:
+            await memory.keep_name_found(
+                guild_id, cid, answer.entity_id, Found(how, line_ref, typed, times)
+            )
+        except Exception as exc:
+            log.warning("Undo of a yes: what made it a name was not kept (%s)", type(exc).__name__)
 
 
 async def _change_words(

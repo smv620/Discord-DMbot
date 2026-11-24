@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import unittest
-from typing import Any
+from typing import Any, ClassVar
 
 from dmbot.memory import name_reader as nr
 
@@ -315,7 +315,7 @@ class TheSwitch(unittest.TestCase):
 
 
 class TheBotStep(unittest.TestCase):
-    """`DMBot._read_session_names` on a stand-in bot: metered, never raises, joins the scan."""
+    """`DMBot._read_session_names` on a stand-in bot: metered, never raises, every name found."""
 
     def bot(self, client: Any) -> Any:
         from types import SimpleNamespace
@@ -347,10 +347,10 @@ class TheBotStep(unittest.TestCase):
         from dmbot.bot import DMBot
 
         lines: Any = [SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out")]
-        joined, kinds, _trace = asyncio.run(
+        found, _trace, _unread = asyncio.run(
             DMBot._read_session_names(bot, 5, "c1", lines, set(), scan)
         )
-        return joined, kinds
+        return [f.name for f in found], {f.name: f.kind for f in found}
 
     def test_its_calls_are_charged_to_the_campaign_as_names(self) -> None:
         from dmbot import credits
@@ -364,7 +364,7 @@ class TheBotStep(unittest.TestCase):
         joined, kinds = self.step(self.bot(FakeClient(answer_for)), [])
         self.assertEqual([(c.guild_id, c.campaign_id, c.job_kind) for c in charged],
                          [(5, "c1", "names")])  # fmt: skip
-        self.assertEqual(([s.name for s in joined], kinds), (["hrothgar"], {"hrothgar": "npc"}))
+        self.assertEqual((joined, kinds), (["hrothgar"], {"hrothgar": "person"}))
 
     def test_a_job_that_already_charges_keeps_charging(self) -> None:
         from dmbot import credits
@@ -379,7 +379,106 @@ class TheBotStep(unittest.TestCase):
             self.step(self.bot(FakeClient(answer_for)), [])
         self.assertEqual([c.job_kind for c in charged], ["import"])
 
-    def test_a_failure_leaves_the_scans_list_as_it_was(self) -> None:
+    def test_a_speaker_who_stopped_during_the_read_adds_no_hearing(self) -> None:
+        """#5178: the lines that hold a name but weren't cited count as hearings only while their
+        speaker is still recorded, asked again after the reader's last await."""
+        import asyncio
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        stopped: list[bool] = []
+
+        def answer_for(_text: str) -> FakeReply:
+            stopped.append(True)  # (speaker 2 stops while the reader is out)
+            return FakeReply(answer(item("hrothgar")))
+
+        bot = self.bot(FakeClient(answer_for))
+
+        async def consenting(_gid: int) -> set[int]:
+            return {1} if stopped else {1, 2}
+
+        bot.consent = SimpleNamespace(consenting=consenting)
+        lines: Any = [
+            SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out"),
+            SimpleNamespace(user_id=2, text="hrothgar waves at us"),
+        ]
+        found, _trace, _unread = asyncio.run(
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), [])
+        )
+        self.assertEqual([(f.name, f.times, f.lines) for f in found], [("hrothgar", 1, ("1",))])
+        # (both still recorded: the uncited line counts as before)
+        bot = self.bot(FakeClient(lambda _t: FakeReply(answer(item("hrothgar")))))
+        bot.consent = SimpleNamespace(consenting=lambda _g: asyncio.sleep(0, result={1, 2}))
+        found, _trace, _unread = asyncio.run(
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), [])
+        )
+        self.assertEqual([(f.name, f.times) for f in found], [("hrothgar", 2)])
+
+    def test_a_line_cited_before_its_speaker_stopped_is_no_hearing(self) -> None:
+        """#5178, the reviewer's case: speaker 2's line is cited in the first batch, and speaker 2
+        stops while the second batch is read. The reader kept it then; the step drops it now, and
+        a name left with no line ends as stopped."""
+        import asyncio
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        calls: list[int] = []
+
+        def answer_for(_text: str) -> FakeReply:
+            calls.append(1)
+            if len(calls) == 1:  # (the first batch cites speaker 2's line, number 2)
+                return FakeReply(answer(item("vorna", lines=[2])))
+            return FakeReply(answer())
+
+        bot = self.bot(FakeClient(answer_for))
+
+        async def consenting(_gid: int) -> set[int]:
+            return {1} if len(calls) >= 2 else {1, 2}
+
+        bot.consent = SimpleNamespace(consenting=consenting)
+        lines: Any = [
+            SimpleNamespace(user_id=2 if i == 1 else 1, text="a smith called vorna" if i == 1
+                            else f"we walk on, step {i}")
+            for i in range(nr.BATCH_LINES + 5)
+        ]  # fmt: skip
+        found, trace, _unread = asyncio.run(
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), [])
+        )
+        self.assertEqual(found, [])
+        # (counted, and never named: a stopped speaker's name is never written, even in a trace)
+        self.assertIn(("", nr.STOPPED), [(r.name, r.reason) for r in trace])
+        self.assertNotIn("vorna", [r.name for r in trace])
+
+    def test_an_import_reads_and_counts_by_its_own_recorded_check(self) -> None:
+        """#5184: an import judges who is recorded with `recorded_in` (#3305), which includes a
+        speaker the uploader confirmed; the reader and its re-check use the caller's check, not
+        `consenting` (here: nobody but speaker 1 agreed in Discord)."""
+        import asyncio
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        bot = self.bot(FakeClient(lambda _t: FakeReply(answer(item("hrothgar", lines=[2])))))
+
+        async def recorded() -> set[int]:
+            return {1, 2}
+
+        lines: Any = [
+            SimpleNamespace(user_id=1, text="we walk on"),
+            SimpleNamespace(user_id=2, text="a dwarf called hrothgar steps out"),
+        ]
+        found, _trace, _unread = asyncio.run(
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), [], recorded=recorded)
+        )
+        self.assertEqual([(f.name, f.lines) for f in found], [("hrothgar", ("2",))])
+        found, _trace, _unread = asyncio.run(  # (no check given: `consenting`, speaker 1 only)
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), [])
+        )
+        self.assertEqual(found, [])
+
+    def test_a_failure_gives_no_names_and_the_scans_list_stands(self) -> None:
         from dmbot.memory.scan import Suggestion
 
         bot = self.bot(FakeClient(lambda _t: FakeReply(answer())))
@@ -389,4 +488,110 @@ class TheBotStep(unittest.TestCase):
 
         bot.memory.known_keys = broken
         scan = [Suggestion("Targos", 3)]
-        self.assertEqual(self.step(bot, scan), (scan, {}))
+        self.assertEqual(self.step(bot, scan), ([], {}))
+
+    def test_a_kept_descriptions_head_word_is_a_known_name_to_the_reader(self) -> None:
+        # (#5173, the Expert: "mine" once "gemstone mine" is kept, unless another shares it)
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        bot = self.bot(FakeClient(lambda _t: FakeReply(answer())))
+        kept = [
+            SimpleNamespace(name="Gemstone mine", described="gemstone mine"),
+            SimpleNamespace(name="North gate", described="north gate"),
+            SimpleNamespace(name="South gate", described="south gate"),
+            SimpleNamespace(name="Bryn Shander", described=None),
+        ]
+
+        async def entities(*_: Any) -> list[Any]:
+            return kept
+
+        bot.memory.entities = entities
+        seen: dict[str, Any] = {}
+
+        async def read(_ai: Any, _rows: Any, skip: Any, *, known: Any, **_kw: Any) -> Any:
+            seen.update(skip=dict(skip), known=list(known))
+            raise RuntimeError("stop here")
+
+        with patch("dmbot.bot.name_reader.read", read):
+            self.step(bot, [])
+        self.assertEqual(seen["skip"].get("mine"), nr.KNOWN_NAME)
+        self.assertIn("mine", seen["known"])
+        self.assertNotIn("gate", seen["skip"])  # (two gates: which one can't be told)
+
+    def test_the_readers_progress_reaches_the_given_hook_batch_by_batch(self) -> None:
+        import asyncio
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        bot = self.bot(FakeClient(lambda _t: FakeReply(answer(item("hrothgar")))))
+        moves: list[tuple[int, int]] = []
+
+        async def moved(part: int, parts: int) -> None:
+            moves.append((part, parts))
+
+        lines: Any = [SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out")]
+        asyncio.run(DMBot._read_session_names(bot, 5, "c1", lines, set(), [], progress=moved))
+        self.assertEqual(moves, [(1, 1)])
+
+    def test_the_live_card_and_an_import_s_card_both_follow_the_reader(self) -> None:
+        # (#5124's after-session card and #5091's import card share the reader's progress)
+        import asyncio
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.bot import DMBot
+        from dmbot.ui import after_session
+
+        bot = self.bot(FakeClient(lambda _t: FakeReply(answer(item("hrothgar")))))
+        moves: list[tuple[int, int]] = []
+
+        async def moved(part: int, parts: int) -> None:
+            moves.append((part, parts))
+
+        card: Any = SimpleNamespace(stage=AsyncMock(), note=lambda *_: None)
+        lines: Any = [SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out")]
+        asyncio.run(
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), [], card=card, progress=moved)
+        )
+        self.assertEqual(moves, [(1, 1)])
+        card.stage.assert_awaited_once_with(after_session.NAMES, 1, 1)
+
+
+class SingledOut(unittest.TestCase):
+    """A thing or a place singled out with no name (#5173, slice 6): an item or a place only,
+    given without its article, and never a name of its own."""
+
+    LINES: ClassVar[dict[str, str]] = {
+        "1": "the gemstone mine is shut",
+        "2": "a woman with a sad look waits",
+        "3": "x",
+    }
+
+    def test_an_item_or_a_place_is_kept_without_its_article(self) -> None:
+        got = nr.parse(
+            answer(item("the gemstone mine", nr.SINGLED_OUT, [1], "place")), self.LINES, {}
+        )
+        self.assertEqual([(h.name, h.why) for h in got.heard], [("gemstone mine", "singled_out")])
+
+    def test_a_person_a_group_or_an_event_is_refused(self) -> None:
+        got = nr.parse(
+            answer(
+                item("woman with a sad look", nr.SINGLED_OUT, [2], "person"),
+                item("gemstone mine", nr.SINGLED_OUT, [1], "group"),
+                item("gemstone mine", nr.SINGLED_OUT, [1], "event"),
+            ),
+            self.LINES,
+            {},
+        )
+        self.assertEqual(got.heard, [])
+        self.assertEqual(got.refused[nr.BAD_KIND], 3)
+
+    def test_it_is_the_weakest_reason_and_needs_three_hearings(self) -> None:
+        self.assertEqual(nr.WHYS[-1], nr.SINGLED_OUT)
+        self.assertEqual(nr.HEARINGS[nr.SINGLED_OUT], 3)
+
+    def test_the_question_asks_for_it_and_its_version_moved(self) -> None:
+        self.assertIn('"singled_out"', nr.SYSTEM)
+        self.assertNotEqual(nr.PROMPT_VERSION, "names-1")

@@ -34,12 +34,14 @@ export default function QuestionsHere({
   group,
   id,
   onLeft,
+  waiting,
 }: {
   api: AccountApi;
   campaignRef: string;
   group: HereGroup;
   id: string;
   onLeft?: (left: number) => void;
+  waiting?: number;
 }) {
   // The waiting group has two panels; each reports apart, and the group tells the sum once both mounted panels have (#4740).
   const [waitingLeft, setWaitingLeft] = useState<number | null>(null);
@@ -52,7 +54,7 @@ export default function QuestionsHere({
     onLeft(waitingLeft + (handMounted ? (handLeft ?? 0) : 0));
   }, [group, waitingLeft, handLeft, handMounted]);
 
-  if (group === "names") return <QuestionsNames api={api} campaignRef={campaignRef} id={id} onLeft={report} />;
+  if (group === "names") return <QuestionsNames api={api} campaignRef={campaignRef} id={id} onLeft={report} waiting={waiting ?? 0} />;
   if (group === "traits")
     return (
       <LazyPanel load={() => import("./TraitQuestions")} what="the lineage and class questions" props={{ api, campaignRef, id, onLeft: report }} />

@@ -42,7 +42,7 @@ from dmbot.names import not_names
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "names-1"
+PROMPT_VERSION = "names-2"  # (2: "singled_out", #5173)
 BATCH_LINES = 60  # lines a call reads; a few before it go with it for context, never cited
 CONTEXT_LINES = 4
 MIN_SPLIT = 8  # a cut or overfull answer is asked again in halves, down to this many lines
@@ -55,9 +55,14 @@ INTRODUCED = "introduced"
 ADDRESSED = "addressed"
 PLACE = "place"
 SPOKEN_OF = "spoken_of"
-WHYS = (INTRODUCED, ADDRESSED, PLACE, SPOKEN_OF)
+# A thing or a place the story singles out with no name of its own ("gemstone mine"; #5173, slice
+# 6): the weakest reason, kept apart from the names (`memory/singled_out.py` decides on it)
+SINGLED_OUT = "singled_out"
+WHYS = (INTRODUCED, ADDRESSED, PLACE, SPOKEN_OF, SINGLED_OUT)
+SINGLED_KINDS = frozenset({"item", "place"})  # never a person, a group or an event (the ruling)
 # How many hearings each reason needs (design section 5): introduced by name, once
-HEARINGS = {INTRODUCED: 1, ADDRESSED: 2, PLACE: 2, SPOKEN_OF: 2}
+HEARINGS = {INTRODUCED: 1, ADDRESSED: 2, PLACE: 2, SPOKEN_OF: 2, SINGLED_OUT: 3}
+_ARTICLE = re.compile(r"^(?:a|an|the|this|that)\s+", re.IGNORECASE)
 
 # The fixed reasons a candidate ends with (design section 8; the trace's words)
 LISTED = "listed"  # kept: becomes a suggestion (after the joining and the DM's own lists)
@@ -89,6 +94,10 @@ show it is a name, with one of these words:
 - "addressed": someone is spoken to by it ("thank you, hrothgar").
 - "place": it is a place travelled to, come from, or pointed at ("we ride for bryn shander").
 - "spoken_of": it is talked about as one particular someone or something ("hrothgar owes us").
+- "singled_out": a particular thing or place the story treats as one of a kind but never names,
+  given in the lines' own words without "a", "an" or "the" ("gemstone mine", "azure tome"). Only
+  for an item or a place the story comes back to or builds on: never a person or a group, never
+  an everyday thing, and never a thing mentioned once in passing.
 
 Leave out: the names in <known>; the people playing; plain words used as plain words ("the
 dwarf", "a valley"); rules words (spells, conditions, a kind of monster as a kind); and anything
@@ -212,6 +221,12 @@ def check(
     why = _text(item.get("why")).casefold().replace(" ", "_")
     if why not in WHYS:
         return None, BAD_WHY
+    if why == SINGLED_OUT:
+        if kind not in SINGLED_KINDS:
+            return None, BAD_KIND  # (people and groups stay with the claims path, the ruling)
+        name = _ARTICLE.sub("", name)  # (the story's words, without the article: "gemstone mine")
+        if not name:
+            return None, NOT_IN_LINES
     cited = item.get("lines")
     numbers = [_text(n) for n in cited] if isinstance(cited, list) else []
     numbers = [n for n in dict.fromkeys(numbers) if n]
@@ -286,14 +301,16 @@ class Found:
 
 
 def tally(
-    heard: Iterable[Heard], texts: Mapping[str, str] | None = None
+    heard: Iterable[Heard], texts: Mapping[str, str] | None = None, *, every: bool = False
 ) -> tuple[list[Found], list[Outcome]]:
     """The session's names from every batch's checked answers, by name key: hearings are distinct
     lines (a line cited twice is one hearing), the reason is the strongest given (introduced
     first), and a name needs the hearings its reason asks for (`HEARINGS`); the rest end as
     `too_few_hearings`. `texts`: every line the reader read, by number; a line that holds one of
     the name's spellings is a hearing even when the reader cited another (it cites at most
-    `LINES_MAX`). Most heard first."""
+    `LINES_MAX`). Most heard first. `every`: no name ends with too few hearings here: the after-
+    session step counts hearings for a whole group of spellings (`name_groups`, design section 5),
+    so a spelling heard once may still join one heard once more."""
     by_key: dict[str, list[Heard]] = {}
     for h in heard:
         by_key.setdefault(h.key, []).append(h)
@@ -307,7 +324,7 @@ def tally(
         why = min((h.why for h in group), key=WHYS.index)
         spelled = Counter(h.name for h in group).most_common(1)[0][0]
         kind = Counter(h.kind for h in group).most_common(1)[0][0]
-        if len(lines) < HEARINGS[why]:
+        if not every and len(lines) < HEARINGS[why]:
             dropped.append(Outcome(spelled, TOO_FEW))
             continue
         kept.append(Found(spelled, kind, why, len(lines), lines))

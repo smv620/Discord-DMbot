@@ -787,7 +787,7 @@ class ClassFeatures(unittest.TestCase):
         assert feat is not None
         self.assertTrue(srd.has_asked_for("Two-Weapon Fighting", "2024"))
         self.assertFalse(srd.has_asked_for("Underwater Combat", "2024"))
-        from dmbot.ui import rule_lookup
+        from dmbot.rules import lookup as rule_lookup
 
         found = rule_lookup._asked_for(srd, "Two-Weapon Fighting", "2024", "2014")
         assert found is not None

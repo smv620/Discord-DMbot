@@ -31,6 +31,10 @@ CONNECTION_WORDS = {
     "next_to": next_words.PLAIN,  # (its word, when it has one, reads instead: `next_words`)
     "route_to": route_words.OTHER_FORWARD,  # (its means reads instead: `route_words`, #4173 6d)
 }
+# What a companion link means, on every card that asks the DM about one (#5164): the words alone
+# ("travels with") left the DM guessing, and two player characters were once asked. (No pronoun
+# for the character, so not the spec's "goes along with them": the ux-critic's wording.)
+TRAVELS_WITH_MEANS = "a companion who goes along, like a hireling, a familiar or a rescued prisoner"
 # The same connection read from the other name's card ("Frostwolf tribe has as members
 # Ulfgar"). Connections that read the same both ways use CONNECTION_WORDS.
 CONNECTION_BACK = {

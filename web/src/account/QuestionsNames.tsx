@@ -19,11 +19,14 @@ export default function QuestionsNames({
   campaignRef,
   id,
   onLeft,
+  waiting = 0,
 }: {
   api: AccountApi;
   campaignRef: string;
   id?: string;
   onLeft?: (left: number) => void;
+  /** How many names the campaign's count says are waiting (#5186): more than the recaps hold means some wait outside a recap. */
+  waiting?: number;
 }) {
   const [list, setList] = useState<CampaignNameChecks | null>(null);
   const [failed, setFailed] = useState(false);
@@ -60,11 +63,11 @@ export default function QuestionsNames({
           {words.loading}
         </p>
       ) : list.recaps.length === 0 ? (
-        <p class="small muted">{words.noneHere}</p>
+        <p class="small muted">{waiting > 0 ? words.outsideRecap(waiting) : words.noneHere}</p>
       ) : (
         list.recaps.map((r) => (
           <section class="stack" key={r.ref} aria-labelledby={`qn-${r.ref}`}>
-            <h3 id={`qn-${r.ref}`}>{words.sessionOf(day(r.at))}</h3>
+            <h3 id={`qn-${r.ref}`}>{r.other === true ? words.otherNames : words.sessionOf(day(r.at))}</h3>
             <LazyPanel
               load={() => import("./RecapNameChecks")}
               what="the names to check"

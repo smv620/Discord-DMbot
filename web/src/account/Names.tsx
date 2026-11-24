@@ -11,6 +11,8 @@ import { PARTY_RECORD_LIVE } from "../content/party-record-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
+import { SINGLED_OUT_LIVE } from "../content/singled-out-switch";
+import { nameFoundWords as foundWords } from "../content/name-found-words";
 import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
 import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
 import { NAME_SOURCES_LIVE } from "../content/name-sources-switch";
@@ -826,6 +828,7 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
           )}
         </span>
       </div>
+      {SINGLED_OUT_LIVE && row.described === true && <p class="small muted">{foundWords.singled.described}</p>}
       {!canEdit && PLACE_WORLD_LIVE && row.kind === "place" && api.placeWorldTable && (
         <LazyPanel load={() => import("./PlaceWorldLines")} what="the place's land, climate and ruler" props={{ api, refId, row }} />
       )}
