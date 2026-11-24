@@ -271,6 +271,7 @@ def stand_in(
         _scan_kinds=AsyncMock(return_value={}),
         _session_start=AsyncMock(return_value=None),
         _keep_places=AsyncMock(),
+        consent=SimpleNamespace(consenting=AsyncMock(return_value={1})),  # (#5178)
     )
 
 
@@ -370,6 +371,77 @@ class TheBotStep(unittest.TestCase):
             self.assertEqual(
                 (call.args[4].name, call.args[5]), ("Hrothgar", ["Hrothgar", "Rothgar"])
             )
+
+    def test_after_the_reader_a_stopped_speakers_lines_leave_the_scans_count(self) -> None:
+        # (#5184: the scan counted before the reader; a speaker who stopped meanwhile is taken out
+        # and the scan runs again, so "Vorna", said only by them, is not suggested)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We rest."]
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+
+            async def lines(*_: Any) -> list[Any]:
+                return [SimpleNamespace(user_id=2 if "Vorna" in t else 1, text=t, topic="game",
+                                        typed=False) for t in texts]  # fmt: skip
+
+            bot.transcripts = SimpleNamespace(lines=lines)
+            bot.consent.consenting.return_value = {1}
+            self.assertEqual(self.run_step(bot, texts), [])
+        with tempfile.TemporaryDirectory() as d:  # (still recorded: suggested as before)
+            bot = stand_in(d, {}, texts=texts)
+            bot.transcripts = SimpleNamespace(lines=lines)
+            bot.consent.consenting.return_value = {1, 2}
+            self.assertEqual(self.run_step(bot, texts), ["Vorna"])
+
+    def test_the_same_words_from_a_kept_and_a_stopped_speaker_count_once(self) -> None:
+        # (#5184: lines are taken out by their words, one for each line of the stopped speaker)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "And Vorna left."]
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+
+            async def lines(*_: Any) -> list[Any]:
+                return [SimpleNamespace(user_id=2 if i == 2 else 1, text=t, topic="game",
+                                        typed=False) for i, t in enumerate(texts)]  # fmt: skip
+
+            bot.transcripts = SimpleNamespace(lines=lines)
+            bot.consent.consenting.return_value = {1}
+            # (two of the three left, enough; removing both copies of the repeated words would
+            # leave one, too few)
+            self.assertEqual(self.run_step(bot, texts), ["Vorna"])
+
+    def test_an_import_s_own_recorded_check_reaches_the_step(self) -> None:
+        # (#5184: `recheck` is used after the reader, not `consenting`: here only the import's
+        # check still counts speaker 2, so "Vorna", said by them alone, is still suggested)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We rest."]
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+
+            async def lines(*_: Any) -> list[Any]:
+                return [SimpleNamespace(user_id=2 if "Vorna" in t else 1, text=t, topic="game",
+                                        typed=False) for t in texts]  # fmt: skip
+
+            async def recorded() -> set[int]:
+                return {1, 2}
+
+            bot.transcripts = SimpleNamespace(lines=lines)
+            bot.consent.consenting.return_value = {1}
+            from dmbot.bot import DMBot
+
+            bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+            bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)
+            made = asyncio.run(
+                DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1", recheck=recorded)
+            )
+            self.assertEqual(made, ["Vorna"])
+
+    def test_after_the_reader_a_stopped_speakers_lines_are_never_kept(self) -> None:
+        # (#5178: who is recorded is asked again after the reader; nobody now, so no line of the
+        # session is stored as where a name was said)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left."]
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            bot.consent.consenting.return_value = set()
+            self.run_step(bot, texts)
+            bot._keep_places.assert_not_awaited()
 
     def test_a_name_close_to_a_secret_is_never_suggested(self) -> None:
         texts = ["Then we met Hrothgar at the gate.", "Later Rothgar drank alone."]

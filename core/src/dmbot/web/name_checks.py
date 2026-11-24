@@ -21,7 +21,7 @@ from dmbot.memory.places import LINE_CHARS, cut, find_in, trimmed
 from dmbot.names import not_names
 from dmbot.recaps import name_answers
 from dmbot.recaps.notify import job_ref
-from dmbot.web import name_found, name_groups, players_lines, recaps, scenes
+from dmbot.web import name_found, name_groups, players_lines, recaps, relationships, scenes
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
@@ -297,3 +297,12 @@ async def read_answer(
         "error": str(got["error"]) or None,
         "batch": got["batch"],
     }
+
+
+async def queue_more_names(db: Database, session: Session, ref: str) -> str:
+    """📝 More names (#5081): the id of the answer the page polls at `.../web/answers/{id}`. The
+    queue door checks the caller is a DM of the campaign; the bot checks again and makes the names
+    to check as Discord's button does."""
+    return await relationships._queue(
+        db, session, ref, entity=None, action="names-more", target="", text="", flag=False
+    )
