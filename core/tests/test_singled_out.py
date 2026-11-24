@@ -46,7 +46,8 @@ class WhatIsOffered(unittest.TestCase):
         self.assertEqual([k.name for k in out.kept], ["Gemstone mine"])  # (one capital only)
         self.assertEqual(out.kept[0].heard, "gemstone mine")
         self.assertEqual(out.kept[0].times, 4)  # three by its words, one by "the mine"
-        self.assertEqual(out.shorter_returns, 1)
+        self.assertEqual(out.shorter_returns, [("gemstone mine", 1)])  # (its own count)
+        self.assertEqual(out.kept[0].said, "gemstone mine")
 
     def test_a_door_said_three_times_in_one_scene_is_not(self) -> None:
         out = self.decide(("door", "item"))
@@ -55,7 +56,7 @@ class WhatIsOffered(unittest.TestCase):
 
     def test_a_shorter_return_needs_a_head_word_no_other_phrase_shares(self) -> None:
         out = self.decide(("gemstone mine", "place"), ("silver mine", "place"))
-        self.assertEqual(out.shorter_returns, 0)  # (two mines are never one)
+        self.assertEqual(out.shorter_returns, [])  # (two mines are never one)
         mine = next(k for k in out.kept if k.heard == "gemstone mine")
         self.assertEqual(mine.times, 3)
 
@@ -119,9 +120,9 @@ class TheWords(unittest.TestCase):
         self.assertEqual(so.proposed("gemstone mine"), "Gemstone mine")
 
     def test_in_a_sentence_a_description_reads_as_the_story_said_it(self) -> None:
-        self.assertEqual(in_sentence("Gemstone mine", True), "the gemstone mine")
-        self.assertEqual(in_sentence("The old well", True), "the old well")
-        self.assertEqual(in_sentence("Bryn Shander", False), "Bryn Shander")
+        self.assertEqual(in_sentence("Gemstone mine", "gemstone mine"), "the gemstone mine")
+        self.assertEqual(in_sentence("The old well", "The old well"), "the old well")
+        self.assertEqual(in_sentence("Bryn Shander", None), "Bryn Shander")
 
 
 class TheCardAndTheRecap(unittest.TestCase):
@@ -129,7 +130,7 @@ class TheCardAndTheRecap(unittest.TestCase):
         from dmbot.ui import names as ui
 
         self.assertEqual(
-            ui.singled_line("Gemstone mine", 4),
+            ui.singled_line("gemstone mine", 4),
             "📌 Not a name, but the story keeps coming back to it: “gemstone mine” "
             "(heard 4 times).",
         )
@@ -156,9 +157,9 @@ class TheCardAndTheRecap(unittest.TestCase):
 
         names = SimpleNamespace(
             entities={
-                "e1": SimpleNamespace(name="Gemstone mine", described=True),
-                "e2": SimpleNamespace(name="Bryn Shander", described=False),
-                "e3": SimpleNamespace(name="Azure tome", described=True),
+                "e1": SimpleNamespace(name="Gemstone mine", described="gemstone mine"),
+                "e2": SimpleNamespace(name="Bryn Shander", described=None),
+                "e3": SimpleNamespace(name="Azure tome", described="azure tome"),
             }
         )
         self.assertEqual(
@@ -171,14 +172,13 @@ class TheReviewersCases(unittest.TestCase):
     """The reviewer's and the ux-critic's points on slice 6a (#5173)."""
 
     def test_a_possessive_reads_as_the_story_said_it(self) -> None:
-        from dmbot.memory.entity_words import as_said
         from dmbot.ui import names as ui
 
-        self.assertEqual(in_sentence("Garret's old sled", True), "Garret's old sled")
-        self.assertEqual(as_said("Garret's old sled"), "Garret's old sled")
-        self.assertIn("\u201cGarret's old sled\u201d", ui.singled_line("Garret's old sled", 3))
-        self.assertEqual(in_sentence("Gemstone mine", True), "the gemstone mine")
-        self.assertEqual(in_sentence("The azure tome", True), "the azure tome")
+        sled = "Garret's old sled"
+        self.assertEqual(in_sentence(sled, sled), "Garret's old sled")
+        self.assertIn("\u201cGarret's old sled\u201d", ui.singled_line(sled, 3))
+        self.assertEqual(in_sentence("Gemstone mine", "gemstone mine"), "the gemstone mine")
+        self.assertEqual(in_sentence("The azure tome", "The azure tome"), "the azure tome")
 
     def test_one_capital_unless_the_lines_give_more(self) -> None:
         self.assertEqual(
@@ -216,11 +216,11 @@ class TheReviewersCases(unittest.TestCase):
         from dmbot.ui import names as ui
 
         self.assertEqual(
-            ui.not_kept_note("Gemstone mine"),
+            ui.not_kept_note("Gemstone mine", "gemstone mine"),
             "🚫 Not kept. DMbot won't ask about **the gemstone mine** again.",
         )
         self.assertEqual(
-            ui.kept_note(in_sentence("Gemstone mine", True), "place", ()),
+            ui.kept_note(in_sentence("Gemstone mine", "gemstone mine"), "place", ()),
             "✅ Kept **the gemstone mine** as a place.",
         )
         self.assertIn("Type its name, or press ✅ Keep it", ui.SAME_AS_DESCRIBED)
@@ -239,12 +239,61 @@ class TheReviewersCases(unittest.TestCase):
         from dmbot.ui import names as ui
 
         mine = Entity(
-            "e1", "place", "Gemstone mine", "", "proposed", None, "scan", 1, described=True
-        )
+            "e1", "place", "Gemstone mine", "", "proposed", None, "scan", 1,
+            described="gemstone mine",
+        )  # fmt: skip
         text = ui.suggestion_text(mine, 1, counts=(4, 0), singled=True)
         self.assertIn("📝 **the gemstone mine**", text)
         self.assertIn("\u201cgemstone mine\u201d (heard 4 times)", text)
         self.assertNotIn("a new name?", text)
+
+
+class TheExpertsCases(unittest.TestCase):
+    """The Expert's points on slice 6a (#5173): short returns need the whole phrase twice, a kept
+    description's head word is a known name, and the mark holds the story's own words."""
+
+    def test_one_cited_line_never_makes_every_the_gate_its_own(self) -> None:
+        said = {"1": "the north gate creaks", "40": "the gate", "80": "the gate", "120": "the gate"}
+        out = so.decide([found("north gate", "place", said)], said, set())
+        self.assertEqual(out.kept, [])
+        self.assertEqual(out.shorter_returns, [])
+        self.assertEqual(self.reasons(out), {"north gate": so.TOO_FEW})
+
+    def test_two_cited_lines_then_the_returns_are_counted_for_that_phrase(self) -> None:
+        said = {"1": "the north gate", "70": "past the north gate", "100": "the gate", "130": "x"}
+        said["130"] = "that gate again"
+        out = so.decide([found("north gate", "place", said)], said, set())
+        self.assertEqual([k.heard for k in out.kept], ["north gate"])
+        self.assertEqual(out.kept[0].times, 4)
+        self.assertEqual(out.shorter_returns, [("north gate", 2)])
+
+    def test_the_words_are_the_cited_lines_own(self) -> None:
+        said = {
+            "1": "We wait for the Easthaven ferry.",
+            "70": "The Easthaven ferry is late.",
+            "130": "Still no Easthaven ferry.",
+        }
+        (ferry,) = so.decide([found("easthaven ferry", "place", said)], said, set()).kept
+        self.assertEqual(ferry.said, "Easthaven ferry")
+        self.assertEqual(in_sentence(ferry.name, ferry.said), "the Easthaven ferry")
+        mine = so.decide([found("gemstone mine", "place", texts())], texts(), set()).kept[0]
+        self.assertEqual(in_sentence(mine.name, mine.said), "the gemstone mine")
+        sled = {str(n): "Garret's old sled is here." for n in (1, 70, 130)}
+        (kept,) = so.decide([found("Garret's old sled", "item", sled)], sled, set()).kept
+        self.assertEqual(in_sentence(kept.name, kept.said), "Garret's old sled")
+
+    def test_a_kept_descriptions_head_word_is_a_known_name_when_no_other_shares_it(self) -> None:
+        self.assertEqual(
+            so.described_heads(["gemstone mine", "Easthaven ferry"]), {"mine", "ferry"}
+        )
+        self.assertEqual(so.described_heads(["north gate", "south gate"]), set())  # (which one?)
+        said = {"1": "the old mine", "70": "the old mine", "130": "the old mine"}
+        heads = so.described_heads(["gemstone mine"])
+        out = so.decide([found("old mine", "place", said)], said, heads, live=heads)
+        self.assertEqual(self.reasons(out), {"old mine": KNOWN_NAME})
+
+    def reasons(self, out: so.Decided) -> dict[str, str]:
+        return {name: why for name, why, _t in out.refused}
 
 
 if __name__ == "__main__":

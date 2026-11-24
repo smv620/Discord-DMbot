@@ -240,7 +240,7 @@ _VERSIONS = {"version", "definition_version"}  # from 1 up (#1189)
 _LISTS = {"examples", "subject_types", "object_types", "conflicts_with", "sound_codes",
           "mention_ids", "covers", "not_this", "synonyms", "evidence_ids", "hidden_by"}  # fmt: skip
 _NULLABLE = {
-    "role", "edition", "played_by", "merged_into", "used_by", "other_id", "entity_id",
+    "role", "edition", "described", "played_by", "merged_into", "used_by", "other_id", "entity_id",
     "replaced_by", "parent", "from_session_at", "to_session_at", "from_game_time",
     "to_game_time", "game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
     "session_started_at", "decided_at", "said_as", "from_set", "session_at", "manipulated_by",
@@ -335,9 +335,10 @@ def _valid(column: str, value: object) -> bool:
         "setting",
         "srd",
         "length_approx",  # (a route's length said "about", #4255)
-        "described",  # (a description, not a name, #5173)
     ):
         return isinstance(value, bool)
+    if column == "described":  # the story's words for a thing with no name (None: a name, #5173)
+        return isinstance(value, str) and 0 < len(value) <= NAME_MAX
     if column == "length_amount":  # a route's stated length (#4255)
         return (
             isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value <= 10_000
@@ -939,7 +940,7 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "length_approx": False,
                 "length_from": None,
                 "players_text": None,  # from before the players' line (#2967)
-                "described": False,  # from before #5173: every entry's name was a name
+                "described": None,  # from before #5173: every entry's name was a name
                 **raw,
             }
             if "setting_from" not in raw:  # (from before #4173 slice 2b: a setting was the DM's)

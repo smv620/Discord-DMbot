@@ -33,11 +33,10 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.extractor import Said, quoted
 from dmbot.memory.importance import beat_score
 from dmbot.memory.importance_rank import beat_rank
-from dmbot.memory.models import spelling_key
+from dmbot.memory.models import name_key, spelling_key
 from dmbot.names import not_names
 from dmbot.recaps import must_haves
 from dmbot.recaps.beats import Beat, sheet
@@ -710,7 +709,9 @@ def _with_familiar(name: str, familiar: Mapping[str, str] | None) -> str:
     description (#5173: `recaps.inputs.described_words`) is shown only as the story says it ("the
     gemstone mine"), so the writer never sees it written like a proper name."""
     short = (familiar or {}).get(name)
-    if short is not None and short == in_sentence(name, True):
+    # (a description's words are its name's, re-cased as the story said them, with "the" before
+    # them unless they start with a possessive: `entity_words.in_sentence`)
+    if short is not None and name_key(short) in {name_key(name), f"the {name_key(name)}"}:
         return short
     return f"[familiar: {short}; full: {name}]" if short else name
 

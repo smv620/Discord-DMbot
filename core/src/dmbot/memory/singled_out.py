@@ -10,8 +10,10 @@ module decides, in code and never on the reader's word, which are offered to the
    ruling's second way ("built on it": 2 lines when another reader used it) waits for the sample's
    count of which way finds each of its rows; a candidate it would be for is traced
    `two_lines_only`, so that count can be made.
-2. **A shorter return** ("the mine" after "the gemstone mine") counts only when no other singled-out
-   phrase this session shares that head word (two mines are never one); counted for the trace.
+2. **A shorter return** ("the mine" after "the gemstone mine") counts only when the reader cited the
+   whole phrase in at least `WHOLE_LINES` lines (one "north gate" never makes every "the gate" its
+   own) and no other singled-out phrase this session shares that head word (two mines are never
+   one); counted per candidate for the trace (the Expert, on #5173).
 3. **Never a name DMbot has:** refused when the whole phrase, or its head word, is a known name.
    "Garret's old sled" stays: the possessor tells this sled from others. No connection is written
    from the possessive.
@@ -38,6 +40,7 @@ from dmbot.memory.name_reader import BATCH_LINES, KNOWN_NAME, SINGLED_OUT, Found
 SINGLED_MAX = 3  # offered a session at most (the ruling: "a few")
 CAME_BACK_LINES = 3  # lines holding it...
 STRETCH_APART = BATCH_LINES  # ...the first and last at least this many lines apart
+WHOLE_LINES = 2  # lines holding the whole phrase before its shorter returns count
 
 # The fixed reasons a candidate ends with (the dev tools' trace words)
 OFFERED = "offered"
@@ -50,6 +53,7 @@ SHORTER_RETURN = "shorter_return"  # a count row: lines counted by the head word
 
 _SMALL = frozenset({"a", "an", "the", "this", "that", "of", "from", "in", "on", "at", "for", "and",
                     "to", "with", "by", "under", "upon"})  # fmt: skip
+_LEADING = frozenset({"a", "an", "the", "this", "that"})
 _POSSESSOR = re.compile(r"^(.+?)['’]s?\s+\S")
 
 
@@ -57,20 +61,24 @@ _POSSESSOR = re.compile(r"^(.+?)['’]s?\s+\S")
 class Kept:
     """One singled-out thing or place offered to the DM: the name proposed (a capital on its
     first word only: a description, never "Gemstone Mine"), the words as heard, its kind, its
-    hearings and the lines that hold it (the reader's numbers)."""
+    hearings, the lines that hold it (the reader's numbers) and `said`: the words as a cited line
+    says them, without an article ("gemstone mine", "Easthaven ferry"), kept as the entry's mark
+    (`Entity.described`)."""
 
     name: str
     heard: str
     kind: str
     times: int
     lines: tuple[str, ...]
+    said: str = ""
 
 
 @dataclass(slots=True)
 class Decided:
     kept: list[Kept] = field(default_factory=list)
     refused: list[tuple[str, str, int]] = field(default_factory=list)  # (heard, reason, times)
-    shorter_returns: int = 0  # lines counted by a unique head word alone ("the mine")
+    # (heard, lines counted by its head word alone: "the mine"), per candidate that had any
+    shorter_returns: list[tuple[str, int]] = field(default_factory=list)
 
 
 def head_word(phrase: str) -> str:
@@ -97,6 +105,43 @@ def proposed(heard: str, lines: Iterable[str] = ()) -> str:
         cap = w[:1].upper() + w[1:]
         out.append(cap if cap in said else w[:1].lower() + w[1:])
     return " ".join(out)
+
+
+def _bare(phrase: str) -> str:
+    words = " ".join(phrase.split()).split()
+    while len(words) > 1 and words[0].casefold() in _LEADING:
+        words = words[1:]
+    return " ".join(words)
+
+
+def _phrase(heard: str) -> re.Pattern[str]:
+    """The whole phrase in a line, whatever its case and spacing ("Easthaven  ferry")."""
+    words = [re.escape(w) for w in _bare(heard).split()]
+    return re.compile(r"(?<![^\W_])" + r"\s+".join(words) + r"(?![^\W_])", re.IGNORECASE)
+
+
+def as_said(heard: str, lines: Iterable[str]) -> str:
+    """The words as the first cited line that holds them says them, without an article: its own
+    capitals ("Easthaven ferry", "gemstone mine"), never DMbot's. None holds them (the reader
+    reworded): the reader's words, without an article."""
+    bare = _bare(heard)
+    if not bare:
+        return ""
+    pattern = _phrase(bare)
+    for line in lines:
+        match = pattern.search(line)
+        if match:
+            return " ".join(match.group(0).split())
+    return bare
+
+
+def described_heads(described: Iterable[str]) -> set[str]:
+    """The head words of the campaign's live descriptions (`Entity.described`) that no other live
+    description shares: "mine" once "gemstone mine" is kept, so a later "the mine" is never offered
+    as something new (the Expert, on #5173). Two descriptions with one head word ("north gate",
+    "south gate") refuse neither word: which one a "the gate" means can't be told."""
+    heads = [head_word(d) for d in described]
+    return {h for h in heads if h and heads.count(h) == 1}
 
 
 def player_keys(names: Iterable[str]) -> set[str]:
@@ -151,10 +196,13 @@ def decide(
             out.refused.append((f.name, EVERYDAY_ITEM, f.times))
             continue
         lines = [n for n in f.lines if n in texts]  # (only lines still readable: consent)
-        if head not in shared:  # a shorter return: "the mine", when no other phrase has "mine"
+        whole = _phrase(f.name)
+        if head not in shared and sum(bool(whole.search(texts[n])) for n in lines) >= WHOLE_LINES:
+            # a shorter return: "the mine", when no other phrase has "mine"
             short = re.compile(rf"\b(?:the|that|this)\s+{re.escape(head)}\b", re.IGNORECASE)
             more = [n for n, t in texts.items() if n not in lines and short.search(t)]
-            out.shorter_returns += len(more)
+            if more:
+                out.shorter_returns.append((f.name, len(more)))
             lines += more
         if not _stretches(lines):
             reason = (
@@ -168,7 +216,8 @@ def decide(
             continue
         ordered = tuple(sorted(dict.fromkeys(lines), key=lambda n: int(n) if n.isdigit() else 0))
         cited = [texts[n] for n in ordered if n in texts]
-        ready.append(Kept(proposed(f.name, cited), f.name, f.kind, len(ordered), ordered))
+        words = as_said(f.name, cited)
+        ready.append(Kept(proposed(f.name, cited), f.name, f.kind, len(ordered), ordered, words))
     ready.sort(key=lambda k: (-k.times, k.name.casefold()))
     out.kept = ready[:SINGLED_MAX]
     out.refused += [(k.heard, OVER_SINGLED, k.times) for k in ready[SINGLED_MAX:]]

@@ -117,7 +117,7 @@ ENTITIES = Table(
         "manipulated_by": None,  # the evidence this one faked (#2409)
         # a person the story describes but never names (#2790); a row written now is a named one
         "unnamed": False,
-        "described": False,  # a description, not a name (#5173): set only where it is made
+        "described": None,  # a description, not a name (#5173): set only where it is made
         "unnamed_anchor": None,
         "unnamed_role": None,
         "unnamed_what": None,

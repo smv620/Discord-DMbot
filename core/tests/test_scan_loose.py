@@ -367,8 +367,9 @@ class TheBotStep(unittest.TestCase):
             made = self.run_step(bot, texts)
             self.assertEqual(made[0], "Gemstone mine")  # (first, one capital only)
             marked = {k["name"]: k.get("described") for k in kwargs}
-            self.assertTrue(marked["Gemstone mine"])
-            self.assertFalse(marked.get("Vorna"))
+            # (the mark is the story's words as a cited line says them, #5173)
+            self.assertEqual(marked["Gemstone mine"], "gemstone mine")
+            self.assertIsNone(marked.get("Vorna"))
             self.assertIn((nt.READER, "door", so.ONE_STRETCH), self.ends(d))
             group = bot._keep_found.await_args_list[0].args[4]
             self.assertEqual(group.why, SINGLED_OUT)  # (what the card shows: name_found.how)
@@ -410,6 +411,27 @@ class TheBotStep(unittest.TestCase):
             bot._name_closeness = AsyncMock(return_value=None)
             self.assertNotIn("Gemstone mine", self.run_step(bot, texts))
             self.assertNotIn("Gemstone mine", [n for _s, n, _r in self.ends(d)])
+
+    def test_a_kept_descriptions_head_word_is_never_offered_again(self) -> None:
+        # (#5173, the Expert: once "gemstone mine" is kept, "the old mine" is a known name)
+        from dmbot.memory.name_reader import KNOWN_NAME, SINGLED_OUT
+
+        texts = ["We call Vorna home.", "Vorna waves.", *(["The road is cold."] * 80)]
+        for at in (2, 40, 80):
+            texts[at] = "The old mine is shut."
+        old = Found("old mine", "place", SINGLED_OUT, 3, ("3", "41", "81"))
+        with tempfile.TemporaryDirectory() as d:
+            bot = self.singled_bot(d, texts, [old])
+            kept = SimpleNamespace(
+                id="e1", name="Gemstone mine", described="gemstone mine", is_player_character=False
+            )
+
+            async def entities(*_: Any) -> list[Any]:
+                return [kept]
+
+            bot.memory.entities = entities
+            self.assertNotIn("Old mine", self.run_step(bot, texts))
+            self.assertIn((nt.READER, "old mine", KNOWN_NAME), self.ends(d))
 
     def test_a_line_of_someone_who_stopped_being_recorded_is_not_read(self) -> None:
         from dmbot.memory.name_reader import SINGLED_OUT

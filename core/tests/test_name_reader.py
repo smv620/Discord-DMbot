@@ -391,6 +391,35 @@ class TheBotStep(unittest.TestCase):
         scan = [Suggestion("Targos", 3)]
         self.assertEqual(self.step(bot, scan), ([], {}))
 
+    def test_a_kept_descriptions_head_word_is_a_known_name_to_the_reader(self) -> None:
+        # (#5173, the Expert: "mine" once "gemstone mine" is kept, unless another shares it)
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        bot = self.bot(FakeClient(lambda _t: FakeReply(answer())))
+        kept = [
+            SimpleNamespace(name="Gemstone mine", described="gemstone mine"),
+            SimpleNamespace(name="North gate", described="north gate"),
+            SimpleNamespace(name="South gate", described="south gate"),
+            SimpleNamespace(name="Bryn Shander", described=None),
+        ]
+
+        async def entities(*_: Any) -> list[Any]:
+            return kept
+
+        bot.memory.entities = entities
+        seen: dict[str, Any] = {}
+
+        async def read(_ai: Any, _rows: Any, skip: Any, *, known: Any, **_kw: Any) -> Any:
+            seen.update(skip=dict(skip), known=list(known))
+            raise RuntimeError("stop here")
+
+        with patch("dmbot.bot.name_reader.read", read):
+            self.step(bot, [])
+        self.assertEqual(seen["skip"].get("mine"), nr.KNOWN_NAME)
+        self.assertIn("mine", seen["known"])
+        self.assertNotIn("gate", seen["skip"])  # (two gates: which one can't be told)
+
     def test_the_readers_progress_reaches_the_given_hook_batch_by_batch(self) -> None:
         import asyncio
         from types import SimpleNamespace

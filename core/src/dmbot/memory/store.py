@@ -173,6 +173,7 @@ from dmbot.memory.models import (
     MENTION_METHODS,
     MERGE_MANY_MAX,
     MERGED,
+    NAME_MAX,
     NPC,
     PARTY_SOURCE,
     PLAYER_CHARACTER,
@@ -614,7 +615,7 @@ def _entity(r: dict[str, Any]) -> Entity:
         form=r.get("form"), form_from=r.get("form_from"),
         length_words=r.get("length_words"), length_amount=r.get("length_amount"),
         length_unit=r.get("length_unit"), length_approx=bool(r.get("length_approx")),
-        length_from=r.get("length_from"), described=bool(r.get("described")),
+        length_from=r.get("length_from"), described=r.get("described") or None,
     )  # fmt: skip
 
 
@@ -4918,10 +4919,11 @@ class MemoryStore:
         role: str | None = None,
         hidden_from_players: bool = False,
         session_started_at: int | None = None,
-        described: bool = False,
+        described: str | None = None,
     ) -> Written[Entity]:
-        """A new person, place or thing, with its name as the first alias. `described`: a thing
-        or a place the session singled out with no name of its own (#5173). `role`: for a
+        """A new person, place or thing, with its name as the first alias. `described`: for a thing
+        or a place the session singled out with no name of its own, the words as the story said
+        them, without an article (#5173). `role`: for a
         character, player character, NPC or god (the older kinds npc, player_character,
         deity and creature are read as a character with that role). `played_by`: the
         Discord user playing a player character. `hidden_from_players`: the DM's "Players don't
@@ -4940,6 +4942,9 @@ class MemoryStore:
         name = clean_text(name)
         if len(description) > DESCRIPTION_MAX:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
+        # (the story's words, at most a name's length: the column's CHECK)
+        if described is not None:
+            described = " ".join(described.split())[:NAME_MAX] or None
         async with self._write(guild_id, campaign_id, source) as w:
             row = await _make_entity(
                 w, type=type, name=name, source=source, status=status, description=description,
@@ -5757,7 +5762,7 @@ class MemoryStore:
                 # The DM giving a description a name (#5173, "Give it a name…"): a name now. The
                 # story's words for it stay as another name, as a merge keeps them, so the reader
                 # never offers "the gemstone mine" again as something new.
-                changes["described"] = False
+                changes["described"] = None
             row = await w.update(ENTITIES, entity_id, changes)
             await _relabel_unnamed(
                 w,
@@ -5846,7 +5851,7 @@ class MemoryStore:
             if alias["kind"] == "old":  # an old spelling made the name is listened for again
                 await w.update(ALIASES, alias_id, {"kind": "full"})
             # (⭐ another name as the main one is the DM naming it: no longer a description, #5173)
-            row = await w.update(ENTITIES, entity_id, {"name": alias["text"], "described": False})
+            row = await w.update(ENTITIES, entity_id, {"name": alias["text"], "described": None})
             return Written(_entity(row), w.batch)
 
     async def set_note(
@@ -12945,7 +12950,7 @@ async def _make_entity(
     role: str | None,
     hidden_from_players: bool,
     session_started_at: int | None,
-    described: bool = False,
+    described: str | None = None,
 ) -> Any:
     """The writes that make a new entry (and its first alias), inside the caller's write: shared by
     `add_entity` and `link_new_event` so an entry and what hangs on it can be one change."""

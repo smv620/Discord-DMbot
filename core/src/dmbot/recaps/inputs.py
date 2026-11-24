@@ -239,9 +239,9 @@ def described_words(names: Any, allowed: Collection[str]) -> dict[str, str]:
     never written as a proper name."""
     ok = set(allowed)
     return {
-        e.name: in_sentence(e.name, True)
+        e.name: in_sentence(e.name, e.described)
         for e in getattr(names, "entities", {}).values()
-        if getattr(e, "described", False) and e.name in ok
+        if getattr(e, "described", None) and e.name in ok
     }
 
 

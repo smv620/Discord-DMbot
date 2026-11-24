@@ -24,7 +24,7 @@ from discord import app_commands
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory import heard_rules, name_reader, tags
-from dmbot.memory.entity_words import as_said, in_sentence
+from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.list_names import split_list
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -1178,11 +1178,12 @@ def heard_line(times: int, typed: int, also: Sequence[str], *, written: bool = F
     return f"Typed {_times(typed)} in chat{also_heard}{spelled}."
 
 
-def singled_line(heard: str, times: int) -> str:
+def singled_line(said: str, times: int) -> str:
     """The card's line for a thing or a place the story singles out with no name (#5173, as
     ruled): "📌 Not a name, but the story keeps coming back to it: “gemstone mine” (heard 4
-    times)." The quote is the story's own words; counts only otherwise."""
-    words = as_said(heard)  # (as heard: the first capital was only DMbot's proposal)
+    times)." The quote is the story's own words as heard (`Entity.described`); counts only
+    otherwise."""
+    words = " ".join(said.split())
     return (
         f"📌 Not a name, but the story keeps coming back to it: \u201c{_md(words)}\u201d "
         f"(heard {_times(max(times, 1))})."
@@ -1297,7 +1298,7 @@ def suggestion_text(
         line = heard_line(*counts, also or [], written=verb == "written")
         heard = f": a new name? {line}" if match is None and not fix_to else f"\n{line}"
         if singled:  # (it is no name: the card says so instead of asking "a new name?")
-            heard = f"\n{singled_line(entity.name, counts[0])}"
+            heard = f"\n{singled_line(entity.described or entity.name, counts[0])}"
         others = ""
     read = f"\nDMbot's guess: {_bold_kind(kind)}." if kind else ""
     where = f"\n{places}" if places else ""  # where it was said (#2329), under the count
@@ -1308,7 +1309,8 @@ def suggestion_text(
     seen = scene_line(scene)  # (DMbot's summary of the scene, #3596, above the places)
     # (`tagged`: the name with its tag, for a description such as "beggar woman", #3431)
     # (a description is titled as the story says it, "the gemstone mine", #5173)
-    title = _md(in_sentence(entity.name, True) if singled else tagged or entity.name)
+    words = entity.described or entity.name  # (the mark; the name only if it was never written)
+    title = _md(in_sentence(entity.name, words) if singled else tagged or entity.name)
     # What the players will be told of it (#2967, #3833): shown as written, never cut (the column
     # holds at most 120 characters), so confirming the name is confirming this line too. Nothing
     # extra for a name with no line: DMbot never makes one up.
@@ -1398,10 +1400,10 @@ def spelled_pick(name: str) -> str:
 NOT_ASKED_SHOWN = 3  # spellings named in "won't ask about …"; then "or N more spellings"
 
 
-def not_kept_note(name: str) -> str:
+def not_kept_note(name: str, described: str) -> str:
     """🚫 Not worth keeping, on a singled-out thing or place (#5173): "🚫 Not kept. DMbot won't
-    ask about **the gemstone mine** again." """
-    return f"🚫 Not kept. DMbot won't ask about **{_md(in_sentence(name, True))}** again."
+    ask about **the gemstone mine** again." `described`: the words as the story said them."""
+    return f"🚫 Not kept. DMbot won't ask about **{_md(in_sentence(name, described))}** again."
 
 
 def not_a_name_note(spellings: Sequence[str]) -> str:
@@ -2731,7 +2733,9 @@ class SuggestionReview(_Menu):
             await _tell(interaction, "Only the DM can change a name.")
             return
         if self.singled:  # (no spelling to fix: a name to give, #5173)
-            await interaction.response.send_modal(GiveNameForm(self, entity.id, entity.name))
+            await interaction.response.send_modal(
+                GiveNameForm(self, entity.id, entity.described or entity.name)
+            )
             return
         await interaction.response.send_modal(SpelledForm(self, entity.id, entity.name))
 
@@ -3099,7 +3103,7 @@ class SuggestionReview(_Menu):
             return
         changed(interaction, campaign)
         if entity.described:  # (#5173: a description is not kept, not "not a name")
-            note = not_kept_note(entity.name)
+            note = not_kept_note(entity.name, entity.described)
         elif self.new_card:  # (#5133 slice 3c: every spelling heard, as ruled)
             note = not_a_name_note([entity.name, *self.also])
         else:
