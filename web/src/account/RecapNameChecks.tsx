@@ -363,7 +363,9 @@ function NameRow({
 }) {
   const id = `name-check-${name.id}`;
   // No kind is chosen for the DM: a tap on Yes with a kind nobody picked would be a wrong answer.
-  const [kind, setKind] = useState("");
+  // The menu starts on DMbot's best guess when it is one of the kinds (#5218): the DM's own tap on Yes is still the answer, and
+  // choosing the guess sends nothing by itself. No guess (or a kind this list doesn't know) leaves it on "Pick what it is".
+  const [kind, setKind] = useState(() => (name.guess && list.kinds.some((k) => k.key === name.guess) ? name.guess : ""));
   const [known, setKnown] = useState("");
   const [spelling, setSpelling] = useState("");
   const [note, setNote] = useState("");
@@ -379,6 +381,8 @@ function NameRow({
   // The one known name this sounds like (#5215): "It's X" joins them, as "It's the same as…" does; "new" is answering the card as usual.
   const like = name.soundsLike ?? null;
   const likeLine = like ? (like.spelled ? words.soundsLikeSpelled(like.name, name.name) : words.soundsLike(like.name)) : "";
+  // A person the story never named shows as their description with a quiet "(no name yet)" (#5218), never as "unnamed - …".
+  const unnamed = name.name.startsWith(words.unnamedPrefix) && name.name.length > words.unnamedPrefix.length;
   // How the session-names reader found this name (#5144): its guess is only offered when the list knows that kind.
   const found = name.found;
   const foundOn = NAME_FOUND_LIVE && found !== undefined;
@@ -398,7 +402,10 @@ function NameRow({
   return (
     <li>
       <div class="panel stack" role="group" aria-labelledby={`${id}-name`} id={itemDomId(name.id)} tabIndex={-1}>
-        <strong id={`${id}-name`}>{name.name}</strong>
+        <strong id={`${id}-name`}>
+          {unnamed ? name.name.slice(words.unnamedPrefix.length) : name.name}
+          {unnamed && <span class="muted small"> {words.noNameYet}</span>}
+        </strong>
         {foundOn && found && (
           <>
             <p class="small">{found.heard}</p>
