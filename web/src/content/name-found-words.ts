@@ -16,14 +16,14 @@ export const nameFoundWords = {
   longName: 24,
   /** A thing or place the story keeps coming back to but never names (#5175, slice 6): its three answers, for that question only. */
   singled: {
-    keepIt: "Keep it",
-    giveName: "Give it a name…",
-    notWorth: "Not worth keeping",
+    keepIt: "✅ Keep it",
+    giveName: "✏️ Give it a name…",
+    notWorth: "🚫 Not worth keeping",
     keepItFor: (name: string): string => `Keep it: ${name}`,
     notWorthFor: (name: string): string => `Not worth keeping: ${name}`,
     giveNameFor: (name: string): string => `Give it a name: ${name}`,
-    giveNameLabel: "What is it called?",
-    giveNameHint: "Type the name it goes by. It then becomes a name of its own.",
+    giveNameLabel: "Its name in your game",
+    giveNamePlaceholder: "For example: the Glittering Deep",
     giveNameUse: "Give it a name",
     /** On a kept one's row: it is described in the story and has no name of its own. */
     described: "🔖 Described in the story, no name of its own.",

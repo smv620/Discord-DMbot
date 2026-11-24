@@ -432,12 +432,12 @@ function NameRow({
               <summary>{singled ? fw.singled.giveName : words.changeUse}</summary>
               <fieldset class="stack" disabled={busy}>
                 <legend>{singled ? fw.singled.giveNameLabel : words.changeLabel}</legend>
-                <p class="small muted">{singled ? fw.singled.giveNameHint : words.changeHint}</p>
+                {!singled && <p class="small muted">{words.changeHint}</p>}
                 <div class="row">
                   <label for={`${id}-words`} class="visually-hidden">
                     {singled ? fw.singled.giveNameLabel : words.changeLabel}
                   </label>
-                  <input id={`${id}-words`} type="text" maxLength={NAME_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={wholeName} onInput={(e) => { const typed = (e.target as HTMLInputElement).value; setWholeName(typed); if (typed.trim() === "") setHeard(""); }} />
+                  <input id={`${id}-words`} type="text" placeholder={singled ? fw.singled.giveNamePlaceholder : undefined} maxLength={NAME_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={wholeName} onInput={(e) => { const typed = (e.target as HTMLInputElement).value; setWholeName(typed); if (typed.trim() === "") setHeard(""); }} />
                   <button
                     type="button"
                     class="button secondary"

@@ -124,6 +124,15 @@ describe("a singled-out thing on the name card", () => {
     expect(within(row("The gemstone mine")).queryByText(fw.singled.keepIt)).toBeNull();
   });
 
+  it("uses Discord's own words, with their emoji", async () => {
+    expect([fw.singled.keepIt, fw.singled.giveName, fw.singled.notWorth]).toEqual(["✅ Keep it", "✏️ Give it a name…", "🚫 Not worth keeping"]);
+    expect(fw.singled.giveNameLabel).toBe("Its name in your game");
+    render(<RecapNameChecks api={singledApi()} refId={draft.ref} />);
+    await screen.findByRole("heading", { name: nw.heading });
+    const box = within(row("The gemstone mine")).getByLabelText("Its name in your game", { selector: "input" }) as HTMLInputElement;
+    expect(box.placeholder).toBe("For example: the Glittering Deep");
+  });
+
   it("the shipped switch is off", async () => {
     const real = await vi.importActual<typeof import("../src/content/singled-out-switch")>("../src/content/singled-out-switch");
     expect(real.SINGLED_OUT_LIVE).toBe(false);
