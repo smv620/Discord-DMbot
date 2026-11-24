@@ -549,28 +549,25 @@ def sound_keys(name: str) -> tuple[str, ...]:
 # "Harps" and "Harp" stay apart, as they were.
 S_FOLD_STEM = 5
 S_FOLD_WORDS = 4  # (every word may gain or lose its "s": 2 ** 4 spellings at most, a short query)
-_FINAL_S = re.compile(r"(?:['’]s|s)$", re.IGNORECASE)
+_FINAL_S = re.compile(r"(?:['’]s|s['’]?)$", re.IGNORECASE)
 
 
 def s_folds(name: str) -> tuple[str, ...]:
-    """`name` with a final "s" or "'s" taken off, or added to, each word whose stem has 5 letters
-    or more (#5215): "Explorer League" gives "Explorers League", "Explorer Leagues" and
-    "Explorers Leagues" too. `name` itself first. Only for finding candidates: the spelling tests
-    still decide, and `name_key` and the sound codes never change."""
+    """`name` (spaces made single) first, then with a final "s", "'s" or "s'" taken off, or an "s"
+    added to, each of its first `S_FOLD_WORDS` words whose stem has 5 letters or more (#5215):
+    "Explorer League" gives "Explorers League", "Explorer Leagues" and "Explorers Leagues" too.
+    Only for finding candidates: the spelling tests still decide, and `name_key` and the sound
+    codes never change."""
     options: list[tuple[str, ...]] = []
-    long_words = 0
+    folded = 0
     for word in name.split():
         stem = _FINAL_S.sub("", word)
-        if stem != word and len(name_key(stem)) >= S_FOLD_STEM:
-            options.append((word, stem))
-        elif stem == word and len(name_key(word)) >= S_FOLD_STEM:
-            options.append((word, word + "s"))
+        long_stem = len(name_key(stem)) >= S_FOLD_STEM
+        if folded < S_FOLD_WORDS and long_stem:
+            folded += 1
+            options.append((word, stem) if stem != word else (word, word + "s"))
         else:
             options.append((word,))
-            continue
-        long_words += 1
-        if long_words > S_FOLD_WORDS:
-            options[-1] = (word,)
     spellings: list[str] = [""]
     for choices in options:
         spellings = [f"{done} {w}".strip() for done in spellings for w in choices]

@@ -17,15 +17,16 @@ from dmbot.memory.sounds import sound_codes
 
 class Known:
     """`MemoryStore.sound_alikes` over a few confirmed, never secret names: by stored sound codes,
-    as the real query is (each alias's codes are `sound_codes` of its text)."""
+    as the real query is (each alias's codes are `sound_codes` of its text, unless given)."""
 
     def __init__(self, *names: str) -> None:
         self.rows = [(f"e{i}", name, name) for i, name in enumerate(names)]
+        self.codes = {name: set(sound_codes(name)) for name in names}
 
     async def sound_alikes(
         self, guild_id: int, campaign_id: str, codes: Sequence[str]
     ) -> list[tuple[str, str, str]]:
-        return [r for r in self.rows if set(sound_codes(r[1])) & set(codes)]
+        return [r for r in self.rows if self.codes.get(r[1], set()) & set(codes)]
 
 
 async def match(known: Known, name: str) -> str | None:
@@ -55,7 +56,12 @@ class TheFolds(unittest.TestCase):
         )
 
     def test_a_long_name_stays_a_short_query(self) -> None:
-        self.assertLessEqual(len(s_folds("Ancient Golden Dragons Hidden Temple Beyond")), 16)
+        folds = s_folds("Ancient Golden Dragons Hidden Temple Beyond")
+        self.assertEqual(len(folds), 16)  # (the first four long words only)
+        self.assertFalse(any("Temples" in f or "Beyonds" in f for f in folds))
+
+    def test_a_trailing_apostrophe_plural_folds_too(self) -> None:
+        self.assertIn("Harper", s_folds("Harpers'"))
 
 
 class TheCard(unittest.IsolatedAsyncioTestCase):
@@ -77,8 +83,11 @@ class TheCard(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(await match(Known("Harp"), "Harps"))
 
     async def test_the_spelling_test_still_decides(self) -> None:
-        # (shares a code once folded, but spelled too unlike: never offered)
-        self.assertIsNone(await match(Known("Exploding Leagues"), "Explorer League"))
+        # (a known name sharing a folded code, but spelled too unlike: never offered)
+        known = Known("Oxplar Lodge")
+        known.codes["Oxplar Lodge"] = {card_sound_keys("Explorer League")[1]}
+        self.assertTrue(known.codes["Oxplar Lodge"] & set(card_sound_keys("Explorer League")))
+        self.assertIsNone(await match(known, "Explorer League"))
 
     async def test_two_names_that_fit_alike_offer_neither(self) -> None:
         known = Known("Explorer's League", "Explorers Leagues")
