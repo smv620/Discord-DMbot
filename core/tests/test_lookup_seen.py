@@ -111,11 +111,58 @@ class TheNames(Party):
             await self.view(user)
         self.assertEqual(await self.rows(), before)  # (§9 rule 6)
 
-    async def test_a_read_with_no_viewer_set_says_so_in_the_log(self) -> None:
+    async def test_a_read_for_a_player_without_seen_is_a_callers_mistake(self) -> None:
+        # (#4802, ruling P: no fallback to the flags; the error names the caller, counts only)
         whole = await self.lookup()
-        with self.assertLogs("dmbot.memory.lookup", "WARNING") as logged:
+        with self.assertRaises(ValueError) as raised:
             whole.for_viewer(False)
-        self.assertIn("lookup read with no viewer set", logged.output[0])
-        with self.assertNoLogs("dmbot.memory.lookup", "WARNING"):
-            whole.for_viewer(True)
-            whole.for_viewer(False, frozenset())
+        said = str(raised.exception)
+        self.assertIn("test_lookup_seen.py:", said)
+        self.assertIn(f"{len(whole.entities)} entries", said)
+        self.assertNotIn("harbourmaster", said.casefold())  # (no name, ever)
+        whole.for_viewer(True)  # (a DM needs no `seen`)
+        whole.for_viewer(False, frozenset())
+
+    def interaction(self, user: int) -> Any:
+        from types import SimpleNamespace
+
+        from dmbot.memory.lookup import LookupCache
+
+        bot = SimpleNamespace(lookup=LookupCache(self.memory), memory=self.memory)
+        return SimpleNamespace(client=bot, user=SimpleNamespace(id=user), guild_id=GUILD)
+
+    async def test_each_list_a_player_opens_holds_only_what_the_gate_gives(self) -> None:
+        # (#4802 A: the name card's and the names lists' loaders, and the type-ahead, ask
+        # `entries_seen_by` for anyone who isn't a DM, as `ui/names.py` does)
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.ui import name_card, name_lists
+
+        campaign = await CampaignStore(self.db).get(GUILD, self.c)
+        assert campaign is not None
+        held = (await self.view(CARA)).entities.keys()
+        for load in (name_card._names, name_lists._names):
+            with self.subTest(load=load.__module__):
+                got = await load(self.interaction(CARA), campaign)
+                assert got is not None
+                self.assertEqual(got.entities.keys(), held)
+                self.assertNotIn(self.npc, got.entities)  # (Cara hasn't been told of it)
+        with patch.object(name_card, "typeahead_campaign", AsyncMock(return_value=campaign)):
+            picked = await name_card.find_typeahead(self.interaction(CARA), "")
+            harbour = await name_card.find_typeahead(self.interaction(CARA), "harbour")
+        whole = await self.lookup()
+        shown = {str(c.value) for c in picked}
+        self.assertTrue(shown <= set(held), shown)
+        self.assertEqual(harbour, [])  # (the name she doesn't hold is never suggested)
+        self.assertIn(self.npc, whole.entities)
+        # A DM sees no less: the whole lookup, with no read of what they hold
+        dm = next(iter(campaign.dm_user_ids))
+        for load in (name_card._names, name_lists._names):
+            with self.subTest(dm=load.__module__):
+                got = await load(self.interaction(dm), campaign)
+                assert got is not None
+                self.assertEqual(got.entities.keys(), whole.entities.keys())
+        # With no story store to ask, nothing is held (failing closed)
+        bare = self.interaction(CARA)
+        bare.client.memory = None
+        self.assertEqual(await names_ui.seen_for(bare, campaign, False), frozenset())

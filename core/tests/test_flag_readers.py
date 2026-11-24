@@ -70,9 +70,11 @@ FILES: dict[str, tuple[str, str, str]] = {
     "memory/lookup.py": (
         READS,
         "GraphEngineer",
-        "`for_viewer`'s `seen=None` fallback until #4802/#4804/#4805 pass `seen` (ruling P); "
-        "the Cleaner's `NameEntry.secret` is a SWITCH (ruling Q) and the recap's `entry_hidden` "
-        "and `clue` are #4802's",
+        "`hidden`, read by PlotBot's name pass until #4802's second PR reads the gate's table "
+        "view (ruling Q2); `for_viewer` no longer falls back to the flags (#4802 A+B). The "
+        "Cleaner's `NameEntry.secret` is a SWITCH (ruling Q), and the recap's `entry_hidden` "
+        "fallback stays, fail-stricter (ruling Q3: only when no party could be read; it only "
+        "ever hides more)",
     ),
     "memory/models.py": (DEFINES, "GraphEngineer", "the Entity fields and `unseen_by_players`"),
     "memory/party.py": (DEFINES, "GraphEngineer", "the party faction's row"),
