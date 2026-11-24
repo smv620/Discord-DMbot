@@ -117,3 +117,40 @@ describe("the shipped switch", () => {
     expect(real.NAME_FOUND_LIVE).toBe(false);
   });
 });
+
+describe("the yes and its Undo (#5144 slice B)", () => {
+  // Brannoch's answer in the mock is done with a note and batch 11, as core's #5196 answers a yes on a found name.
+  function brannochFound(guess: string | null = "npc") {
+    const api = mockApi("table");
+    const real = api.nameChecks!.bind(api);
+    api.nameChecks = async (...a) => {
+      const got = await real(...a);
+      return {
+        ...got,
+        names: got.names.map((n) =>
+          n.name === "Brannoch" ? { ...n, found: { how: "introduced" as const, times: 3, typed: 0, also: ["Branoch"], heard: "Brannoch: a new name? Heard 3 times, sometimes as Branoch.", guess, line: null } } : n,
+        ),
+      };
+    };
+    return api;
+  }
+
+  it("Yes, spelled X says the bot's note with an Undo, which sends the batch", async () => {
+    const api = brannochFound();
+    const spy = vi.spyOn(api, "answerNameCheck");
+    render(<RecapNameChecks api={api} refId={draft.ref} />);
+    await screen.findByRole("heading", { name: nw.heading });
+    fireEvent.click(within(row("Brannoch")).getByRole("button", { name: fw.yesSpelledFor("Brannoch") }));
+    expect(await screen.findByText("Done.", {}, { timeout: 8000 })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Undo/ }));
+    expect(spy).toHaveBeenCalledWith(draft.ref, "a".repeat(32), { action: "undo", batch: 11 });
+  }, 20000);
+
+  it("a found name's naming form says Spelled another way…", async () => {
+    render(<RecapNameChecks api={brannochFound()} refId={draft.ref} />);
+    await screen.findByRole("heading", { name: nw.heading });
+    const card = within(row("Brannoch"));
+    expect(card.getByText(fw.spelledOther)).toBeTruthy();
+    expect(card.getByLabelText(fw.spelledLabel, { selector: "input" })).toBeTruthy();
+  });
+});

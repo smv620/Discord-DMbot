@@ -60,6 +60,10 @@ export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountAp
   // Split, group and Undo (#3406): the bot's word on the last such answer, followed until it is done. The name
   // leaves the list once it is applied, so the line with Undo sits under the list, not on the card.
   const splitOn = NAME_SPLIT_LIVE && api.nameAnswerResult !== undefined;
+  // The new name card's yes (#5144 slice B) also has its note and Undo, followed the same way (core's #5196 answers with a batch).
+  const followOn = splitOn || (NAME_FOUND_LIVE && api.nameAnswerResult !== undefined);
+  const followed = (name: NameCheck, answer: NameCheckAnswer): boolean =>
+    SPLIT_ACTIONS.has(answer.action) || (followOn && NAME_FOUND_LIVE && answer.action === "confirm" && name.found !== undefined);
   const [follow, setFollow] = useState<{ id: string; undo: boolean; batch: number } | null>(null);
   const [last, setLast] = useState<{ id: string; note: string; batch: number } | null>(null);
   const [lastProblem, setLastProblem] = useState("");
@@ -196,7 +200,7 @@ export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountAp
       {taken && (
         <p class="small muted">{gw.undone}</p>
       )}
-      {splitOn && last && (
+      {followOn && last && (
         <div class="stack small" role="status">
           <span>{last.note}</span>
           <span>
@@ -252,14 +256,14 @@ export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountAp
     setProblems((was) => ({ ...was, [name.id]: "" }));
     setLast(null); // (Undo is offered until the next answer)
     setTaken(false);
-    if (!SPLIT_ACTIONS.has(answer.action)) setFollow(null); // a plain answer ends any follow: its Undo would be stale
+    if (!followed(name, answer)) setFollow(null); // a plain answer ends any follow: its Undo would be stale
     setLastProblem("");
     setBusy((was) => new Set(was).add(name.id));
     setSlow(false);
     looks.current = 0;
     try {
       await api.answerNameCheck!(refId, name.id, answer);
-      if (SPLIT_ACTIONS.has(answer.action)) setFollow({ id: name.id, undo: false, batch: 0 });
+      if (followed(name, answer)) setFollow({ id: name.id, undo: false, batch: 0 });
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "server";
       setProblems((was) => ({ ...was, [name.id]: words.problem[kind] ?? words.problem.server ?? "" }));
@@ -429,13 +433,13 @@ function NameRow({
               </div>
             )}
             <details open={changing} onToggle={(e) => setChanging((e.target as HTMLDetailsElement).open)}>
-              <summary>{singled ? fw.singled.giveName : words.changeUse}</summary>
+              <summary>{singled ? fw.singled.giveName : foundOn ? fw.spelledOther : words.changeUse}</summary>
               <fieldset class="stack" disabled={busy}>
-                <legend>{singled ? fw.singled.giveNameLabel : words.changeLabel}</legend>
-                {!singled && <p class="small muted">{words.changeHint}</p>}
+                <legend>{singled ? fw.singled.giveNameLabel : foundOn ? fw.spelledLabel : words.changeLabel}</legend>
+                {!singled && !foundOn && <p class="small muted">{words.changeHint}</p>}
                 <div class="row">
                   <label for={`${id}-words`} class="visually-hidden">
-                    {singled ? fw.singled.giveNameLabel : words.changeLabel}
+                    {singled ? fw.singled.giveNameLabel : foundOn ? fw.spelledLabel : words.changeLabel}
                   </label>
                   <input id={`${id}-words`} type="text" placeholder={singled ? fw.singled.giveNamePlaceholder : undefined} maxLength={NAME_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={wholeName} onInput={(e) => { const typed = (e.target as HTMLInputElement).value; setWholeName(typed); if (typed.trim() === "") setHeard(""); }} />
                   <button

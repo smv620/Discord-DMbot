@@ -14,6 +14,9 @@ export const nameFoundWords = {
   yesSpelling: "✅ Yes, this spelling",
   /** Names longer than this get the short yes. */
   longName: 24,
+  /** ✏️ Spelled another way…: the change-the-words form for a name the reader found (Discord's words, #5144 slice B). */
+  spelledOther: "✏️ Spelled another way…",
+  spelledLabel: "The name, spelled right",
   /** A thing or place the story keeps coming back to but never names (#5175, slice 6): its three answers, for that question only. */
   singled: {
     keepIt: "✅ Keep it",
