@@ -33,7 +33,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.scan import alike, find_new_names, group_alike, sound_keys
+from dmbot.memory.models import name_key
+from dmbot.memory.scan import Suggestion, alike, find_new_names, group_alike, sound_keys
 from dmbot.transcript.cleaner import text_names_a_secret
 
 MIN_LETTERS = 4  # shorter words sound like too many names
@@ -185,16 +186,33 @@ class Survey:
     items: list[Candidate]  # the words to ask PlotBot about, most heard first
     guarded: int  # words left as heard because they are close to a secret (or DM-only) name
     new: int  # words close to no list name: new names, for the after-session scan and the DM
+    # Past MAX_CANDIDATES (slice 4): never asked, so the name step's card keeps them; their keys
+    left_out: tuple[str, ...] = ()
 
 
-def survey(lines: Sequence[str], lookup: CampaignLookup, people: Iterable[str] = ()) -> Survey:
+def survey(
+    lines: Sequence[str],
+    lookup: CampaignLookup,
+    people: Iterable[str] = (),
+    extra: Sequence[Suggestion] = (),
+) -> Survey:
     """The words in `lines` (cleaned text) worth asking PlotBot about, most heard first, and how
     many were left alone. `people`: the names of the people at the table, each whole name and each
-    word of it."""
+    word of it. `extra` (docs/design/session_names.md, section 7, slice 4): the spellings the name
+    reader found, capitals or none, joined to the capital-letter scan's (the union, by key), so a
+    known name heard in lower case is asked about too; each goes through the same tests."""
     skip = {entry.key for entry in lookup.names} | set(lookup.keep_keys)
     skip |= {key for key in lookup.people_by_key}
     skip |= {p.casefold() for p in people}
-    found = group_alike(find_new_names(lines, skip, min_times=1, unlimited=True))
+    scanned = find_new_names(lines, skip, min_times=1, unlimited=True)
+    have = {name_key(s.name) for s in scanned} | {name_key(a) for s in scanned for a in s.also}
+    added: list[Suggestion] = []
+    for s in extra:
+        key = name_key(s.name)
+        if key and key not in skip and s.name.casefold() not in skip and key not in have:
+            have.add(key)
+            added.append(s)
+    found = group_alike([*scanned, *added])
     out: list[Candidate] = []
     guarded = new = 0
     for suggestion in found:
@@ -238,8 +256,15 @@ def survey(lines: Sequence[str], lookup: CampaignLookup, people: Iterable[str] =
                 tuple(shown),
             )
         )
-    out.sort(key=lambda c: (-c.times, c.heard))
-    return Survey(out[:MAX_CANDIDATES], guarded, new)
+    if extra:
+        # (slice 4, the Expert on #5133: with the reader's names joined, the limit decides more,
+        # so the closest to a known name go first, then the most heard: it cuts the weakest)
+        out.sort(key=lambda c: (-max(n.likeness for n in c.near), -c.times, c.heard))
+    else:
+        out.sort(key=lambda c: (-c.times, c.heard))
+    cut = out[MAX_CANDIDATES:]
+    left = tuple(name_key(s) for c in cut for s in (c.heard, *c.also))
+    return Survey(out[:MAX_CANDIDATES], guarded, new, left)
 
 
 def candidates(

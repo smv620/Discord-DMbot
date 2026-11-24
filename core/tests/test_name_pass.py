@@ -210,3 +210,133 @@ class TheReportAsText(unittest.TestCase):
         )
         self.assertEqual(report_from_json(report_to_json(report)), report)
         self.assertEqual(report_from_json(report_to_json(Report())), Report())
+
+
+class TheReadersCandidates(unittest.TestCase):
+    """Slice 4 (docs/design/session_names.md, section 7; #5133): the name reader's spellings join
+    the capital-letter scan's, so a known name heard in lower case is asked about."""
+
+    LOWER = ("we met keirandal at dawn", "keirandal waved from the cart")
+
+    def test_a_known_name_heard_in_lower_case_is_asked_only_with_the_reader(self) -> None:
+        from dmbot.memory.scan import Suggestion
+
+        self.assertEqual(np.candidates(self.LOWER, make()), [])
+        got = np.survey(self.LOWER, make(), extra=[Suggestion("keirandal", 2)]).items
+        self.assertEqual([c.heard for c in got], ["keirandal"])
+        self.assertEqual(got[0].near[0].name, "Kethrandil")
+        self.assertTrue(got[0].lines)  # (its lines are found in any case)
+
+    def test_the_union_never_asks_one_spelling_twice(self) -> None:
+        from dmbot.memory.scan import Suggestion
+
+        got = np.survey(LINES, make(), extra=[Suggestion("Keirandal", 3)]).items
+        self.assertEqual(sum(1 for c in got if c.heard.casefold() == "keirandal"), 1)
+
+    def test_past_the_limit_the_closest_go_first_and_the_rest_are_counted(self) -> None:
+        from unittest.mock import patch
+
+        from dmbot.memory.scan import Suggestion
+
+        lines = [*self.LOWER, "drenwik was there", "drenwik again"]
+        extra = [Suggestion("keirandal", 2), Suggestion("drenwik", 9)]
+        with patch.object(np, "MAX_CANDIDATES", 1):
+            got = np.survey(lines, make(), extra=extra)
+        self.assertEqual(len(got.items), 1)
+        best = max(n.likeness for n in got.items[0].near)
+        other = "drenwik" if got.items[0].heard == "keirandal" else "keirandal"
+        self.assertEqual(got.left_out, (other,))
+        self.assertGreaterEqual(best, 0)  # (the closest first, whatever the hearings)
+
+    def test_without_the_reader_the_order_is_today_s(self) -> None:
+        got = np.survey(LINES, make())
+        self.assertEqual(
+            [c.times for c in got.items], sorted((c.times for c in got.items), reverse=True)
+        )
+        self.assertEqual(got.left_out, ())
+
+    def test_a_known_name_or_a_person_at_the_table_from_the_reader_is_never_asked(self) -> None:
+        from dmbot.memory.scan import Suggestion
+
+        got = np.survey(
+            self.LOWER, make(), ["Mia"], extra=[Suggestion("kethrandil", 2), Suggestion("mia", 2)]
+        ).items
+        self.assertEqual(got, [])
+
+
+class WhatThePassTellsTheStep(unittest.TestCase):
+    """Slice 4 (#5133, the reviewer): `run` tells the name step what it settled only once it has
+    finished, and a "sure" answer that wrote nothing is not settled."""
+
+    def run_pass(self, ask: object, written: bool = True) -> tuple[set[str], set[str], set[str]]:
+        import asyncio
+        from types import SimpleNamespace
+
+        from dmbot.memory.scan import Suggestion
+        from dmbot.transcript import name_pass_run
+
+        lines = [SimpleNamespace(text=t, sidebar="", typed=False, user_id=1, topic="game")
+                 for t in TheReadersCandidates.LOWER]  # fmt: skip
+
+        async def read(*_a: object) -> list[SimpleNamespace]:
+            return lines
+
+        async def respell(*_a: object, **_k: object) -> object:
+            return SimpleNamespace(forms=[("keirandal", 2)] if written else [])
+
+        store = SimpleNamespace(lines=read, respell_names=respell)
+        asked: set[str] = set()
+        left: set[str] = set()
+        fixed: set[str] = set()
+        asyncio.run(
+            name_pass_run.run(
+                store, make(), ask, 1, "c1", "s1", now=0, forget_before=0,  # type: ignore[arg-type]
+                extra=[Suggestion("keirandal", 2)], asked=asked, left_out=left, fixed_keys=fixed,
+            )
+        )  # fmt: skip
+        return asked, left, fixed
+
+    def test_a_fix_is_settled_and_reported_as_written(self) -> None:
+        async def ask(*_a: object) -> str:
+            return json.dumps({"answers": [{"n": 1, "answer": "is", "name": "Kethrandil"}]})
+
+        asked, left, fixed = self.run_pass(ask)
+        self.assertEqual((asked, left, fixed), ({"keirandal"}, set(), {"keirandal"}))
+
+    def test_a_failed_call_settles_nothing(self) -> None:
+        import asyncio
+        from types import SimpleNamespace
+
+        from dmbot.memory.scan import Suggestion
+        from dmbot.transcript import name_pass_run
+
+        async def ask(*_a: object) -> str:
+            raise RuntimeError("down")
+
+        async def read(*_a: object) -> list[object]:
+            return [SimpleNamespace(text=t, sidebar="", typed=False, user_id=1, topic="game")
+                    for t in TheReadersCandidates.LOWER]  # fmt: skip
+
+        asked: set[str] = set()
+        with self.assertRaises(RuntimeError):
+            asyncio.run(
+                name_pass_run.run(
+                    SimpleNamespace(lines=read), make(), ask, 1, "c1", "s1", now=0,  # type: ignore[arg-type]
+                    forget_before=0, extra=[Suggestion("keirandal", 2)], asked=asked,
+                )
+            )  # fmt: skip
+        self.assertEqual(asked, set())  # (so the step's "Sounds like" questions stay)
+
+    def test_a_sure_answer_that_wrote_nothing_is_not_settled(self) -> None:
+        async def ask(*_a: object) -> str:
+            return json.dumps({"answers": [{"n": 1, "answer": "is", "name": "Kethrandil"}]})
+
+        asked, _left, fixed = self.run_pass(ask, written=False)
+        self.assertEqual((asked, fixed), (set(), set()))
+
+    def test_unsure_is_settled_for_the_dm_s_own_question(self) -> None:
+        async def ask(*_a: object) -> str:
+            return json.dumps({"answers": [{"n": 1, "answer": "unsure"}]})
+
+        asked, _left, fixed = self.run_pass(ask)
+        self.assertEqual((asked, fixed), ({"keirandal"}, set()))
