@@ -26,7 +26,7 @@ class SplitTest(unittest.TestCase):
     def test_every_test_file_is_in_exactly_one_part(self) -> None:
         files = sorted(p.name for p in TESTS.glob("test_*.py"))
         self.assertGreater(len(files), 100)  # the real suite, not an empty glob
-        for total in (1, 2, 3, 4):
+        for total in (1, 2, 3, 4, 8):
             parts = [
                 {f for f in files if shard.part_of(f, total) == n} for n in range(1, total + 1)
             ]
