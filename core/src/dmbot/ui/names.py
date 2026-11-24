@@ -1833,7 +1833,11 @@ class SuggestionReview(_Menu):
             singled=self.singled,
             # (a name the reader found that is a rules word: it was offered on the reader's word
             # that the session used it like a name, #5214 part 2a)
+            # (`entity.type` is the lore kind word, "npc" for a character, as `in_the_rules` needs;
+            # the reader's own reasons only: the scan never hands on a rules word, so a name the
+            # reader found that is a rules word was offered on its stated sense)
             rules_word=self.found is not None
+            and self.found.how in name_reader.WHYS
             and not self.singled
             and name_reader.rules_word(
                 entity.name, entity.type, (campaign.target_ruleset, campaign.fallback_ruleset)

@@ -12940,11 +12940,33 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     and read_in[int(n) - 1].typed
                 )  # fmt: skip
 
+            # A rules word the scan found by its capitals ("the Owlbear attacks") is never a plain
+            # new name: only the reader's stated sense opens it, from the lines it cited (#5214 2a;
+            # the Expert's check). The campaign's rulesets say which spells and monsters it holds.
+            try:
+                held_rules = await self.campaigns.get(gid, cid)
+                rules = (
+                    (held_rules.target_ruleset, held_rules.fallback_ruleset) if held_rules else None
+                )
+            except Exception:  # (then only the game terms, skills and abilities are known)
+                rules = None
+            rules_scanned = {
+                name_key(f.name) for f in spelled if name_reader.rules_word_any(f.name, rules)
+            }
+            scan_rows = [
+                *scan_rows,
+                *(
+                    name_trace.Row(name_trace.SCAN, f.name, name_reader.RULES_WORD)
+                    for f in spelled
+                    if name_key(f.name) in rules_scanned
+                ),
+            ]
             spellings = [
                 name_groups.Spelling(
                     f.name, f.times, typed=typed_by_scan(f.name), ordinary=f.ordinary
                 )
                 for f in spelled
+                if name_key(f.name) not in rules_scanned
             ] + [
                 name_groups.Spelling(
                     f.name,

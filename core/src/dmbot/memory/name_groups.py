@@ -57,7 +57,7 @@ GROUPED = "grouped_into_another"  # one spelling of a group whose shown spelling
 TO_NAME_PASS = "decided_by_name_pass"
 # #5214 part 2a: a rules word the reader was unsure was used as a name, past the session's cap
 UNSURE_OVER = "unsure_over_the_number"
-UNSURE_CAP = 2  # (Supervisor's ruling on #5214; the reader's own `name_reader.UNSURE_CAP`)
+UNSURE_CAP = 2  # (Supervisor's ruling on #5214: 2, revisited with the scored counts)
 # Close to a known name, but past the pass's limit: the card asks it (the Expert, on #5133)
 PASS_OVER = "pass_over_the_number"
 # (a count row only, never a name: spellings dropped as close to a secret)
@@ -115,8 +115,9 @@ class Group:
 
     @property
     def sure(self) -> bool:
-        """Introduced by name or typed: offered first (section 6)."""
-        return self.why == INTRODUCED or self.typed
+        """Introduced by name or typed: offered first (section 6). Never an unsure rules word: it
+        comes after every other suggestion, whatever its reason (#5214 2a)."""
+        return not self.unsure and (self.why == INTRODUCED or self.typed)
 
     def suggestion(self) -> Suggestion:
         return Suggestion(self.name, self.times, self.also)
@@ -286,7 +287,9 @@ def _merged(spellings: Iterable[Spelling]) -> list[_Key]:
                 typed=max(s.typed for s in found),
                 kind=next((s.kind for s in read if s.kind), ""),
                 ordinary=bool(scan) and not read and all(s.ordinary for s in scan),
-                unsure=bool(read) and not scan and all(s.unsure for s in read),
+                # (from the reader alone: the session step never hands a rules word the scan
+                # found by its capitals, which are no evidence it was used as a name)
+                unsure=bool(read) and all(s.unsure for s in read),
             )
         )
     return out
@@ -355,7 +358,9 @@ def settle(
                 unsure,
             )
         )
-    # (an unsure rules word after every other suggestion, and at most UNSURE_CAP of them: #5214)
+    # (an unsure rules word after every other suggestion, and at most UNSURE_CAP of them: #5214.
+    # Capped here, before the name pass takes its groups: a kept one it takes is not replaced by
+    # one dropped, so the session asks at most 2, never more.)
     out.offered.sort(key=lambda g: (g.unsure, not g.sure, -g.times, g.name.casefold()))
     unsure_seen = 0
     kept: list[Group] = []

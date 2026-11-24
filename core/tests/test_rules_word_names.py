@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dmbot.memory import name_groups as ng
 from dmbot.memory import name_reader as nr
@@ -93,6 +93,16 @@ class TheRules(unittest.TestCase):
         self.assertTrue(nr.holds_as_name("stealth the cat sleeps", "stealth"))
         self.assertTrue(nr.holds_as_name("we sail on the insight", "insight"))
 
+    def test_a_roll_phrase_needs_its_whole_words(self) -> None:
+        # (only check, roll, save and saving throw, plurals too: "saving the crew" is no roll)
+        self.assertTrue(nr.holds_as_name("the insight saving the crew", "insight"))
+        self.assertFalse(nr.holds_as_name("an insight saving throw", "insight"))
+        self.assertFalse(nr.holds_as_name("two insight saving throws", "insight"))
+
+    def test_unsure_perception_cited_only_on_its_roll_lines_is_refused(self) -> None:
+        kept, why = read(item("perception", "idea", "spoken_of", [6, 12, 14], "unsure"))
+        self.assertEqual((kept, why), ([], {"perception": nr.RULES_WORD}))
+
     def test_the_instructions_ask_for_the_sense(self) -> None:
         self.assertEqual(nr.PROMPT_VERSION, "names-3")
         self.assertIn('"sense": "name"', nr.SYSTEM)
@@ -112,11 +122,21 @@ class TheCap(unittest.TestCase):
         out = ng.settle([ng.Spelling("Insight", 1, why="introduced", unsure=True)])
         self.assertEqual((out.offered, out.refused[0][1]), ([], ng.TOO_FEW))
 
-    def test_a_name_both_readers_found_is_never_unsure(self) -> None:
+    def test_unsure_is_the_readers_word_alone(self) -> None:
+        # (the step hands on no rules word the scan found; were one there, its capitals would be
+        # no evidence of a name, so the group stays unsure)
         out = ng.settle(
             [ng.Spelling("Insight", 2, why="spoken_of", unsure=True), ng.Spelling("Insight", 2)]
         )
-        self.assertEqual([g.unsure for g in out.offered], [False])
+        self.assertEqual([g.unsure for g in out.offered], [True])
+
+    def test_an_unsure_one_is_never_sure_even_when_introduced(self) -> None:
+        out = ng.settle(
+            [ng.Spelling("Insight", 2, why="introduced", unsure=True),
+             ng.Spelling("Vorna", 2, why="spoken_of")]
+        )  # fmt: skip
+        self.assertEqual([(g.name, g.sure) for g in out.offered], [("Vorna", False),
+                                                                   ("Insight", False)])  # fmt: skip
 
 
 class TheCard(unittest.TestCase):
@@ -136,6 +156,64 @@ class TheCard(unittest.TestCase):
         for name, kind in (("Insight", "item"), ("Animal Handling", "concept"), ("Arcana", "npc")):
             with self.subTest(name=name):
                 self.assertTrue(nr.rules_word(name, kind, None))
+        # (the card passes `entity.type`, the lore kind word: a waiting character named for a
+        # kind of monster gets the line; the Expert's check)
+        self.assertTrue(nr.rules_word("Owlbear", "npc", RULES))
+        self.assertTrue(nr.rules_word_any("Owlbear", RULES))
+        self.assertFalse(nr.rules_word("Owlbear", "place", RULES))
         for name in ("Captain Stealth", "Hrothgar", "Dex"):
             with self.subTest(name=name):
                 self.assertFalse(nr.rules_word(name, "npc", None))
+
+
+class TheStep(unittest.TestCase):
+    """The session step itself (switch on), on `test_scan_loose`'s stand-in bot."""
+
+    def run_step(self, bot: Any, texts: list[str]) -> list[str]:
+        from tests.test_scan_loose import TheBotStep
+
+        return TheBotStep.run_step(cast(Any, TheBotStep()), bot, texts)
+
+    def bot(self, folder: str, found: list[nr.Found], texts: list[str]) -> Any:
+        from types import SimpleNamespace
+
+        from tests.test_scan_loose import stand_in
+
+        bot = stand_in(folder, {}, texts=texts)
+
+        async def read(*_a: Any, **_k: Any) -> Any:
+            return found, [], 0
+
+        async def campaign(*_a: Any) -> Any:
+            return SimpleNamespace(
+                name="sample", target_ruleset=RULES[0], fallback_ruleset=RULES[1]
+            )
+
+        bot._read_session_names = read
+        bot.campaigns = SimpleNamespace(get=campaign)
+        return bot
+
+    def test_an_owlbear_the_scan_found_by_its_capitals_is_never_a_plain_new_name(self) -> None:
+        import tempfile
+
+        from dmbot.memory.scan import find_new_names
+
+        texts = ["The Owlbear attacks Vorna.", "Then the Owlbear roars at Vorna."]
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self.run_step(self.bot(d, [], texts), texts), ["Vorna"])
+        # (without the campaign's rulesets the scan alone would offer it: the guard is real)
+        found = [s.name for s in find_new_names(texts, min_times=2)]
+        self.assertIn("Owlbear", found)
+
+    def test_two_unsure_offered_after_the_others_the_third_traced(self) -> None:
+        import tempfile
+
+        texts = ["we sail on", "and on"]
+        found = [nr.Found(n, "item", "spoken_of", 2, ("1", "2"), nr.UNSURE)
+                 for n in ("insight", "arcana", "nature")]  # fmt: skip
+        found.append(nr.Found("hrothgar", "person", "spoken_of", 2, ("1", "2")))
+        with tempfile.TemporaryDirectory() as d:
+            made = self.run_step(self.bot(d, found, texts), texts)
+        # (the sure name first, then two unsure ones; the third is dropped: `TheCap` traces it)
+        self.assertEqual(made[0], "Hrothgar")
+        self.assertEqual(len(made), 3)

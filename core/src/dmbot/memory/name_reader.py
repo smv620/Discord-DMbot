@@ -17,9 +17,9 @@ Rules held in code, not trust (design section 11):
   kind of monster the campaign's rules hold, as the lore read leaves them out (`rules_word`).
   The one opening (#5214 part 2a): a whole name that is a rules word ("the Insight", a ship) is
   offered when the reader says the lines use it as a name (`sense`): "name", or "unsure" (asked,
-  at most `UNSURE_CAP` a session, after every other suggestion). Its hearings are only the lines
-  the reader cited, never one with a roll after it ("insight check"). The list only ever refuses;
-  the reader's word only decides whether the DM is asked.
+  at most `name_groups.UNSURE_CAP` a session, after every other suggestion). Its hearings are only
+  the lines the reader cited, never one with a roll after it ("insight check"). The list only
+  ever refuses; the reader's word only decides whether the DM is asked.
 - **The transcript is data.** A name that reads like an instruction is refused (`instruction`).
 - **How many hearings** (section 5): a name introduced ("a dwarf called …") needs one; addressed,
   a place or spoken of needs two. Grouping by sound is slice 3, so here a name's hearings are
@@ -80,10 +80,9 @@ SINGLED_KINDS = frozenset({"item", "place"})  # never a person, a group or an ev
 HEARINGS = {INTRODUCED: 1, ADDRESSED: 2, PLACE: 2, SPOKEN_OF: 2, SINGLED_OUT: 3}
 # A rules word used as a name (#5214 part 2a): the reader's "sense" of it
 AS_NAME = "name"
-UNSURE = "unsure"  # asked when 2 lines hold it, at most UNSURE_CAP a session, after the others
+UNSURE = "unsure"  # asked when 2 lines hold it, after the others (the cap: `name_groups`)
 SENSES = (AS_NAME, UNSURE)
 UNSURE_HEARINGS = 2
-UNSURE_CAP = 2  # (Supervisor's ruling on #5214: 2, revisited with the scored counts)
 _ARTICLE = re.compile(r"^(?:a|an|the|this|that)\s+", re.IGNORECASE)
 
 # The fixed reasons a candidate ends with (design section 8; the trace's words)
@@ -136,7 +135,7 @@ Answer with JSON only:
 {"names": [{"name": "hrothgar", "kind": "person", "why": "introduced", "lines": [3]}]}
 "kind" is one of: person, place, group, god, item, event, idea. "lines" are the numbers of the
 lines that hold the name. A word that is also a rules word, used as a name, adds "sense":
-{"name": "insight", "kind": "item", "why": "place", "lines": [7, 9], "sense": "name"}
+{"name": "insight", "kind": "item", "why": "spoken_of", "lines": [7, 9], "sense": "name"}
 Give {"names": []} if there are none."""
 
 _LIST_START = re.compile(r'\s*\{\s*"names"\s*:\s*\[')
@@ -206,7 +205,11 @@ def holds(line: str, name: str) -> bool:
     return any(words[i : i + len(want)] == want for i in range(len(words) - len(want) + 1))
 
 
-_ROLL_START = frozenset(w.split()[0] for w in ROLL_WORDS) | {w.split()[0] + "s" for w in ROLL_WORDS}
+# The roll words as word lists, with their plurals ("checks", "saving throws"): whole phrases only,
+# so "the insight saving the crew" is still a hearing
+_ROLLS = [w.split() for w in ROLL_WORDS] + [
+    [*w.split()[:-1], w.split()[-1] + "s"] for w in ROLL_WORDS
+]
 
 
 def holds_as_name(line: str, name: str) -> bool:
@@ -215,9 +218,12 @@ def holds_as_name(line: str, name: str) -> bool:
     want, words = _words(name), _words(line)
     if not want:
         return False
+
+    def rolled(after: int) -> bool:
+        return any(words[after : after + len(r)] == r for r in _ROLLS)
+
     return any(
-        words[i : i + len(want)] == want
-        and (i + len(want) >= len(words) or words[i + len(want)] not in _ROLL_START)
+        words[i : i + len(want)] == want and not rolled(i + len(want))
         for i in range(len(words) - len(want) + 1)
     )
 
@@ -230,6 +236,12 @@ def rules_word(name: str, kind: str, rules: tuple[str, str] | None) -> bool:
     if key in GAME_TERMS or key in RULES_PHRASES:
         return True
     return rules is not None and in_the_rules(name, kind, *rules)
+
+
+def rules_word_any(name: str, rules: tuple[str, str] | None) -> bool:
+    """`rules_word` for a name with no kind yet (the scan's): a monster as a character, or a spell
+    as an idea."""
+    return rules_word(name, "npc", rules) or rules_word(name, "concept", rules)
 
 
 def _whole_items(text: str) -> list[object]:
@@ -380,10 +392,11 @@ def tally(
     the name's spellings is a hearing even when the reader cited another (it cites at most
     `LINES_MAX`); but a rules word used as a name is heard only in the lines the reader cited
     (#5214 2a: "stealth" said as a skill is no hearing of a cat called Stealth), and one it was
-    unsure of needs `UNSURE_HEARINGS`. Most heard first. `every`: no name ends with too few
-    hearings here: the after-
-    session step counts hearings for a whole group of spellings (`name_groups`, design section 5),
-    so a spelling heard once may still join one heard once more."""
+    unsure of needs `UNSURE_HEARINGS`. Most heard first.
+
+    `every`: no name ends with too few hearings here: the after-session step counts hearings for a
+    whole group of spellings (`name_groups`, design section 5), so a spelling heard once may still
+    join one heard once more."""
     by_key: dict[str, list[Heard]] = {}
     for h in heard:
         by_key.setdefault(h.key, []).append(h)

@@ -1,4 +1,5 @@
-# Invented lines for #5214 part 2a: a rules word used as a name. Numbered from 1, one line each.
+# Invented lines for #5214 part 2a: a rules word used as a name. One line each, numbered from 1
+# after these comment lines (they are skipped, so line 1 is the first line below them).
 our ship is called the insight and she is fast
 we sail on the insight at dawn
 the insight takes on water near the reef
