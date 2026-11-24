@@ -19,6 +19,10 @@ costs a little, so that is the gate, not `--dry-run`): the tool only says how ma
 to ask about (a number, no words), from the same lines and the same people as the live pass. There
 is no cleaner step in the tool on purpose: a stored session's cleaned text is already what the
 live pass reads, so running the cleaner again would not change what the pass sees.
+`--reader` (with `--yes`: it calls the AI too) runs the name reader first, as a live session does
+with DMBOT_SESSION_NAMES on (`DMBot._read_before_pass`, slice 4, #5133), and passes its spellings to
+the pass as `extra`, so the dry run's candidates are a live session's (#5163). Without it the pass
+reads the capital-letter scan's candidates only, as with the switch off.
 `--game-only` is for an imported session (the off-topic filter's lines are left out, as the
 import does). A run without `--dry-run` writes the fixes into the cleaned text, with
 the same Undo numbers as a live session (the DM sees them on the DM screen only for a live
@@ -40,6 +44,7 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
+from dmbot.memory.scan import Suggestion
 from dmbot.transcript import name_pass as np
 
 
@@ -52,7 +57,50 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--game-only", action="store_true", help="an imported session: skip off-topic lines"
     )
+    parser.add_argument(
+        "--reader",
+        action="store_true",
+        help="run the name reader first, as with DMBOT_SESSION_NAMES on (with --yes)",
+    )
     return parser.parse_args(argv)
+
+
+async def reader_spellings(
+    read: Any,
+    stored: Sequence[Any],
+    pass_texts: Sequence[str],
+    *,
+    known: set[str],
+    rejected: set[str],
+    people: set[str],
+    dms: set[int],
+    rules: tuple[str, str],
+    consenting: Any,
+    max_tokens: int,
+) -> tuple[list[Suggestion], int | None]:
+    """The name reader's spellings for the pass, as `DMBot._read_before_pass` makes them (slice 4,
+    #5133): it reads exactly the stored lines the pass reads (`pass_texts`), with the same names
+    to skip and why, and each name it kept becomes a candidate heard at least once
+    (`EarlyRead.spellings`). `read`: `name_reader.read`, with its AI bound. Returns the spellings
+    and the stretches not read (shown as a count: a stretch not read is never "no names")."""
+    from dmbot.memory import name_reader
+
+    texts = set(pass_texts)
+    rows = [
+        name_reader.Row(str(i), x.user_id, x.user_id in dms, x.text)
+        for i, x in enumerate((x for x in stored if x.text in texts), 1)
+    ]
+    if not rows:
+        return [], 0
+    skip = {k: name_reader.KNOWN_NAME for k in known}
+    skip.update({k: name_reader.NOT_A_NAME for k in rejected})
+    skip.update({k: name_reader.AT_TABLE for k in people})
+    got = await read(
+        rows, skip, known=sorted(known - rejected), consenting=consenting,
+        max_tokens=max_tokens, rules=rules,
+    )  # fmt: skip
+    kept, _dropped = name_reader.tally(got.heard, {r.number: r.text for r in rows}, every=True)
+    return [Suggestion(f.name, max(f.times, 1)) for f in kept], got.unread
 
 
 def output(report: np.Report, *, dry_run: bool) -> list[str]:
@@ -90,6 +138,9 @@ async def main_async(args: argparse.Namespace) -> int:
         people = set(lookup.people_by_key)
         for key in list(people):
             people.update(key.split())
+        if args.reader and not args.yes:
+            print("name_pass: --reader calls the AI, so it needs --yes", file=sys.stderr)
+            return 2
         if not args.yes:
             texts = await name_pass_run.pass_lines(
                 transcripts, args.guild, args.session, agreed, args.game_only
@@ -111,6 +162,40 @@ async def main_async(args: argparse.Namespace) -> int:
             return 2
         ai = AnthropicClient(key, models)
         client = ai.tier(FEATURE_TIERS[Feature.NAME_PASS], Feature.NAME_PASS)
+        extra: list[Suggestion] = []
+        if args.reader:
+            from dmbot.ai import OUTPUT_FLOOR
+            from dmbot.campaigns.store import CampaignStore
+            from dmbot.memory import name_reader
+            from dmbot.transcript.topics import GAME
+
+            campaign = await CampaignStore(db).get(args.guild, session.campaign_id)
+            if campaign is None:
+                print("name_pass: the session's campaign is gone", file=sys.stderr)
+                await ai.close()
+                return 2
+            pass_texts = await name_pass_run.pass_lines(
+                transcripts, args.guild, args.session, agreed, args.game_only
+            )
+            consent = ConsentStore(db)
+            extra, unread = await reader_spellings(
+                lambda *a, **k: name_reader.read(client, *a, **k),
+                [  # (the lines `_read_before_pass` reads: who still agrees, game talk on an import)
+                    x
+                    for x in await transcripts.lines(args.guild, args.session)
+                    if x.user_id in agreed and (not args.game_only or x.topic == GAME)
+                ],
+                pass_texts,
+                known=set(await memory.known_keys(args.guild, session.campaign_id)),
+                rejected=set(await memory.rejected_keys(args.guild, session.campaign_id)),
+                people=people,
+                dms=set(campaign.dm_user_ids),
+                rules=(campaign.target_ruleset, campaign.fallback_ruleset),
+                consenting=lambda: consent.consenting(args.guild),
+                max_tokens=OUTPUT_FLOOR,
+            )
+            # (counts only: the spellings are transcript words and stay out of the counts line)
+            print(f"Name reader: {len(extra)} spelling(s) found, {unread} stretch(es) not read")
 
         async def ask(system: str, question: str) -> Any:
             return await client.complete(system, question, max_tokens=2000, schema=np.SCHEMA)
@@ -121,7 +206,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 transcripts, lookup, ask, args.guild, session.campaign_id, args.session,
                 people=people, known=await memory.known_keys(args.guild, session.campaign_id),
                 agreed=agreed, now=now, forget_before=now - int(memory.keep_days * 86400),
-                dry_run=args.dry_run, game_only=args.game_only,
+                dry_run=args.dry_run, game_only=args.game_only, extra=extra,
             )  # fmt: skip
         finally:
             await ai.close()
