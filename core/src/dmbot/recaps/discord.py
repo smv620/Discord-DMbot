@@ -2660,13 +2660,22 @@ class RecapFeatures:
                             name_answers.NOT_ALLOWED
                             if campaign is None
                             else await name_answers.apply(
-                                self.memory, guild.id, campaign.dm_user_ids, answer, kept, store
+                                self.memory,
+                                guild.id,
+                                campaign.dm_user_ids,
+                                answer,
+                                kept,
+                                store,
+                                name_answers.HeardTools(
+                                    getattr(self, "transcripts", None),
+                                    getattr(self, "consent", None),
+                                ),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
                         log.warning("A name answer failed: %s", type(exc).__name__)
                         why = name_answers.FAILED
-                    stays = answer.action in name_answers.KEPT_ACTIONS and kept.batch is not None
+                    stays = answer.action in name_answers.UNDOABLE and kept.batch is not None
                     if not await store.finish(
                         guild.id, answer, error=why, kept=kept if stays else None
                     ):

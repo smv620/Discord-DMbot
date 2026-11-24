@@ -15,6 +15,7 @@ from typing import Any
 
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
+from dmbot.memory import name_words
 from dmbot.memory.models import NAME_MAX, MemoryRuleError, lookup_key
 from dmbot.memory.name_longer import MAX_OFFERED, longer_names
 from dmbot.memory.places import LINE_CHARS, cut, find_in, trimmed
@@ -306,12 +307,24 @@ async def read_answer(
         got = (await cur.fetchone() or {}).get("r")
     if got is None:
         raise RecapError("not_found")
-    return {
+    out = {
         "state": str(got["state"]),
         "note": str(got["note"]),
         "error": str(got["error"]) or None,
         "batch": got["batch"],
     }
+    kept = name_answers.read_yes_note(out["note"])
+    if kept is not None:
+        # A yes that made rules (#5144): Discord's reply as plain text, which heard spellings now
+        # read as the name, and whether this session's transcript was fixed ("fixed", "later" or
+        # "failed"); the batch is what the page's Undo sends.
+        fixed, kind, name, rules = kept
+        out.update(
+            note=name_words.rules_note(name, kind, rules, fixed),
+            rules=rules,
+            fixed=fixed,
+        )
+    return out
 
 
 async def queue_more_names(db: Database, session: Session, ref: str) -> str:

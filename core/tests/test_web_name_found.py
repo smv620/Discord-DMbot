@@ -10,6 +10,7 @@ from typing import Any
 from dmbot.consent import TERMS_VERSION
 from dmbot.memory import name_words
 from dmbot.memory.name_found import NameFound
+from dmbot.recaps import name_answers as na
 from dmbot.transcript.models import Line, line_ref
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import name_checks as web_checks
@@ -167,3 +168,94 @@ class TheWords(unittest.TestCase):
         self.assertEqual(
             name_words.heard_line(2, 0, [], written=True), "Found 2 times in your text."
         )
+
+
+class FakeConsent:
+    """Who counts as recorded: only the people given (the bot's `Consent.recorded_in`)."""
+
+    def __init__(self, *people: int) -> None:
+        self.people = frozenset(people)
+
+    async def recorded_in(self, guild_id: int, campaign_id: str) -> frozenset[int]:
+        return self.people
+
+
+class TheYes(TheFoundCard):
+    """The yes on a name with a found row (#5144 slice B): the other spellings heard become rules,
+    this session's transcript follows, one Undo takes it all back, and the poll says so."""
+
+    async def start(self) -> tuple[str, str]:
+        # (a table with a player character: the gate holds a new entry for a party that exists, and
+        # an empty party sees only common knowledge, so the lines would be "later")
+        await self.memory.add_entity(
+            GUILD, self.one.id, type="character", name="Mira", source="dm",
+            role="player_character", status="confirmed",
+        )  # fmt: skip
+        harrow = await self.suggest("Hrothgar Hall")
+        await self.memory.add_alias(
+            GUILD, self.one.id, harrow, "Rothgar Hall", kind="misheard", source="scan"
+        )
+        sid = await TranscriptStore(self.db).open_session(GUILD, self.one.id, AT)
+        line = Line(4000, ALICE.id, "We rode to Rothgar Hall at dawn", "We rode to Rothgar Hall")
+        await TranscriptStore(self.db).add_lines(GUILD, sid, [line])
+        await self.keep(harrow, "introduced", line_ref(sid, line.started_ms, ALICE.id), times=3)
+        return harrow, sid
+
+    async def yes(self, harrow: str) -> tuple[str, na.Kept]:
+        await self.ask(harrow, action="confirm", kind="place")
+        answer = await self.answers.claim_next(GUILD)
+        assert answer is not None
+        kept = na.Kept()
+        tools = na.HeardTools(TranscriptStore(self.db), FakeConsent(ALICE.id))
+        why = await na.apply(self.memory, GUILD, {ALICE.id}, answer, kept, self.answers, tools)
+        await self.answers.finish(GUILD, answer, error=why, kept=kept if kept.batch else None)
+        return why, kept
+
+    async def test_a_yes_makes_rules_fixes_the_session_and_says_so(self) -> None:
+        harrow, sid = await self.start()
+        why, kept = await self.yes(harrow)
+        self.assertEqual(why, "")
+        assert kept.batch is not None
+        parsed = na.read_yes_note(kept.note)
+        assert parsed is not None
+        self.assertEqual(parsed[0:3], ("fixed", "place", "Hrothgar Hall"))
+        self.assertEqual(parsed[3], ["Rothgar Hall"])
+        read = await web_checks.read_answer(self.web, self.session, self.ref, harrow)
+        self.assertEqual(read["state"], "done")
+        self.assertEqual(read["batch"], kept.batch)
+        self.assertEqual(read["fixed"], "fixed")
+        self.assertEqual(read["rules"], ["Rothgar Hall"])
+        self.assertIn("now reads as Hrothgar Hall, in this session's transcript", read["note"])
+        lines = await TranscriptStore(self.db).lines(GUILD, sid)
+        self.assertIn("Hrothgar Hall", lines[0].text)
+
+    async def test_the_undo_puts_the_name_the_lines_and_what_made_it_a_name_back(self) -> None:
+        harrow, sid = await self.start()
+        _why, kept = await self.yes(harrow)
+        await self.ask(harrow, action="undo", batch=kept.batch)
+        answer = await self.answers.claim_next(GUILD)
+        assert answer is not None
+        tools = na.HeardTools(TranscriptStore(self.db), FakeConsent(ALICE.id))
+        why = await na.apply(self.memory, GUILD, {ALICE.id}, answer, None, self.answers, tools)
+        await self.answers.finish(GUILD, answer, error=why)
+        self.assertEqual(why, "")
+        entity = await self.memory.entity(GUILD, self.one.id, harrow)
+        assert entity is not None
+        self.assertEqual(entity.status, "proposed")
+        lines = await TranscriptStore(self.db).lines(GUILD, sid)
+        self.assertIn("Rothgar Hall", lines[0].text)
+        found = (await self.memory.name_found(GUILD, self.one.id, [harrow])).get(harrow)
+        assert found is not None
+        self.assertEqual((found.how, found.times), ("introduced", 3))
+        (card,) = (await self.listed())["names"]
+        self.assertEqual(card["found"]["how"], "introduced")
+
+    async def test_a_name_with_no_found_row_keeps_todays_yes(self) -> None:
+        plain = await self.suggest("Aaron")
+        await self.ask(plain, action="confirm", kind="place")
+        answer = await self.answers.claim_next(GUILD)
+        assert answer is not None
+        kept = na.Kept()
+        tools = na.HeardTools(TranscriptStore(self.db), FakeConsent(ALICE.id))
+        why = await na.apply(self.memory, GUILD, {ALICE.id}, answer, kept, self.answers, tools)
+        self.assertEqual((why, kept.batch), ("", None))
