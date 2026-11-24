@@ -40,10 +40,12 @@ from dmbot.memory.models import NAME_MAX, name_key
 from dmbot.memory.scan import (
     COMMON,
     GAME_TERMS,
-    RULES_WORD,
     Suggestion,
     is_rules_phrase,
     without_roll,
+)
+from dmbot.memory.scan import (
+    RULES_WORD as RULES_WORD,  # (re-exported: the reader's reasons are all here)
 )
 from dmbot.names import not_names
 

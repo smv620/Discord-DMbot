@@ -152,6 +152,6 @@ class TheRecapsNames(unittest.IsolatedAsyncioTestCase):
             to_confirm=(*ROLLS, "Mira check", "Vell check", "Dex saves", "Yrsa"),
         )
         camp = SimpleNamespace(dm_screen_channel_id=77, dm_bot_channel_id=None)
-        await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, job, camp)
+        await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, cast(Any, job), cast(Any, camp))
         added = [c.kwargs["name"] for c in bot.memory.add_entity.await_args_list]
         self.assertEqual(added, ["Yrsa"])  # (the list only refuses: Yrsa is still offered)
