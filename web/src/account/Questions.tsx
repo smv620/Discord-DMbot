@@ -213,6 +213,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                     campaignRef={campaign.ref}
                     group={walking.group}
                     id={`q-${campaign.ref}-walk`}
+                    waiting={walking.count}
                     onLeft={setLeft}
                   />
                   <div class="row">
@@ -265,7 +266,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                         {open.has(k.kind) ? words.hideHere : words.showHere}
                       </button>
                       {open.has(k.kind) && walking?.group !== groupOf(k.kind) && (
-                        <QuestionsHere api={api} campaignRef={campaign.ref} group={groupOf(k.kind) ?? "names"} id={`q-${campaign.ref}-${k.kind}`} />
+                        <QuestionsHere api={api} campaignRef={campaign.ref} group={groupOf(k.kind) ?? "names"} id={`q-${campaign.ref}-${k.kind}`} waiting={k.count} />
                       )}
                     </>
                   ) : howFor(k.kind, api) === "link" && w.to ? (
