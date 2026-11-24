@@ -15503,6 +15503,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 deeds=self._answer_deed,
                                 continuity_ask=self._work_out_continuity,
                                 continuity_answer=self._answer_continuity,
+                                more_names=self.add_more_names,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
