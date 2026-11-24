@@ -26,6 +26,8 @@ import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
 import { THREADS_LIVE } from "../content/threads-switch";
 import { MAPS_LIVE } from "../content/maps-switch";
 import { RULE_UPDATES_LIVE } from "../content/rule-updates-switch";
+import { MORE_NAMES_LIVE } from "../content/more-names-switch";
+import MoreNames from "./MoreNames";
 import QuestionsHere, { groupOf, type HereGroup } from "./QuestionsHere";
 
 /** The bot counts every minute or so: five minutes without a count and the numbers are said to be old. */
@@ -245,7 +247,9 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
               return (
                 <li key={k.kind} class="stack">
                   <strong>{words.kindLine(w.label, k.count)}</strong>
-                  {howFor(k.kind, api) === "here" && lead.get(groupOf(k.kind) ?? "") !== k.kind ? (
+                  {k.kind === "more_names" && MORE_NAMES_LIVE && api.moreNames !== undefined ? (
+                    <MoreNames api={api} campaignRef={campaign.ref} />
+                  ) : howFor(k.kind, api) === "here" && lead.get(groupOf(k.kind) ?? "") !== k.kind ? (
                     <span class="small muted">{words.answeredWith(kindWords(lead.get(groupOf(k.kind) ?? "") ?? "").label)}</span>
                   ) : howFor(k.kind, api) === "here" ? (
                     <>
