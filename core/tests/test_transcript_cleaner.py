@@ -247,6 +247,34 @@ class TrapsTest(unittest.TestCase):
                 heard = f"the {name.lower()} attacks"
                 self.assertEqual(text(heard, names), heard)
 
+    def test_a_names_possessive_heard_in_lower_case_gets_its_capitals(self) -> None:
+        # (#5207: by the same rule as the name alone; either apostrophe; first word too)
+        names = lookup(more=(entity(MAREN, "Strahd"),), more_aliases=(alias(MAREN, "Strahd"),))
+        self.assertEqual(text("in strahd's castle", names), "in Strahd's castle")
+        self.assertEqual(text("in strahd’s castle", names), "in Strahd’s castle")
+        self.assertEqual(text("strahd's men wait", names), "Strahd's men wait")
+        self.assertEqual(text("we follow thorin's trail"), "we follow Thorin's trail")
+        # (a name ending in s with only an apostrophe is the name itself, already fixed)
+        self.assertEqual(text("in belleros' tent"), "in Belleros' tent")
+
+    def test_an_ordinary_words_possessive_or_a_plural_keeps_its_lower_case(self) -> None:
+        # (#5207: "hope's" is an ordinary word's, even with an NPC called Hope; a plural is never
+        # given capitals, as Supervisor ruled)
+        hope = lookup(more=(entity(MAREN, "Hope"),), more_aliases=(alias(MAREN, "Hope"),))
+        self.assertEqual(text("all hope's gone", hope), "all hope's gone")
+        strahd = lookup(more=(entity(MAREN, "Strahd"),), more_aliases=(alias(MAREN, "Strahd"),))
+        self.assertEqual(text("the strahds are here", strahd), "the strahds are here")
+        self.assertEqual(text("we follow thorins trail"), "we follow thorins trail")
+
+    def test_a_secret_or_unconfirmed_names_possessive_keeps_its_lower_case(self) -> None:
+        secret = lookup(more=(entity(MAREN, "Zarvok"),),
+                        more_aliases=(alias(MAREN, "Zarvok", secret=True),))  # fmt: skip
+        self.assertEqual(text("zarvok's plan", secret), "zarvok's plan")
+        self.assertEqual(text("hrothgar's axe"), "hrothgar's axe")  # (only proposed)
+        # (someone at the table with that name: never rewritten, as for the name alone)
+        strahd = lookup(more=(entity(MAREN, "Strahd"),), more_aliases=(alias(MAREN, "Strahd"),))
+        self.assertEqual(text("strahd's turn", strahd, people=["Strahd"]), "strahd's turn")
+
     def test_a_secret_unconfirmed_or_two_word_name_never_gets_capitals_from_lower_case(
         self,
     ) -> None:

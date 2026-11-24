@@ -9,7 +9,8 @@ missed one):
 - **Same letters, other spelling:** "Kazeth" → "Ka'zeth", "Bryn shander" → "Bryn
   Shander" (`scene.find_mentions` finds them). A word in lower case gets capitals only
   when it is a one-word name and no ordinary word (`_capitals_safe`, #5154), so "ring the
-  bell" never becomes "Bell", while "hrothgar" becomes "Hrothgar".
+  bell" never becomes "Bell", while "hrothgar" becomes "Hrothgar"; its possessive too
+  ("strahd's" → "Strahd's", #5207), never a plural.
 - **A spelling the DM fixed:** "Sara" → "Cerric", once the DM said that's who it means.
 - **Sounds like one name:** a word speech-to-text didn't know ("Beleros"), or a name it
   split ("Ka Zeth"), that sounds like exactly one confirmed name (`lookup.by_sound`) and
@@ -469,7 +470,42 @@ def _known_names(lookup: CampaignLookup, heard: str, person_keys: set[str]) -> l
             written = with_ending(said, written)
         if written is not None and written != said:
             fixes.append(Fix(span[0], span[1], said, written, entity_id, how))
+    fixes += _possessives(lookup, heard, person_keys, taken)
     return fixes
+
+
+def _possessives(
+    lookup: CampaignLookup, heard: str, person_keys: set[str], taken: list[tuple[int, int]]
+) -> list[Fix]:
+    """A confirmed one-word name's possessive heard in lower case gets its capitals, by the same
+    rule as the name alone (`_capitals_safe`, #5207): "strahd's" is "Strahd's", while "hope's"
+    stays as said with an NPC called Hope. Never a plural ("hrothgars"): it is too easily an
+    ordinary word. (A name ending in s with only an apostrophe after it, "belleros'", is the name
+    itself as a word, so the main pass already gives it its capitals.) Only the capitals change
+    here: a possessive spelled some other way is left to the other fixes."""
+    words = list(WORD.finditer(heard))
+    secret = _secret_spans(lookup, words)
+    out = []
+    for w in words:
+        said = w.group()
+        stem = _stem(said)
+        span = (w.start(), w.end())
+        if stem == said or not stem[:1].islower():
+            continue  # (not a possessive, or written with a capital already)
+        if any(span[0] < end and start < span[1] for start, end in (*taken, *secret)):
+            continue  # (inside a name already fixed, or a secret one: never touched)
+        key = name_key(stem)
+        if key in person_keys or key in lookup.keep_keys or is_dm_word(stem):
+            continue  # (someone at the table, a word to keep as heard, or "GM")
+        ids = {e.entity_id for e in lookup.by_key.get(key, ()) if e.confirmed and not e.secret}
+        entity = lookup.entities.get(next(iter(ids))) if len(ids) == 1 else None
+        if entity is None or entity.status != CONFIRMED:
+            continue
+        written = _respelled(lookup, stem)  # (`_capitals_safe` decides, as for the name alone)
+        if written is None or written.casefold() != stem.casefold():
+            continue
+        out.append(Fix(span[0], span[1], said, with_ending(said, written), entity.id, SPELLING))
+    return out
 
 
 def _respelled(lookup: CampaignLookup, said: str) -> str | None:
