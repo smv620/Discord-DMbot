@@ -628,7 +628,8 @@ class TheBotStep(unittest.TestCase):
                 DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1", import_scan=True)
             )
         self.assertNotIn("Quillon", made)
-        held_names = [h.name for h in held.await_args.args[3]] if held.await_count else []
+        call = held.await_args
+        held_names = [h.name for h in call.args[3]] if call is not None else []
         self.assertNotIn("Quillon", held_names)
         self.assertEqual(len(made) + len(held_names), 11)
 
