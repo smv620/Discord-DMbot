@@ -55,10 +55,15 @@ LEFT_OUT = "left_out_by_pass_1"  # pass 1 saw it and left it out on purpose (NOT
 SPELLING_NOT_KEPT = "spelling_not_kept"  # given as another name's spelling, then dropped
 READ_STOPPED = "read_stopped"  # the read stopped (cancelled or failed) before this name ended
 # The story reader's own (#5123; the reasons above with the same meaning are shared)
-AT_TABLE = "at_the_table"  # a person at the table, never a story name
 DM_SAID_NO = "dm_said_not_a_name"  # the DM turned this name down before
 DESCRIBED = "described_not_named"  # a person the story describes but never names: no name asked
-CLAIM_DROPPED = "claim_dropped"  # the only claim it was in was dropped (`why` says the rule)
+CLAIM_DROPPED = "claim_dropped"  # a claim it was in was dropped (`why` says the rule)
+# (a name's last row is how it ended: a later claim that stores it, or keeps it, writes after)
+
+
+def active() -> bool:
+    """Is a trace being collected? (So a caller skips the work of a note nobody reads.)"""
+    return _ROWS.get() is not None
 
 
 def note(name: str, reason: str, why: str = "") -> None:

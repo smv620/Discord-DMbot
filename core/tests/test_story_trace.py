@@ -11,6 +11,7 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
@@ -46,6 +47,19 @@ class TheStoryTrace(ConfirmedMemoryTest):
     def last(self, rows: Sequence[tuple[str, str, str]], name: str) -> str:
         return [r for n, r, _w in rows if n == name][-1]
 
+    async def test_a_spelling_joining_a_name_already_waiting_says_which(self) -> None:
+        await self.propose(said("Bram", "knows", "Oskar Vance"))  # (an earlier read)
+        rows = await self.traced(said("Bram", "fears", "Oskar Vence"))
+        self.assertEqual(rows, [("Oskar Vence", trace_note.FOLDED, "Oskar Vance")])
+
+    async def test_a_number_is_a_shape_and_a_lower_case_word_is_ordinary(self) -> None:
+        rows = await self.traced(said("Bram", "owes", "300 gold"))
+        self.assertEqual(self.last(rows, "300 gold"), trace_note.SHAPE)
+
+    async def test_a_person_the_story_describes_is_not_asked_as_a_name(self) -> None:
+        rows = await self.traced(said("Bram", "knows", "the old woman"))
+        self.assertEqual(self.last(rows, "the old woman"), trace_note.DESCRIBED)
+
     async def test_a_new_name_is_stored_for_the_dm(self) -> None:
         rows = await self.traced(said("Bram", "knows", "Oskar Vance"))
         self.assertEqual(rows, [("Oskar Vance", trace_note.STORED, "")])
@@ -69,16 +83,19 @@ class TheStoryTrace(ConfirmedMemoryTest):
         rows = await self.traced(said("Bram", "knows", "He"))
         self.assertEqual(rows, [("He", trace_note.ORDINARY, "")])
 
-    async def test_a_person_at_the_table_is_never_a_story_name(self) -> None:
-        rows = await self.traced(said("Bram", "knows", "Mia"), skip={"mia"})
-        self.assertEqual(rows, [("Mia", trace_note.AT_TABLE, "")])
+    async def test_a_person_at_the_table_is_never_written(self) -> None:
+        # (#5107: the session's trace never writes one; their claim's other new name says why)
+        rows = await self.traced(said("Mia", "knows", "Kesh Varn"), skip={"mia"})
+        self.assertEqual([n for n, _r, _w in rows], ["Kesh Varn"])
+        self.assertEqual(rows[0][1], trace_note.CLAIM_DROPPED)
 
     async def test_a_name_the_dm_turned_down_says_so(self) -> None:
         await self.propose(said("Bram", "knows", "Nobody Special"))
         nobody = (await self.entries())["Nobody Special"]
         await self.memory.set_entity_status(GUILD_A, self.c, nobody.id, REJECTED, source=DM_SOURCE)
-        rows = await self.traced(said("Bram", "owes", "Nobody Special"))
-        self.assertEqual(rows, [("Nobody Special", trace_note.DM_SAID_NO, "")])
+        rows = await self.traced(said("Nobody Special", "owes", "Kesh Varn"))
+        self.assertIn(("Nobody Special", trace_note.DM_SAID_NO, ""), rows)
+        self.assertEqual(self.last(rows, "Kesh Varn"), trace_note.CLAIM_DROPPED)  # (went with it)
 
     async def test_a_kind_of_creature_is_the_rules(self) -> None:
         rows = await self.traced(said("Bram", "fights", "an owlbear"))
@@ -98,8 +115,14 @@ class TheStoryTrace(ConfirmedMemoryTest):
         self.assertEqual(rows, [])
 
     async def test_nothing_is_noted_unless_a_trace_is_collected(self) -> None:
-        got = await self.propose(said("Bram", "knows", "Oskar Vance"))
-        self.assertEqual(got.new, ("Oskar Vance",))  # (and no collector: nothing to read)
+        # (the rules' notes are skipped whole; only the store's one note for the name it made is
+        # called, and a note with no collector does nothing)
+        found = (said("Bram", "knows", "He"), said("Bram", "knows", "Oskar Vance"))
+        with mock.patch.object(trace_note, "note") as noted:
+            got = await self.propose(*found)
+        self.assertEqual(got.new, ("Oskar Vance",))
+        self.assertFalse(trace_note.active())
+        self.assertEqual(noted.call_count, 1)
 
 
 class WhyMissed(unittest.TestCase):
@@ -131,10 +154,13 @@ class TheWriter(unittest.IsolatedAsyncioTestCase):
         )
 
     async def written(self, now: set[int]) -> list[nt.Row]:
+        async def recorded() -> set[int]:
+            return now
+
         noted = [(tn.STORY, "Kesh Varn", tn.STORED, ""), (tn.STORY, "He", tn.ORDINARY, "")]
         with tempfile.TemporaryDirectory() as d:
             bot = self.bot(d, now)
-            await DMBot._write_story_trace(bot, 5, "c1", "s1", noted, frozenset({1, 2}))
+            await DMBot._write_story_trace(bot, 5, "c1", "s1", noted, frozenset({1, 2}), recorded)
             return _rows(Path(d, "trace-c1.jsonl"))
 
     async def test_with_everyone_still_recorded_each_name_is_written(self) -> None:
@@ -143,6 +169,31 @@ class TheWriter(unittest.IsolatedAsyncioTestCase):
             [(r.source, r.name, r.reason) for r in rows],
             [(tn.STORY, "Kesh Varn", tn.STORED), (tn.STORY, "He", tn.ORDINARY)],
         )
+
+    async def test_the_readers_own_check_is_used_never_another(self) -> None:
+        # (#5123: an import gives `recorded_in`, holding a confirmed speaker (-7) that
+        # `consenting` never lists; their stop shows there alone)
+        noted = [(tn.STORY, "Kesh Varn", tn.STORED, "")]
+        with tempfile.TemporaryDirectory() as d:
+            bot = self.bot(d, {1, 2, -7})
+
+            async def recorded() -> set[int]:
+                return {1, 2}
+
+            await DMBot._write_story_trace(bot, 5, "c1", "s1", noted, frozenset({1, 2, -7}),
+                                           recorded)  # fmt: skip
+            rows = _rows(Path(d, "trace-c1.jsonl"))
+        self.assertEqual([(r.name, r.reason) for r in rows], [("", name_reader.STOPPED)])
+
+    async def test_off_the_test_server_or_on_a_real_campaign_nothing_is_collected(self) -> None:
+        async def recorded() -> set[int]:
+            return {1}
+
+        bot = self.bot("/tmp/x", {1})
+        self.assertEqual(await DMBot._story_trace_start(bot, 5, "c1", recorded), frozenset({1}))
+        self.assertIsNone(await DMBot._story_trace_start(bot, 6, "c1", recorded))
+        bot.campaigns.get.return_value = SimpleNamespace(guild_id=5, id="c1", name="Frostmaiden")
+        self.assertIsNone(await DMBot._story_trace_start(bot, 5, "c1", recorded))
 
     async def test_after_a_stop_only_a_count_is_written(self) -> None:
         rows = await self.written({1})

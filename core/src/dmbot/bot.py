@@ -10868,7 +10868,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
                 # (#5123, dev tools: where the story reader's own new names end, on the test
                 # server's sample campaigns only; nothing is collected otherwise)
-                traced_from = await self._story_trace_start(gid, cid)
+                traced_from = await self._story_trace_start(gid, cid, consenting)
                 with (
                     trace_note.collecting()
                     if traced_from is not None
@@ -10916,7 +10916,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         leaves=self.settings.party_leaves_on and not old_import,
                     )
                 if noted is not None and traced_from is not None:
-                    await self._write_story_trace(gid, cid, sid, noted, traced_from)
+                    await self._write_story_trace(gid, cid, sid, noted, traced_from, consenting)
             log.info(report.line())
             if report.names_over_cap and self.import_job is not None:
                 # (#5055 A: names held for a later session, for the sample run only. They are not
@@ -11083,17 +11083,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await self.transcripts.mark_read(gid, cid, uid, started)
         return len(chosen)
 
-    async def _story_trace_start(self, gid: int, cid: str) -> frozenset[int] | None:
+    async def _story_trace_start(
+        self, gid: int, cid: str, recorded: Callable[[], Awaitable[Collection[int]]]
+    ) -> frozenset[int] | None:
         """Who is recorded when the story reader starts, when its names are traced (#5123, dev
         tools: the test server's sample campaigns, as `name_trace.write` checks again); else
-        None, and nothing is collected."""
-        settings = self.settings
-        if not settings.name_trace_dir or settings.name_trace_guild != gid:
+        None, and nothing is collected. `recorded`: the same check the reader is given (an
+        import's own `recorded_in`, a live session's `consenting`). Never raises: a dev tool
+        never costs a read."""
+        try:
+            settings = self.settings
+            if not settings.name_trace_dir or settings.name_trace_guild != gid:
+                return None
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not name_trace.is_sample(campaign.name):
+                return None
+            return frozenset(await recorded())
+        except Exception as exc:
+            log.warning("Story name trace not started: %s", type(exc).__name__)
             return None
-        campaign = await self.campaigns.get(gid, cid)
-        if campaign is None or not name_trace.is_sample(campaign.name):
-            return None
-        return frozenset(await self.consent.consenting(gid))
 
     async def _write_story_trace(
         self,
@@ -11102,6 +11110,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         sid: str,
         noted: Sequence[trace_note.Note],
         before: frozenset[int],
+        recorded: Callable[[], Awaitable[Collection[int]]],
     ) -> None:
         """The story reader's rows of the per-name trace (#5123), in order, so `why_missed` takes
         each name's last one. Its names came only from claims whose speakers were all recorded;
@@ -11111,7 +11120,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or not noted:
                 return
-            stopped = bool(before - set(await self.consent.consenting(gid)))
+            stopped = bool(before - set(await recorded()))
             rows = (
                 [name_trace.Row(trace_note.STORY, "", name_reader.STOPPED, times=len(noted))]
                 if stopped
@@ -11168,7 +11177,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         try:
             # (#5123, dev tools: where the story reader's own new names end, on the test
             # server's sample campaigns only; nothing is collected otherwise)
-            traced_from = await self._story_trace_start(gid, cid)
+            def recorded() -> Awaitable[Collection[int]]:
+                return self.consent.consenting(gid)  # (the reader's own check, below)
+
+            traced_from = await self._story_trace_start(gid, cid, recorded)
             with (
                 trace_note.collecting()
                 if traced_from is not None
@@ -11213,7 +11225,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ),
                 )
             if noted is not None and traced_from is not None:
-                await self._write_story_trace(gid, cid, sid, noted, traced_from)
+                await self._write_story_trace(gid, cid, sid, noted, traced_from, recorded)
         except Exception as exc:  # a batch may already be stored: done, never run twice
             log.warning("Put-back lines: the extractor failed (%s)", type(exc).__name__)
             return True
