@@ -24,7 +24,7 @@ from __future__ import annotations
 import difflib
 import re
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, replace
 
 from dmbot.memory.models import NAME_MAX, name_key
@@ -48,6 +48,30 @@ _SENTENCE = re.compile(r"(?<=[.!?…])\s+|\n+")
 _WORD = re.compile(r"[^\W\d_](?:[^\W\d_]|['’-](?=[^\W\d_]))*|[,;/]")
 _POSSESSIVE = re.compile(r"['’]s$")
 _BREAKS = frozenset({",", ";", "/"})
+# The loosened scan (docs/design/session_names.md, section 3; on only beside the name reader): a
+# run may go on through "of" or "of the" to more name words ("Spine of the World", "Heart of
+# Chardalyn"). Those words don't count toward MAX_WORDS.
+JOINING = "of"
+_THE = "the"
+# Other small words a name may hold ("Wulfgar the Mighty", "Hrothgar in Bryn Shander" may not):
+# never joined, only counted in the trace when one stands between two name words, so the sample
+# shows whether any is worth adding (the Expert, on slice 2d).
+SMALL_WORDS = frozenset({"the", "on", "in", "upon", "by", "at", "under", "von", "van", "de", "du"})
+
+# Why the scan left a candidate out, for the per-name trace (design section 10, rule 6). Fixed
+# words; `find_new_names(refusals=...)` collects them, the bot adds ORDINARY and GROUPED.
+TOO_FEW = "too_few_hearings"
+AT_START = "only_at_a_sentence_start"
+TOO_LONG = "too_long"
+INSIDE = "only_inside_a_longer_name"
+SMALL_WORD = "stopped_at_a_small_word"  # ("Wulfgar the Mighty", the whole run: counted only)
+ORDINARY = "ordinary_word"  # also said in lower case, and the name reader didn't find it
+# ...and some of the reader's batches were not read: a call's fault, maybe not the word's, so
+# why_missed must not blame the word. (When the reader did not read at all, the bot keeps the
+# strict scan's list, which never holds an ordinary word.)
+ORDINARY_PART_READ = "ordinary_word_some_lines_not_read"
+SPLIT = "split_by_the_reader"  # "Wulfgar of Icewind Dale": the reader named a part, not the whole
+GROUPED = "grouped_into_another"
 
 
 def _words(text: str) -> frozenset[str]:
@@ -93,13 +117,30 @@ class Suggestion:
     name: str  # as heard most often
     times: int
     also: tuple[str, ...] = ()  # near-duplicates folded in ("Vane" with "Oskar Vane")
+    # The loosened scan only: every word of it is also said in lower case ("Hope" beside "hope"),
+    # so it may be an ordinary word. The scan alone never suggests it: it goes on only when the
+    # name reader also found it (design section 3).
+    ordinary: bool = False
 
 
-def _sentences(lines: Iterable[str]) -> list[list[str]]:
+def _bare(word: str) -> str:
+    """A word without its "'s": "Kelvin's" is looked up as "Kelvin"."""
+    return _POSSESSIVE.sub("", word)
+
+
+def _text(run: Sequence[str]) -> str:
+    """A run of words as a name: a possessive inside it is kept ("Kelvin's Cairn"), one at its end
+    is not ("Hrothgar's axe" is Hrothgar)."""
+    return " ".join([*run[:-1], _bare(run[-1])]) if run else ""
+
+
+def _sentences(lines: Iterable[str], *, possessives: bool = False) -> list[list[str]]:
+    """Each sentence's words. Their "'s" is dropped, unless `possessives` (the loosened scan keeps
+    it, so a name with one inside can be read whole; `_text` drops the one at a name's end)."""
     out = []
     for line in lines:
         for sentence in _SENTENCE.split(line):
-            words = [_POSSESSIVE.sub("", w) for w in _WORD.findall(sentence)]
+            words = [w if possessives else _bare(w) for w in _WORD.findall(sentence)]
             while words and words[0] in _BREAKS:
                 words.pop(0)  # a sentence led by a comma would shift the mid-sentence test
             if words:
@@ -108,7 +149,8 @@ def _sentences(lines: Iterable[str]) -> list[list[str]]:
 
 
 def _is_name_word(word: str, skip: frozenset[str], lower_words: set[str]) -> bool:
-    return word[:1].isupper() and name_key(word) not in skip and word.casefold() not in lower_words
+    bare = _bare(word)
+    return word[:1].isupper() and name_key(bare) not in skip and bare.casefold() not in lower_words
 
 
 # The many-word known names, by their first word: {"oskar": [("vane",), ...]}.
@@ -129,85 +171,185 @@ def _many_word_names(skip: Iterable[str]) -> KnownNames:
 def _known_name_spans(words: list[str], many: KnownNames) -> set[int]:
     """The positions of words that belong to a many-word known name said whole here
     ("Oskar Vane"), so that a word of it ("Oskar", whose other half "Vane" is also a
-    known name) isn't offered as a new name (#399)."""
+    known name) isn't offered as a new name (#399). A word is matched with and without its
+    "'s", so a known "Kelvin's Cairn" is found too."""
     if not many:
         return set()
-    keys = [name_key(w) for w in words]
+    forms = [(name_key(_bare(w)), name_key(w)) for w in words]
     covered: set[int] = set()
-    for start, key in enumerate(keys):
-        for rest in many.get(key, ()):
+    for start, keys in enumerate(forms):
+        for rest in {r for key in set(keys) for r in many.get(key, ())}:
             end = start + 1 + len(rest)
-            if tuple(keys[start + 1 : end]) == rest:
+            got = forms[start + 1 : end]
+            if len(got) == len(rest) and all(
+                want in pair for want, pair in zip(rest, got, strict=True)
+            ):
                 covered.update(range(start, end))
     return covered
 
 
 def _candidates(
-    words: list[str], skip: frozenset[str], lower_words: set[str], many: KnownNames
+    words: list[str],
+    skip: frozenset[str],
+    lower_words: set[str],
+    many: KnownNames,
+    *,
+    loose: bool = False,
+    said_lower: set[str] | None = None,
+    too_long: list[str] | None = None,
+    small: list[str] | None = None,
 ) -> list[tuple[str, bool, str]]:
     """Each run of name-like words as (text, said mid-sentence, the key of the longer name that
-    led it here, or ""). Runs longer than
-    MAX_WORDS are dropped, not chopped (no "Caer Dineval Ice"). A run that starts the
+    holds it here, or ""). Runs longer than MAX_WORDS name words are dropped, not chopped (no
+    "Caer Dineval Ice"), and listed in `too_long` when given. A run that starts the
     sentence also offers its tail, so "Ask Hrothgar" still finds Hrothgar. A known
-    name said whole ends a run: what's left on either side is still looked at."""
+    name said whole ends a run: what's left on either side is still looked at.
+
+    `loose` (design section 3): the run goes on through "of" or "of the" to more name words,
+    and each part of it is kept as well, marked; a join that can't be a name (too long, a
+    pronoun, a number) is read as its parts instead. A run led by words also said in lower case
+    (`said_lower`: "Brave Hrothgar") keeps the name after them too, marked, as #5086 does for
+    the strict scan. `small`, when given, gets each run that stopped at a small word before more
+    name words, with them (`SMALL_WORDS`, for the trace)."""
     covered = _known_name_spans(words, many)
+    said_lower = said_lower or set()
 
     def name_like(index: int) -> bool:
         return index not in covered and _is_name_word(words[index], skip, lower_words)
+
+    def joined_to(index: int) -> int:
+        # "of" or "of the" at `index` followed by a name word: where that word is, else `index`
+        if not loose or index >= len(words) or words[index].casefold() != JOINING:
+            return index
+        after = index + 1
+        if after < len(words) and words[after].casefold() == _THE:
+            after += 1
+        return after if after < len(words) and name_like(after) else index
 
     def leads(index: int) -> bool:
         # A capitalized word also said in lower case ("dwarven") may lead a name that follows it
         # mid-sentence (#5055: Supervisor's ruling). Only one such word, never at the sentence's
         # start (where every word has a capital), and never a common word, a known one, a
-        # pronoun or a word of address: "so I Hrothgar" must still find Hrothgar.
+        # person at the table ("Mia's" is Mia), a pronoun or a word of address: "so I Hrothgar"
+        # must still find Hrothgar.
         word = words[index]
+        bare = _bare(word)
         return (
             word[:1].isupper()
             and index not in covered
-            and name_key(word) not in skip
-            and not not_names.is_not_name(word)
-            and not_names.shape_of(word) is None
+            and name_key(bare) not in skip
+            and not not_names.is_not_name(bare)
+            and not_names.shape_of(bare) is None
         )
 
-    out = []
+    def can_be_a_name(text: str, at: int) -> bool:
+        return (
+            not not_names.is_not_name(text, sentence_start=at == 0)
+            and not_names.shape_of(text) is None
+        )
+
+    out: list[tuple[str, bool, str]] = []
+
+    def plain(i: int, j: int) -> None:
+        """One run with no joining word in it."""
+        run = _text(words[i:j])
+        spoken = " ".join(words[i:j])
+        # A pronoun is never offered as a name (#2358), unless this sentence plainly names
+        # someone by it ("My name is We"). A run led by one ("We Should") goes with it.
+        if not_names.is_not_name(spoken, sentence_start=i == 0) and not (
+            not_names.keep(spoken, " ".join(words), sentence_start=i == 0)
+        ):
+            return
+        if not_names.shape_of(spoken) is not None:
+            return  # a form of address ("Friend"), a number, a measure or a time: no name (#3394)
+        if j - i > MAX_WORDS:
+            if too_long is not None:
+                too_long.append(run)
+            return
+        # "the Dwarven Valley" (#5055): the led name is offered too, and its plain tail is
+        # kept as well, marked, so a name also heard alone ("Hrothgar" beside "Brave
+        # Hrothgar") keeps every sighting; find_new_names drops the tail only when it was
+        # never heard unled. Not after a comma (a clause start, capitalized like a
+        # sentence's), and never past MAX_WORDS.
+        led = (
+            i >= 2
+            and words[i - 2] not in _BREAKS
+            and j - i < MAX_WORDS
+            and leads(i - 1)
+            and can_be_a_name(" ".join(words[i - 1 : j]), i - 1)
+        )
+        led_key = name_key(_text(words[i - 1 : j])) if led else ""
+        out.append((run, i > 0, led_key))
+        if led:
+            out.append((_text(words[i - 1 : j]), True, ""))
+        if i == 0 and j - i > 1:
+            out.append((_text(words[1:j]), True, ""))
+        # The loose scan's own "Brave Hrothgar": the same rule, for words it no longer rules out
+        # (once per sighting: the sentence-start tail above already holds "Ask Hrothgar"'s)
+        k = i
+        while loose and k < j and _bare(words[k]).casefold() in said_lower:
+            k += 1
+        if i < k < j and not (i == 0 and k == 1) and can_be_a_name(_text(words[k:j]), k):
+            out.append((_text(words[k:j]), True, name_key(run)))
+
+    def joined(i: int, j: int, parts: Sequence[tuple[int, int]]) -> None:
+        whole = _text(words[i:j])
+        out.append((whole, i > 0, ""))
+        for a, b in parts:
+            part = _text(words[a:b])
+            if can_be_a_name(part, a):
+                out.append((part, a > 0, name_key(whole)))
+
     i = 0
     while i < len(words):
         if not name_like(i):
             i += 1
             continue
         j = i
-        while j < len(words) and name_like(j):
-            j += 1
-        # A pronoun is never offered as a name (#2358), unless this sentence plainly names
-        # someone by it ("My name is We"). A run led by one ("We Should") goes with it.
-        if not_names.is_not_name(" ".join(words[i:j]), sentence_start=i == 0) and not (
-            not_names.keep(" ".join(words[i:j]), " ".join(words), sentence_start=i == 0)
+        parts: list[tuple[int, int]] = []  # each stretch of name words, between joining words
+        while True:
+            start = j
+            while j < len(words) and name_like(j):
+                j += 1
+            parts.append((start, j))
+            if (on := joined_to(j)) == j:
+                break
+            j = on
+        if (
+            small is not None
+            and j + 1 < len(words)
+            and words[j].casefold() in SMALL_WORDS
+            and name_like(j + 1)
         ):
+            end = j + 1
+            while end < len(words) and name_like(end):
+                end += 1
+            small.append(_text(words[i:end]))
+        if len(parts) == 1:
+            plain(i, j)
             i = j
             continue
-        if not_names.shape_of(" ".join(words[i:j])) is not None:
-            i = j  # a form of address ("Friend"), a number, a measure or a time: no name (#3394)
-            continue
-        if j - i <= MAX_WORDS:
-            # "the Dwarven Valley" (#5055): the led name is offered too, and its plain tail is
-            # kept as well, marked, so a name also heard alone ("Hrothgar" beside "Brave
-            # Hrothgar") keeps every sighting; find_new_names drops the tail only when it was
-            # never heard unled. Not after a comma (a clause start, capitalized like a
-            # sentence's), and never past MAX_WORDS.
-            led = (
-                i >= 2
-                and words[i - 2] not in _BREAKS
-                and j - i < MAX_WORDS
-                and leads(i - 1)
-                and not not_names.is_not_name(" ".join(words[i - 1 : j]))
-                and not_names.shape_of(" ".join(words[i - 1 : j])) is None
-            )
-            led_key = name_key(" ".join(words[i - 1 : j])) if led else ""
-            out.append((" ".join(words[i:j]), i > 0, led_key))
-            if led:
-                out.append((" ".join(words[i - 1 : j]), True, ""))
-            if i == 0 and j - i > 1:
-                out.append((" ".join(words[1:j]), True, ""))
+        # "Spine of the World": the whole is one candidate, and each part is kept too, marked,
+        # so "Icewind Dale" heard alone elsewhere keeps every sighting and a part only ever said
+        # inside it ("World") is never offered alone. The whole and each part must each be able
+        # to be a name (no pronoun, number or form of address).
+        run = _text(words[i:j])
+        names = sum(b - a for a, b in parts)  # (joining words don't count toward MAX_WORDS)
+        if names <= MAX_WORDS and can_be_a_name(run, i):
+            if i == 0 and parts[0][1] - parts[0][0] > 1:
+                # "Ask Heart of Chardalyn": read from the second word, as "Ask Hrothgar" is
+                # (the run from the first word is kept unmarked, never its parts twice)
+                out.append((run, False, ""))
+                joined(1, j, [(1, parts[0][1]), *parts[1:]])
+            else:
+                joined(i, j, parts)
+        else:
+            # (a join that can't be one name: each part is read as if "of" had ended it, so the
+            # loose scan never loses what the strict one finds)
+            if names > MAX_WORDS and too_long is not None:
+                too_long.append(run)
+            for a, b in parts:
+                plain(a, b)
         i = j
     return out
 
@@ -218,14 +360,25 @@ def find_new_names(
     *,
     min_times: int = MIN_TIMES,
     unlimited: bool = False,
+    loose: bool = False,
+    refusals: list[tuple[str, str]] | None = None,
 ) -> list[Suggestion]:
     """Names in these lines (cleaned, so names fixed live are known) worth asking the DM
     about, most heard first: at most MAX_SUGGESTIONS (read when called), or all of them
-    with `unlimited` (to group them, then cap)."""
+    with `unlimited` (to group them, then cap).
+
+    `loose` (docs/design/session_names.md, section 3; only beside the name reader, which then
+    judges): a word also said in lower case may be a name, a name may hold "of" or "of the" and a
+    possessive, and a name all of whose words are also said in lower case is marked `ordinary`
+    for the reader to confirm. `refusals`, when given, gets (name, reason) for each candidate
+    left out, for the dev-tools trace: words a person at the table or the DM has answered for
+    are never candidates, so never listed."""
     lines = list(lines)
-    sentences = _sentences(lines)
+    sentences = _sentences(lines, possessives=loose)
     skip = frozenset({name_key(k) for k in skip_keys} | COMMON | GAME_TERMS)
-    lower_words = {w.casefold() for words in sentences for w in words if w[:1].islower()}
+    lower_words = {_bare(w).casefold() for words in sentences for w in words if w[:1].islower()}
+    long_runs: list[str] | None = [] if refusals is not None else None
+    small_runs: list[str] | None = [] if refusals is not None and loose else None
     many = _many_word_names(skip)
     counts: Counter[str] = Counter()
     spellings: dict[str, Counter[str]] = {}
@@ -233,7 +386,17 @@ def find_new_names(
     led_times: Counter[str] = Counter()  # sightings of a name inside a longer led name (#5055)
     led_by: dict[str, set[str]] = {}
     for words in sentences:
-        for text, mid, led_key in _candidates(words, skip, lower_words, many):
+        # (loose: no word is ruled out for being said in lower case, design rule 2)
+        for text, mid, led_key in _candidates(
+            words,
+            skip,
+            set() if loose else lower_words,
+            many,
+            loose=loose,
+            said_lower=lower_words if loose else None,
+            too_long=long_runs,
+            small=small_runs,
+        ):
             key = name_key(text)
             if not key or len(text) > NAME_MAX or key in skip:
                 continue
@@ -246,9 +409,15 @@ def find_new_names(
                 mid_sentence.add(key)
     offered = {k for k, times in counts.items() if times >= min_times and k in mid_sentence}
     found = []
+    left_out: dict[str, tuple[str, str]] = {}  # key -> (name, reason), for `refusals`
     for key, times in counts.items():
         if key in offered and led_times[key] == times and led_by[key] & offered:
-            continue  # only ever heard inside "the Dwarven Valley": "Valley" is not offered alone
+            # only ever heard inside "the Dwarven Valley": "Valley" is not offered alone
+            left_out[key] = (spellings[key].most_common(1)[0][0], INSIDE)
+            continue
+        if key not in offered:
+            reason = TOO_FEW if times < min_times else AT_START
+            left_out[key] = (spellings[key].most_common(1)[0][0], reason)
         if key in offered:
             name = spellings[key].most_common(1)[0][0]
             # A place's last word is often lower case in the transcript ("Harrow's keep"): when the
@@ -259,9 +428,79 @@ def find_new_names(
                 if name_key(longer) in skip:
                     continue  # the DM already answered for the longer name: not its first word
                 name = longer
-            found.append(Suggestion(name, times))
+            found.append(Suggestion(name, times, ordinary=loose and _ordinary(name, lower_words)))
+    if refusals is not None:
+        for run in long_runs or ():
+            left_out.setdefault(name_key(run), (run, TOO_LONG))
+        for run in small_runs or ():
+            left_out.setdefault(name_key(run), (run, SMALL_WORD))
+        refusals += sorted(left_out.values(), key=lambda r: (r[1], r[0].casefold()))
     found.sort(key=lambda s: (-s.times, s.name))
     return found if unlimited else found[:MAX_SUGGESTIONS]
+
+
+def joined_parts(name: str) -> list[str]:
+    """The names a name joined by "of" holds: "Wulfgar of Icewind Dale" is Wulfgar and Icewind
+    Dale; any other name is itself alone."""
+    words = name.split()
+    parts: list[list[str]] = [[]]
+    i = 0
+    while i < len(words):
+        if words[i].casefold() == JOINING and parts[-1] and i + 1 < len(words):
+            i += 2 if words[i + 1].casefold() == _THE and i + 2 < len(words) else 1
+            parts.append([])
+            continue
+        parts[-1].append(words[i])
+        i += 1
+    return [" ".join(p) for p in parts if p]
+
+
+def split_joined(
+    found: Iterable[Suggestion], named: Collection[str], skip: Collection[str] = ()
+) -> tuple[list[Suggestion], list[Suggestion]]:
+    """A name joined by "of" that the name reader did not return, when it did return a part of it,
+    is two names ("Wulfgar of Icewind Dale": a person and a place, the Expert on slice 2d): its
+    parts are offered in its place, each heard as often as it, unless already listed or in `skip`.
+    `named`: the keys the reader returned. Returns the list, in order, and the names split."""
+    out: list[Suggestion] = []
+    split: list[Suggestion] = []
+    found = list(found)
+    have = {name_key(f.name) for f in found}
+    for f in found:
+        parts = joined_parts(f.name)
+        if (
+            len(parts) > 1
+            and name_key(f.name) not in named
+            and any(name_key(p) in named for p in parts)
+        ):
+            split.append(f)
+            for part in parts:
+                if (key := name_key(part)) not in have and key not in skip:
+                    out.append(Suggestion(part, f.times))
+                    have.add(key)
+            continue
+        out.append(f)
+    return out, split
+
+
+def ordinary_in(name: str, lines: Iterable[str], *, leaving_out: Iterable[str] = ()) -> bool:
+    """The #5121 test outside the scan (#5133 slice 3c-2b, the guard on "change to" rules): every
+    name word of `name` is also said in lower case in these lines. The sightings of `leaving_out`
+    (whole, in the very case heard) are taken out first: a misheard "hroth gar" is itself said in
+    lower case and must not make itself ordinary, while "Hope" still finds "we hope". (Its sightings
+    in another case still count: a lower-case "rothgar" makes "Rothgar" ordinary, which only ever
+    stops a rule, the safe side.)"""
+    gone = [re.escape(s) for s in leaving_out if s.strip()]
+    cut = re.compile(rf"(?<!\w)(?:{'|'.join(gone)})(?!\w)") if gone else None
+    kept = [cut.sub(" ", line) if cut is not None else line for line in lines]
+    lower = {_bare(w).casefold() for words in _sentences(kept) for w in words if w[:1].islower()}
+    return _ordinary(name, lower)
+
+
+def _ordinary(name: str, lower_words: set[str]) -> bool:
+    """Every name word of it is also said in lower case this session ("Hope", "Ten Towns")."""
+    words = [_bare(w).casefold() for w in name.split() if w.casefold() not in (JOINING, _THE)]
+    return bool(words) and all(w in lower_words for w in words)
 
 
 def _alike(a: str, b: str, need: float = 0.0) -> float:
@@ -310,10 +549,19 @@ def _same_thing(a: str, b: str) -> bool:
     and look alike (one-word names: as alike as the Cleaner needs, "Kael" isn't
     "Kaela")?"""
     short, long_ = sorted((name_key(a).split(), name_key(b).split()), key=len)
-    if len(short) < len(long_) and (long_[: len(short)] == short or long_[-len(short) :] == short):
+    # (never part of a name joined by "of": "Chardalyn" is not the Heart of Chardalyn, nor
+    # "Hrothgar" Hrothgar of Bryn Shander, design section 3)
+    if (
+        len(short) < len(long_)
+        and JOINING not in long_
+        and (long_[: len(short)] == short or long_[-len(short) :] == short)
+    ):
         return True
     need = NEAR_ONE_WORD if len(short) == 1 and len(long_) == 1 else NEAR
     return bool(set(sound_keys(a)) & set(sound_keys(b))) and _alike(a, b, need) >= need
+
+
+same_thing = _same_thing  # (public: the fold `name_groups` groups spellings by, section 5)
 
 
 def group_alike(found: list[Suggestion]) -> list[Suggestion]:
@@ -339,7 +587,10 @@ def group_alike(found: list[Suggestion]) -> list[Suggestion]:
         if len(homes) == 1 and len(longer) <= 1:
             g = groups[homes[0]]
             groups[homes[0]] = replace(
-                g, also=(*g.also, suggestion.name), times=g.times + suggestion.times
+                g,
+                also=(*g.also, suggestion.name),
+                times=g.times + suggestion.times,
+                ordinary=g.ordinary and suggestion.ordinary,  # (one plain name word is enough)
             )
         else:
             groups.append(suggestion)

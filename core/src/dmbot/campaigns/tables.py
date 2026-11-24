@@ -130,6 +130,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "memory_hand_over_both": 'the DM\'s "Yes, both have it" answers about a one-of-a-kind '
     "item (#4115): ids and a time, so DMbot doesn't ask about the same two holders again. An "
     "answer to a question, like name_not_same: a restored campaign may ask it once more",
+    "import_more_names": "names an imported session's name scan heard past its first 10, waiting "
+    "for the DM's 📝 More names (#5055 B): each row hangs off its session, which a restore makes "
+    "again under a new id. A restored campaign starts with none, as with any request still waiting",
     "memory_met": "beings the party met in play and nobody named yet, waiting for the DM to name "
     "one (#3172 slice 5): each row hangs off its session, which a restore makes again under a new "
     "id, and holds the DM's words and line numbers from it. A restored campaign starts with none, "
@@ -151,6 +154,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "provenance of working data: the upload's label and, for the DM's Why, the reader's quote "
     "of up to 240 characters (kept only for an upload the DM confirmed the right to use, shown to "
     "the DM alone); a restored campaign's connections read as added by hand (#2946, #3606)",
+    "after_session_jobs": "a live session's slow after-session reads handed to the worker: ids, "
+    "times, a lease and a state, never a word of the session; a working queue made again for "
+    "each session (#4905)",
     "memory_card_summaries": "a character's one sentence and where and when they were first met "
     "and last mentioned (#5050): made by a background job from the entry's player-safe facts and "
     "the transcripts, DMbot's own words and ids only, never a quote; a restored campaign's cards "
@@ -208,6 +214,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "continuity_hits": "the continuity heads-ups DMbot worked out for the website on the DM's "
     "ask (pointers only, no words), gone within a day and worked out again on the next ask "
     "(#3695)",
+    "name_found": "how the after-session step found a waiting name and a pointer to the line "
+    "that made it a name (no words), gone once the name is answered; a restored campaign's cards "
+    "show no quote (#5133)",
     "web_rule_takes": "a day-long undo handle for a website pick of a followed set's changes; "
     "a restored campaign has nothing to undo (#4841)",
     "upload_notices": _RUNTIME,  # each lore upload's notice and the changes it made (#3878)

@@ -21,6 +21,7 @@ import time
 import uuid
 from collections import Counter
 from collections.abc import (
+    AsyncIterator,
     Awaitable,
     Callable,
     Collection,
@@ -348,6 +349,7 @@ from dmbot.memory import (
     lore_context,
     lore_queue,
     meaning,
+    name_groups,
     name_reader,
     name_trace,
     plan_reader,
@@ -357,6 +359,7 @@ from dmbot.memory import (
     scene_move_step,
     scene_step,
     time_limits,
+    trace_note,
     voyage,
     waiting_now,
     web_actions,
@@ -367,10 +370,12 @@ from dmbot.memory import (
 )
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
+from dmbot.memory import scan as name_scan
 from dmbot.memory import (
     sheets as sheets_memory,
 )
 from dmbot.memory.adventure import AdventureSection, AdventureStore
+from dmbot.memory.background import KINDS as LORE_KINDS
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.card_summaries import CardSummaries
@@ -413,7 +418,9 @@ from dmbot.memory.models import (
     lookup_key,
     name_key,
 )
+from dmbot.memory.more_names import PROGRESS_EVERY, HeldName, MoreNames
 from dmbot.memory.name_documents import MAX_PDF_BYTES
+from dmbot.memory.name_found import NameFound
 from dmbot.memory.ontology import Tally
 from dmbot.memory.party import party_notice
 from dmbot.memory.pc_icons_backup import PcIconsSection
@@ -429,7 +436,7 @@ from dmbot.memory.reveal_proposals_backup import RevealProposalsSection
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.role_backup import RolesSection
 from dmbot.memory.role_store import RoleStore
-from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
+from dmbot.memory.scan import MAX_SUGGESTIONS, MIN_TIMES, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.scenes import ENTITY, Scenes
@@ -542,6 +549,7 @@ from dmbot.timebot import phrases as clock_phrases
 from dmbot.timebot import suggest as time_suggest
 from dmbot.timebot.effects import EffectsSection, EffectStore
 from dmbot.timebot.store import ClockSection, ClockStore
+from dmbot.transcript import after_session_jobs as after_jobs
 from dmbot.transcript import (
     fix_notes,
     import_clock,
@@ -561,6 +569,7 @@ from dmbot.transcript import speaker_question as speaker_q
 from dmbot.transcript import spelled as spelled_out
 from dmbot.transcript import stream as transcript_lines
 from dmbot.transcript import suggestions as line_suggestions
+from dmbot.transcript.after_session_jobs import AfterSessionJobs
 from dmbot.transcript.attendance import session_speakers
 from dmbot.transcript.cleaner import (
     DM_EDIT,
@@ -691,6 +700,7 @@ from dmbot.ui.live_heads_up import LiveHeadsUpButton, heads_up_text, heads_up_vi
 from dmbot.ui.map_checks import StopMapChecksButton
 from dmbot.ui.map_layers_note import UndoMapLayersButton
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
+from dmbot.ui.more_names import MoreNamesButton
 from dmbot.ui.name_background import _reading_pictures as reading_pictures
 from dmbot.ui.name_card import (
     FinishPastButton,
@@ -865,6 +875,11 @@ SUMMARY_PARTIAL = (
     "🤫 Some of the secrets in your after-session summary could not be shown to your players "
     "yet, so they are still secret. DMbot will try again after the next session."
 )
+WORKER_TAKE_S = 300  # no worker took a handed-over block in this long: the bot runs it itself
+WORKER_POLL_S = 5.0  # how often the bot looks at a block it waits for
+WORKER_WAIT_MAX_S = 3 * 3600  # the bot stops waiting for the worker's block after this
+AFTER_ROUND_S = 10  # how often the worker looks for blocks (#4905)
+AFTER_LEASE_EVERY_S = 60  # how often a running block's lease is renewed
 CARD_ROUND_S = 300  # how often the card round looks for work (#5050)
 IMPORT_ROUND_S = 30
 IMPORT_SCAN_TRIES = 3  # an imported session's name scan is let go after this many failures
@@ -1056,6 +1071,50 @@ class HeardAnswer:
     reason: str = ""
 
 
+def _untold(lines: Sequence[str], heard_in: Sequence[Line]) -> bool:
+    """Whether a line the scan read has no stored copy to say who said it (#5190): a failed
+    save, or two speakers saying the same words with one copy stored. Counted, so one stored copy
+    never vouches for two. (Lines that come with their speakers, #5199, never need it.)"""
+    stored = Counter(x.text for x in heard_in if not getattr(x, "sidebar", ""))
+    return bool(Counter(lines) - stored)
+
+
+def _without_stopped(
+    now: Collection[int],
+    lines: Sequence[str],
+    heard_in: Sequence[Line],
+    read: Sequence[name_reader.Found],
+    read_in: Sequence[Line],
+    said_by: Sequence[int] | None = None,
+) -> tuple[list[str], list[int] | None, list[Line], list[name_reader.Found]]:
+    """A stopped speaker taken out of the name step (#5184, #5187): their lines from where a
+    name was said; from the scan's words, each line they said, by who said it when the lines
+    come with their speakers (`said_by`, #5199), else one copy for each of their stored lines
+    the scan read (never a sidebar line), matched by its words; and from the reader's names, whose
+    cited lines are numbered as `read_in` (a name left with none goes)."""
+    kept_lines: list[str] = []
+    kept_by: list[int] | None = None
+    if said_by is not None:
+        pairs = [(t, u) for t, u in zip(lines, said_by, strict=True) if u in now]
+        kept_lines, kept_by = [t for t, _u in pairs], [u for _t, u in pairs]
+    else:
+        gone = [x for x in heard_in if x.user_id not in now]
+        said = set(lines)
+        drop = Counter(x.text for x in gone if x.text in said and not getattr(x, "sidebar", ""))
+        for text in lines:
+            if drop[text] > 0:
+                drop[text] -= 1
+            else:
+                kept_lines.append(text)
+    bad = {str(i) for i, x in enumerate(read_in, 1) if x.user_id not in now}
+    kept_read = [
+        replace(f, lines=kept, times=len(kept))
+        for f in read
+        if (kept := tuple(n for n in f.lines if n not in bad))
+    ]
+    return kept_lines, kept_by, [x for x in heard_in if x.user_id in now], kept_read
+
+
 class DMBot(RecapFeatures, commands.AutoShardedBot):
     """One process serving the shards in `settings.shards` (one shard by default).
 
@@ -1191,6 +1250,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         # What the background job kept for each character's card (#5050), read when a card opens.
         self.card_summaries = CardSummaries(recaps.db) if recaps is not None else None
+        # A live session's slow after-session reads handed to the worker (#4905 slice 4a).
+        self.after_jobs = AfterSessionJobs(recaps.db) if recaps is not None else None
         self.outbox_wake = asyncio.Event()
         # The lore DMs uploaded on the website, waiting to be read (#3022), and the reads running.
         self.lore_uploads = lore_queue.LoreQueue(recaps.db) if recaps is not None else None
@@ -2093,6 +2154,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             questions_board.QuestionsButton,
             FamilyTiesButton,
             TraitQuestionsButton,  # 🧬 Character details (#3926)
+            MoreNamesButton,  # 📝 More names, an import's names past the scan's 10 (#5055 B)
             WorldNotesButton,  # 🌍 World notes (#4285)
             ThreadQuestionsButton,  # 📜 Story threads (#4453)
             SecretQuestionsButton,  # 🤫 Known or secret? (#4524)
@@ -3499,6 +3561,282 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 self.pipeline.failed_in.pop(session, None)
                 self.pipeline.sent_s_in.pop(session, None)
 
+    def _worker_does_after_session(self) -> bool:
+        """Whether a live session's slow reads are handed to the worker (`DMBOT_WORKER`, #4905)."""
+        return bool(self.settings.worker_on and self.after_jobs is not None and not self.headless)
+
+    def _after_reads(
+        self, table: Table, ended_at: int
+    ) -> list[tuple[str, Callable[[], Awaitable[Any]]]]:
+        """The story read and what depends on it, in order: the extractor (names, readings, deeds,
+        reveals), where the story is (#4173 slice 4), the scene of each waiting question (#3596),
+        who each name could be (#3602), the contradiction grades and the report for the website
+        (#2661). Today's steps, or with the worker on one step that hands them over."""
+        steps: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
+            ("story extractor", lambda: self.extract_claims(table, ended_at)),
+            ("where the story is", lambda: self.walk_story_chain(table)),
+            ("scenes", lambda: self.write_scenes(table)),
+            ("who is this", lambda: self.write_who(table)),
+            ("contradiction grades", lambda: self.grade_contradictions(table)),
+            ("after-session report", lambda: self.make_report(table)),
+        ]
+        return DMBot._or_worker(self, table, after_jobs.READS, "story reads (worker)", steps)
+
+    def _after_late(self, table: Table) -> list[tuple[str, Callable[[], Awaitable[Any]]]]:
+        """Importance (#3172), then the new story threads (#4522): today's steps, or one step that
+        hands them to the worker."""
+        steps: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
+            ("importance", lambda: self.write_importance(table)),
+            ("story threads", lambda: self.read_session_threads(table)),
+        ]
+        return DMBot._or_worker(self, table, after_jobs.LATE, "late reads (worker)", steps)
+
+    def _or_worker(
+        self,
+        table: Table,
+        block: str,
+        name: str,
+        steps: list[tuple[str, Callable[[], Awaitable[Any]]]],
+    ) -> list[tuple[str, Callable[[], Awaitable[Any]]]]:
+        if not DMBot._worker_does_after_session(self):
+            return steps  # (the worker is off: exactly today's steps)
+        return [(name, lambda: DMBot._hand_to_worker(self, table, block, steps))]
+
+    async def _hand_to_worker(
+        self,
+        table: Table,
+        block: str,
+        steps: list[tuple[str, Callable[[], Awaitable[Any]]]],
+    ) -> None:
+        """Write the block's row and wait until the worker has done it, so the steps after it find
+        its results. If no worker takes it within `WORKER_TAKE_S` (it is down), or the worker that
+        took it died and its lease ran out, the bot takes the row itself and runs the steps as
+        before (keeping the lease fresh while it does), so a session's reads are never lost and
+        never run twice at once. A block the worker failed, or whose row is gone (the campaign was
+        deleted or moved), ends the wait: the steps after it go on. Counts only in the log."""
+        assert self.after_jobs is not None
+        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
+        queue = self.after_jobs
+
+        async def locally() -> None:
+            for name, step in steps:
+                try:
+                    await step()
+                except Exception:
+                    log.exception("After the session: %s failed", name)
+
+        if cid is None or sid is None:
+            return await locally()
+        dm_ids = {table.dm_user_id, *table.dm_user_ids}
+        try:
+            handed = await queue.add(gid, cid, sid, block, dm_ids)
+        except Exception as exc:
+            log.warning("After the session: could not hand %s on (%s)", block, type(exc).__name__)
+            handed = False
+        if not handed:
+            return await locally()
+        # (the DM sees that something is reading, even though the bot only waits: #5126's card)
+        words = (
+            after_session.STORY_IN_WORKER
+            if block == after_jobs.READS
+            else after_session.LATE_IN_WORKER
+        )
+        card = DMBot._after_card(self, table)
+        await card.stage(words)
+        who = f"bot-{uuid.uuid4().hex[:8]}"
+        began = time.monotonic()
+        errors = 0
+        while True:
+            try:
+                found = await queue.status(gid, cid, sid, block)
+                state = None if found is None else found.state
+                waited = time.monotonic() - began
+                if state in (None, after_jobs.DONE, after_jobs.FAILED):
+                    if state == after_jobs.FAILED:
+                        log.warning("After the session: the worker's %s block failed", block)
+                    return  # (None: the row is gone with its campaign)
+                if found is not None and found.stage:  # (what the worker is on: the DM's card)
+                    staged = {
+                        after_jobs.STORY: after_session.STORY,
+                        after_jobs.THREADS: after_session.THREADS,
+                    }.get(found.stage, words)
+                    await card.stage(staged, found.part, found.parts)
+                # `claim` itself refuses a block a live lease holds, so a dead worker's block is
+                # taken here too and a slow one is left alone.
+                if waited >= WORKER_TAKE_S and await queue.claim(gid, cid, sid, block, who):
+                    log.warning("After the session: no worker has %s; running it here", block)
+                    async with self._after_lease(gid, cid, sid, block, who):
+                        await locally()
+                    await queue.finish(gid, cid, sid, block, who, ok=True)
+                    return
+                errors = 0
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # a database hiccup: look again, but not for ever
+                errors += 1
+                log.warning("After the session: waiting for %s (%s)", block, type(exc).__name__)
+                if errors >= 5:
+                    return
+            if time.monotonic() - began >= WORKER_WAIT_MAX_S:
+                log.warning("After the session: gave up waiting for the worker's %s block", block)
+                return
+            await asyncio.sleep(WORKER_POLL_S)
+
+    @contextlib.asynccontextmanager
+    async def _after_lease(
+        self, gid: int, cid: str, sid: str, block: str, who: str
+    ) -> AsyncIterator[None]:
+        """Keep a block's lease fresh while its holder (the worker, or the bot's own fallback) runs
+        it, so a long read is never taken by a second copy. If the lease is found to be someone
+        else's (it was let go while this process was stalled), the run is stopped, never doubled.
+        A renewal that fails for a database reason is tried again at the next beat."""
+        assert self.after_jobs is not None
+        queue = self.after_jobs
+        runner = asyncio.current_task()
+
+        async def keep_fresh() -> None:
+            while True:
+                await asyncio.sleep(AFTER_LEASE_EVERY_S)
+                try:
+                    if not await queue.renew(gid, cid, sid, block, who) and runner is not None:
+                        log.warning("After the session: lost the lease on %s; stopping", block)
+                        runner.cancel()
+                        return
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    log.warning("After the session: lease renewal (%s)", type(exc).__name__)
+
+        renewing = asyncio.create_task(keep_fresh(), name="after-session-lease")
+        try:
+            yield
+        finally:
+            renewing.cancel()
+            await asyncio.gather(renewing, return_exceptions=True)
+
+    async def _run_after_block(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        dm_ids: Collection[int],
+        block: str,
+        report: Callable[[str, int, int], Awaitable[object]] | None = None,
+    ) -> bool:
+        """Run one handed-over block from ids alone (the worker's side, #4905): each step is today's
+        id-based reader, in today's order, each in its own `try` so one failing never stops the
+        next, and consent is asked again inside each as before. Notices go through the outbox
+        (`_story_note`). The extractor's per-session tally is the bot's log only, so it is not
+        kept here. `report` is told the stage and the part n of m as the block goes (the DM's card
+        reads it from the job's row): codes and counts only. True when every step ran without an
+        error."""
+        consenting = partial(self.consent.consenting, gid)
+
+        async def say(stage: str, part: int = 0, parts: int = 0) -> None:
+            if report is not None:
+                try:
+                    await report(stage, part, parts)
+                except Exception as exc:  # a display never breaks a read
+                    log.warning("After the session (worker): progress (%s)", type(exc).__name__)
+
+        async def story(part: int, parts: int) -> None:
+            await say(after_jobs.STORY, part, parts)
+
+        async def threads(part: int, parts: int) -> None:
+            await say(after_jobs.THREADS, part, parts)
+
+        if block == after_jobs.READS:
+            plan: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
+                (
+                    "story extractor",
+                    lambda: self._extract_session(
+                        gid,
+                        cid,
+                        sid,
+                        dm_ids=dm_ids,
+                        tally=None,
+                        notice_channel=None,
+                        progress=story,
+                    ),
+                ),
+                (
+                    "where the story is",
+                    lambda: self._walk_story_chain(gid, cid, sid, dm_ids, consenting),
+                ),
+                ("scenes", lambda: self._write_scenes(gid, cid, sid, dm_ids, consenting)),
+                ("who is this", lambda: self._write_who(gid, cid, sid, dm_ids, consenting)),
+                (
+                    "contradiction grades",
+                    lambda: self._grade_contradictions_for(gid, cid, sid),
+                ),
+                ("after-session report", lambda: self._make_report_for(gid, cid, sid)),
+            ]
+        else:
+            plan = [
+                ("importance", lambda: self._read_importance(gid, cid, sid)),
+                (
+                    "story threads",
+                    lambda: self._read_threads(gid, cid, sid, dm_ids, consenting, step=threads),
+                ),
+            ]
+        failed = 0
+        for name, step in plan:
+            if name not in ("story extractor", "story threads"):  # (those report their own parts)
+                await say(after_jobs.WORKING)
+            try:
+                await step()
+            except Exception as exc:  # the type only: never a word of the story
+                failed += 1
+                log.warning("After the session (worker): %s failed (%s)", name, type(exc).__name__)
+        return failed == 0
+
+    async def _take_after_job(self, job: after_jobs.Job) -> None:
+        """The worker takes one block: claim it (under an id of its own, so a replacement process
+        is never mistaken for it), keep its lease fresh while it runs, run it, end it. A block
+        someone else holds is left alone. A worker that is stopped mid-block (a deploy) gives the
+        block back, unfinished, for the next round; one whose lease was lost stops quietly."""
+        assert self.after_jobs is not None
+        queue = self.after_jobs
+        who = f"worker-{uuid.uuid4().hex[:8]}"
+        gid, cid, sid, block = job.guild_id, job.campaign_id, job.session_id, job.block
+        if not await queue.claim(gid, cid, sid, block, who):
+            return
+        ok = False
+        try:
+            with log_context(guild_id=gid, campaign_id=cid):
+                async with self._after_lease(gid, cid, sid, block, who):
+                    ok = await self._run_after_block(
+                        gid, cid, sid, job.dm_ids, block,
+                        lambda stage, part, parts: queue.step(
+                            gid, cid, sid, block, who, stage, part, parts
+                        ),
+                    )  # fmt: skip
+        except asyncio.CancelledError:
+            await queue.release(gid, cid, sid, block, who)  # (nothing if the lease is not ours)
+            raise
+        except Exception as exc:
+            log.warning(
+                "After the session (worker): %s block failed (%s)", block, type(exc).__name__
+            )
+        await queue.finish(gid, cid, sid, block, who, ok=ok)
+
+    async def _after_session_loop(self) -> None:
+        """The worker's loop for `after_session_jobs` (#4905): every few seconds, the blocks the
+        bot handed over (or whose lease died), taken one at a time."""
+        assert self.after_jobs is not None
+        await asyncio.sleep(20)
+        while True:
+            for gid in await self.work_guild_ids():
+                try:
+                    # (a few at once, so one campaign's long block never holds up another's past
+                    # the bot's take time)
+                    await asyncio.gather(
+                        *(self._take_after_job(j) for j in await self.after_jobs.open(gid, 3))
+                    )
+                except Exception:
+                    log.exception("After the session (worker): a round failed for a server")
+            await asyncio.sleep(AFTER_ROUND_S)
+
     async def _after_session(self, table: Table, ended_at: int, caught_up: bool) -> None:
         sent = 0
 
@@ -3541,20 +3879,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Queues or holds the recap (#2169): held at once while the extractor is still to run.
             ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
-            ("story extractor", lambda: self.extract_claims(table, ended_at)),
-            # Where the story is (#4173 slice 4): the DM's lines move a chain of open places kept
-            # between sessions, and new places get an assumed parent from it. No AI call.
-            ("where the story is", lambda: self.walk_story_chain(table)),
-            # The scene of each waiting question, from the lines it came from (#3596): after the
-            # extractor, so the questions it made are there, and inside the same call limit.
-            ("scenes", lambda: self.write_scenes(table)),
-            # Who each name to check could be (#3602): after the extractor made them, inside the
-            # same call limit; off unless its switch is on.
-            ("who is this", lambda: self.write_who(table)),
-            # After the extractor (its readings are beliefs too); off unless the switch is on.
-            ("contradiction grades", lambda: self.grade_contradictions(table)),
-            # The report for the website (#2661): reuses those grades, then sorts the differences.
-            ("after-session report", lambda: self.make_report(table)),
+            # The story read and what depends on it (where the story is, scenes, who is this,
+            # contradiction grades, the report), as one block: the worker's with `DMBOT_WORKER`.
+            *DMBot._after_reads(self, table, ended_at),
             # The names the extractor proposed are name questions too (#2169): count again.
             ("recap names", lambda: self.recheck_recap_hold(table)),
             ("what was said", lambda: self.note_claims(table)),
@@ -3575,15 +3902,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Private scenes between two player characters (#2996 rule 5): before the importance
             # step, which will weigh them; no AI call. Off unless its switch is on.
             ("private scenes", lambda: self.find_private_scenes(table)),
-            # How much each entry the session touched matters, and its roles (#3172): after the
-            # extractor, inside the same call limit, live wherever it runs (ruled); after the
-            # posts the DM waits for, since nothing above reads a rank.
-            ("importance", lambda: self.write_importance(table)),
-            # New story threads the table's talk started (#4522, quests slice 5a): after the
-            # importance step (as an import runs them), inside the same call limit, so a long
-            # session's threads never leave importance without calls; one counts line in the DM
-            # Bot channel. Off unless its switch is on.
-            ("story threads", lambda: self.read_session_threads(table)),
+            # How much each entry the session touched matters, and its roles (#3172), then the new
+            # story threads (#4522): after the posts the DM waits for, since nothing above reads a
+            # rank, inside the extractor's call limit. One block: the worker's with `DMBOT_WORKER`.
+            *DMBot._after_late(self, table),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             # What maps posted during the session showed (#4259 8a), privately, once each
@@ -3618,7 +3940,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await step()
                 except Exception:
                     log.exception("After the session: %s failed", name)
-                if name == "story threads":  # the last slow read: the card ends here, not later
+                if name in ("story threads", "late reads (worker)"):  # the last slow read
                     await self._end_after_card(table)
         finally:
             await self._end_after_card(table)  # (the safety net: every read is over)
@@ -10544,46 +10866,57 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await self.add_short_names(
                     gid, cid, extractor.heard_texts(lines, agreed, recap_lines)
                 )
-                report = await extractor.run(
-                    self.extractor_ai,
-                    ClaimStore(self.memory),
-                    lines,
-                    guild_id=gid,
-                    campaign_id=cid,
-                    dm_ids=dm_ids,
-                    consenting=consenting,
-                    model=lambda: self.extractor_ai.model if self.extractor_ai else "",
-                    session_started_at=session.started_at,
-                    recap_lines=recap_lines,
-                    tally=tally,
-                    max_calls=allowed,
-                    skip=skip,
-                    after_ms=after_ms,
-                    readings=self.settings.story_readings_on,
-                    theories=self.settings.story_threads_on,  # (#4655: guesses at mysteries)
-                    mysteries=await _open_mysteries(self, gid, cid),
-                    deeds=self.settings.story_deeds_on,
-                    deed_store=DeedProposals(self.memory)
-                    if self.settings.story_deeds_on and self.memory is not None
-                    else None,
-                    reveals=self.settings.story_reveals_on,
-                    reveals_precheck=self.settings.story_reveals_precheck,
-                    reveal_store=RevealProposals(self.memory)
-                    if self.settings.story_reveals_on and self.memory is not None
-                    else None,
-                    met=self.settings.met_unnamed_on,
-                    met_store=MetStore(self.memory._db)
-                    if self.settings.met_unnamed_on and self.memory is not None
-                    else None,
-                    session_id=sid,
-                    family_only=self.settings.story_family_only,
-                    imported=await transcripts.is_import(gid, sid),
-                    count_call=count_call,
-                    progress=progress,
-                    languages=self.settings.session_languages_on,
-                    weather=self.settings.weather_notes_on,
-                    leaves=self.settings.party_leaves_on and not old_import,
-                )
+                # (#5123, dev tools: where the story reader's own new names end, on the test
+                # server's sample campaigns only; nothing is collected otherwise)
+                traced_from = await self._story_trace_start(gid, cid, consenting)
+                with (
+                    trace_note.collecting()
+                    if traced_from is not None
+                    else contextlib.nullcontext() as noted,
+                    trace_note.from_source(trace_note.STORY),
+                ):
+                    report = await extractor.run(
+                        self.extractor_ai,
+                        ClaimStore(self.memory),
+                        lines,
+                        guild_id=gid,
+                        campaign_id=cid,
+                        dm_ids=dm_ids,
+                        consenting=consenting,
+                        model=lambda: self.extractor_ai.model if self.extractor_ai else "",
+                        session_started_at=session.started_at,
+                        recap_lines=recap_lines,
+                        tally=tally,
+                        max_calls=allowed,
+                        skip=skip,
+                        after_ms=after_ms,
+                        readings=self.settings.story_readings_on,
+                        theories=self.settings.story_threads_on,  # (#4655: guesses at mysteries)
+                        mysteries=await _open_mysteries(self, gid, cid),
+                        deeds=self.settings.story_deeds_on,
+                        deed_store=DeedProposals(self.memory)
+                        if self.settings.story_deeds_on and self.memory is not None
+                        else None,
+                        reveals=self.settings.story_reveals_on,
+                        reveals_precheck=self.settings.story_reveals_precheck,
+                        reveal_store=RevealProposals(self.memory)
+                        if self.settings.story_reveals_on and self.memory is not None
+                        else None,
+                        met=self.settings.met_unnamed_on,
+                        met_store=MetStore(self.memory._db)
+                        if self.settings.met_unnamed_on and self.memory is not None
+                        else None,
+                        session_id=sid,
+                        family_only=self.settings.story_family_only,
+                        imported=await transcripts.is_import(gid, sid),
+                        count_call=count_call,
+                        progress=progress,
+                        languages=self.settings.session_languages_on,
+                        weather=self.settings.weather_notes_on,
+                        leaves=self.settings.party_leaves_on and not old_import,
+                    )
+                if noted is not None and traced_from is not None:
+                    await self._write_story_trace(gid, cid, sid, noted, traced_from, consenting)
             log.info(report.line())
             if report.names_over_cap and self.import_job is not None:
                 # (#5055 A: names held for a later session, for the sample run only. They are not
@@ -10735,8 +11068,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             dms = {*campaign.dm_user_ids}
             users = {x.user_id for x in every} | agreed | dms
             added = await self._propose_new_names(
-                gid, cid, [x.text for x in chosen], users, sid, agreed=agreed
-            )
+                gid, cid, [x.text for x in chosen], users, sid, agreed=agreed,
+                said_by=[x.user_id for x in chosen],
+            )  # fmt: skip
             log.info("Put-back lines: %d line(s) scanned, %d new name(s)", len(chosen), len(added))
             # One try once a batch may have been sent: a retry would send the batches that worked
             # again (duplicate claims). Nothing sent yet: the lines wait for the next sweep.
@@ -10748,6 +11082,56 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         for uid, started in by_person.items():
             await self.transcripts.mark_read(gid, cid, uid, started)
         return len(chosen)
+
+    async def _story_trace_start(
+        self, gid: int, cid: str, recorded: Callable[[], Awaitable[Collection[int]]]
+    ) -> frozenset[int] | None:
+        """Who is recorded when the story reader starts, when its names are traced (#5123, dev
+        tools: the test server's sample campaigns, as `name_trace.write` checks again); else
+        None, and nothing is collected. `recorded`: the same check the reader is given (an
+        import's own `recorded_in`, a live session's `consenting`). Never raises: a dev tool
+        never costs a read."""
+        try:
+            settings = self.settings
+            if not settings.name_trace_dir or settings.name_trace_guild != gid:
+                return None
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not name_trace.is_sample(campaign.name):
+                return None
+            return frozenset(await recorded())
+        except Exception as exc:
+            log.warning("Story name trace not started: %s", type(exc).__name__)
+            return None
+
+    async def _write_story_trace(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        noted: Sequence[trace_note.Note],
+        before: frozenset[int],
+        recorded: Callable[[], Awaitable[Collection[int]]],
+    ) -> None:
+        """The story reader's rows of the per-name trace (#5123), in order, so `why_missed` takes
+        each name's last one. Its names came only from claims whose speakers were all recorded;
+        if anyone stopped while it read, no name is written, only one count row (consent has no
+        exception: a name might be theirs). Never raises: the read is done without it."""
+        try:
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not noted:
+                return
+            stopped = bool(before - set(await recorded()))
+            rows = (
+                [name_trace.Row(trace_note.STORY, "", name_reader.STOPPED, times=len(noted))]
+                if stopped
+                else [name_trace.Row(src, name, reason, why) for src, name, reason, why in noted]
+            )
+            name_trace.write(
+                self.settings.name_trace_dir, campaign.name, cid, sid, rows,
+                guild_id=gid, test_guild=self.settings.name_trace_guild,
+            )  # fmt: skip
+        except Exception as exc:  # (a dev tool)
+            log.warning("Story name trace failed: %s", type(exc).__name__)
 
     async def _extract_put_back(
         self,
@@ -10791,43 +11175,57 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         ]
         skip = await self._people_keys(gid, users, cid)
         try:
-            report = await extractor.run(
-                self.extractor_ai,
-                ClaimStore(self.memory),
-                only,
-                guild_id=gid,
-                campaign_id=cid,
-                dm_ids={*campaign.dm_user_ids},
-                consenting=lambda: self.consent.consenting(gid),
-                model=lambda: self.extractor_ai.model if self.extractor_ai else "",
-                session_started_at=session.started_at,
-                recap_lines=await self._recap_lines(gid, sid),
-                max_calls=allowed,
-                skip=skip,
-                after_ms=0,
-                readings=self.settings.story_readings_on,
-                theories=self.settings.story_threads_on,  # (#4655: guesses at mysteries)
-                mysteries=await _open_mysteries(self, gid, cid),
-                deeds=self.settings.story_deeds_on,
-                deed_store=DeedProposals(self.memory)
-                if self.settings.story_deeds_on and self.memory is not None
-                else None,
-                reveals=self.settings.story_reveals_on,
-                reveals_precheck=self.settings.story_reveals_precheck,
-                reveal_store=RevealProposals(self.memory)
-                if self.settings.story_reveals_on and self.memory is not None
-                else None,
-                met=self.settings.met_unnamed_on,
-                met_store=MetStore(self.memory._db)
-                if self.settings.met_unnamed_on and self.memory is not None
-                else None,
-                session_id=sid,
-                family_only=self.settings.story_family_only,
-                imported=await transcripts.is_import(gid, sid),
-                count_call=lambda: transcripts.record_extraction(
-                    gid, sid, through_ms=0, calls=1, now=int(time.time())
-                ),
-            )
+            # (#5123, dev tools: where the story reader's own new names end, on the test
+            # server's sample campaigns only; nothing is collected otherwise)
+            def recorded() -> Awaitable[Collection[int]]:
+                return self.consent.consenting(gid)  # (the reader's own check, below)
+
+            traced_from = await self._story_trace_start(gid, cid, recorded)
+            with (
+                trace_note.collecting()
+                if traced_from is not None
+                else contextlib.nullcontext() as noted,
+                trace_note.from_source(trace_note.STORY),
+            ):
+                report = await extractor.run(
+                    self.extractor_ai,
+                    ClaimStore(self.memory),
+                    only,
+                    guild_id=gid,
+                    campaign_id=cid,
+                    dm_ids={*campaign.dm_user_ids},
+                    consenting=lambda: self.consent.consenting(gid),
+                    model=lambda: self.extractor_ai.model if self.extractor_ai else "",
+                    session_started_at=session.started_at,
+                    recap_lines=await self._recap_lines(gid, sid),
+                    max_calls=allowed,
+                    skip=skip,
+                    after_ms=0,
+                    readings=self.settings.story_readings_on,
+                    theories=self.settings.story_threads_on,  # (#4655: guesses at mysteries)
+                    mysteries=await _open_mysteries(self, gid, cid),
+                    deeds=self.settings.story_deeds_on,
+                    deed_store=DeedProposals(self.memory)
+                    if self.settings.story_deeds_on and self.memory is not None
+                    else None,
+                    reveals=self.settings.story_reveals_on,
+                    reveals_precheck=self.settings.story_reveals_precheck,
+                    reveal_store=RevealProposals(self.memory)
+                    if self.settings.story_reveals_on and self.memory is not None
+                    else None,
+                    met=self.settings.met_unnamed_on,
+                    met_store=MetStore(self.memory._db)
+                    if self.settings.met_unnamed_on and self.memory is not None
+                    else None,
+                    session_id=sid,
+                    family_only=self.settings.story_family_only,
+                    imported=await transcripts.is_import(gid, sid),
+                    count_call=lambda: transcripts.record_extraction(
+                        gid, sid, through_ms=0, calls=1, now=int(time.time())
+                    ),
+                )
+            if noted is not None and traced_from is not None:
+                await self._write_story_trace(gid, cid, sid, noted, traced_from, recorded)
         except Exception as exc:  # a batch may already be stored: done, never run twice
             log.warning("Put-back lines: the extractor failed (%s)", type(exc).__name__)
             return True
@@ -10845,24 +11243,28 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         No consent re-check, on purpose: no audio or transcript line is read or sent here, only the
         DM-confirmed names and relationships the campaign already stores, so there is no
         speaker's consent for a step to depend on."""
+        if table.campaign_id is None or table.transcript_session_id is None:
+            return
+        await DMBot._grade_contradictions_for(  # (by the class: the tests' stand-ins)
+            self, table.guild_id, table.campaign_id, table.transcript_session_id
+        )
+
+    async def _grade_contradictions_for(self, gid: int, cid: str, sid: str) -> None:
+        """`grade_contradictions` from ids, so the worker can run it (#4905)."""
         if (
             not self.settings.story_contradictions_on
             or not self.settings.story_extractor_on
             or self.extractor_ai is None
             or self.memory is None
             or self.transcripts is None
-            or table.campaign_id is None
-            or table.transcript_session_id is None
         ):
             return
-        gid, cid = table.guild_id, table.campaign_id
         with log_context(guild_id=gid, campaign_id=cid):
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or not await self.plan_allows(
                 "story", gid, campaign, fail_open=False
             ):
                 return  # closed: a plan that can't be checked is not run
-            sid = table.transcript_session_id
             session = await self.transcripts.session(gid, sid)
             _, used = await self.transcripts.extraction(gid, sid)
             day_used = await self.transcripts.extractor_calls_since(
@@ -11463,6 +11865,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         has story memory (the same rule as the after-session question and the deed card, #3175),
         so a lapsed plan's leftover proposals are counted nowhere (#5105)."""
         return await self._story_asked(self.settings.story_deeds_on, gid, cid)
+
+    async def heads_up_count(self, gid: int, cid: str) -> int:
+        """How many continuity heads-ups wait for the DM now (#5147): what `ContinuityStore.check`
+        would list, with who agrees read now and the settings' levels; no AI call. Only with the
+        story extractor on and a plan with story memory (the same gate as the after-session check).
+        Any error counts 0 and logs the type only."""
+        try:
+            if self.memory is None or not await self._story_asked(
+                self.settings.story_extractor_on, gid, cid
+            ):
+                return 0
+            report = await ContinuityStore(self.memory).check(
+                gid,
+                cid,
+                opted_in=await self.consent.consenting(gid),
+                levels=self.settings.continuity,
+            )
+            return len(report.conflicts)
+        except Exception as exc:
+            log.warning("Heads-ups count failed (%s)", type(exc).__name__)
+            return 0
 
     async def reveals_on(self, gid: int, cid: str) -> bool:
         """The same for what the characters learned (#2996, #5109): its switch and the plan's
@@ -12300,12 +12723,28 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         game_only: bool = False,
         import_scan: bool = False,
         card: after_session.AfterSessionCard | None = None,
+        recheck: Callable[[], Awaitable[Collection[int]]] | None = None,
+        said_by: Sequence[int] | None = None,
     ) -> list[str]:
         """Suggest the names DMbot heard in `lines` but doesn't know, for the DM to check (the name
         scan of a live session's end and of an imported one, #2106). `users`: the people whose
         names are not story names. `session_id`: the stored transcript the lines came from, so
-        each suggestion keeps where it was said (#2329). Returns the names proposed; nothing is
-        confirmed."""
+        each suggestion keeps where it was said (#2329). `recheck`: who is recorded, asked again
+        after each await; an import gives its own (`recorded_in`, #3305), so the reader and the
+        scan judge an import as the import does (#5184); else `consenting`. `said_by`: each line's
+        speaker, in order (#5199), so a speaker who stops is taken out by who said it, never by
+        matching words; without it (or with a count that doesn't match) the words are matched, as
+        before. Returns the names proposed; nothing is confirmed."""
+        if said_by is not None and len(said_by) != len(lines):
+            log.warning(  # counts only
+                "Name scan: %d speaker(s) for %d line(s); matched by words instead",
+                len(said_by), len(lines),
+            )  # fmt: skip
+            said_by = None
+
+        def recorded_now() -> Awaitable[Collection[int]]:
+            return recheck() if recheck is not None else self.consent.consenting(gid)
+
         assert self.memory is not None
         # A character's first name said alone ("Claude" for Claude Ambere) is their short name
         # before the scan looks (#3880), so it is never offered as a new name.
@@ -12329,28 +12768,260 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         skip = set(await self.memory.known_keys(gid, cid)) | await self._people_keys(
             gid, users, cid
         )
-        # One question per thing ("Oskar Vane", also "Vane"), grouped before the cap
-        # (#394). Which known name each sounds like is worked out when the DM looks,
-        # never saved: names can change, or be made secret, before then.
-        every = group_alike(find_new_names(lines, skip, unlimited=True))
-        # The name reader (docs/design/session_names.md, slice 2; DMBOT_SESSION_NAMES): names
-        # found from what is said about them, never from capitals, joined with the scan's before
-        # the cap. Only lines with a stored speaker can be read (consent is asked per line).
-        reader_kinds: dict[str, str] = {}
-        trace: list[name_trace.Row] = []
-        scan_keys = {name_key(f.name) for f in every}
-        if self.settings.session_names_on and heard_in:
-            # (exactly the lines the scan read: never a sidebar or off-topic line it left out,
-            # and on a put-back sweep only the lines put back, not the whole session again)
-            scanned = set(lines)
-            read_in = [x for x in heard_in if x.text in scanned]
-            people = await self._people_keys(gid, users, cid)
-            every, reader_kinds, trace = await self._read_session_names(
-                gid, cid, read_in, people, every, card=card
+        # Beside the name reader, the scan's rule is loosened (docs/design/session_names.md,
+        # section 3): a word also said in lower case may be a name, and a name may hold "of" or a
+        # possessive. The reader then judges: a name made only of ordinary words ("Hope") goes on
+        # only when the reader found it too.
+        tracing = bool(self.settings.name_trace_dir) and self.settings.name_trace_guild == gid
+        loose = self.settings.session_names_on and bool(heard_in) and self.name_pass_ai is not None
+
+        def scanned_names(loosened: bool) -> tuple[list[Suggestion], list[name_trace.Row]]:
+            # Every spelling heard, once or more: one name heard several ways is grouped before
+            # anything is counted (docs/design/session_names.md, section 5), so two spellings heard
+            # once each are joined, not lost. Which known name each sounds like is worked out when
+            # the DM looks, never saved: names can change, or be made secret, before then.
+            left: list[tuple[str, str]] | None = [] if tracing else None
+            out = find_new_names(
+                lines, skip, min_times=1, unlimited=True, loose=loosened, refusals=left
             )
-        found = every[:MAX_SUGGESTIONS]
+            # The scan's own refusals, for the trace (dev tools): the sample's names only
+            return out, [name_trace.Row(name_trace.SCAN, n, why) for n, why in left or ()]
+
+        settled = name_groups.Settled()
+        found_how: dict[str, name_groups.Group] = {}  # (3b: none with the switch off)
+        read: list[name_reader.Found] = []
+        read_in: list[Line] = []  # the lines the reader read, numbered from 1 in this order
+        unread: int | None = None  # the reader's batches not read; None: it did not read at all
+        ordinary = 0
+        if not self.settings.session_names_on:
+            # The switch off (DMBOT_SESSION_NAMES): the step exactly as it was before slice 3, so
+            # no real campaign's suggestions change until a scored run shows the typed series
+            # unchanged or better (Supervisor, on #5137). One question per thing ("Oskar Vane",
+            # also "Vane"), grouped after the "heard twice" test and before the cap (#394).
+            left: list[tuple[str, str]] | None = [] if tracing else None
+            every = group_alike(find_new_names(lines, skip, unlimited=True, refusals=left))
+            trace = [name_trace.Row(name_trace.SCAN, n, why) for n, why in left or ()]
+            trace += [
+                name_trace.Row(name_trace.SCAN, other, name_scan.GROUPED)
+                for f in every
+                for other in f.also
+            ]
+            reader_kinds: dict[str, str] = {}
+            scan_keys = {name_key(f.name) for f in every}
+            read_keys: set[str] = set()
+        else:
+            spelled, scan_rows = scanned_names(loose)
+            # The name reader (docs/design/session_names.md, slice 2; DMBOT_SESSION_NAMES): names
+            # found from what is said about them, never from capitals, grouped with the scan's
+            # before
+            # any count or cap. Only lines with a stored speaker can be read (consent is asked per
+            # line).
+            trace = []
+            if self.settings.session_names_on and heard_in:
+                # (exactly the lines the scan read: never a sidebar or off-topic line it left out,
+                # and on a put-back sweep only the lines put back, not the whole session again)
+                scanned = set(lines)
+                read_in = [x for x in heard_in if x.text in scanned]
+                people = await self._people_keys(gid, users, cid)
+                # (an import's card shows the reader's stage, part n of m, #5091; a live session's
+                # after-session card shows it through `card`, #5124)
+                stage = (
+                    self.import_job.store if import_scan and self.import_job is not None else None
+                )
+                started = False  # a "reading" was written: a reader that then fails says "stopped"
+
+                async def moved(part: int, parts: int) -> None:
+                    nonlocal started
+                    if stage is not None and session_id is not None:
+                        started = True
+                        await stage.set_names(
+                            gid, session_id, "reading", int(time.time()), part=part, parts=parts
+                        )
+
+                read, trace, unread = await self._read_session_names(
+                    gid, cid, read_in, people, spelled,
+                    card=card, progress=moved if stage is not None else None,
+                    recorded=recorded_now,
+                )  # fmt: skip
+                # Who is recorded, asked again after the reader (#5178): the lines used below for
+                # typed counts and for where a name was said are only those of people still
+                # recorded. (`read_in` keeps its numbering: the reader's lines are already checked.)
+                agreed_now = set(await recorded_now())
+                gone = any(x.user_id not in agreed_now for x in heard_in) or any(
+                    u not in agreed_now for u in said_by or ()
+                )
+                if gone:
+                    # (one rule for taking a stopped speaker out, shared with the late checks:
+                    # `_without_stopped`, #5184, #5187)
+                    lines, said_by, heard_in, read = _without_stopped(
+                        agreed_now, lines, heard_in, read, read_in, said_by
+                    )
+                    spelled, scan_rows = scanned_names(loose)
+                # A reader that failed after it started leaves "stopped", never a "reading" that
+                # looks as if it still runs; one that never started leaves the stage empty.
+                ended = "read" if unread is not None else "stopped" if started else ""
+                if stage is not None and session_id is not None and ended:
+                    try:
+                        await stage.set_names(
+                            gid, session_id, ended, int(time.time()), unread=unread
+                        )
+                    except Exception as exc:  # (the card is a nicety: the names are suggested)
+                        log.warning("The import card's names stage failed (%s)", type(exc).__name__)
+            if loose and unread is None:
+                # The reader did not read (nothing to read, a plan without it, a failure): the scan
+                # alone never decides with the loosened rule, so its usual list stands.
+                loose = False
+                spelled, scan_rows = scanned_names(False)
+            scan_keys = {name_key(f.name) for f in spelled}
+            read_keys = {name_key(f.name) for f in read}
+            # Section 5, in its order (`name_groups`): grouping by sound before any count, a group
+            # close to a secret dropped whole, the group's hearings against its reason's need, the
+            # spelling to show, most sure first. A typed line counts only where the spelling was
+            # found
+            # in it (`Line.typed`: chat typed at the table, never speech-to-text's guess): for the
+            # reader, the lines it found the name in; for the scan, a typed line holding the
+            # spelling
+            # as written (a typed "i hope so" is not where the scan heard "Hope").
+            typed_texts = [x.text for x in heard_in if x.typed]
+
+            def typed_by_scan(text: str) -> int:
+                exact = re.compile(rf"(?<!\w){re.escape(text)}(?!\w)")
+                return sum(1 for t in typed_texts if exact.search(t))
+
+            def typed_by_reader(numbers: Sequence[str]) -> int:
+                # (the reader numbers the lines it read from 1, in the order given: `read_in`)
+                return sum(
+                    1 for n in numbers if n.isdigit() and 0 < int(n) <= len(read_in)
+                    and read_in[int(n) - 1].typed
+                )  # fmt: skip
+
+            spellings = [
+                name_groups.Spelling(
+                    f.name, f.times, typed=typed_by_scan(f.name), ordinary=f.ordinary
+                )
+                for f in spelled
+            ] + [
+                name_groups.Spelling(
+                    f.name, f.times, why=f.why, typed=typed_by_reader(f.lines), kind=f.kind
+                )
+                for f in read
+            ]
+            closeness = await self._name_closeness(gid, cid)
+            heard_wrong: Callable[[str], name_scan.Match | None]
+            near_secret: Callable[[str], bool]
+            if closeness is None:
+                # Unsure whether a name is close to a secret: nothing is suggested this time (a
+                # secret is never risked; the log says so, counts only)
+                log.warning("Name scan: names held back, the campaign's names could not be read")
+                heard_wrong, near_secret = (lambda _s: None), (lambda _s: True)
+            else:
+                heard_wrong, near_secret = closeness
+            # (pure and sometimes hundreds of spellings: off the event loop)
+            settled = await asyncio.to_thread(
+                name_groups.settle, spellings, heard_wrong=heard_wrong, near_secret=near_secret
+            )
+            every = [g.suggestion() for g in settled.offered]
+            found_how = {name_key(g.name): g for g in settled.offered}  # (what made each a name)
+            reader_kinds = {
+                g.name: LORE_KINDS[g.kind] for g in settled.offered if g.kind in LORE_KINDS
+            }
+            split: list[Suggestion] = []
+            if loose:  # "Wulfgar of Icewind Dale" is two names when the reader named a part of it
+                every, split = name_scan.split_joined(every, read_keys, skip)
+            # An ordinary word the reader didn't also find is never suggested by the scan alone
+            # (design section 3). Its trace says when the reader could not say (a call's fault).
+            why_ordinary = name_scan.ORDINARY_PART_READ if unread else name_scan.ORDINARY
+            ordinary = sum(1 for *_x, why, _t in settled.refused if why == name_groups.ORDINARY)
+            # Each spelling's end, once for each reader that found it; names close to a secret are
+            # never written, not even here: one count row
+            trace = [
+                *scan_rows,
+                *trace,
+                *(
+                    name_trace.Row(
+                        source, n, why_ordinary if why == name_groups.ORDINARY else why, times=t
+                    )
+                    for n, why, t in settled.refused
+                    for source, keys in (
+                        (name_trace.SCAN, scan_keys),
+                        (name_trace.READER, read_keys),
+                    )
+                    if name_key(n) in keys
+                ),
+                *(
+                    [name_trace.Row(name_trace.SCAN, "", name_groups.NEAR_SECRET, times=hidden)]
+                    if (hidden := settled.near_secret)
+                    else []
+                ),
+                *(
+                    name_trace.Row(name_trace.SCAN, f.name, name_scan.SPLIT, times=f.times)
+                    for f in split
+                ),
+            ]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
         asked = await self._take_name_asks(gid, cid, session_id) if session_id is not None else []
+        said_before = len(lines)
+        asked_keys = {name_key(n) for n, _t in asked}
+        late_stop = False  # a speaker stopped inside the kinds AI's or the writes' loop (#5190)
+
+        async def still_recorded(names: list[Suggestion]) -> list[Suggestion] | None:
+            """Who is recorded, asked again (#5187; CLAUDE.md: after every async step): a stopped
+            speaker's lines come out and the names left are those the rest still hold. None: they
+            can't be told apart, so nothing is suggested; the name pass's words are put back for
+            the next scan, never lost."""
+            nonlocal lines, said_by, heard_in, read
+            names, lines, said_by, heard_in, read, unsure = await self._names_still_recorded(
+                recorded_now, agreed, names, lines, heard_in, read, read_in, skip, loose,
+                keep={name_key(n): t for n, t in asked}, said_by=said_by,
+            )  # fmt: skip
+            if not unsure:
+                # (#5190: a name that lost hearings says so on its card: never more typed hearings
+                # than hearings, nor a count that holds the stopped speaker's)
+                for n in names:
+                    key = name_key(n.name)
+                    group = found_how.get(key)
+                    if group is None or key in asked_keys or group.times <= n.times:
+                        continue  # (a name pass word's count is its own, not a hearing count)
+                    typed_left = sum(
+                        1
+                        for x in heard_in
+                        if x.typed and any(name_reader.holds(x.text, t) for t in (n.name, *n.also))
+                    )
+                    typed_times = min(group.typed_times, typed_left, n.times)
+                    found_how[key] = replace(
+                        group, times=n.times, typed_times=typed_times,
+                        typed=group.typed and typed_times > 0,
+                    )  # fmt: skip
+                return names
+            log.info("Name scan: a speaker stopped and can't be told apart; none suggested")
+            if asked and session_id is not None:
+                await self._keep_name_asks(gid, cid, session_id, asked)
+            return None
+
+        async def nobody_stopped() -> bool:
+            """Everyone whose lines the step still holds is still recorded (#5190): asked between
+            the kinds AI's batches and before each name is written, the awaits inside those loops
+            (CLAUDE.md: after every async step). A stop there ends the loop; what it made stands,
+            and was checked."""
+            nonlocal late_stop
+            now = set(await recorded_now())
+            ok = all(x.user_id in now for x in heard_in)
+            if said_by is not None:  # (each line's speaker is known: theirs is the question, #5199)
+                ok = ok and all(u in now for u in said_by)
+            # (with no stored transcript, or a line it doesn't hold, the speaker can't be told:
+            # everyone who agreed must still be recorded, #5190)
+            elif not heard_in or _untold(lines, heard_in):
+                ok = ok and (agreed is None or set(agreed) <= now)
+            late_stop = late_stop or not ok
+            return ok
+
+        # before anything is held or stored: the step awaited since its last check (closeness,
+        # grouping, the name pass's words)
+        checked = await still_recorded(every)
+        if checked is None:
+            return []
+        every = checked
+        found = every[:MAX_SUGGESTIONS]
         have = {name_key(f.name) for f in found}
         for name, times in asked:
             if name_key(name) not in skip and name_key(name) not in have:
@@ -12362,20 +13033,192 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         offered = {name_key(f.name) for f in found}
         cut = sum(1 for f in every[MAX_SUGGESTIONS:] if name_key(f.name) not in offered)
         if import_scan and session_id is not None and self.import_job is not None:
+            # (#5055 B: an import is read once, so what is past the 10 waits behind "📝 More names"
+            # instead of being lost; a live session keeps its short list and only counts. Held
+            # first, with no await since the check, so no stopped speaker's name is held.)
+            past = [
+                HeldName(f.name, f.times, f.also)
+                for f in every[MAX_SUGGESTIONS:]
+                if name_key(f.name) not in offered
+            ]
+            if past:
+                try:  # (a count must never stop the scan: the 10 are offered either way)
+                    await MoreNames(self.memory._db).hold(gid, cid, session_id, past)
+                except Exception as exc:
+                    log.warning("More names: not kept (%s)", type(exc).__name__)
             await self.import_job.store.set_scan_cut(gid, session_id, cut)
-        added: list[str] = []
+        # ...again before the kinds AI is sent any line (the step awaited since)
+        checked = await still_recorded(found)
+        if checked is None:
+            return []
+        found = checked
         kinds = await self._scan_kinds(
-            gid, cid, [f.name for f in found if f.name not in reader_kinds], lines
-        )
+            gid, cid, [f.name for f in found if f.name not in reader_kinds], lines,
+            still=nobody_stopped,
+        )  # fmt: skip
         kinds.update({n: k for n, k in reader_kinds.items() if n not in kinds})
         # the session each name is made in, for the split-party check (#4043): never a guess
         session_at = await self._session_start(gid, session_id)
         log.info(  # counts only
-            "Name scan: %d name(s) suggested, %d with a kind, %d without, %d past the limit",
-            len(found), len(kinds), len(found) - len(kinds), cut,
+            "Name scan: %d name(s) suggested, %d with a kind, %d without, %d past the limit,"
+            " %d ordinary word(s) the reader didn't find, %d offered as maybe a known name,"
+            " %d spelling(s) held back as close to a secret",
+            len(found), len(kinds), len(found) - len(kinds), cut, ordinary,
+            sum(1 for g in settled.offered if g.heard_wrong), settled.near_secret,
         )  # fmt: skip
         refused: set[str] = set()
-        for suggestion in found:
+        # ...and once more before the names are written (the kinds AI and the session's start)
+        checked = await still_recorded(found)
+        if checked is None:
+            return []
+        found = checked
+        added = await self._add_scan_names(
+            gid, cid, found, kinds,
+            session_id=session_id, heard_in=heard_in, session_at=session_at, refused=refused,
+            still=nobody_stopped,
+            found_how=found_how, read_in=read_in, read=read,
+        )  # fmt: skip
+        if late_stop and asked and session_id is not None:
+            # (the name pass's words a stop left unmade wait for the next scan, never lost)
+            made = {name_key(n) for n in added} | set(refused)
+            unmade = [(n, t) for n, t in asked if name_key(n) not in made]
+            if unmade:
+                await self._keep_name_asks(gid, cid, session_id, unmade)
+        # (the dev trace was built before a late stop: then it is not written, #5187, #5190)
+        if tracing and len(lines) == said_before and not late_stop:  # (#5055 B)
+            await self._write_name_trace(
+                gid,
+                cid,
+                session_id,
+                every,
+                found,
+                offered,
+                refused,
+                scan_keys,
+                trace,
+                read_keys,
+                {name_key(n) for n, _times in asked},
+            )
+        return added
+
+    async def _names_still_recorded(
+        self,
+        recorded: Callable[[], Awaitable[Collection[int]]],
+        agreed: Collection[int] | None,
+        names: Sequence[Suggestion],
+        lines: Sequence[str],
+        heard_in: Sequence[Line],
+        read: Sequence[name_reader.Found],
+        read_in: Sequence[Line],
+        skip: Collection[str],
+        loose: bool,
+        *,
+        keep: Mapping[str, int] | None = None,
+        said_by: Sequence[int] | None = None,
+    ) -> tuple[
+        list[Suggestion], list[str], list[int] | None, list[Line], list[name_reader.Found], bool
+    ]:
+        """The name step's late consent check (#5187; CLAUDE.md: re-checked after every async
+        step). Who is recorded is asked again; a stopped speaker's lines come out
+        (`_without_stopped`), and a suggestion stays only while the rest still hold it: the scan
+        is run again on the lines left (whole words, as the scan reads them, never a match inside
+        another word) and the reader's names keep only lines still recorded. A suggestion keeps the
+        count heard in what is left, and one that lost a hearing must still be heard twice.
+        `keep`: the name pass's words by name key, with their own counts (not from these lines).
+        The last value is True when someone stopped and their lines can't be told apart (no stored
+        transcript, or a line the scan read that the stored one doesn't hold): the caller suggests
+        nothing rather than risk it. `said_by`: each line's speaker (#5199): then a stopped
+        speaker's lines come out by who said them, and none is ever unsure."""
+        keep = keep or {}
+        by = list(said_by) if said_by is not None else None  # (a copy: the caller's stays)
+        now = set(await recorded())
+        same = (list(names), list(lines), by, list(heard_in), list(read))
+        if by is not None:
+            if all(u in now for u in by) and all(x.user_id in now for x in heard_in):
+                return (*same, False)
+        else:
+            if not heard_in:
+                return (*same, agreed is not None and bool(set(agreed) - now))
+            if all(x.user_id in now for x in heard_in):
+                return (*same, False)
+            # (#5190: a line the scan read that the stored transcript doesn't hold, such as one a
+            # failed save left out, has no speaker to check, so it could be the stopped one's)
+            if _untold(lines, heard_in):
+                return (*same, True)
+        lines, by, heard_in, read = _without_stopped(now, lines, heard_in, read, read_in, by)
+        scanned: dict[str, int] = {}
+        for found in find_new_names(lines, skip, min_times=1, unlimited=True, loose=loose):
+            scanned[name_key(found.name)] = scanned.get(name_key(found.name), 0) + found.times
+        by_reader: dict[str, int] = {}
+        for got in read:
+            by_reader[name_key(got.name)] = by_reader.get(name_key(got.name), 0) + got.times
+        kept: list[Suggestion] = []
+        for s in names:
+            key = name_key(s.name)
+            if key in keep:  # (the name pass's word: its own count, not the lines')
+                kept.append(replace(s, times=keep[key]))
+                continue
+            # (heard in what is left, the scan's and the reader's counted apart, as a group is)
+            keys = {name_key(t) for t in (s.name, *s.also)}
+            times = min(
+                s.times,
+                max(sum(scanned.get(k, 0) for k in keys), sum(by_reader.get(k, 0) for k in keys)),
+            )
+            # A name stays as it was when no hearing was lost; one that lost some must still pass
+            # the plain rule (heard twice) on what is left, since the hearing that let it through
+            # once (an introduction, a typed line) may be the stopped speaker's.
+            if not (times and (times == s.times or times >= MIN_TIMES)):
+                continue
+            # (a spelling only the stopped speaker said is never kept as an alias, nor shown: the
+            # most heard spelling left is, #5190)
+            heard = {
+                t: max(scanned.get(name_key(t), 0), by_reader.get(name_key(t), 0))
+                for t in (s.name, *s.also)
+            }
+            left = [t for t, n in heard.items() if n]
+            if not left:  # (heard only as a group: its spellings stay as they were)
+                kept.append(replace(s, times=times))
+                continue
+            shown = s.name if heard[s.name] else max(left, key=lambda t: heard[t])
+            also = tuple(t for t in left if t != shown)
+            kept.append(replace(s, name=shown, times=times, also=also))
+        return kept, list(lines), by, list(heard_in), list(read), False
+
+    async def _add_scan_names(
+        self,
+        gid: int,
+        cid: str,
+        found: Sequence[Suggestion],
+        kinds: Mapping[str, str],
+        *,
+        session_id: str | None,
+        heard_in: Sequence[Line],
+        session_at: int | None,
+        refused: set[str] | None = None,
+        found_how: Mapping[str, name_groups.Group] | None = None,
+        read_in: Sequence[Line] = (),
+        read: Sequence[name_reader.Found] = (),
+        still: Callable[[], Awaitable[bool]] | None = None,
+    ) -> list[str]:
+        """Make each suggestion a name to check, as the scan does: proposed, source scan, "Heard N
+        times", its other spellings as aliases, and where it was said when the lines are given.
+        Shared by the scan and "📝 More names" (#5055 B). Returns the names made; `refused`, when
+        given, gets the key of each the store refused (for the scan's trace). `found_how`,
+        `read_in` and `read` are the scan's own (what made each a name, for the 3b card); "More
+        names" gives none, so its names are found by the scan (#5168: they were the scan's locals,
+        out of reach here once the two were split). `still`: whether everyone whose lines these
+        names hold is still recorded, asked before each name (#5190: each name awaits several
+        writes); False stops here, and the names not made yet are not suggested this time."""
+        assert self.memory is not None
+        added: list[str] = []
+        for done, suggestion in enumerate(found):
+            if still is not None and not await still():
+                log.info(
+                    "Name scan: a speaker stopped while names were written; %d made, %d not",
+                    len(added),
+                    len(found) - done,
+                )  # counts only
+                break
             written = None
             # (a kind the campaign's ontology does not allow falls back to none: the card asks)
             for kind in dict.fromkeys((kinds.get(suggestion.name, "concept"), "concept")):
@@ -12393,9 +13236,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except MemoryRuleError as exc:
                     log.info("Skipped a suggested name: %s", exc)
             if written is None:
-                refused.add(name_key(suggestion.name))
+                if refused is not None:
+                    refused.add(name_key(suggestion.name))
                 continue
             added.append(suggestion.name)
+            if still is not None and not await still():  # (the name's write was an await too)
+                log.info("Name scan: a speaker stopped while names were written; no more lines")
+                break
+            if self.settings.session_names_on:  # (what made it a name: for the 3c card, 3b)
+                await self._keep_found(
+                    gid, cid, session_id, written.value.id,
+                    (found_how or {}).get(name_key(suggestion.name)),
+                    [suggestion.name, *suggestion.also], heard_in, read_in, read,
+                )  # fmt: skip
             if heard_in and session_id is not None:
                 await self._keep_places(
                     gid, cid, session_id, written.value.id, heard_in,
@@ -12414,21 +13267,66 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a name heard with a suggestion: %s", exc)
-        if self.settings.name_trace_dir and self.settings.name_trace_guild == gid:  # (#5055 B)
-            await self._write_name_trace(
-                gid,
-                cid,
-                session_id,
-                every,
-                found,
-                offered,
-                refused,
-                scan_keys,
-                trace,
-                {name_key(n) for n in reader_kinds},
-                {name_key(n) for n, _times in asked},
-            )
         return added
+
+    async def add_more_names(
+        self,
+        gid: int,
+        cid: str,
+        progress: Callable[[int, int], Awaitable[None]] | None = None,
+    ) -> tuple[int, int]:
+        """The DM pressed "📝 More names" (#5055 B): every name an imported session's scan held past
+        its 10 becomes a name to check, as the scan makes them, and leaves the waiting list. A name
+        DMbot has meanwhile learned, or that the DM said isn't one, is let go; one held from two
+        sessions is one name (its times added, its other spellings joined, the earliest session
+        kept). If making them fails part way, the names not made yet are put back, so none is lost.
+        `progress(done, of)` is awaited every few names (the wait rule). Returns (made, still
+        waiting): one press makes at most `more_names.TAKE_MAX`. No AI call: what each is, the card
+        asks. Counts only in the log."""
+        assert self.memory is not None
+        held = MoreNames(self.memory._db)
+        taken = await held.take(gid, cid)
+        known = set(await self.memory.known_keys(gid, cid))
+        merged: dict[str, HeldName] = {}
+        for h in taken:  # (most heard first, so the first session seen is kept for ties)
+            key = name_key(h.name)
+            if key in known:
+                continue
+            old = merged.get(key)
+            if old is None:
+                merged[key] = h
+                continue
+            also = tuple(dict.fromkeys((*old.also, *h.also)))
+            merged[key] = HeldName(old.name, old.times + h.times, also, old.session_id)
+        waiting = list(merged.values())
+        made = 0
+        starts: dict[str, int | None] = {}
+        try:
+            for done, h in enumerate(waiting):
+                if progress is not None and done % PROGRESS_EVERY == 0:
+                    await progress(done, len(waiting))
+                if h.session_id not in starts:
+                    starts[h.session_id] = await self._session_start(gid, h.session_id)
+                one = [Suggestion(h.name, h.times, h.also)]
+                made += len(
+                    await self._add_scan_names(
+                        gid, cid, one, {},
+                        session_id=h.session_id, heard_in=(), session_at=starts[h.session_id],
+                    )
+                )  # fmt: skip
+                waiting[done] = HeldName("", 0)  # (made, or refused by a rule: not put back)
+        except BaseException:
+            # (nothing is lost: what was not made yet waits again, under its own session)
+            back: dict[str, list[HeldName]] = {}
+            for h in waiting:
+                if h.name:
+                    back.setdefault(h.session_id, []).append(h)
+            for sid, names in back.items():
+                await held.hold(gid, cid, sid, names)
+            raise
+        left = await held.count(gid, cid)
+        log.info("More names: %d taken, %d made, %d still waiting", len(taken), made, left)
+        return made, left
 
     async def _write_name_trace(
         self,
@@ -12480,23 +13378,76 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception as exc:  # (a dev tool: the step's own work is done)
             log.warning("Name trace failed: %s", type(exc).__name__)
 
+    async def _name_closeness(
+        self, gid: int, cid: str
+    ) -> tuple[Callable[[str], name_scan.Match | None], Callable[[str], bool]] | None:
+        """For section 5: the known name a spelling is heard wrong for (the scan's `near_match_in`
+        over confirmed, non-secret names sharing a sound code, through the lookup's sound index,
+        as the card's "Sounds like" uses), and whether a spelling is close to a secret or DM-only
+        name (the cleaner's free-text check and the name pass's own test, `name_pass_logic.
+        secret_test`). Read once, fresh: a name may have just been made secret. None when the
+        names can't be read: the step then suggests nothing rather than risk a secret. With no
+        lookup at all (tests, a worker with no memory) nothing is close to anything; a bot with
+        memory always has one."""
+        if self.lookup is None:
+            return (lambda _s: None), (lambda _s: False)
+        try:
+            lookup = await self.lookup.get(gid, cid)
+        except Exception as exc:
+            log.warning(
+                "Couldn't read the campaign's names for the name scan (%s)", type(exc).__name__
+            )
+            return None
+        close_to_secret = name_pass_logic.secret_test(lookup)
+
+        def heard_wrong(spelling: str) -> name_scan.Match | None:
+            seen: set[tuple[str, str]] = set()
+            candidates: list[tuple[str, str, str]] = []
+            for code in name_scan.sound_keys(spelling):
+                for known in lookup.by_sound.get(code, ()):
+                    if (
+                        known.confirmed and not known.secret and not known.person
+                        and known.entity_id not in lookup.hidden
+                        and known.entity_id in lookup.entities
+                        and (known.entity_id, known.text) not in seen
+                    ):  # fmt: skip
+                        seen.add((known.entity_id, known.text))
+                        candidates.append(
+                            (known.entity_id, known.text, lookup.entities[known.entity_id].name)
+                        )
+            return name_scan.near_match_in(spelling, candidates)
+
+        def near_secret(spelling: str) -> bool:
+            return text_names_a_secret(lookup, spelling) or close_to_secret(spelling)
+
+        return heard_wrong, near_secret
+
     async def _read_session_names(
         self,
         gid: int,
         cid: str,
         heard_in: Sequence[Line],
         people: Collection[str],
-        scan: list[Suggestion],
+        scan: Sequence[Suggestion],
         *,
         card: after_session.AfterSessionCard | None = None,
-    ) -> tuple[list[Suggestion], dict[str, str], list[name_trace.Row]]:
-        """The name reader over the session's lines (docs/design/session_names.md, slice 2),
-        joined with the scan's suggestions (`name_reader.join`). Never raises: no AI, a plan
-        without it, or a failure leave the scan's list as it was. Who is recorded is asked before
-        and after each call. Counts only in the log."""
+        progress: Callable[[int, int], Awaitable[None]] | None = None,
+        recorded: Callable[[], Awaitable[Collection[int]]] | None = None,
+    ) -> tuple[list[name_reader.Found], list[name_trace.Row], int | None]:
+        """The name reader over the session's lines (docs/design/session_names.md, slice 2): every
+        name it found, each with its hearings, reason, kind and lines, none yet ended for too few
+        hearings (the step counts those for a whole group of spellings, `name_groups`, section 5).
+        `scan`: the scan's spellings, for the trace's "joined" rows. Never raises: no AI, a plan
+        without it, or a failure give no names and None for `unread`. Who is recorded is asked
+        before and after each call. Counts only in the log."""
+
+        # (who is recorded: the caller's own, an import's `recorded_in`, else `consenting`, #5184)
+        def asked() -> Awaitable[Collection[int]]:
+            return recorded() if recorded is not None else self.consent.consenting(gid)
+
         ai = self.name_pass_ai
         if ai is None or not heard_in or self.memory is None:
-            return scan, {}, []
+            return [], [], None
         try:
             # Each name never to suggest, with why: a trace can tell "the DM said it isn't a
             # name" from a known name or a person at the table (the Expert, on #5087).
@@ -12507,7 +13458,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             skip.update({k: name_reader.AT_TABLE for k in people})
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
-                return scan, {}, []
+                return [], [], None
             dms = set(campaign.dm_user_ids)
             rows = [
                 name_reader.Row(str(i), x.user_id, x.user_id in dms, x.text)
@@ -12520,45 +13471,76 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if credits.current() is None
                 else contextlib.nullcontext()
             )
+
+            async def moved(part: int, parts: int) -> None:
+                # the reader's batch n of m: the live session's card (#5124) and an import's
+                # card (#5091) each follow it
+                if card is not None:
+                    await card.stage(after_session.NAMES, part, parts)
+                if progress is not None:
+                    await progress(part, parts)
+
             with meter:
                 read = await name_reader.read(
                     ai,
                     rows,
                     skip,
                     known=sorted(known - rejected),
-                    consenting=lambda: self.consent.consenting(gid),
+                    consenting=asked,
                     max_tokens=OUTPUT_FLOOR,  # (background calls never send less, #2596)
                     rules=(campaign.target_ruleset, campaign.fallback_ruleset),
-                    progress=(
-                        (lambda n, of: card.stage(after_session.NAMES, n, of)) if card else None
-                    ),
+                    progress=moved if card is not None or progress is not None else None,
                 )
             if card is not None and read.unread:  # (a stretch not read is said, never "no names")
                 card.note(after_session.not_read(read.unread))
-            kept, dropped = name_reader.tally(read.heard, {r.number: r.text for r in rows})
-            joined, kinds = name_reader.join(scan, kept)
+            # A line counts as a hearing only while its speaker is still recorded: asked again
+            # here, after the reader's last await (#5178; CLAUDE.md: consent is re-checked after
+            # every async step). The reader asks after each batch's answer, so a line cited in an
+            # earlier batch by someone who stopped later is dropped here too, cited or not; a name
+            # left with no line ends as `speaker_stopped`, as the reader ends one
+            agreed = await asked()
+            ok = {r.number for r in rows if r.user_id in agreed}
+            heard: list[name_reader.Heard] = []
+            stopped: list[name_reader.Outcome] = []
+            for h in read.heard:
+                kept_lines = tuple(n for n in h.lines if n in ok)
+                if kept_lines:
+                    heard.append(replace(h, lines=kept_lines))
+                else:
+                    stopped.append(name_reader.Outcome(h.name, name_reader.STOPPED))
+            kept, dropped = name_reader.tally(
+                heard, {r.number: r.text for r in rows if r.number in ok}, every=True
+            )
+            dropped += stopped
             log.info(  # counts only (a stretch not read is never "no names")
-                "Name reader: %d name(s) kept, %d with too few hearings, %d new beside the scan,"
-                " %d stretch(es) not read",
-                len(kept), len(dropped), len(joined) - len(scan), read.unread,
-            )  # fmt: skip
+                "Name reader: %d name(s) found, %d stretch(es) not read", len(kept), read.unread
+            )
             # The trace (#5055 B): every candidate the reader ended, with its fixed reason. A kept
             # name the scan also found is "joined"; the rest are traced with the joined list in
             # `_propose_new_names` (offered, or over the number).
             scanned = {name_key(x.name) for x in scan} | {name_key(a) for x in scan for a in x.also}
-            traced = name_trace.reader_rows(read.outcomes, dropped, kept, scanned)
-            return joined, kinds, traced
+            # (no "joined" rows: every name found is ended by the step's grouping, `name_groups`)
+            traced = name_trace.reader_rows(read.outcomes, dropped, [], scanned)
+            return kept, traced, read.unread
         except Exception as exc:  # the reader adds names; the scan's list stands without it
             log.warning("Name reader failed: %s", type(exc).__name__)
-            return scan, {}, []
+            return [], [], None
 
     async def _scan_kinds(
-        self, gid: int, cid: str, names: Sequence[str], lines: Sequence[str]
+        self,
+        gid: int,
+        cid: str,
+        names: Sequence[str],
+        lines: Sequence[str],
+        *,
+        still: Callable[[], Awaitable[bool]] | None = None,
     ) -> dict[str, str]:
         """What each suggested name is (npc, place, faction, item, event), asked of the AI from the
         sentence it was said in, so the review card can say "Yes, a place" (#2937). Never raises:
         no AI, a plan without it, or a failed call mean no kind for those names, and the card
-        shows its own picker. Counts only in the log."""
+        shows its own picker. Counts only in the log. `still`: whether everyone whose lines these
+        are is still recorded, asked before each call (#5190); False sends no more lines, and the
+        names not asked yet have no kind."""
         ai = self.name_pass_ai
         if ai is None or not names:
             return {}
@@ -12568,7 +13550,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 return {}
             kinds: dict[str, str] = {}
 
+            stopped = False
+
             async def ask_batch(batch: Sequence[str]) -> None:
+                nonlocal stopped
+                if stopped or (still is not None and not await still()):
+                    stopped = True  # (no line goes out after a stop)
+                    return
                 ask = [(n, scan_kinds.context_for(n, lines)) for n in batch]
                 reply = await ai.complete(
                     scan_kinds.SYSTEM,
@@ -12585,10 +13573,65 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
             for batch in scan_kinds.batches(names):
                 await ask_batch(batch)
+            if stopped:
+                log.info("Name kinds: a speaker stopped; %d of %d asked", len(kinds), len(names))
             return kinds
         except Exception as exc:  # the kinds are a nicety: the suggestions are made without them
             log.warning("Couldn't ask for the kinds of suggested names: %s", type(exc).__name__)
             return {}
+
+    async def _keep_found(
+        self,
+        gid: int,
+        cid: str,
+        session_id: str | None,
+        entity_id: str,
+        group: name_groups.Group | None,
+        spellings: Sequence[str],
+        heard_in: Sequence[Line],
+        read_in: Sequence[Line],
+        read: Sequence[name_reader.Found],
+    ) -> None:
+        """What made a suggested name a name (#5133 slice 3b): how it was found, and a pointer to
+        the one line that did it, for the card to quote (read then, with consent asked then).
+        Typed: a typed line holding it. Found by the name reader: the first line it cited for its
+        strongest reason. Otherwise the first line holding one of its spellings. A name split from
+        a joined one, or asked by the name pass, has no group: found by the scan. Never raises."""
+        db = self._picture_db
+        if db is None or session_id is None:
+            return
+        try:
+            how = "typed" if group is not None and group.typed else group.why if group else "scan"
+            keys = {name_key(t) for t in spellings}
+
+            def holding(lines: Iterable[Line]) -> Line | None:
+                return next(
+                    (x for x in lines if any(name_reader.holds(x.text, t) for t in spellings)),
+                    None,
+                )
+
+            def cited(f: name_reader.Found) -> list[Line]:
+                # (the reader numbers the lines it read from 1, in `read_in`'s order)
+                numbers = [int(n) for n in f.lines if n.isdigit()]
+                return [read_in[n - 1] for n in numbers if 0 < n <= len(read_in)]
+
+            mine = [f for f in read if name_key(f.name) in keys]
+            line: Line | None = None
+            if how == "typed":
+                # a typed line only, never speech quoted as typed: one holding a spelling, else
+                # one the reader cited, else no line at all
+                line = holding(x for x in heard_in if x.typed) or next(
+                    (x for f in mine for x in cited(f) if x.typed), None
+                )
+            else:
+                if how != "scan":
+                    line = next((x for f in mine if f.why == how for x in cited(f)), None)
+                line = line or holding(heard_in)
+            ref = line_ref(session_id, line.started_ms, line.user_id) if line else None
+            times, typed = (group.times, group.typed_times) if group is not None else (0, 0)
+            await NameFound(db).keep(gid, cid, entity_id, how, ref, times=times, typed=typed)
+        except Exception as exc:  # (the card simply has no quote)
+            log.warning("Couldn't keep what made a name a name (%s)", type(exc).__name__)
 
     async def _keep_places(
         self,
@@ -12660,10 +13703,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         gid, cid = table.guild_id, table.campaign_id
         with log_context(guild_id=gid, campaign_id=cid):
             agreed = await self.consent.consenting(gid)
-            lines = [text for uid, text in table.heard if uid in agreed]
+            # (each line with who said it, so a speaker who stops while the names are read is
+            # taken out by who said it, never by matching words, #5199)
+            heard = [(uid, text) for uid, text in table.heard if uid in agreed]
             speakers = {uid for uid, _ in table.heard}
             table.heard = []  # the session is over; free it
-            if not lines:
+            if not heard:
                 return
             users = speakers | agreed | {table.dm_user_id}
             users |= table.dm_user_ids
@@ -12677,11 +13722,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
                 if fixed and self.transcripts is not None:
                     try:
-                        lines = [
-                            x.text
+                        heard = [
+                            (x.user_id, x.text)
                             for x in await self.transcripts.lines(gid, table.transcript_session_id)
                             if x.user_id in agreed and not x.sidebar and not x.typed
-                        ] or lines
+                        ] or heard
                         repaired = True  # (every stored line is in it, the turned-back ones too)
                     except Exception:
                         log.exception("Name pass: couldn't read the repaired lines")
@@ -12689,8 +13734,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     # The lines the end-of-session pass turned back into game talk were labelled
                     # off-topic while the session ran, so the held words left them out (#2587).
                     try:
-                        lines += [
-                            x.text
+                        heard += [
+                            (x.user_id, x.text)
                             for x in await self.transcripts.leaned_lines(
                                 gid, table.transcript_session_id
                             )
@@ -12699,10 +13744,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     except Exception:
                         log.exception("Name pass: couldn't read the lines turned back")
             added = await self._propose_new_names(
-                gid, cid, lines, users, table.transcript_session_id, agreed=agreed,
-                card=DMBot._after_card(self, table),
+                gid, cid, [text for _uid, text in heard], users, table.transcript_session_id,
+                agreed=agreed, card=DMBot._after_card(self, table),
+                said_by=[uid for uid, _text in heard],
             )  # fmt: skip
-            log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
+            log.info("After-session scan: %d line(s), %d new name(s)", len(heard), len(added))
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
             ):
@@ -13496,7 +14542,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         while the worker has its recaps to start (#4904 3b-4c)."""
         if await store.pending_scans(gid, cid):
             return True
-        return any(r.campaign_id == cid for r in await store.ready_for_recap(gid))
+        return await store.recap_waiting(gid, cid)
 
     async def _import_news(
         self, gid: int, store: ImportStore, left: dict[str, int] | None = None
@@ -14384,7 +15430,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         }
         added = await self._propose_new_names(
             gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id,
-            agreed=set(agreed), game_only=True, import_scan=True,
+            agreed=set(agreed), game_only=True, import_scan=True, recheck=recorded,
+            said_by=[uid for uid, _ in lines],
         )  # fmt: skip
         if self.import_state is not None:
             await self.import_state.add_strings(
@@ -14827,6 +15874,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 deeds=self._answer_deed,
                                 continuity_ask=self._work_out_continuity,
                                 continuity_answer=self._answer_continuity,
+                                more_names=self.add_more_names,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -15046,6 +16094,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def apply_share_improve(self, campaign: Campaign, on: bool) -> None:
         """ "Share this campaign's story to improve DMbot" chosen on the website (#3741)."""
         await self.campaigns.set_share_improve(campaign.guild_id, campaign.id, on)
+
+    async def apply_rules_cards(self, campaign: Campaign, on: bool) -> None:
+        """ "Rules cards" chosen on the website (#5155): `set_rules_cards` itself, as Discord's
+        button calls it, so a session of this campaign follows from now on."""
+        await self.set_rules_cards(campaign.guild_id, campaign.id, on)
+
+    async def apply_ask_before_adding(self, campaign: Campaign, on: bool) -> None:
+        """ "Ask me before adding" chosen on the website (#5155): Discord's button's call."""
+        await self.campaigns.set_ask_before_adding(campaign.guild_id, campaign.id, on)
 
     async def apply_map_checks(self, campaign: Campaign, on: bool) -> None:
         """ "Map checks" chosen on the website (#4687): the call Discord's button makes."""

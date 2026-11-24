@@ -80,6 +80,7 @@ EVERY_ACTION = (
     "reveals-ask", "reveals-keep", "reveals-not",  # what the characters learned (#3863)
     "deed-record", "deed-not", "deed-undo",  # deeds the party did (#3591)
     "continuity-ask", "continuity-answer",  # the continuity heads-ups (#3695 half 1)
+    "names-more",  # 📝 More names from the Questions page (#5081)
 )  # fmt: skip
 
 

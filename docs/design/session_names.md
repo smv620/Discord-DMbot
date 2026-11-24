@@ -1,7 +1,10 @@
 # Design basis: finding names in what was said
 
-**Status:** revision 1, 2026-11-23, written at the owner's request. **Not binding until Supervisor
-approves it.**
+**Status:** revision 2, 2026-11-23. Revision 1 (written at the owner's request) is binding.
+Revision 2 folds in the rulings Supervisor made while slices 2 to 6 were planned and built, on
+#5133 and #5173, and corrects two errors in revision 1. They are listed in
+[section 14](#14-what-changed-in-revision-2). **Revision 2's wording is not binding until
+Supervisor approves it;** the rulings themselves already are.
 
 **Who builds it:** GraphEngineer owns the name readers and the scan (`core/src/dmbot/memory/`).
 CloudDev-lead owns the transcript, the Cleaner and speech-to-text (`core/src/dmbot/transcript/`,
@@ -25,6 +28,7 @@ issue #5055 (which names a sample run missed, and why) with #5082 and #5086;
 11. [Rules developers must keep](#11-rules-developers-must-keep)
 12. [Slice order](#12-slice-order)
 13. [Open questions](#13-open-questions)
+14. [What changed in revision 2](#14-what-changed-in-revision-2)
 
 ---
 
@@ -165,13 +169,39 @@ single out**, and for each:
 to it so it can leave them out), a rules word (a spell, a creature of the rules, a condition), a
 word used only as an ordinary word, and anything it would have to guess.
 
-**Singled out, with no name** ("the gemstone mine", "the azure tome", "the woman with the sad
-look"):
+**Singled out, with no name** ("the gemstone mine", "the kennel", "the woman with the sad look").
+Lore has no rule for these to copy (revision 1 said it had; the change it cited was never merged),
+so sessions have their own (Supervisor's ruling on #5173):
 
-- a person goes to the existing unnamed entries, as lore does (`unnamed_read.py`);
-- a thing or a place is suggested under the story's own words, a few for each session at most,
-  only when the story comes back to it or builds on it. This is the rule lore already has for
-  special objects (#3157), applied to sessions.
+- **A person or a group is left out here.** The story reader's own question about a person the
+  story never names covers them, and makes the unnamed entry.
+- **A thing or a place only,** under the story's own words, exactly as the lines write them,
+  without a leading "a", "an" or "the". Never an event.
+- **It must come back, or be built on,** and code checks this, never the reader's word:
+  - heard in at least 3 lines, in at least 2 stretches of the session at least 60 lines apart; or
+  - heard in 2 lines, when another reader used it: the place reader opened it as where the story
+    is, or a kept or waiting connection or quest part points at it. This second way is built only
+    if the sample shows the first misses a row it should find.
+  - A shorter return ("the mine" for "the gemstone mine") counts only when no other singled-out
+    phrase in the session shares that head word.
+- **A known name inside the phrase is fine** ("Garret's old sled"): the owner is what tells it
+  apart. It is refused only when the whole phrase, or its head word, is a known name. No
+  connection is made from the possessive.
+- **An item must also pass the "one particular thing" test** (`unique_item.py`), so a character's
+  everyday gear is never offered.
+- **At most 3 a session,** inside the session's limit and never on top of it: first those another
+  reader used, then the most heard. **Past 3 they are dropped, not held** (section 9's one
+  exception): they are not names, and one that matters comes back next session.
+- **Nothing in code can tell "the door" from "the gemstone mine" by its words.** The two-stretch
+  rule, the limit of 3 and the reader's judgement do that work.
+
+**A kept description is marked as one, for good.**
+- It carries a lasting mark that it is a description and not a name.
+- Wherever DMbot writes it into a sentence (a recap, an answer, a card), it reads as the story said
+  it: "the gemstone mine", never "Gemstone mine went dark".
+- It takes a capital on its first word only ("Gemstone mine"). A capital on each word would claim a
+  name the story never gave.
+- When the DM gives it a name, it becomes a real name, with no mark.
 
 **How it is run:**
 
@@ -191,19 +221,32 @@ Before anything is counted or suggested, in this order:
 
 1. **Is it a known name heard wrong?** Each candidate is compared with the campaign's names by
    sound and by letters (the scan's `NEAR` thresholds, as today). If it is close to exactly one,
-   it is not a new name: it goes to the name pass (section 7). If it is close to two, it is asked
-   as "which one?", as today.
-2. **Group what is left by sound.** Candidates that sound alike and are of one kind become one
-   name with several spellings (`scan.sound_keys` and `group_alike` exist for this). "Hrothgar",
-   "Rothgar" and "hroth gar" are one name heard three times. **This changes the order:** today the
-   "heard twice" test runs first and grouping after it, so spellings heard once each are lost
-   before they can be joined. Whether a two-word spelling passes the fold test against a one-word
-   one is to be proved by a test, not assumed.
-3. **Join split names.** Two short words that together sound like a spelling in the group belong
-   to it.
-4. **Count hearings for the group,** not for each spelling.
-5. **Choose the spelling to show:** a typed spelling if there is one; otherwise the spelling heard
-   most; otherwise the first heard. The others are kept as "also heard as".
+   it is not a new name: it goes to the name pass (section 7). If it is close to two, it also goes
+   to the name pass, with every tied name listed, and "not sure" becomes the DM's question.
+   (Revision 1 said a tie "is asked as 'which one?', as today". No such question existed.)
+2. **Close to a secret name:** dropped whole, never asked about and never written.
+3. **Group what is left by sound.** Candidates that sound alike become one name with several
+   spellings (`scan.sound_keys` and `group_alike` exist for this). "Hrothgar", "Rothgar" and
+   "hroth gar" are one name heard three times.
+   - **This changes the order:** before, the "heard twice" test ran first and grouping after it, so
+     spellings heard once each were lost before they could be joined.
+   - **The kind only breaks a borderline match.** A reader's kind is a guess. When two spellings
+     are as alike in their letters as a one-word match needs (`NEAR_ONE_WORD`), they group whatever
+     the kinds say; a wrong guess must not split one name into two questions.
+4. **Join split names.** Two short words that together sound like a spelling in the group belong
+   to it. A test proves the fold either way; it is not assumed.
+5. **Count hearings for the group,** not for each spelling.
+6. **Choose the spelling to show.** There are two kinds of fold, and each has its own rule:
+   - **a part and its whole** ("Vane" and "Oskar Vane", "Valley" and "Dwarven Valley"): the whole
+     leads, however often the part was heard;
+   - **spellings of one name:** a typed spelling if there is one; otherwise the spelling heard
+     most; otherwise the first heard. A split spelling ("hroth gar") never leads the joined one.
+   The others are kept as "also heard as".
+7. **Give the proposed spelling its capitals.** When no spelling in the group was typed or has a
+   capital, the spelling proposed to the DM gets a capital on each name word (not on "of" or "of
+   the"): "Hrothgar", from "a dwarf called hrothgar". It is still only a proposal the DM confirms,
+   and the quoted line stays exactly as heard. A description is different (section 4): a capital on
+   its first word only.
 
 **How many hearings are needed:**
 
@@ -236,9 +279,29 @@ After the session, in "📝 Check new names", as now. The suggestion changes in 
 **When the DM says yes:**
 
 - the name is kept under the spelling the DM chose;
-- every other spelling heard becomes a "said as" spelling of it, so the Cleaner corrects it from
-  then on and the session's cleaned transcript is fixed (never the raw one);
-- the name goes to speech-to-text as a hint from the next session.
+- each other spelling heard becomes a **"change to" rule** (the code's word; `memory_corrections`),
+  so the Cleaner writes it as the name from then on, and the session's cleaned transcript is fixed
+  (never the raw one). Revision 1 called this a "said as" spelling, which in the code is the
+  narrator's pronunciation and a different thing;
+- **the other spellings are not kept as other names,** so they are never sent to speech-to-text as
+  hints. A misheard spelling sent as a hint teaches the service the wrong spelling;
+- the name itself goes to speech-to-text as a hint from the next session;
+- the reply names exactly the spellings that became rules, with Undo.
+
+**A "change to" rule rewrites that spelling in every later cleaned transcript, so some spellings
+never get one:**
+
+| The spelling | Rule? |
+|---|---|
+| an ordinary word (also said in lower case as a word, a common word, a game term) | no |
+| one or two letters | no |
+| another known name's spelling | no |
+| one word that differs from the name only by capitals ("hope" for Hope, "hrothgar" for Hrothgar) | no. An NPC called Hope must never turn every "I hope" into her name. Capitalising one-word names safely needs a list of ordinary words (section 13, question 1) |
+| different letters or spacing ("Rothgar", "hroth gar") | yes |
+| several words that differ only by capitals ("bryn shander") | yes |
+
+A spelling that gets no rule is dropped in the same change, not kept as another name, so one Undo
+restores it.
 
 **When the DM says "Not a name":** every spelling in the group is remembered as not a name, so none
 of them is asked again.
@@ -257,7 +320,19 @@ The same flaw sits in the two places that fix a known name.
 - **The name pass** (after the session, AI decides): its candidates stop being "capitalised words".
   They become every candidate from section 5, step 1: anything the name reader or the scan found
   that is close to a known name. The decision is unchanged: which of the offered names it means, a
-  new name, or not sure, and only a sure answer is written.
+  new name, or not sure, and only a sure answer is written. As built (Supervisor, #5133):
+  - **the name reader reads the session once, before the name pass,** and the name step reuses
+    that reading, so there is no second call. The recap starts later by the reader's time, which is
+    reported beside the counts;
+  - **the pass gets the reader's spellings from before the "heard twice" test,** so a known name
+    misheard once is still fixed;
+  - **the reader's candidates join today's capital-letter survey,** one for each key, so the typed
+    version loses nothing;
+  - **a tie goes to the pass with every tied name listed;**
+  - **a group leaves the DM's list only when the pass answered for the whole group,** never when
+    only one of its spellings was asked;
+  - **the pass's limit orders candidates by closeness, then hearings.** What is past the limit is
+    counted with a fixed reason and stays on the "Sounds like…" card for the DM.
 - **The Cleaner** (live, code only, silent when near-certain): it treats only a capitalised word as
   unknown. A known name heard in lower case and slightly wrong is left as heard.
   - It can't simply drop the capital test: without it, an ordinary word that sounds like a name
@@ -317,6 +392,12 @@ typed sample session, so where each key name is said is known.
 - **None of this is needed for the typed or the no-capitals versions:** each has one typed spelling
   for each name, so "heard another way" is nil by construction.
 
+**A fourth version, for development only, until the spoken recording exists** (Supervisor,
+#5133): the sample with a few key names respelled by a fixed table, two or three spellings each,
+one of them split in two. The typed and no-capitals versions have one spelling for each name, so
+only this one can show a doubled name. It is its own series, and it stops being needed once the
+spoken version is scored.
+
 **The bar:**
 
 - **Typed:** no fewer found, and no more extra, than before the change.
@@ -345,7 +426,11 @@ typed sample session, so where each key name is said is known.
 - **Never write a new name by itself.** The DM confirms the name and its spelling.
 - **Never change the raw transcript.**
 - **Never ask about, or write, anything close to a secret name.**
-- **Never drop a name for being over a number:** it waits.
+- **Never drop a name for being over a number:** it waits. The one exception is a singled-out
+  thing or place past the session's 3 (section 4): it is not a name, and it is dropped.
+- **Never make a "change to" rule from an ordinary word,** or from a one-word spelling that differs
+  from the name only by capitals.
+- **Never write a kept description as if it were a name.**
 - **Never ask during play.**
 - **Never loosen the live Cleaner's "near-certain" rule** to catch more.
 
@@ -372,7 +457,9 @@ typed sample session, so where each key name is said is known.
    regard to capitals. Anything else is dropped and counted with its reason.
 2. **No test anywhere requires a capital letter for a word to be a name,** and none rules a word
    out for appearing in lower case. A CI test lists the functions that look at a letter's case in
-   the name paths, and the list may only shrink.
+   the name paths, and the list may only shrink. **One exception, listed with its reason**
+   (Supervisor, #5133): `scan.ordinary_in`, which looks at case only to stop a "change to" rule,
+   never to make or refuse a name.
 3. **Grouping by sound happens before counting and before any limit.**
 4. **A typed spelling outranks a heard one.**
 5. **A reader suggests; the DM confirms the name and the spelling.**
@@ -395,7 +482,7 @@ Each slice is its own PR with tests, and its numbers on the versions that exist.
 |---|---|---|---|---|
 | 1 | **The "no capitals" version in the sample run,** scored beside the typed one, with today's code: a version choice on the sample run (typed, no capitals, spoken) with its own campaigns and summaries, the "wrong shape" count, and the input description | dev1, GraphEngineer | nothing | the baseline: how far today's readers fall with no capitals, and which reader found what is left |
 | 2 | **The name reader,** joined with the scan and the story reader's names; the check; the loosened scan rule; the trace's reasons | GraphEngineer | new names found from context | no capitals: at least today's typed count. Typed: nothing lost |
-| 3 | **Grouping by sound, and the new suggestion** ("heard as", "spelled another way"); other spellings become "said as" on a yes | GraphEngineer, WebDev | one question for one name, with its spelling | no doubled names; the typed version unchanged |
+| 3 | **Grouping by sound, and the new suggestion** ("heard as", "spelled another way"); other spellings become "change to" rules on a yes | GraphEngineer, WebDev | one question for one name, with its spelling | no doubled names; the typed version unchanged |
 | 4 | **The name pass's candidates** come from the readers, not from capitals. It first settles whether the name pass runs on an imported session at all: if it doesn't, the sample can't score this slice until it does | GraphEngineer, CloudDev-lead | known names heard in lower case are fixed after the session | the no-capitals version: known names corrected |
 | 5 | **The spoken version of the sample** | dev1, with the owner's recording | nothing | the first real numbers |
 | 6 | **Singled-out things and places** from sessions | GraphEngineer | "the gemstone mine" offered | extra names stay low |
@@ -409,10 +496,9 @@ Slice 1 is first because it costs almost nothing and turns the owner's point int
 
 1. **A list of ordinary words for the Cleaner** (section 7). It must be one DMbot may bundle in a
    public repository, with its licence stated. For Supervisor, before slice 7.
-2. **Who records the spoken version, and how.** Proposed: the table's own voices, reading the
-   sample session's script as written, with no ad-libbing, so the recording can be lined up with
-   the script (section 8). One reader would do, but several voices test what a real table sounds
-   like. For the owner.
+2. **Who records the spoken version, and how: answered** (owner, 2026-11-23). One reader, reading
+   the sample session's script, with slight accents on the names. A recording with several
+   speakers perhaps later.
 3. **The cost of one more call a batch.** The measured figure for a comparable call is about $0.36
    to $0.73 for a four-hour session (`docs/costs.md`). If slice 1 of the tagger design shows the
    name reader and the tagger could share one read safely, that is a later saving, not a reason to
@@ -423,3 +509,23 @@ Slice 1 is first because it costs almost nothing and turns the owner's point int
 5. **#5086: answered.** Supervisor ruled that it merges as it is. It helps the typed version now,
    and section 3 builds on it.
 6. **The words** of the new suggestion, for the ux-critic.
+
+---
+
+## 14. What changed in revision 2
+
+| Revision 1 | Revision 2 | Why | Where ruled |
+|---|---|---|---|
+| A tie between two known names "is asked as 'which one?', as today" | It goes to the name pass with every tied name listed | **An error in revision 1:** no such question existed | #5133 |
+| Singled-out things follow "the rule lore already has (#3157)" | Sessions have their own rule: a thing or a place, come back to or built on, at most 3 a session | **An error in revision 1:** that change was never merged | #5173 |
+| Spellings group when they are "of one kind" | The kind only breaks a borderline match | A reader's kind is a guess; a wrong one would double a name | #5133 |
+| The spelling shown: typed, most heard, first | Two folds, two rules: a whole always leads its part; only spellings of one name use typed, most heard, first | "Valley" must not lead "Dwarven Valley", nor "hroth gar" lead "Hrothgar" | #5133 |
+| The spelling proposed is the one heard | It gets capitals on each name word when none were heard | Otherwise every name from speech is offered in lower case | #5133 |
+| Other spellings become "said as" spellings | They become "change to" rules, are not kept as other names, and are never hints; some spellings get no rule | "Said as" is another thing in the code; a misheard hint teaches the wrong spelling; a rule from an ordinary word would rewrite ordinary speech | #5133 |
+| The case list "may only shrink" | One listed exception, `scan.ordinary_in` | It looks at case only to stop a rule | #5133 |
+| Nothing is dropped for being over a number | One exception: singled-out things past 3 | They are not names | #5173 |
+| (nothing on descriptions) | A kept description has a lasting mark, is written as the story said it, and takes one capital | A recap must not treat "Gemstone mine" as a name | #5173 |
+| The name pass's candidates come from the readers | The same, with the order and the four conditions as built | So a name misheard once is fixed and no group is half-answered | #5133 |
+| Who records the spoken version: open | One reader, the script, slight accents on names | The owner's answer | #5055 |
+| Three versions of the sample | A fourth, for development only, until the recording exists: the sample with a few names respelled by a fixed table | The typed and no-capitals versions have one spelling for each name, so they can't show a doubled name | #5133 |
+

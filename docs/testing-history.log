@@ -2994,3 +2994,13 @@ Check 2 (sample run 22, counts on #3545): DONE. Exit 0. Lore 67 of 89 entries, 2
 Owner checks A to D (wizard Back and members, dndbeyond.com sheet links after finish, Open the campaign, Cerric entries) are open.
 
 Session: dev1
+
+DEPLOY c979adfa (deploy 44; Supervisor's handover on #3720, target c979adfaf9ed596beb72cc10cb04ab77108d5122 with #5166 and #5167 merged, CI green on that commit; the owner's OK in the dev1 session on 2026-11-23). Live was 19879fb4 (43). Migrations 0601, 0611, 0612, 0613 (603 in total; no 0614+). Dry run on a fresh pg_dumpall copy: MIGRATIONS OK 603, twice. Live backup before the switch: dmbot-pre-c979adfa-20261124T002...Z.sql (in /home/ubuntu/db-backups, not in git). Image dmbot-core:oneoff-c979adfa built with BUILD EXIT 0. Bot up 00:29 UTC, then web-api (healthy).
+
+Check 1 (migrations applied, 0 errors for 10 minutes): PASSED. 603 rows in schema_migrations, latest 0613_web_homebrew_edition; bot and web-api logs 0 ERROR or Traceback lines from 00:29 to 00:40 UTC; GIT_COMMIT c979adfa on both.
+
+Check 2 (sample run 44, counts on #3545): DONE. Exit 0, about $3.94. Lore names 64, connections 91; both entries found 72 of 90, ties found 48, ties wrong 7; no Keep refused for travels_with in any run (the sample does not press Keep in Discord, so the live Keep check for #4161 and #5164 is still open).
+
+Check 3 (the website, signed in as the test DM): PARTLY. /account/questions opens on dev.getdmbot.com and its counts show, but the names count (1) and its list (nothing) disagree. Cause verified in the live database (count = every proposed name; list = names linked to a recap's name check). Bug #5186 filed; owner to choose the fix. The Discord side of the same count is not yet compared.
+
+Session: dev1
