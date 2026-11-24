@@ -26,7 +26,7 @@ afterEach(() => cleanup());
 
 const draft = mockRecaps()[0]!;
 
-function withLike(like: { id: string; name: string } | null | undefined) {
+function withLike(like: { id: string; name: string; spelled?: boolean } | null | undefined) {
   const api = mockApi("table");
   const real = api.nameChecks!.bind(api);
   api.nameChecks = async (...a) => {
@@ -47,6 +47,12 @@ describe("a waiting name that sounds like a known one", () => {
     const card = await open(withLike({ id: "k".repeat(32), name: "Veshla's Hall" }));
     expect(card.getByRole("group", { name: "Sounds like Veshla's Hall. The same, or new?" })).toBeTruthy();
     expect(card.getByText("Veshla's Hall", { selector: "strong" })).toBeTruthy();
+  });
+
+  it("says 'Same name, spelled Y?' when someone spelled it out at the table", async () => {
+    const card = await open(withLike({ id: "k".repeat(32), name: "Veshla's Hall", spelled: true }));
+    expect(card.getByRole("group", { name: "Sounds like Veshla's Hall. Same name, spelled Veshla? Or a new name?" })).toBeTruthy();
+    expect(card.getByRole("button", { name: nw.itsThatFor("Veshla's Hall", "Veshla") })).toBeTruthy();
   });
 
   it("'It's X' joins them with the same answer as 'It's the same as…'", async () => {

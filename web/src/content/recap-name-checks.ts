@@ -10,6 +10,8 @@ export const nameCheckWords = {
   heading: "Names to check",
   // A waiting name that sounds like a known one (#5215): Discord's own words, so both places ask the same.
   soundsLike: (name: string): string => `Sounds like ${name}. The same, or new?`,
+  // When someone spelled it out at the table (core's `spelled`): Discord's second line.
+  soundsLikeSpelled: (name: string, waiting: string): string => `Sounds like ${name}. Same name, spelled ${waiting}? Or a new name?`,
   itsThat: (name: string): string => `It's ${name}`,
   itsThatFor: (name: string, waiting: string): string => `It's ${name}: ${waiting}`,
   lead: "DMbot isn't sure about these names. Tell it what each one is. Your recap stays as it is. You can also answer in Discord with 📝 Check new names.",

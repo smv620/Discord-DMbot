@@ -378,6 +378,7 @@ function NameRow({
   const longer = (name.longerNames ?? []).slice(0, 3);
   // The one known name this sounds like (#5215): "It's X" joins them, as "It's the same as…" does; "new" is answering the card as usual.
   const like = name.soundsLike ?? null;
+  const likeLine = like ? (like.spelled ? words.soundsLikeSpelled(like.name, name.name) : words.soundsLike(like.name)) : "";
   // How the session-names reader found this name (#5144): its guess is only offered when the list knows that kind.
   const found = name.found;
   const foundOn = NAME_FOUND_LIVE && found !== undefined;
@@ -418,11 +419,11 @@ function NameRow({
           </>
         )}
         {like && (
-          <div class="stack" role="group" aria-label={words.soundsLike(like.name)}>
+          <div class="stack" role="group" aria-label={likeLine}>
             <p class="small">
-              {words.soundsLike(like.name).split(like.name)[0]}
+              {likeLine.slice(0, likeLine.indexOf(like.name))}
               <strong>{like.name}</strong>
-              {words.soundsLike(like.name).split(like.name).slice(1).join(like.name)}
+              {likeLine.slice(likeLine.indexOf(like.name) + like.name.length)}
             </p>
             <div class="row">
               <button type="button" class="button" disabled={busy} aria-label={words.itsThatFor(like.name, name.name)} onClick={() => onSend({ action: "same", known: like.id })}>
