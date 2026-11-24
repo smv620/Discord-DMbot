@@ -5,7 +5,7 @@ who no longer agrees), in Discord's words and order. Invented names throughout."
 from __future__ import annotations
 
 import unittest
-from typing import Any
+from typing import Any, cast
 
 from dmbot.consent import TERMS_VERSION
 from dmbot.memory import name_words
@@ -317,7 +317,7 @@ class TheSoundsLike(TheFoundCard):
         from tests.test_recap_web import BOB, NOW
         from tests.test_web_api import THURSDAY
 
-        token = await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30)
+        token = await sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
         found = await sessions.find(self.web, token, now=NOW)
         assert found is not None
         return found
