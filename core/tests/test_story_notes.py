@@ -34,8 +34,14 @@ def bot(*, headless: bool, channel: int | None = 55, posted: bool = True) -> Any
         campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id=CID))),
         _upkeep_channel=MagicMock(return_value=(channel, None)),
         post=AsyncMock(return_value=posted),
+        transcripts=SimpleNamespace(
+            session=AsyncMock(return_value=SimpleNamespace(started_at=1_700_000_000)),
+            claim_recap_note=AsyncMock(return_value=True),
+            release_recap_note=AsyncMock(),
+        ),
     )
     out._say_story_note = DMBot._say_story_note.__get__(out)
+    out._post_recap_note = DMBot._post_recap_note.__get__(out)
     return out
 
 
@@ -74,7 +80,7 @@ class TheDelivery(IsolatedAsyncioTestCase):
     async def test_the_recap_lines_note_carries_its_undo_button(self) -> None:
         b = bot(headless=False)
         await b._say_story_note(GUILD, CID, STORY_RECAP_LINES, {"sid": "a" * 32, "n": 4})
-        self.assertEqual(b.post.await_args.args[1], recap_lines_ui.note(4))
+        self.assertEqual(b.post.await_args.args[1], recap_lines_ui.note(4, 1_700_000_000))
         self.assertIsNotNone(b.post.await_args.kwargs["view"])
 
     async def test_the_secret_count_line_is_posted_with_its_button(self) -> None:

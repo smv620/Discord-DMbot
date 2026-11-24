@@ -2169,6 +2169,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await recaps_discord.setup(self)  # the recap buttons (#2129)
         self.add_dynamic_items(name_pass_undo.UndoNamePassButton)  # Undo of the name pass (#2628)
         self.add_dynamic_items(recap_lines_ui.RecapLinesUndoButton)  # last time's recap (#3298)
+        self.add_dynamic_items(recap_lines_ui.RecapLinesShowButton)  # ...and its lines (#5232)
         self.add_dynamic_items(questions_discord.NotNowButton)  # 🔕 under a reminder (#3435)
         self.add_dynamic_items(
             questions_board.LookAlikesButton,
@@ -10967,10 +10968,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     if not await _story_note(
                         self, gid, cid, STORY_RECAP_LINES, {"sid": sid, "n": report.recap_lines}
                     ):
-                        await self.post(
-                            counts_channel,
-                            recap_lines_ui.note(report.recap_lines),
-                            view=recap_lines_ui.undo_view(cid, sid),
+                        await self._post_recap_note(
+                            gid, cid, sid, report.recap_lines, counts_channel
                         )
                 except Exception as exc:
                     log.warning("Recap lines: the note was not posted (%s)", type(exc).__name__)
@@ -14135,6 +14134,29 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
         return extractor.recap_numbers(await self.transcripts.session_split(gid, sid))
 
+    async def recap_lines_text(self, guild: discord.Guild, cid: str, sid: str) -> str:
+        """👀 Show them (#5232): the lines of the session the story reader read as last time's
+        recap, for the DM alone. Only people recorded now (the rule of the transcript and the name
+        card, `recorded_in`), with nothing in place of the others: how many were left out is never
+        said. The numbers are the split's, over `extractor.readable` as the reader numbers them."""
+        transcripts = self.transcripts
+        session = None if transcripts is None else await transcripts.session(guild.id, sid)
+        if transcripts is None or session is None or session.campaign_id != cid:
+            return recap_lines_ui.GONE
+        recap = extractor.recap_numbers(await transcripts.session_split(guild.id, sid))
+        agreed = await self.consent.recorded_in(guild.id, cid)
+        said = [
+            s
+            for s in extractor.readable(await transcripts.lines(guild.id, sid))
+            if s.number in recap and s.user_id in agreed
+        ]
+        from dmbot.ui.transcripts import display_names
+
+        names = await display_names(guild, tuple(sorted({s.user_id for s in said})))
+        return recap_lines_ui.show_text(
+            [(s.user_id, s.text) for s in said], names, session.started_at
+        )
+
     async def undo_recap_lines(self, gid: int, cid: str, sid: str) -> int:
         """The DM says the lines read as last time's recap were play (#3298): the session's split
         is kept with them as play, and they are queued to be read again by the put-back sweep
@@ -15177,9 +15199,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 raise RuntimeError("not-posted")
             return
         if kind == STORY_RECAP_LINES:
-            text = recap_lines_ui.note(n)
-            view = recap_lines_ui.undo_view(cid, str(payload["sid"]))
-        elif kind == STORY_SECRET_COUNT:
+            await self._post_recap_note(gid, cid, str(payload["sid"]), n, channel)
+            return
+        if kind == STORY_SECRET_COUNT:
             from dmbot.ui import secret_questions as secret_questions_ui
 
             text = secret_questions_ui.count_line(n).strip()
@@ -15187,6 +15209,32 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         else:
             text, view = met_list_ui.notice(n), met_list_ui.notice_view(cid)
         if text and not await self.post(channel, text, view=view):
+            raise RuntimeError("not-posted")
+
+    async def _post_recap_note(self, gid: int, cid: str, sid: str, n: int, channel: int) -> None:
+        """The note about lines read as last time's recap (#3298), said once for each session
+        (#5232): the story reader reads a session several times (a retry, a resumed read, lines put
+        back) and said it each time. The session's one turn is taken first, in one update, so two
+        reads at once say it once; a note that could not be posted gives the turn back and raises,
+        so it is tried again. It names the session and has the two buttons. Counts only."""
+        transcripts = self.transcripts
+        session = None if transcripts is None else await transcripts.session(gid, sid)
+        if transcripts is None or session is None:
+            return  # (a session that is gone has nothing to show or hand back)
+        if not await transcripts.claim_recap_note(gid, sid, int(time.time())):
+            log.info("Recap lines: this session's note was said already")
+            return
+        try:
+            posted = await self.post(
+                channel,
+                recap_lines_ui.note(n, session.started_at),
+                view=recap_lines_ui.undo_view(cid, sid),
+            )
+        except BaseException:
+            await transcripts.release_recap_note(gid, sid)
+            raise
+        if not posted:
+            await transcripts.release_recap_note(gid, sid)
             raise RuntimeError("not-posted")
 
     async def deliver_story_weather(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
