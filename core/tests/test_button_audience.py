@@ -244,6 +244,7 @@ AUDIENCE: dict[str, str] = {
             "ui.check_everything.WalkButton",  # `begin` asks `_campaign_for` first (#4192)
             "ui.family_ties.FamilyTiesButton",  # `_campaign_for` before anything is shown
             "ui.trait_questions.TraitQuestionsButton",  # the same DM check (`_dm_campaign`)
+            "ui.more_names.MoreNamesButton",  # `_dm_campaign` first (#5055 B)
             "ui.world_notes.WorldNotesButton",  # the screen asks `sees_secrets` first (#4285)
             "ui.thread_questions.ThreadQuestionsButton",  # `_dm_campaign` first (#4453)
             "ui.secret_questions.SecretQuestionsButton",  # `_dm_campaign` first (#4524)

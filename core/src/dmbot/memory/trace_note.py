@@ -28,6 +28,7 @@ _SOURCE: ContextVar[str] = ContextVar("dmbot_lore_trace_source", default="lore")
 # (its pass 1 lists names the text read has already ended, so its rows are told apart)
 LORE = "lore"
 LORE_PICTURE = "lore_picture"
+STORY = "story"  # the session's story reader's own new names (#5123)
 
 # How a lore name ended: fixed words (the session reasons with the same meaning share their word)
 LISTED = "listed"  # pass 1 listed it (a later row says what happened next, if anything did)
@@ -53,6 +54,16 @@ UNKNOWN_KIND = "unknown_kind"  # pass 2 gave it a kind off the list
 LEFT_OUT = "left_out_by_pass_1"  # pass 1 saw it and left it out on purpose (NOT INCLUDED)
 SPELLING_NOT_KEPT = "spelling_not_kept"  # given as another name's spelling, then dropped
 READ_STOPPED = "read_stopped"  # the read stopped (cancelled or failed) before this name ended
+# The story reader's own (#5123; the reasons above with the same meaning are shared)
+DM_SAID_NO = "dm_said_not_a_name"  # the DM turned this name down before
+DESCRIBED = "described_not_named"  # a person the story describes but never names: no name asked
+CLAIM_DROPPED = "claim_dropped"  # a claim it was in was dropped (`why` says the rule)
+# (a name's last row is how it ended: a later claim that stores it, or keeps it, writes after)
+
+
+def active() -> bool:
+    """Is a trace being collected? (So a caller skips the work of a note nobody reads.)"""
+    return _ROWS.get() is not None
 
 
 def note(name: str, reason: str, why: str = "") -> None:

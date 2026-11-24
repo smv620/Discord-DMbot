@@ -102,6 +102,7 @@ class Group:
     typed: bool  # a person typed one of its spellings
     kind: str  # the reader's kind given most, '' when none gave one
     heard_wrong: Match | None = None  # the known name it is close to (the card asks, until slice 4)
+    typed_times: int = 0  # of its hearings, how many a person typed (the card says so, 3c)
 
     @property
     def sure(self) -> bool:
@@ -335,6 +336,9 @@ def settle(
                 typed,
                 kinds.most_common(1)[0][0] if kinds else "",
                 matches.most_common(1)[0][0] if matches else None,
+                # (each key's typed lines, never more than the group's hearings: a key the scan
+                # alone found and one the reader alone found are each counted in `times` once)
+                min(sum(k.typed for k in group), times),
             )
         )
     out.offered.sort(key=lambda g: (not g.sure, -g.times, g.name.casefold()))

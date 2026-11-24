@@ -475,6 +475,41 @@ class ThePass(NamesTest):
         self.assertEqual(report.fixed, ())
         self.assertEqual(await self.texts(), before)
 
+    async def test_a_word_only_a_withdrawn_person_said_is_no_question_for_the_dm(self) -> None:
+        """#5162 review: the words asked about include the name reader's, read before the pass; a
+        person who withdraws while the AI answers takes their words out of the questions too."""
+        from dmbot.transcript import name_pass_run
+
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+        lookup = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+        agreed = {PLAYER}
+
+        async def ask(_system: str, _question: str) -> str:
+            agreed.discard(PLAYER)  # withdrawn while the model answers
+            return str(reply({"n": 1, "answer": "new", "name": ""}).text)
+
+        async def now_agreed() -> set[int]:
+            return set(agreed)
+
+        asked: set[str] = set()
+        report = await name_pass_run.run(
+            self.transcripts, lookup, ask, GUILD, self.campaign.id, self.session,
+            agreed={PLAYER}, now=START, forget_before=0, consenting=now_agreed, asked=asked,
+        )  # fmt: skip
+        self.assertEqual((report.unsure, report.new), ((), ()))
+        self.assertEqual(asked, set())  # (the name step's own checks decide it, not the pass)
+
+        agreed.add(PLAYER)  # (still recorded: the same answer is a question for the DM)
+
+        async def ask_kept(_system: str, _question: str) -> str:
+            return str(reply({"n": 1, "answer": "new", "name": ""}).text)
+
+        report = await name_pass_run.run(
+            self.transcripts, lookup, ask_kept, GUILD, self.campaign.id, self.session,
+            agreed={PLAYER}, now=START, forget_before=0, consenting=now_agreed,
+        )  # fmt: skip
+        self.assertEqual(len(report.new), 1)
+
     async def test_an_imported_sessions_off_topic_line_is_not_written_either(self) -> None:
         off = "Keirandal pass the chips."
         await self.transcripts.add_lines(

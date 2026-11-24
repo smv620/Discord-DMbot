@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, CharacterLanguages, DeedQuestions, HeardQuestions, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, NodeTrait, PlotThreads, RevealProposal, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes, LeaveGroup } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, ContinuityHits, DeedQuestions, HeardQuestions, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, NodeTrait, PlotThreads, RevealProposal, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes, LeaveGroup } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 /** The revealed list of an upload notice (#4661): plain lines of at most 200 characters, at most ten; anything else is dropped. */
@@ -92,6 +92,19 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
         onLook?.(sharedOf(look.progress)),
       );
       return { putBack: got.putBack ?? 0 };
+    },
+    // The press is queued for the bot like the other queued changes; the answer carries how many names were made and how many wait (#5081).
+    moreNames: async (campaignRef, onLook) => {
+      const queued = (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/more-names`, {})) as { answer?: string } | null;
+      if (!queued?.answer) throw new ApiError("server");
+      // Core sends `progress: {done, total}` with no stage for this one, so `sharedOf` would drop it: read the counts.
+      const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(campaignRef)}/web/answers/${encodeURIComponent(queued.answer)}`, (look) => {
+        const p = look.progress as { done?: unknown; total?: unknown } | null | undefined;
+        onLook?.(p && typeof p.done === "number" && typeof p.total === "number" && p.total > 0 ? { done: p.done, total: p.total } : null);
+      });
+      // A done answer without its counts is not a success to report ("No more names are waiting" would be false).
+      if (typeof got.made !== "number" || typeof got.left !== "number") throw new ApiError("server");
+      return { made: got.made, left: got.left };
     },
     campaignNames: async (campaignRef) =>
       (
@@ -666,6 +679,23 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       if (!queued?.answer) throw new ApiError("server");
       const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
+    // The heads-ups from this session (#3695): DM only; the door answers anyone else with not-allowed.
+    continuityHits: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/continuity`)) as ContinuityHits,
+    // Queued for the bot and waited for: its count says how many heads-ups it found.
+    askContinuity: async (ref) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/continuity/ask`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = (await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`)) as { count?: unknown };
+      return { count: typeof got.count === "number" ? got.count : 0 };
+    },
+    // Queued for the bot and waited for. A "refused" is the bot's own word for a clash it cannot settle yet (#3695).
+    answerContinuity: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/continuity/answer`, change)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`, undefined, undefined, { refused: "refused" });
     },
     // The deeds the party did, waiting to be recorded (#3591): DM only; the door answers anyone else with nothing.
     deedQuestions: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/deeds`)) as DeedQuestions,

@@ -211,6 +211,37 @@ describe("when the page asks again", () => {
     expect(screen.getByText(w.doneCount(0, 1))).toBeTruthy();
   });
 
+  it("asks again while a session's names are being read", async () => {
+    // (a read session whose names are still being read is asked again; the stop once they are done is pinned in the next test)
+    const reading = {
+      sessions: [
+        {
+          file: "a.txt",
+          date: "2026-09-14",
+          state: "done" as const,
+          reason: null,
+          names: { stage: "reading_names" as const, done: 3, total: 8, unit: "parts" as const, startedAt: 1, updatedAt: 1, serverNow: 1, state: "running" as const, reason: null },
+        },
+      ],
+    };
+    expect(await delays(reading)).toContain(3000);
+  });
+
+  it("stops asking once a session's names are read and done", async () => {
+    const read = {
+      sessions: [
+        {
+          file: "a.txt",
+          date: "2026-09-14",
+          state: "done" as const,
+          reason: null,
+          names: { stage: "names_read" as const, done: 8, total: 8, unit: "parts" as const, startedAt: 1, updatedAt: 1, serverNow: 1, state: "done" as const, reason: null },
+        },
+      ],
+    };
+    expect(await delays(read)).toEqual([]);
+  });
+
   it("falls back to the old rule without a stage: stops when done", async () => {
     expect(await delays(one({ state: "done" }))).toEqual([]);
   });

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from dmbot.db import Database
 
-HOWS = ("introduced", "typed", "addressed", "place", "spoken_of", "scan")
+HOWS = ("introduced", "typed", "addressed", "place", "spoken_of", "scan", "singled_out")  # (0614)
 SURE = frozenset({"introduced", "typed"})  # offered first (section 6)
 
 
@@ -28,6 +28,8 @@ SURE = frozenset({"introduced", "typed"})  # offered first (section 6)
 class Found:
     how: str
     line_ref: str | None  # `transcript.models.line_ref`, or None when no line is kept
+    typed: int = 0  # how many of its hearings were typed in chat (0611)
+    times: int = 0  # how many times its group was heard, 0 when not counted (0611)
 
 
 class NameFound:
@@ -36,7 +38,15 @@ class NameFound:
         self._now = clock
 
     async def keep(
-        self, guild_id: int, campaign_id: str, entity_id: str, how: str, line_ref: str | None
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        how: str,
+        line_ref: str | None,
+        *,
+        times: int = 0,
+        typed: int = 0,
     ) -> None:
         """What made this waiting entry a name; a later suggestion of it replaces the row (a name
         suggested again after another session keeps that session's line). Written only while the
@@ -47,12 +57,13 @@ class NameFound:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "INSERT INTO name_found (guild_id, campaign_id, entity_id, how, line_ref,"
-                " found_at) SELECT %s, %s, %s, %s, %s, %s WHERE EXISTS (SELECT 1"
-                " FROM memory_entities WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+                " found_at, times, typed) SELECT %s, %s, %s, %s, %s, %s, %s, %s"
+                " WHERE EXISTS (SELECT 1 FROM memory_entities"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
                 " AND status = 'proposed')"
                 " ON CONFLICT (guild_id, campaign_id, entity_id) DO UPDATE"
                 " SET how = EXCLUDED.how, line_ref = EXCLUDED.line_ref,"
-                " found_at = EXCLUDED.found_at",
+                " found_at = EXCLUDED.found_at, times = EXCLUDED.times, typed = EXCLUDED.typed",
                 (
                     guild_id,
                     campaign_id,
@@ -60,6 +71,8 @@ class NameFound:
                     how,
                     line_ref,
                     int(self._now()),
+                    max(0, times),
+                    min(max(0, typed), max(0, times)),  # (never more typed than heard)
                     guild_id,
                     campaign_id,
                     entity_id,
@@ -74,9 +87,14 @@ class NameFound:
             return {}
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT entity_id, how, line_ref FROM name_found"
+                "SELECT entity_id, how, line_ref, typed, times FROM name_found"
                 " WHERE guild_id = %s AND campaign_id = %s AND entity_id = ANY(%s)",
                 (guild_id, campaign_id, list(entity_ids)),
             )
             rows = await cur.fetchall()
-        return {str(r["entity_id"]): Found(str(r["how"]), r["line_ref"]) for r in rows}
+        return {
+            str(r["entity_id"]): Found(
+                str(r["how"]), r["line_ref"], int(r["typed"]), int(r["times"])
+            )
+            for r in rows
+        }

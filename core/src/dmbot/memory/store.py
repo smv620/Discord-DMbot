@@ -46,6 +46,7 @@ from dmbot.memory import (
     evidence,
     gate,
     graph_review,
+    heard_rules,
     kin,
     kind_offers,
     knowers,
@@ -75,6 +76,7 @@ from dmbot.memory import isolated as isolated_mod
 from dmbot.memory import join_questions as join_questions_mod
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import map_facts as mf
+from dmbot.memory import name_found as name_found_mod
 from dmbot.memory import party as party_mod
 from dmbot.memory import same_person as same_person_mod
 from dmbot.memory import secret_questions as secret_questions_mod
@@ -171,6 +173,7 @@ from dmbot.memory.models import (
     MENTION_METHODS,
     MERGE_MANY_MAX,
     MERGED,
+    NAME_MAX,
     NPC,
     PARTY_SOURCE,
     PLAYER_CHARACTER,
@@ -326,6 +329,9 @@ INT64_MAX = 2**63 - 1
 # For a lookup of a few rows (one key). Reads of a whole campaign's names or facts use
 # _live_ids instead: joined to a campaign with no table statistics yet (one just given
 # a long list), Postgres compared every name with every entry, 1.4 s for 2,000 (#598).
+# The names a yes on the new card may turn into "change to" rules (#5133 slice 3c-2b): heard ones.
+HEARD_KINDS = frozenset({"misheard", "old"})
+
 _LIVE_ENTITY_IDS = (
     " (SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
     " AND status IN ('proposed', 'confirmed'))"
@@ -425,7 +431,7 @@ ASSUMED_FIRST = (
 SAY_WHO_PLAYS = "Say who plays a character on the character itself."
 DESCRIBED_AS = "Say who they are described as."
 WORD_TOO_LONG = "That relationship word is too long."
-COMPANION_NOT_NPC = "Only a character who is not a player character travels with the party."
+COMPANION_NOT_NPC = "Only a character who isn't a player character can be a companion."  # (#5164)
 COMPANION_PARTY_SOURCE = "Only the DM or a session can say who travels with the party."
 COMPANION_TARGET = "A companion travels with a player character or with the party."
 LED_TO_KINDS = "A clue, an event or a thread can lead to a thread or an event."
@@ -609,7 +615,7 @@ def _entity(r: dict[str, Any]) -> Entity:
         form=r.get("form"), form_from=r.get("form_from"),
         length_words=r.get("length_words"), length_amount=r.get("length_amount"),
         length_unit=r.get("length_unit"), length_approx=bool(r.get("length_approx")),
-        length_from=r.get("length_from"),
+        length_from=r.get("length_from"), described=r.get("described") or None,
     )  # fmt: skip
 
 
@@ -1148,6 +1154,28 @@ class MemoryStore:
                 if row := await cur.fetchone():
                     return str(row["name"])
         return None
+
+    async def name_found(
+        self, guild_id: int, campaign_id: str, entity_ids: Collection[str]
+    ) -> dict[str, name_found_mod.Found]:
+        """What made each of these waiting names a name (#5133 slice 3b, `memory.name_found`):
+        how it was found, the pointer to its line, and its counts, for the card."""
+        return await name_found_mod.NameFound(self._db).of(guild_id, campaign_id, entity_ids)
+
+    async def keep_name_found(
+        self, guild_id: int, campaign_id: str, entity_id: str, found: name_found_mod.Found
+    ) -> None:
+        """What made a name a name, kept again: an Undo of the new card's yes (#5133 slice 3c-2b)
+        puts the name back waiting, and the row went with the yes (0608's trigger)."""
+        await name_found_mod.NameFound(self._db).keep(
+            guild_id,
+            campaign_id,
+            entity_id,
+            found.how,
+            found.line_ref,
+            times=found.times,
+            typed=found.typed,
+        )
 
     async def sound_alikes(
         self, guild_id: int, campaign_id: str, codes: Sequence[str], *, limit: int = 500
@@ -4891,8 +4919,11 @@ class MemoryStore:
         role: str | None = None,
         hidden_from_players: bool = False,
         session_started_at: int | None = None,
+        described: str | None = None,
     ) -> Written[Entity]:
-        """A new person, place or thing, with its name as the first alias. `role`: for a
+        """A new person, place or thing, with its name as the first alias. `described`: for a thing
+        or a place the session singled out with no name of its own, the words as the story said
+        them, without an article (#5173). `role`: for a
         character, player character, NPC or god (the older kinds npc, player_character,
         deity and creature are read as a character with that role). `played_by`: the
         Discord user playing a player character. `hidden_from_players`: the DM's "Players don't
@@ -4911,11 +4942,14 @@ class MemoryStore:
         name = clean_text(name)
         if len(description) > DESCRIPTION_MAX:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
+        # (the story's words, at most a name's length: the column's CHECK)
+        if described is not None:
+            described = " ".join(described.split())[:NAME_MAX] or None
         async with self._write(guild_id, campaign_id, source) as w:
             row = await _make_entity(
                 w, type=type, name=name, source=source, status=status, description=description,
                 played_by=played_by, role=role, hidden_from_players=hidden_from_players,
-                session_started_at=session_started_at,
+                session_started_at=session_started_at, described=described,
             )  # fmt: skip
             return Written(_entity(row), w.batch)
 
@@ -5724,6 +5758,11 @@ class MemoryStore:
                     "description": description,
                 }
                 keep_old = False
+            if current.get("described"):
+                # The DM giving a description a name (#5173, "Give it a name…"): a name now. The
+                # story's words for it stay as another name, as a merge keeps them, so the reader
+                # never offers "the gemstone mine" again as something new.
+                changes["described"] = None
             row = await w.update(ENTITIES, entity_id, changes)
             await _relabel_unnamed(
                 w,
@@ -5811,7 +5850,8 @@ class MemoryStore:
                 await w.update(ALIASES, kept[0]["id"], {"status": CONFIRMED})
             if alias["kind"] == "old":  # an old spelling made the name is listened for again
                 await w.update(ALIASES, alias_id, {"kind": "full"})
-            row = await w.update(ENTITIES, entity_id, {"name": alias["text"]})
+            # (⭐ another name as the main one is the DM naming it: no longer a description, #5173)
+            row = await w.update(ENTITIES, entity_id, {"name": alias["text"], "described": None})
             return Written(_entity(row), w.batch)
 
     async def set_note(
@@ -5872,11 +5912,19 @@ class MemoryStore:
         played_by: int | None = None,
         role: str | None = None,
         as_kin: bool = False,
+        heard: Collection[str] | None = None,
+        may_rule: Collection[str] = (),
     ) -> Written[Entity]:
         """The DM says a suggested name is real: what it is (and, for a character, its
         role), confirmed with all its names, in one change (one undo, one reload). The DM's own
         stated claims about it whose other end is kept are kept in that same change (#4636,
         `ClaimStore.keep_dm_claims_in`).
+
+        `heard` (the new name card, #5133 slice 3c-2b): the other spellings it was heard as. They
+        are not kept as its names: each one in `may_rule` (the pure guard's, `heard_rules`) that
+        no other entry has as a name and that has no rule yet becomes a "change to" rule for the
+        Cleaner; the rest are dropped. All in this same change, so one Undo takes back the yes and
+        the rules; `Written.rules` names the rules made.
 
         `as_kin` (#4636 part 1): an unnamed person kept because the character it hangs off is
         kept ("Brewner's daughter"). An unnamed person is the DM's alone anyway, but once the DM
@@ -5923,6 +5971,11 @@ class MemoryStore:
                 },
             )
             learned = await learn_names_in_scene(w, entity_id, scene) if scene is not None else 0
+            # (never the name itself, nor a one-word spelling of it that differs by capitals only)
+            spelled = {
+                name_key(h) for h in heard or () if not heard_rules.only_capitals(before["name"], h)
+            } - {name_key(before["name"])}
+            made = await self._heard_rules(w, entity_id, spelled, may_rule) if spelled else ()
             for alias in await w.select(
                 ALIASES, " AND entity_id = %s AND status = 'proposed'", [entity_id]
             ):
@@ -5942,7 +5995,47 @@ class MemoryStore:
             await ClaimStore(self).keep_dm_claims_in(w, [entity_id])
             await _rematch_pins(w, entity_id)  # (a map's pin with its name, #4670)
             said = "" if scene is None else "group" if learned else "unknown"
-            return Written(_entity(row), w.batch, split=said)
+            return Written(_entity(row), w.batch, split=said, rules=made)
+
+    @staticmethod
+    async def _heard_rules(
+        w: Changes, entity_id: str, spelled: set[str], may_rule: Collection[str]
+    ) -> tuple[str, ...]:
+        """`confirm_entity`'s heard spellings (#5133 slice 3c-2b): each of this entry's names with
+        one of these keys is dropped, and becomes a "change to" rule when the pure guard allowed it,
+        no other entry has it as a name (a name, a "not a name", a secret one: a rule would rewrite
+        it) and no rule for those words exists yet (a "keep as heard" wins over any fix)."""
+        allowed = {name_key(m) for m in may_rule}
+        made: list[str] = []
+        for alias in await w.select(ALIASES, " AND entity_id = %s", [entity_id]):
+            key = alias["key"]
+            # (only what was heard: a misheard spelling, or the one a rename kept; a short form
+            # inside the name, "Vane" for "Oskar Vane", or a DM's nickname stays one of its names)
+            if key not in spelled or alias["kind"] not in HEARD_KINDS:
+                continue
+            await w.delete(ALIASES, alias["id"])
+            text = clean_text(alias["text"])
+            heard_key = lookup_key(text)
+            if (
+                key not in allowed
+                or await w.select(ALIASES, " AND key = %s AND entity_id <> %s", [key, entity_id])
+                or await w.select(CORRECTIONS, " AND heard_key = %s", [heard_key])
+            ):
+                continue
+            await w.insert(
+                CORRECTIONS,
+                {
+                    "id": new_id(),
+                    "heard": text,
+                    "heard_key": heard_key,
+                    "entity_id": entity_id,
+                    "action": FIX,
+                    "source": DM,
+                    "created_at": w.now,
+                },
+            )
+            made.append(text)
+        return tuple(made)
 
     async def has_kin_tie(self, guild_id: int, campaign_id: str, entity_id: str) -> bool:
         """Whether an unnamed relative has a stated tie to its character (`_kin_ties`): what a
@@ -7566,6 +7659,10 @@ class MemoryStore:
         keep = await _entity_row(w, keep_id)
         gone = await _entity_row(w, gone_id)
         if keep["unnamed"] and not gone["unnamed"]:
+            keep_id, gone_id, keep, gone = gone_id, keep_id, gone, keep
+        elif keep.get("described") and not gone.get("described") and not gone["unnamed"]:
+            # A description joined with a real name (#5173): the name is kept, whichever way round
+            # the merge was asked, as for an unnamed person, so the mark goes with the description
             keep_id, gone_id, keep, gone = gone_id, keep_id, gone, keep
         elif (
             join_alias is None
@@ -11242,6 +11339,37 @@ def _companion_problem(subject: dict[str, Any], target: dict[str, Any], source: 
     return COMPANION_TARGET
 
 
+def companion_refusal(message: str) -> str | None:
+    """A companion refusal, which the card shows with what to press, or None for any other
+    refusal (#5164: "couldn't keep that one" alone left the DM guessing; the ux-critic kept it to
+    the rule's one sentence, since the card above already says what "travels with" means)."""
+    return (
+        message
+        if message in (COMPANION_NOT_NPC, COMPANION_PARTY_SOURCE, COMPANION_TARGET)
+        else None
+    )
+
+
+def companion_end(entity: Entity) -> dict[str, Any]:
+    """An entry as the companion check reads it (#5164)."""
+    return {"type": entity.type, "role": entity.role, "party": entity.party}
+
+
+def companion_order(
+    first: Mapping[str, Any], second: Mapping[str, Any], source: str
+) -> bool | None:
+    """Which way round a companion link (`travels_with`) between these two may be kept, the one
+    check every path that offers one runs before asking the DM (#5164), so nothing the store would
+    refuse is ever asked: False as given, True turned round (the player character was named first),
+    None neither way (two player characters are both in the party: no companion link at all).
+    Each end is a row's `type`, `role` and `party`; `source` is who would write it."""
+    if _companion_problem(dict(first), dict(second), source) is None:
+        return False
+    if _companion_problem(dict(second), dict(first), source) is None:
+        return True
+    return None
+
+
 async def _check_travels_with(w: Changes, source: str, subject_id: str, object_id: str) -> None:
     problem = _companion_problem(
         await _entity_row(w, subject_id), await _entity_row(w, object_id), source
@@ -12853,6 +12981,7 @@ async def _make_entity(
     role: str | None,
     hidden_from_players: bool,
     session_started_at: int | None,
+    described: str | None = None,
 ) -> Any:
     """The writes that make a new entry (and its first alias), inside the caller's write: shared by
     `add_entity` and `link_new_event` so an entry and what hangs on it can be one change."""
@@ -12876,6 +13005,7 @@ async def _make_entity(
             "needs_look": False,
             "unique_item": None,
             "hidden_from_players": hidden_from_players,
+            "described": described,
         },
     )
     await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))

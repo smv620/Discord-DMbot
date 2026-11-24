@@ -85,7 +85,9 @@ class TheDiscordCardRows(unittest.TestCase):
         from dmbot.ui.name_card import _rows
 
         def entity(eid: str, name: str) -> Any:
-            return SimpleNamespace(id=eid, name=name, type="character", status=CONFIRMED)
+            return SimpleNamespace(
+                id=eid, name=name, type="character", status=CONFIRMED, described=None
+            )
 
         mira, kesh = entity("m" * 32, "Mira"), entity("k" * 32, "Kesh")
         lookup: Any = SimpleNamespace(entities={mira.id: mira, kesh.id: kesh}, guarded=frozenset())

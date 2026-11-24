@@ -105,6 +105,7 @@ ENTITIES = Table(
         "length_unit",
         "length_approx",
         "length_from",
+        "described",
     ),
     # a clue's switch (#1649), the party, "players don't know this one yet" (#2321); a row written
     # now is after the pronoun gate (#2358)
@@ -116,6 +117,7 @@ ENTITIES = Table(
         "manipulated_by": None,  # the evidence this one faked (#2409)
         # a person the story describes but never names (#2790); a row written now is a named one
         "unnamed": False,
+        "described": None,  # a description, not a name (#5173): set only where it is made
         "unnamed_anchor": None,
         "unnamed_role": None,
         "unnamed_what": None,

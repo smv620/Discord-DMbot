@@ -22,6 +22,10 @@ vi.mock("../src/content/recap-words", async (original) => {
     get RECAP_FIX_LIVE() {
       return true;
     },
+    // (the names-to-check list is its own page's test: off here, as when this one was written)
+    get RECAP_NAME_CHECKS_LIVE() {
+      return false;
+    },
     get RECAPS_LIVE() {
       return true;
     },

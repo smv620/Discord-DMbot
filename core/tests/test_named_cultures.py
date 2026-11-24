@@ -180,10 +180,17 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
         await drop_schema(TEST_URL, self.schema)
 
     async def place(self, campaign: str, name: str) -> str:
-        made = await self.memory.add_entity(
-            GUILD_A, campaign, type="place", name=name, source="dm", status="confirmed"
-        )
-        return made.value.id
+        # (written as the schema stood before 0496: the store's own insert names later columns,
+        # such as 0614's `described`)
+        eid = new_id()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at) VALUES (%s, %s, %s, 'place', %s, '', 'confirmed',"
+                " 'dm', 1)",
+                (GUILD_A, campaign, eid, name),
+            )
+        return eid
 
     async def test_own_words_cultures_become_named_cultures(self) -> None:
         store = CampaignStore(self.db)
