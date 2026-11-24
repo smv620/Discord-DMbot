@@ -12148,16 +12148,29 @@ async def _ai_join_refusal(
         fits = [(keep["id"], str(a["text"]), str(keep["name"])) for a in names]
         if join_target(str(gone["name"]), fits) != keep["id"]:
             return AI_JOIN_REFUSED
-    # The DM took this very join back once (↩️ Undo): DMbot never makes it again by itself
+    # The DM took a join onto this entry back (↩️ Undo, "Not the same"): DMbot never makes it again
+    # by itself, for that name or any spelling of it that differs by a final "s" (the same fold
+    # key, #5215 slice 3: "Explorers League" after "Explorer League" was undone). The DM can still
+    # say "same" on its card.
+    from dmbot.memory.s_join import fold_key  # (late: s_join imports scan)
+
     undone = await w.conn.execute(
-        "SELECT 1 FROM memory_changes c WHERE c.guild_id = %s AND c.campaign_id = %s"
+        "SELECT c.row_id, COALESCE(e.name, c.after->>'name', '') AS name FROM memory_changes c"
+        " LEFT JOIN memory_entities e ON e.guild_id = c.guild_id AND e.campaign_id = c.campaign_id"
+        " AND e.id = c.row_id"
+        " WHERE c.guild_id = %s AND c.campaign_id = %s"
         " AND c.source = %s AND c.table_name = 'memory_entities' AND c.op = 'update'"
-        " AND c.row_id = %s AND c.after->>'merged_into' = %s AND EXISTS (SELECT 1 FROM"
+        " AND c.after->>'merged_into' = %s AND EXISTS (SELECT 1 FROM"
         " memory_changes u WHERE u.guild_id = c.guild_id AND u.campaign_id = c.campaign_id"
-        " AND u.undoes = c.batch) LIMIT 1",
-        (*w.ids, WHO_SOURCE, gone["id"], keep["id"]),
+        " AND u.undoes = c.batch)",
+        (*w.ids, WHO_SOURCE, keep["id"]),
     )
-    if await undone.fetchone() is not None:
+    turned_down = await undone.fetchall()
+    group = fold_key(str(gone["name"]))
+    if any(
+        str(r["row_id"]) == str(gone["id"]) or fold_key(str(r["name"])) == group
+        for r in turned_down
+    ):
         return AI_JOIN_REFUSED
     if await name_scene(w, gone) is not None:
         return AI_JOIN_REFUSED  # said only in a split scene: who knows it is the DM's (#4043)

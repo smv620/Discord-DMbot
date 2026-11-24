@@ -406,6 +406,19 @@ class FoldAtTheRead(Base):
         self.assertIn("explorer league", await self.memory.known_keys(self.g, self.one.id))
         self.assertEqual(await self.memory.waiting_joins(self.g, self.one.id), [])
 
+    async def test_an_undo_refuses_the_whole_fold_group_onto_that_entry(self) -> None:
+        league = await self.add("Explorer's League", "faction")
+        await self.found("Explorer League")
+        (join,) = await self.memory.waiting_joins(self.g, self.one.id)
+        await self.memory.undo(self.g, self.one.id, join.batch)
+        again = await self.found("Explorers League")  # (another spelling of the same group)
+        self.assertIsNone(again.value.merged_into)
+        self.assertEqual(await self.memory.waiting_joins(self.g, self.one.id), [])
+        # (another name onto the same entry is still joined: only that group was turned down)
+        tam = await self.waiting_name("The Ferry Lady", "faction")
+        done = await self.memory.join_by_ai(self.g, self.one.id, league, tam)
+        self.assertEqual(done.value.id, league)
+
     async def test_two_fits_or_a_secret_fit_stay_ordinary_waiting_names(self) -> None:
         await self.add("Explorer's League", "faction")
         await self.add("Explorers Leagues", "faction")
