@@ -1178,11 +1178,20 @@ class MemoryStore:
         )
 
     async def sound_alikes(
-        self, guild_id: int, campaign_id: str, codes: Sequence[str], *, limit: int = 500
+        self,
+        guild_id: int,
+        campaign_id: str,
+        codes: Sequence[str],
+        *,
+        limit: int = 500,
+        secret: bool = False,
     ) -> list[tuple[str, str, str]]:
         """Confirmed, non-secret names of confirmed entries that share a sound code with
         `codes`, as (entity ID, name as written, the entry's own name): one small query,
-        for matching a suggested name without loading the whole campaign (#394)."""
+        for matching a suggested name without loading the whole campaign (#394).
+
+        `secret`: the secret names instead, only so a caller can tell that a secret one also fits
+        and then ask the DM rather than decide (#5215 slice 2). Never shown or logged."""
         if not codes:
             return []
         # Two plain reads, in one snapshot: joined, a campaign with no table statistics
@@ -1191,8 +1200,8 @@ class MemoryStore:
             cur = await scope.conn.execute(
                 "SELECT entity_id, text FROM memory_aliases"
                 " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
-                " AND NOT secret AND sound_codes && %s::text[] ORDER BY entity_id, id",
-                (*scope.ids, list(codes)),
+                " AND secret = %s AND sound_codes && %s::text[] ORDER BY entity_id, id",
+                (*scope.ids, secret, list(codes)),
             )
             found = await cur.fetchall()
             cur = await scope.conn.execute(
@@ -12059,6 +12068,28 @@ async def _ai_join_refusal(
         return AI_JOIN_REFUSED
     if (keep["type"] != gone["type"] and not any_kind) or keep["role"] != gone["role"]:
         return AI_JOIN_REFUSED  # (any_kind: the waiting kind is the reader's guess, #5215)
+    if any_kind:
+        # (only a name that is the kept one but for a final "s", read again now: a rename since
+        # the caller looked never crosses kinds on a stale decision)
+        from dmbot.memory.s_join import join_target  # (late: s_join imports scan)
+
+        names = await w.select(
+            ALIASES, " AND entity_id = %s AND status = 'confirmed' AND NOT secret", [keep["id"]]
+        )
+        fits = [(keep["id"], str(a["text"]), str(keep["name"])) for a in names]
+        if join_target(str(gone["name"]), fits) != keep["id"]:
+            return AI_JOIN_REFUSED
+    # The DM took this very join back once (↩️ Undo): DMbot never makes it again by itself
+    undone = await w.conn.execute(
+        "SELECT 1 FROM memory_changes c WHERE c.guild_id = %s AND c.campaign_id = %s"
+        " AND c.source = %s AND c.table_name = 'memory_entities' AND c.op = 'update'"
+        " AND c.row_id = %s AND c.after->>'merged_into' = %s AND EXISTS (SELECT 1 FROM"
+        " memory_changes u WHERE u.guild_id = c.guild_id AND u.campaign_id = c.campaign_id"
+        " AND u.undoes = c.batch) LIMIT 1",
+        (*w.ids, WHO_SOURCE, gone["id"], keep["id"]),
+    )
+    if await undone.fetchone() is not None:
+        return AI_JOIN_REFUSED
     if await name_scene(w, gone) is not None:
         return AI_JOIN_REFUSED  # said only in a split scene: who knows it is the DM's (#4043)
     ids = [keep["id"], gone["id"]]

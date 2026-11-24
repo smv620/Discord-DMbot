@@ -38,6 +38,14 @@ class TheRule(unittest.TestCase):
         rows = [row("e1", "Explorer's League"), ("e1", "Explorers League", "Explorer's League")]
         self.assertEqual(join_target("Explorer League", rows), "e1")
 
+    def test_a_secret_name_that_fits_means_ask(self) -> None:
+        rows = [row("e1", "Explorer's League")]
+        self.assertIsNone(join_target("Explorer League", rows, [row("s1", "Explorers League")]))
+
+    def test_the_target_holding_the_very_spelling_still_joins(self) -> None:
+        rows = [row("e1", "Explorer's League"), ("e1", "Explorer League", "Explorer's League")]
+        self.assertEqual(join_target("Explorer League", rows), "e1")
+
     def test_a_spelling_that_is_already_a_known_name_is_asked(self) -> None:
         rows = [row("e1", "Explorer's League"), row("e2", "Explorer League")]
         self.assertIsNone(join_target("Explorer League", rows))
@@ -51,25 +59,31 @@ def waiting(eid: str, name: str) -> Entity:
 
 
 def bot_with(
-    *names: Entity, on: bool = True, known: list[tuple[str, str, str]] | None = None
+    *names: Entity,
+    on: bool = True,
+    known: list[tuple[str, str, str]] | None = None,
+    hidden: list[tuple[str, str, str]] | None = None,
 ) -> Any:
+    shown = known if known is not None else [row("k1", "Explorer's League")]
+
+    async def sound_alikes(
+        _g: int, _c: str, _codes: Any, *, secret: bool = False
+    ) -> list[tuple[str, str, str]]:
+        return (hidden or []) if secret else shown
+
     memory = SimpleNamespace(
         entities=AsyncMock(return_value=list(names)),
-        sound_alikes=AsyncMock(return_value=known or [row("k1", "Explorer's League")]),
+        sound_alikes=AsyncMock(side_effect=sound_alikes),
         join_by_ai=AsyncMock(),
     )
-    return SimpleNamespace(
-        settings=SimpleNamespace(story_who_apply_on=on),
-        memory=memory,
-        campaigns=SimpleNamespace(get=AsyncMock(return_value=None)),
-    )
+    return SimpleNamespace(settings=SimpleNamespace(story_who_apply_on=on), memory=memory)
 
 
 class TheStep(unittest.IsolatedAsyncioTestCase):
     async def run_step(self, bot: Any) -> int:
         from dmbot.bot import DMBot
 
-        return await DMBot._join_final_s(cast(Any, bot), 1, "c1", "s1")
+        return await DMBot._join_final_s(cast(Any, bot), 1, "c1")
 
     async def test_joins_a_two_word_name_across_kinds(self) -> None:
         bot = bot_with(waiting("w1", "Explorer League"), waiting("w2", "Harper"))
@@ -81,12 +95,22 @@ class TheStep(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.run_step(bot), 0)
         bot.memory.entities.assert_not_awaited()
 
+    async def test_a_secret_name_that_also_fits_means_the_dm_is_asked(self) -> None:
+        bot = bot_with(waiting("w1", "Explorer League"), hidden=[row("s1", "Explorers Leagues")])
+        self.assertEqual(await self.run_step(bot), 0)
+        bot.memory.join_by_ai.assert_not_awaited()
+
     async def test_a_refused_join_is_asked_as_before(self) -> None:
         bot = bot_with(waiting("w1", "Explorer League"))
         bot.memory.join_by_ai.side_effect = MemoryRuleError("no")
         self.assertEqual(await self.run_step(bot), 0)
 
+    async def test_one_failure_never_stops_the_rest(self) -> None:
+        bot = bot_with(waiting("w1", "Explorer League"), waiting("w2", "Explorers League"))
+        bot.memory.join_by_ai.side_effect = [RuntimeError("down"), None]
+        self.assertEqual(await self.run_step(bot), 1)
+
     async def test_a_failed_read_never_raises(self) -> None:
         bot = bot_with(waiting("w1", "Explorer League"))
-        bot.memory.sound_alikes.side_effect = RuntimeError("down")
+        bot.memory.entities.side_effect = RuntimeError("down")
         self.assertEqual(await self.run_step(bot), 0)

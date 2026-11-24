@@ -30,17 +30,26 @@ def fold_key(text: str) -> str:
     return " ".join(words)
 
 
-def join_target(name: str, candidates: Iterable[Candidate]) -> str | None:
-    """The one known entry `name` is, differing from it only by a final "s", or None (asked as
-    today). `candidates`: confirmed, never secret names (entity ID, a name of it as written, its own
-    name), as `MemoryStore.sound_alikes` gives them for `scan.card_sound_keys(name)`."""
+def join_target(
+    name: str, candidates: Iterable[Candidate], secret: Iterable[Candidate] = ()
+) -> str | None:
+    """The one known entry `name` is, differing from it only by a final "s" (on any of its words),
+    or None (asked as today). `candidates`: confirmed, never secret names (entity ID, a name of it
+    as written, its own name), as `MemoryStore.sound_alikes` gives them for
+    `scan.card_sound_keys(name)`; `secret`: the secret ones the same way, only counted: if one fits,
+    the DM is asked (the name may really be the secret one), and nothing of it is shown."""
     if len(name.split()) < JOIN_WORDS:
         return None
     own, want = name_key(name), fold_key(name)
+    if any(fold_key(text) == want for _e, text, _o in secret):
+        return None
     fits: set[str] = set()
+    exact: set[str] = set()
     for entity_id, text, _own in candidates:
         if name_key(text) == own:
-            return None  # (the waiting spelling is already a known name: both are entries)
+            exact.add(entity_id)
         if fold_key(text) == want:
             fits.add(entity_id)
-    return next(iter(fits)) if len(fits) == 1 else None
+    if len(fits) != 1 or exact - fits:
+        return None  # (two fit, or the spelling is another entry's own: both are entries)
+    return next(iter(fits))
