@@ -1165,20 +1165,8 @@ def background_kind(entity: Entity) -> str:
     return name_words.guess_kind(entity.source, entity.type, entity.role)
 
 
-def a_kind(kind: str) -> str:
-    """ "a place", "an item": the kind with its article."""
-    word = kind_label(kind)
-    an = word.casefold().startswith(
-        ("a", "e", "i", "o", "u", "npc")
-    )  # ("an NPC": said "en-pee-see")
-    return f"{'an' if an else 'a'} {word}"
-
-
-def kind_label(kind: str) -> str:
-    """ "person", "place"…: a kind in plain words (the same ones the background reader uses)."""
-    from dmbot.memory.background import LABELS
-
-    return LABELS.get(kind, (kind, kind))[0]
+a_kind = name_words.a_kind
+kind_label = name_words.kind_label
 
 
 def _bold_kind(kind: str) -> str:
@@ -1365,23 +1353,17 @@ def _italic_and(spellings: Sequence[str]) -> str:
 
 
 def rules_note(name: str, kind: str, rules: Sequence[str], fixed: str) -> str:
-    """The reply to the new card's yes (#5133 slice 3c-2b, as ruled): what was kept, and which
-    heard spellings now read as it. `fixed`: "fixed" (this session's transcript too), "later"
-    (from now on only: an entry not everyone at the table may read about), "fixing" (the wait
-    line) or "failed"."""
-    if fixed == "failed":
-        return (
-            f"Kept **{_md(name)}**, but this session's transcript couldn't be fixed. "
-            "Press 🔁 Try again."
-        )
-    head = f"✅ Kept **{_md(name)}** as {a_kind(kind)}"
-    if fixed == "fixing":
-        return f"{head}, and DMbot is fixing this session's transcript."
-    if not rules:
-        return f"{head}."
-    verb = "reads" if len(rules) == 1 else "read"
-    when = "in this session's transcript and from now on" if fixed == "fixed" else "from now on"
-    return f"{head}. {_italic_and(rules)} now {verb} as {_md(name)}, {when}."
+    """The reply to the new card's yes (#5133 slice 3c-2b): `name_words.rules_note`, in Discord's
+    markdown."""
+    return name_words.rules_note(
+        name,
+        kind,
+        rules,
+        fixed,
+        bold=lambda n: f"**{_md(n)}**",
+        italic=lambda r: f"*{_md(r)}*",
+        plain=_md,
+    )
 
 
 def not_kind_label(kind: str) -> str:
