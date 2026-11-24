@@ -49,6 +49,9 @@ from dmbot.memory.ontology import is_dm_word
 from dmbot.memory.scan import COMMON, GAME_TERMS
 from dmbot.memory.scene import WORD, find_mentions, group_sizes
 from dmbot.memory.sounds import sound_codes
+from dmbot.names import not_names
+from dmbot.names.english import is_english_word
+from dmbot.names.not_names import CREATURE_KINDS
 from dmbot.secrets_match import names_a_secret
 from dmbot.transcript.close_calls import CloseCalls
 
@@ -482,8 +485,25 @@ def _respelled(lookup: CampaignLookup, said: str) -> str | None:
         return None  # not a confirmed name, or written two ways, or already right
     (text,) = texts
     if said.casefold() == text.casefold() and not said[:1].isupper():
-        return None
+        return text if _capitals_safe(text) else None
     return text
+
+
+def _capitals_safe(name: str) -> bool:
+    """A confirmed one-word name heard in lower case ("hrothgar") gets its capitals only when the
+    word is no ordinary one (#5154, as Supervisor ruled): not in the English word list, the
+    scan's common words or game terms, the kinds of creature, nor anything `not_names` says is no
+    name. So "hope" stays "hope" even with an NPC called Hope; "hrothgar" becomes "Hrothgar"."""
+    if not name.isalpha():  # (one word of letters: never "of", a digit or an apostrophe inside)
+        return False
+    word = name.casefold()
+    return not (
+        is_english_word(word)
+        or word in COMMON
+        or word in GAME_TERMS
+        or word in CREATURE_KINDS
+        or not_names.is_not_name(name)
+    )
 
 
 def _by_sound(

@@ -220,6 +220,37 @@ class TrapsTest(unittest.TestCase):
         names = lookup(more=(entity(MAREN, "Bell"),), more_aliases=(alias(MAREN, "Bell"),))
         self.assertEqual(text("ring the bell", names), "ring the bell")
 
+    def test_a_name_heard_in_lower_case_gets_its_capitals_when_no_word_is_spelled_so(
+        self,
+    ) -> None:
+        # (#5154: "thorin" is no English word, so it is the name; mid-sentence and first)
+        self.assertEqual(text("we follow thorin home", lookup()), "we follow Thorin home")
+        self.assertEqual(text("thorin waits", lookup()), "Thorin waits")
+
+    def test_an_ordinary_word_spelled_as_a_name_keeps_its_lower_case(self) -> None:
+        # (#5154: "Hope", "Will", "Grace" and "Bell" are names too, but "I hope" is never "I Hope")
+        for name, heard in (
+            ("Hope", "I hope so"),
+            ("Will", "we will see"),
+            ("Grace", "say grace first"),
+            ("Bell", "ring the bell"),
+        ):
+            with self.subTest(name=name):
+                names = lookup(more=(entity(MAREN, name),), more_aliases=(alias(MAREN, name),))
+                self.assertEqual(text(heard, names), heard)
+
+    def test_a_kind_of_creature_spelled_as_a_name_keeps_its_lower_case(self) -> None:
+        # (#5154: "kobold", "wyvern", "drow" and "lich" are no English words, but kinds of creature)
+        for name in ("Kobold", "Wyvern", "Drow", "Lich"):
+            with self.subTest(name=name):
+                names = lookup(more=(entity(MAREN, name),), more_aliases=(alias(MAREN, name),))
+                heard = f"the {name.lower()} attacks"
+                self.assertEqual(text(heard, names), heard)
+
+    def test_a_secret_or_two_word_name_never_gets_capitals_from_lower_case(self) -> None:
+        self.assertEqual(text("the hooded stranger walks in"), "the hooded stranger walks in")
+        self.assertEqual(text("we reach bryn shander"), "we reach bryn shander")
+
     def test_the_secret_identity_is_never_revealed(self) -> None:
         heard = "the hooded stranger walks in"
         self.assertEqual(text(heard), heard)

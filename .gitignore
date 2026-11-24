@@ -239,6 +239,8 @@ Thumbs.db
 data/
 # ...but the rules data DMbot ships (the SRD 5.2.1, #866) is part of the code
 !core/src/dmbot/rules/data/
+# ...and so is the English word list (SCOWL, #5154), with its notice
+!core/src/dmbot/names/data/
 *.sqlite
 *.db
 logs/
