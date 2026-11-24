@@ -4,7 +4,7 @@ only, the DM checked on every press, the lines handed back. Real Postgres, fake 
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.recaps import split as sp
@@ -69,6 +69,7 @@ class TheOnce(Base):
         await say(me, self.g, self.c, self.sid, 3, 55)
         await say(me, self.g, self.c, self.sid, 3, 55)
         self.assertEqual(post.await_count, 1)
+        assert post.await_args is not None
         self.assertEqual(post.await_args.args[1], rl.note(3, AT))
 
     async def test_a_refused_post_raises_and_is_tried_again_by_the_next_read(self) -> None:
@@ -194,7 +195,7 @@ class TheShow(TheUndo):
         guild = SimpleNamespace(id=self.g, get_member=lambda uid: None)
         show: Any = DMBot.recap_lines_text
         with patch("dmbot.ui.transcripts.display_names", AsyncMock(return_value={DM: "Mira"})):
-            return await show(me, guild, self.c, self.sid)
+            return str(await show(me, guild, self.c, self.sid))
 
     async def test_it_shows_exactly_the_lines_the_split_calls_recap(self) -> None:
         text = await self.lines_text({DM})
@@ -218,12 +219,13 @@ class TheShow(TheUndo):
     async def test_only_a_dm_can_press_it_and_read_them_as_play_still_works_after(self) -> None:
         campaign = SimpleNamespace(id=self.c, dm_user_ids=frozenset({DM}))
         button = rl.RecapLinesShowButton(self.c, self.sid)
-        stranger, bot = self.press(PLAYER, campaign)
-        bot.recap_lines_text = AsyncMock(return_value="the lines")
+        stranger, stranger_bot = self.press(PLAYER, campaign)
+        shown: Any = AsyncMock(return_value="the lines")
+        cast(Any, stranger_bot).recap_lines_text = shown
         await button.callback(stranger)  # type: ignore[arg-type]
-        bot.recap_lines_text.assert_not_called()
-        dm, bot = self.press(DM, campaign)
-        bot.recap_lines_text = AsyncMock(return_value="the lines")
+        shown.assert_not_called()
+        dm, dm_bot = self.press(DM, campaign)
+        cast(Any, dm_bot).recap_lines_text = AsyncMock(return_value="the lines")
         await button.callback(dm)  # type: ignore[arg-type]
         self.assertEqual(dm.followup.send.await_args.args[0], "the lines")  # type: ignore[attr-defined]
         self.assertEqual(await release_recap_lines(self.lines, self.g, self.sid), frozenset({2, 3}))
