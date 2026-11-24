@@ -2004,9 +2004,9 @@ class RecapFeatures:
             for name in job.to_confirm:
                 if name_key(name) in known or names_a_secret(name, secret, []):
                     continue  # the list has it (or the DM said it is not a name) since
-                if is_rules_phrase(name) or name_key(without_roll(name)) in known:
+                if is_rules_phrase(name) or without_roll(name) != name:
                     # ("Animal Handling check" is a roll, never a name; "Strahd check" is a
-                    # hearing of a name DMbot has, never a new one: #5214)
+                    # hearing of Strahd, never a new name: #5214)
                     continue
                 try:
                     await self.memory.add_entity(

@@ -103,9 +103,10 @@ GAME_TERMS = _words(
     """
 )
 # The 2024 PHB's eighteen skills and six abilities (#5214): a rules phrase is never a name, nor is
-# one with a roll after it ("Animal Handling check", "Wisdom saving throw"). The one-word ones are
-# in GAME_TERMS; these are the rest. The short ability forms ("Dex") count only with a roll word
-# after them ("Dex save"): alone, "Dex" may well be someone's name.
+# one with a roll after it ("Animal Handling check", "Wisdom saving throw"). GAME_TERMS repeats the
+# one-word ones; these lists are the whole set, so the two-word ones are refused too. The short
+# ability forms ("Dex") count only with a roll word after them ("Dex save"): alone, "Dex" may well
+# be someone's name.
 SKILLS = (
     "acrobatics", "animal handling", "arcana", "athletics", "deception", "history", "insight",
     "intimidation", "investigation", "medicine", "nature", "perception", "performance",
@@ -114,34 +115,58 @@ SKILLS = (
 ABILITIES = ("strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma")
 ABILITY_SHORT = frozenset({"str", "dex", "con", "int", "wis", "cha"})
 RULES_PHRASES = frozenset(SKILLS) | frozenset(ABILITIES)
-# What is said after a rules word to make a roll of it, longest first
+# The other rolls said at nearly every table ("Death Save", "Attack Roll", "Ability Check"): with a
+# roll word after them they are rules phrases; alone ("Death") they are left to the other checks.
+ROLL_CORES = frozenset(
+    {"death", "attack", "ability", "skill", "spell", "damage", "group", "hit dice", "initiative",
+     "concentration", "luck", "flat"}
+)  # fmt: skip
+# What is said after a rules word to make a roll of it, longest first; plurals, hyphens and a
+# closing stop too ("Dex saves", "Dex saving-throw", "Dex save.")
 ROLL_WORDS = ("saving throw", "check", "roll", "save")
 _ROLL_AFTER = re.compile(
-    r"\s+(?:" + "|".join(re.escape(w).replace(r"\ ", r"\s+") for w in ROLL_WORDS) + r")$",
+    r"[\s-]+(?:"
+    + "|".join(re.escape(w).replace(r"\ ", r"[\s-]+") for w in ROLL_WORDS)
+    + r")s?[.,!?;:]*$",
     re.IGNORECASE,
 )
-_ROLL_KEYS = frozenset(name_key(w) for w in ROLL_WORDS)
-RULES_WORD = "rules_word"  # a rules word or phrase, with a roll after it or not (#5214)
+_ROLL_ALONE = re.compile(
+    r"^(?:" + "|".join(re.escape(w).replace(r"\ ", r"[\s-]+") for w in ROLL_WORDS) + r")s?$",
+    re.IGNORECASE,
+)
+# A rules word or phrase, with a roll after it or not (#5214); also the reason the name reader
+# gives (it imports this one)
+RULES_WORD = "rules_word"
 
 
 def without_roll(name: str) -> str:
-    """`name` without a roll said after it: "Animal Handling check" is "Animal Handling", "Strahd
-    check" is "Strahd" (#5214). Unchanged when nothing is left, or no roll word ends it."""
+    """`name` without a roll said after it: "Animal Handling check" is "Animal Handling", "Strahd's
+    check" is "Strahd" (#5214). Unchanged when nothing is left, or no roll word ends it. Only for
+    looking a name up: "X check" is never a new name of its own."""
     bare = _ROLL_AFTER.sub("", name.strip())
-    return bare if bare.strip() else name
+    if bare == name.strip() or not bare.strip():
+        return name
+    return _POSSESSIVE.sub("", bare.strip())
 
 
 def is_rules_phrase(name: str) -> bool:
     """Whether `name` is a rules word or phrase, with a roll after it or not (#5214): a skill, an
     ability, a condition, a class or another game term ("Insight", "Animal Handling check", "Dex
-    save", "Wisdom saving throw"). Only ever refuses: it never makes anything a name."""
+    save", "Wisdom saving throw", "Death Save"). A roll word alone ("Check", "Roll", "Save") is one
+    too: the scan leaves it over beside a known name ("Strahd Check" with Strahd skipped), and a
+    character truly called "Roll" is a cost we accept, since this only ever refuses: it never makes
+    anything a name."""
+    stripped = name.strip().rstrip(".,!?;:")
+    if _ROLL_ALONE.match(stripped):
+        return True
     core = without_roll(name)
     key = name_key(core)
     if not key:
         return False
-    if key in GAME_TERMS or key in RULES_PHRASES or key in _ROLL_KEYS:
-        return True  # (a roll word alone too: "Check" left over beside a known "Strahd")
-    return core != name and key in ABILITY_SHORT
+    if key in GAME_TERMS or key in RULES_PHRASES:
+        return True
+    rolled = core != name
+    return rolled and (key in ABILITY_SHORT or " ".join(core.casefold().split()) in ROLL_CORES)
 
 
 @dataclass(frozen=True, slots=True)
@@ -426,6 +451,7 @@ def find_new_names(
     led_times: Counter[str] = Counter()  # sightings of a name inside a longer led name (#5055)
     led_by: dict[str, set[str]] = {}
     rules_words: dict[str, tuple[str, str]] = {}  # (#5214, for `refusals`)
+    rolled: list[tuple[str, str, bool, str]] = []  # "X check" hearings: (X's key, X, mid, as said)
     for words in sentences:
         # (loose: no word is ruled out for being said in lower case, design rule 2)
         for text, mid, led_key in _candidates(
@@ -445,10 +471,13 @@ def find_new_names(
                 rules_words.setdefault(key, (text, RULES_WORD))
                 continue
             core = without_roll(text)
-            if core != text:  # ("Strahd check": a hearing of Strahd, never a new name, #5214)
-                if name_key(core) in skip:
-                    continue
-                text, key = core, name_key(core)
+            if core != text:
+                # "Strahd check" is a hearing of Strahd, never a new name (#5214): it counts for
+                # Strahd only if Strahd is known (skipped) or heard alone too (after the loop),
+                # so "Barrel Roll" never makes "Barrel" a name nobody said
+                if name_key(core) not in skip:
+                    rolled.append((name_key(core), core, mid, text))
+                continue
             counts[key] += 1
             if led_key:
                 led_times[key] += 1
@@ -456,6 +485,14 @@ def find_new_names(
             spellings.setdefault(key, Counter())[text] += 1
             if mid:
                 mid_sentence.add(key)
+    for key, core, mid, said in rolled:
+        if key in counts:  # (X was heard alone too: "X check" is one more hearing of it)
+            counts[key] += 1
+            spellings[key][core] += 1
+            if mid:
+                mid_sentence.add(key)
+        else:  # (never a new name of its own, #5214)
+            rules_words.setdefault(name_key(said), (said, RULES_WORD))
     offered = {k for k, times in counts.items() if times >= min_times and k in mid_sentence}
     found = []
     left_out: dict[str, tuple[str, str]] = {}  # key -> (name, reason), for `refusals`
