@@ -492,8 +492,8 @@ def _possessives(
         said = w.group()
         stem = _stem(said)
         span = (w.start(), w.end())
-        if stem == said or not stem[:1].islower():
-            continue  # (not a possessive, or written with a capital already)
+        if stem == said:
+            continue  # (not a possessive; one written right already is left by `_respelled`)
         if secret is None:
             secret = _secret_spans(lookup, words)
         if any(span[0] < end and start < span[1] for start, end in (*taken, *secret)):
