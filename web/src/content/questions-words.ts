@@ -38,6 +38,8 @@ export const questionsPage = {
   showHere: "Answer them here",
   hideHere: "Hide them",
   sessionOf: (date: string): string => `Session of ${date}`,
+  // The names no recap has linked, from the lore or the story reader (#5186): listed after the sessions.
+  otherNames: "Other new names",
   // Connections, "Which one?" and facts to check are one list on the Story Graph: it opens under the first of them.
   answeredWith: (label: string): string => `Answered with ${label}, in the same list.`,
   noneHere: "Nothing is waiting here now.",
