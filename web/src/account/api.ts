@@ -1064,6 +1064,9 @@ export interface NameCheck {
   guess?: string | null;
   /** How the session-names reader found this name (#5144, core #5182): present only for a name it found; missing from an older API. */
   found?: NameFound;
+  /** True when this name is also a rules word and the session used it like a name (#5220, core's `name_reader.rules_word` with a reader's
+   * reason): the card adds a line above its question. Missing from an older API and for every other name. */
+  rulesWord?: boolean;
 }
 /** What made a waiting name a name (#5144). `heard` is Discord's heard line as plain text; `line` is the one line that made it
  * a name, or null when none is kept or its speaker no longer agrees. */
