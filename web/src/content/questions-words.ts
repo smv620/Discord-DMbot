@@ -41,6 +41,8 @@ export const questionsPage = {
   // Connections, "Which one?" and facts to check are one list on the Story Graph: it opens under the first of them.
   answeredWith: (label: string): string => `Answered with ${label}, in the same list.`,
   noneHere: "Nothing is waiting here now.",
+  // The count is true but the list has no recap to open for it (#5186): a name from the lore or the story reader, in Discord for now.
+  outsideRecap: (n: number): string => `${n === 1 ? "1 name waits" : `${n} names wait`} outside a recap. Answer ${n === 1 ? "it" : "them"} in Discord with ❓ Questions for you.`,
   // The counts are written by the bot every minute or so: older than five minutes, the page says it is catching up.
   catchingUp: "DMbot is catching up. These numbers may be a little old.",
   notYet: "This page isn't available yet.",
@@ -55,7 +57,7 @@ export const questionsPage = {
     // (answered on this page when it can read them, else the link to the recaps: see `howFor` in Questions.tsx)
     names: { label: "New names to check", how: "here", to: "recaps", link: "Open the recaps" },
     // An imported session's names past the scan's first 10, waiting behind 📝 More names (#5055 B):
-    // added from Discord until the website's button.
+    // added from Discord until the website's button (MORE_NAMES_LIVE, #5081, which shows it inside the line).
     more_names: { label: "More names from your sessions", how: "discord" },
     heard: { label: "Did they mean…?", how: "discord" },
     lookalikes: { label: "Names that look alike", how: "link", to: "names", link: "Open the Names page" },

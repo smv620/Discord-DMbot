@@ -23,7 +23,7 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
-from dmbot.memory import heard_rules, tags
+from dmbot.memory import heard_rules, name_words, tags
 from dmbot.memory.list_names import split_list
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -1145,57 +1145,24 @@ def _heard(entity: Entity) -> str:
     return f" · {_md(text[:1].lower() + text[1:])}" if text else ""
 
 
-HEARD_AS_SHOWN = 3  # other spellings named on the card; the rest are "and N more" (#5133)
-
-
-def _times(n: int) -> str:
-    return "once" if n == 1 else f"{n} times"
+HEARD_AS_SHOWN = name_words.HEARD_AS_SHOWN
 
 
 def heard_line(times: int, typed: int, also: Sequence[str], *, written: bool = False) -> str:
-    """How a waiting name was found, in the words Supervisor ruled for slice 3c (#5133): "Heard 5
-    times, sometimes as *Rothgar* or *hroth gar*.", "Heard once.", "Typed once in chat, and heard 3
-    times, sometimes as *Rothgar*.", or for the DM's own text "Found 2 times in your text, …". At
-    most three other spellings are named, then "and N more": the reply to a yes names every one
-    it keeps (slice 3c-2). Counts and the spellings only."""
-    shown = [f"*{_md(a)}*" for a in also[:HEARD_AS_SHOWN]]
-    named = ""
-    if shown:
-        named = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + f" or {shown[-1]}"
-    rest = len(also) - len(shown)
-    spelled = f", sometimes as {named}" + (f" and {rest} more" if rest > 0 else "") if also else ""
-    times = max(times, 1)
-    typed = min(max(typed, 0), times)
-    if written:
-        return f"Found {_times(times)} in your text{spelled}."
-    if not typed:
-        return f"Heard {_times(times)}{spelled}."
-    # (heard: the hearings that weren't typed; "sometimes as", since which spelling each one was
-    # isn't kept, so "heard 3 times as *Rothgar*" could say more than DMbot knows)
-    heard = times - typed
-    also_heard = f", and heard {_times(heard)}" if heard else ""
-    return f"Typed {_times(typed)} in chat{also_heard}{spelled}."
+    """How a waiting name was found (#5133 slice 3c): `name_words.heard_line`, with each other
+    spelling in italics for Discord."""
+    return name_words.heard_line(times, typed, also, written=written, mark=lambda a: f"*{_md(a)}*")
 
 
 def heard_times(entity: Entity, found: Found | None = None) -> int:
-    """How many times a waiting name was heard: the count kept with what made it a name (0611),
-    else the one the after-session step wrote in its note ("Heard 5 times"), else 1."""
-    if found is not None and found.times > 0:
-        return found.times
-    said = re.search(r"\b(\d+)\b", entity.description)
-    return max(int(said.group(1)), 1) if said else 1
+    """How many times a waiting name was heard (`name_words.heard_times`)."""
+    return name_words.heard_times(entity.description, None if found is None else found.times)
 
 
 def background_kind(entity: Entity) -> str:
     """The kind a suggestion was given when it was read (npc, place…), or "" when it has none to
-    confirm as (an idea, or nothing guessed). From the DM's background (#2167) or from the name
-    scan, whose AI guesses a kind from the sentence (#2937)."""
-    if entity.source not in (BACKGROUND_SOURCE, "scan"):  # marked by where it came from
-        return ""
-    if entity.type == "character":
-        # (read from a text that says so, #3553; confirmed with its player)
-        return {"npc": "npc", PLAYER_CHARACTER: PLAYER_CHARACTER}.get(entity.role or "", "")
-    return entity.type if entity.type in ("place", "faction", "item", "event") else ""
+    confirm as (an idea, or nothing guessed): `name_words.guess_kind`."""
+    return name_words.guess_kind(entity.source, entity.type, entity.role)
 
 
 def a_kind(kind: str) -> str:
@@ -1473,11 +1440,13 @@ async def start_review(
 
 
 def _surest(entity: Entity, found: Found | None) -> tuple[int, int, int, str]:
-    """The waiting list's order (#5133 slice 3c; design section 6)."""
-    if found is None:
-        return (2, 0, entity.created_at, entity.name)
-    sure = found.how in ("introduced", "typed")
-    return (0 if sure else 1, -heard_times(entity, found), entity.created_at, entity.name)
+    """The waiting list's order (#5133 slice 3c; design section 6): `name_words.surest`."""
+    return name_words.surest(
+        None if found is None else found.how,
+        0 if found is None else heard_times(entity, found),
+        entity.created_at,
+        entity.name,
+    )
 
 
 async def _found(memory: MemoryStore, campaign: Campaign, entity: Entity) -> Found | None:
