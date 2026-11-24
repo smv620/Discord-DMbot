@@ -8,6 +8,8 @@
 import NamePlaces from "./NamePlaces";
 import { campaignRefOf } from "./RecapNames";
 import PlayersKnow from "./PlayersKnow";
+import { NAME_FOUND_LIVE } from "../content/name-found-switch";
+import { nameFoundWords as fw } from "../content/name-found-words";
 import SceneLine from "./SceneLine";
 import { useEffect, useRef, useState } from "preact/hooks";
 
@@ -348,6 +350,10 @@ function NameRow({
   const [asking, setAsking] = useState(false);
   const [groupName, setGroupName] = useState("");
   const longer = (name.longerNames ?? []).slice(0, 3);
+  // How the session-names reader found this name (#5144): its guess is only offered when the list knows that kind.
+  const found = name.found;
+  const foundOn = NAME_FOUND_LIVE && found !== undefined;
+  const guessLabel = found?.guess ? (list.kinds.find((k) => k.key === found.guess)?.label ?? "") : "";
   // The card keeps its id when its words change (here or in Discord), so the box follows the stored name.
   const shownName = useRef(name.name);
   useEffect(() => {
@@ -360,6 +366,24 @@ function NameRow({
     <li>
       <div class="panel stack" role="group" aria-labelledby={`${id}-name`} id={itemDomId(name.id)} tabIndex={-1}>
         <strong id={`${id}-name`}>{name.name}</strong>
+        {foundOn && found && (
+          <>
+            <p class="small">{found.heard}</p>
+            {guessLabel !== "" && <p class="small">{fw.guess(guessLabel)}</p>}
+            {found.line && (
+              <p class="small">
+                <strong>{fw.lineLabel}</strong> {fw.line(found.line.speaker, found.line.text)}
+              </p>
+            )}
+            {guessLabel !== "" && (
+              <div class="row">
+                <button type="button" class="button" disabled={busy} aria-label={fw.yesSpelledFor(name.name)} onClick={() => onSend({ action: "confirm", kind: found.guess ?? "" })}>
+                  {name.name.length > fw.longName ? fw.yesSpelling : fw.yesSpelled(name.name)}
+                </button>
+              </div>
+            )}
+          </>
+        )}
         {name.note && (
           <p class="small muted">
             {noteSaysWhere(name.note) ? "" : `${words.noteFrom} `}

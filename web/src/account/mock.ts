@@ -5032,7 +5032,21 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const names = [
         { id: "a".repeat(32), name: "Brannoch", note: "A smith in Eastmarch.", scene: "The party reached Brannoch's forge as the storm broke.", playersText: "The smith of Eastmarch." },
         { id: "b".repeat(32), name: "Veshla", note: "Spoken of as the queen's rider." },
-        { id: "c".repeat(32), name: "Garrick", note: "" },
+        {
+          id: "c".repeat(32),
+          name: "Garrick",
+          note: "",
+          // How the session-names reader found it (#5144): heard five times, with a guess and the line that made it a name.
+          found: {
+            how: "introduced" as const,
+            times: 5,
+            typed: 0,
+            also: ["Garrik", "gar rick"],
+            heard: "Garrick: a new name? Heard 5 times, sometimes as Garrik or gar rick.",
+            guess: "npc",
+            line: { speaker: "Mira", at: 2210, text: "This is Garrick, the ferryman." },
+          },
+        },
         // Lists of names (#3406): a split or a group is offered on these; "Brannoch and Veshla" has a group DMbot knows.
         { id: "f".repeat(32), name: "Aldmoor, Quillgate and Fenwick", note: "Three towns named together.", isList: true, groups: [] as NameGroupHint[] },
         {
