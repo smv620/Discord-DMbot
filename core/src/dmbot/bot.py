@@ -415,6 +415,7 @@ from dmbot.memory.models import (
     FIX,
     KEEP,
     PROPOSED,
+    FoldJoinFailed,
     Heard,
     MemoryRuleError,
     lookup_key,
@@ -13420,12 +13421,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 try:
                     try:
                         written = await make(kind, True)
-                    except MemoryRuleError:
-                        raise
-                    except Exception as exc:
+                    except FoldJoinFailed as exc:
                         # (the join failed, and the name with it, in its one write: made again
-                        # as an ordinary waiting name, never lost, #5215 slice 3)
-                        log.warning("Final-s join failed (%s)", type(exc).__name__)
+                        # as an ordinary waiting name, never lost, #5215 slice 3; any other
+                        # failure is the write's own and stops the step as before)
+                        log.warning("Final-s join failed (%s)", exc)
                         written = await make(kind, False)
                     break
                 except MemoryRuleError as exc:

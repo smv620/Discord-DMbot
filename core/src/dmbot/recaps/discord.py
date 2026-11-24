@@ -53,6 +53,7 @@ from dmbot.memory.models import (
     HINTED,
     OPEN,
     PROPOSED,
+    FoldJoinFailed,
     MemoryRuleError,
     name_key,
 )
@@ -2022,8 +2023,8 @@ class RecapFeatures:
                 except MemoryRuleError as exc:
                     log.info("Skipped a name from the recap: %s", exc)
                     continue
-                except Exception as exc:  # (the join failed, and the name with it: one write)
-                    log.warning("Recap names: the final-s join failed (%s)", type(exc).__name__)
+                except FoldJoinFailed as exc:  # (the join failed, and the name with it: one write)
+                    log.warning("Recap names: the final-s join failed (%s)", exc)
                     try:  # (kept as an ordinary waiting name instead, never lost)
                         made = await self.memory.add_entity(
                             gid, cid, type="concept", name=name, source="scan",

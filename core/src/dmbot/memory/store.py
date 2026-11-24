@@ -195,6 +195,7 @@ from dmbot.memory.models import (
     Correction,
     Entity,
     Flag,
+    FoldJoinFailed,
     GroupHint,
     GroupJoined,
     Heard,
@@ -4974,7 +4975,13 @@ class MemoryStore:
             # (a reader's plain waiting name only, never the DM's own: a DM write is reviewed by
             # `_write` under its own source, which the join's changing of the source would skip)
             plain = status == PROPOSED and described is None and played_by is None and source != DM
-            if fold and plain and await self._fold_join_in(w, row):
+            try:
+                joined_now = fold and plain and await self._fold_join_in(w, row)
+            except MemoryRuleError:
+                raise
+            except Exception as exc:  # (the join's own failure: the caller retries without it)
+                raise FoldJoinFailed(exc.__class__.__name__) from exc  # (`type` is a kind here)
+            if joined_now:
                 joined = await w.get(ENTITIES, str(row["id"]))
                 assert joined is not None
                 return Written(_entity(joined), made.batch)
