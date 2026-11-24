@@ -12705,6 +12705,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     gid, cid, read_in, people, spelled,
                     card=card, progress=moved if stage is not None else None,
                 )  # fmt: skip
+                # Who is recorded, asked again after the reader (#5178): the lines used below for
+                # typed counts and for where a name was said are only those of people still
+                # recorded. (`read_in` keeps its numbering: the reader's lines are already checked.)
+                agreed_now = await self.consent.consenting(gid)
+                heard_in = [x for x in heard_in if x.user_id in agreed_now]
                 # A reader that failed after it started leaves "stopped", never a "reading" that
                 # looks as if it still runs; one that never started leaves the stage empty.
                 ended = "read" if unread is not None else "stopped" if started else ""
@@ -13158,9 +13163,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
             if card is not None and read.unread:  # (a stretch not read is said, never "no names")
                 card.note(after_session.not_read(read.unread))
+            # A line counts as a hearing only while its speaker is still recorded: asked again
+            # here, after the reader's last await (#5178; CLAUDE.md: consent is re-checked after
+            # every async step). The reader asks after each batch's answer, so a line cited in an
+            # earlier batch by someone who stopped later is dropped here too, cited or not; a name
+            # left with no line ends as `speaker_stopped`, as the reader ends one
+            agreed = await self.consent.consenting(gid)
+            ok = {r.number for r in rows if r.user_id in agreed}
+            heard: list[name_reader.Heard] = []
+            stopped: list[name_reader.Outcome] = []
+            for h in read.heard:
+                kept_lines = tuple(n for n in h.lines if n in ok)
+                if kept_lines:
+                    heard.append(replace(h, lines=kept_lines))
+                else:
+                    stopped.append(name_reader.Outcome(h.name, name_reader.STOPPED))
             kept, dropped = name_reader.tally(
-                read.heard, {r.number: r.text for r in rows}, every=True
+                heard, {r.number: r.text for r in rows if r.number in ok}, every=True
             )
+            dropped += stopped
             log.info(  # counts only (a stretch not read is never "no names")
                 "Name reader: %d name(s) found, %d stretch(es) not read", len(kept), read.unread
             )

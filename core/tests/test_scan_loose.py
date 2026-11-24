@@ -271,6 +271,7 @@ def stand_in(
         _scan_kinds=AsyncMock(return_value={}),
         _session_start=AsyncMock(return_value=None),
         _keep_places=AsyncMock(),
+        consent=SimpleNamespace(consenting=AsyncMock(return_value={1})),  # (#5178)
     )
 
 
@@ -370,6 +371,16 @@ class TheBotStep(unittest.TestCase):
             self.assertEqual(
                 (call.args[4].name, call.args[5]), ("Hrothgar", ["Hrothgar", "Rothgar"])
             )
+
+    def test_after_the_reader_a_stopped_speakers_lines_are_never_kept(self) -> None:
+        # (#5178: who is recorded is asked again after the reader; nobody now, so no line of the
+        # session is stored as where a name was said)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left."]
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            bot.consent.consenting.return_value = set()
+            self.run_step(bot, texts)
+            bot._keep_places.assert_not_awaited()
 
     def test_a_name_close_to_a_secret_is_never_suggested(self) -> None:
         texts = ["Then we met Hrothgar at the gate.", "Later Rothgar drank alone."]

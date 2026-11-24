@@ -379,6 +379,78 @@ class TheBotStep(unittest.TestCase):
             self.step(self.bot(FakeClient(answer_for)), [])
         self.assertEqual([c.job_kind for c in charged], ["import"])
 
+    def test_a_speaker_who_stopped_during_the_read_adds_no_hearing(self) -> None:
+        """#5178: the lines that hold a name but weren't cited count as hearings only while their
+        speaker is still recorded, asked again after the reader's last await."""
+        import asyncio
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        stopped: list[bool] = []
+
+        def answer_for(_text: str) -> FakeReply:
+            stopped.append(True)  # (speaker 2 stops while the reader is out)
+            return FakeReply(answer(item("hrothgar")))
+
+        bot = self.bot(FakeClient(answer_for))
+
+        async def consenting(_gid: int) -> set[int]:
+            return {1} if stopped else {1, 2}
+
+        bot.consent = SimpleNamespace(consenting=consenting)
+        lines: Any = [
+            SimpleNamespace(user_id=1, text="a dwarf called hrothgar steps out"),
+            SimpleNamespace(user_id=2, text="hrothgar waves at us"),
+        ]
+        found, _trace, _unread = asyncio.run(
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), [])
+        )
+        self.assertEqual([(f.name, f.times, f.lines) for f in found], [("hrothgar", 1, ("1",))])
+        # (both still recorded: the uncited line counts as before)
+        bot = self.bot(FakeClient(lambda _t: FakeReply(answer(item("hrothgar")))))
+        bot.consent = SimpleNamespace(consenting=lambda _g: asyncio.sleep(0, result={1, 2}))
+        found, _trace, _unread = asyncio.run(
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), [])
+        )
+        self.assertEqual([(f.name, f.times) for f in found], [("hrothgar", 2)])
+
+    def test_a_line_cited_before_its_speaker_stopped_is_no_hearing(self) -> None:
+        """#5178, the reviewer's case: speaker 2's line is cited in the first batch, and speaker 2
+        stops while the second batch is read. The reader kept it then; the step drops it now, and
+        a name left with no line ends as stopped."""
+        import asyncio
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        calls: list[int] = []
+
+        def answer_for(_text: str) -> FakeReply:
+            calls.append(1)
+            if len(calls) == 1:  # (the first batch cites speaker 2's line, number 2)
+                return FakeReply(answer(item("vorna", lines=[2])))
+            return FakeReply(answer())
+
+        bot = self.bot(FakeClient(answer_for))
+
+        async def consenting(_gid: int) -> set[int]:
+            return {1} if len(calls) >= 2 else {1, 2}
+
+        bot.consent = SimpleNamespace(consenting=consenting)
+        lines: Any = [
+            SimpleNamespace(user_id=2 if i == 1 else 1, text="a smith called vorna" if i == 1
+                            else f"we walk on, step {i}")
+            for i in range(nr.BATCH_LINES + 5)
+        ]  # fmt: skip
+        found, trace, _unread = asyncio.run(
+            DMBot._read_session_names(bot, 5, "c1", lines, set(), [])
+        )
+        self.assertEqual(found, [])
+        # (counted, and never named: a stopped speaker's name is never written, even in a trace)
+        self.assertIn(("", nr.STOPPED), [(r.name, r.reason) for r in trace])
+        self.assertNotIn("vorna", [r.name for r in trace])
+
     def test_a_failure_gives_no_names_and_the_scans_list_stands(self) -> None:
         from dmbot.memory.scan import Suggestion
 
