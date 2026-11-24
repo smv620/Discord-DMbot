@@ -93,6 +93,17 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       );
       return { putBack: got.putBack ?? 0 };
     },
+    // The press is queued for the bot like the other queued changes; the answer carries how many names were made and how many wait (#5081).
+    moreNames: async (campaignRef, onLook) => {
+      const queued = (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/more-names`, {})) as { answer?: string } | null;
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(campaignRef)}/web/answers/${encodeURIComponent(queued.answer)}`, (look) =>
+        onLook?.(sharedOf(look.progress)),
+      );
+      // A done answer without its counts is not a success to report ("No more names are waiting" would be false).
+      if (typeof got.made !== "number" || typeof got.left !== "number") throw new ApiError("server");
+      return { made: got.made, left: got.left };
+    },
     campaignNames: async (campaignRef) =>
       (
         (await call(

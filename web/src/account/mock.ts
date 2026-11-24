@@ -1629,6 +1629,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
   const made = new Map<number, string>();
   const staleSeen = new Set<string>(); // recaps whose scene 3 already answered `stale` (#2577)
   const namesUndone = new Set<string>(); // name fixes undone (#2645), by recap and id
+  const moreNamesPressed = new Set<string>(); // campaigns whose 📝 More names was pressed (#5081)
   // The after-session report (#2661) the pretend API keeps by campaign and session.
   const reports = new Map<string, { made: boolean; failed?: boolean; tries: number; answers: Map<string, ReportAnswer>; looks?: number }>();
   const reportItems = (): { contradictions: ReportContradiction[]; differences: SessionReport["differences"] } => {
@@ -2108,6 +2109,18 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!stalled) onLook?.({ stage: "working", startedAt: at, updatedAt: now - 1, serverNow: now, state: "running" });
       namesUndone.add(`${recapRef}:${id}`);
       return { putBack: 8 };
+    },
+    async moreNames(campaignRef, onLook) {
+      calls.push(`moreNames:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.includes("player")) throw new ApiError("not-found");
+      const now = Math.floor(Date.now() / 1000);
+      onLook?.({ stage: "working", startedAt: now - 2, updatedAt: now - 1, serverNow: now, state: "running" });
+      // The pretend bot makes 12 and 40 still wait; asking again finds none.
+      const first = !moreNamesPressed.has(campaignRef);
+      moreNamesPressed.add(campaignRef);
+      return first ? { made: 12, left: 40 } : { made: 0, left: 0 };
     },
     async makeRecap(recapRef, replace) {
       calls.push(`makeRecap:${recapRef}${replace ? ":replace" : ""}`);
