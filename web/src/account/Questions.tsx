@@ -106,7 +106,8 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
         : group === "readings"
           ? WEB_READINGS_LIVE && api.webReadings !== undefined
           : false;
-  return can ? "here" : "link";
+  // Never a link to a page whose panel is off (#5225: the Story Graph's waiting list sent a DM to an empty page): say where it can be answered.
+  return can ? "here" : "discord";
 }
 
 function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; serverNow: number; api: AccountApi }) {
