@@ -306,7 +306,10 @@ def settings_view(
         if setting is not None:  # the campaign's setting (#4291)
             if setting.guessed and setting.entity_id:  # (DMbot's guess waits for the DM's yes)
                 view.add_item(_row(KeepSettingButton(campaign.id, setting.entity_id), 4))
-            view.add_item(_row(PickButton(campaign.id, has_setting=bool(setting.entity_id)), 4))
+            # (a world DMbot only guessed is not shown as chosen until the DM keeps it)
+            view.add_item(
+                _row(PickButton(campaign.id, world=None if setting.guessed else setting.name), 4)
+            )
         if map_checks:  # (only while the map answers are on, #4670 4c-2: else it does nothing)
             view.add_item(_row(MapChecksButton(campaign.id, campaign.map_checks), 4))
     return view

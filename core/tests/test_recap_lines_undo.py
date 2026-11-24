@@ -4,8 +4,8 @@ only, the DM checked on every press, the lines handed back. Real Postgres, fake 
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.recaps import split as sp
 from dmbot.recaps.session_split import release_recap_lines
@@ -21,13 +21,67 @@ KEPT = sp.Split(
 )
 
 
+AT = 1_700_000_000  # the session start: 14 Nov 2023 UTC
+
+
 class TheNote(Base):
-    def test_the_note_says_how_many_lines_and_nothing_else(self) -> None:
-        self.assertIn(
-            "12 lines read as last time's recap and not used as this session's events", rl.note(12)
-        )
-        self.assertIn("1 line read as last time's recap", rl.note(1))
+    def test_the_note_names_the_session_and_says_how_many_lines_and_nothing_else(self) -> None:
+        text = rl.note(12, AT)
+        self.assertIn("Session of 14 Nov 2023: 12 lines were read as last time's recap", text)
+        self.assertIn("not as this session's events", text)
+        self.assertIn(rl.SHOW, text)
+        self.assertIn(rl.UNDO, text)
+        self.assertIn("1 line was read as last time's recap", rl.note(1, AT))
         self.assertIn("A recap already written stays as it is", rl.done(3))
+
+    def test_the_lines_are_listed_with_their_speaker_in_order_and_cut_with_a_count(self) -> None:
+        names = {DM: "Mira", PLAYER: "Rook"}
+        text = rl.show_text([(DM, "We rode out."), (PLAYER, "And so on.")], names, AT)
+        self.assertIn("**Mira:** We rode out.", text)
+        self.assertLess(text.index("Mira"), text.index("Rook"))
+        long = rl.show_text([(DM, "x" * 150)] * 60, names, AT)
+        self.assertLessEqual(len(long), 2000)
+        self.assertRegex(long, r"…and \d+ more\.")
+        self.assertEqual(rl.show_text([], names, AT), rl.NOTHING_TO_SHOW)
+
+
+class TheOnce(Base):
+    """The note is said once for each session (#5232)."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.lines = TranscriptStore(self.db)
+        self.g, self.c = THURSDAY.id, self.one.id
+        self.sid = await self.lines.open_session(self.g, self.c, AT)
+
+    async def test_only_the_first_read_takes_the_turn_and_a_failed_post_gives_it_back(self) -> None:
+        self.assertTrue(await self.lines.claim_recap_note(self.g, self.sid, 5))
+        self.assertFalse(await self.lines.claim_recap_note(self.g, self.sid, 6))
+        await self.lines.release_recap_note(self.g, self.sid)
+        self.assertTrue(await self.lines.claim_recap_note(self.g, self.sid, 7))
+
+    async def test_a_second_read_of_the_same_session_posts_nothing_new(self) -> None:
+        from dmbot.bot import DMBot
+
+        post = AsyncMock(return_value=True)
+        me: Any = SimpleNamespace(transcripts=self.lines, post=post)
+        say: Any = DMBot._post_recap_note
+        await say(me, self.g, self.c, self.sid, 3, 55)
+        await say(me, self.g, self.c, self.sid, 3, 55)
+        self.assertEqual(post.await_count, 1)
+        assert post.await_args is not None
+        self.assertEqual(post.await_args.args[1], rl.note(3, AT))
+
+    async def test_a_refused_post_raises_and_is_tried_again_by_the_next_read(self) -> None:
+        from dmbot.bot import DMBot
+
+        post = AsyncMock(side_effect=[False, True])
+        me: Any = SimpleNamespace(transcripts=self.lines, post=post)
+        say: Any = DMBot._post_recap_note
+        with self.assertRaises(RuntimeError):
+            await say(me, self.g, self.c, self.sid, 3, 55)
+        await say(me, self.g, self.c, self.sid, 3, 55)
+        self.assertEqual(post.await_count, 2)
 
 
 class TheUndo(Base):
@@ -126,3 +180,54 @@ class TheUndo(Base):
         self.assertEqual(await undo(me, self.g, self.c, self.sid), 0)  # nothing left: no sweep
         self.assertEqual(reads, [self.g])
         self.assertEqual(recounted, [(self.g, self.c)])
+
+
+class TheShow(TheUndo):
+    """👀 Show them lists the recap lines, only of people recorded now, and only to a DM."""
+
+    async def lines_text(self, recorded: set[int]) -> str:
+        from dmbot.bot import DMBot
+
+        me: Any = SimpleNamespace(
+            transcripts=self.lines,
+            consent=SimpleNamespace(recorded_in=AsyncMock(return_value=frozenset(recorded))),
+        )
+        guild = SimpleNamespace(id=self.g, get_member=lambda uid: None)
+        show: Any = DMBot.recap_lines_text
+        with patch("dmbot.ui.transcripts.display_names", AsyncMock(return_value={DM: "Mira"})):
+            return str(await show(me, guild, self.c, self.sid))
+
+    async def test_it_shows_exactly_the_lines_the_split_calls_recap(self) -> None:
+        text = await self.lines_text({DM})
+        self.assertIn("line 2", text)
+        self.assertIn("line 3", text)
+        for other in ("line 1", "line 4", "line 5"):
+            self.assertNotIn(other, text)
+
+    async def test_a_speaker_who_is_not_recorded_now_leaves_no_words_and_no_trace(self) -> None:
+        self.assertEqual(await self.lines_text(set()), rl.NOTHING_TO_SHOW)
+        self.assertNotIn("line 2", await self.lines_text(set()))
+
+    async def test_another_campaigns_session_shows_nothing(self) -> None:
+        from dmbot.bot import DMBot
+
+        me: Any = SimpleNamespace(transcripts=self.lines, consent=MagicMock())
+        show: Any = DMBot.recap_lines_text
+        guild = SimpleNamespace(id=self.g)
+        self.assertEqual(await show(me, guild, "f" * 32, self.sid), rl.GONE)
+
+    async def test_only_a_dm_can_press_it_and_read_them_as_play_still_works_after(self) -> None:
+        campaign = SimpleNamespace(id=self.c, dm_user_ids=frozenset({DM}))
+        button = rl.RecapLinesShowButton(self.c, self.sid)
+        stranger, stranger_bot = self.press(PLAYER, campaign)
+        shown: Any = AsyncMock(return_value="the lines")
+        cast(Any, stranger_bot).recap_lines_text = shown
+        await button.callback(stranger)  # type: ignore[arg-type]
+        shown.assert_not_called()
+        dm, dm_bot = self.press(DM, campaign)
+        cast(Any, dm_bot).recap_lines_text = AsyncMock(return_value="the lines")
+        await button.callback(dm)  # type: ignore[arg-type]
+        self.assertEqual(dm.followup.send.await_args.args[0], "the lines")  # type: ignore[attr-defined]
+        self.assertEqual(await release_recap_lines(self.lines, self.g, self.sid), frozenset({2, 3}))
+        both = [type(i).__name__ for i in rl.undo_view(self.c, self.sid).children]
+        self.assertEqual(both, ["RecapLinesShowButton", "RecapLinesUndoButton"])

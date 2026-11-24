@@ -63,7 +63,11 @@ class WhatItMayDo(Base):
         gone = await self.waiting_name("The Ferry Lady")
         await self.join(tam, gone)
         lookup = CampaignLookup.build(await self.memory.lookup_data(self.g, self.one.id))
-        mine = [e for e in lookup.for_viewer(False).names if e.text == "The Ferry Lady"]
+        mine = [
+            e
+            for e in lookup.for_viewer(False, frozenset(lookup.entities)).names
+            if e.text == "The Ferry Lady"
+        ]
         self.assertTrue(mine)
         self.assertFalse(any(e.confirmed for e in mine))  # never a silent fix, never a recap name
 
@@ -242,7 +246,11 @@ class TheDmsCheck(Base):
         _, _, done = await self.joined()
         await self.memory.confirm_join(self.g, self.one.id, done.batch)
         lookup = CampaignLookup.build(await self.memory.lookup_data(self.g, self.one.id))
-        mine = [e for e in lookup.for_viewer(False).names if e.text == "The Ferry Lady"]
+        mine = [
+            e
+            for e in lookup.for_viewer(False, frozenset(lookup.entities)).names
+            if e.text == "The Ferry Lady"
+        ]
         self.assertTrue(mine and all(e.confirmed for e in mine))
 
     async def test_an_undone_join_is_no_longer_listed_and_cannot_be_confirmed(self) -> None:
@@ -318,3 +326,46 @@ class TheDmsCheck(Base):
         with self.assertRaises((MemoryRuleError, TooLateToUndo)):
             await self.memory.undo(self.g, self.one.id, done.batch)
         self.assertEqual((await self.aliases_of(tam))["The Ferry Lady"], CONFIRMED)
+
+
+class AFinalS(Base):
+    """#5215 slice 2: a name that is a known one but for a final "s" may join across kinds (the
+    waiting kind is the reader's guess); every other limit holds."""
+
+    async def test_a_different_kind_joins_only_for_a_final_s(self) -> None:
+        league = await self.add("Explorer's League", "faction")
+        gone = await self.waiting_name("Explorer League", "concept")
+        self.assertEqual(await self.refusal(league, gone), AI_JOIN_REFUSED)
+        done = await self.memory.join_by_ai(self.g, self.one.id, league, gone, any_kind=True)
+        self.assertEqual(done.value.id, league)
+        self.assertEqual((await self.aliases_of(league))["Explorer League"], PROPOSED)
+
+    async def test_every_other_limit_still_holds(self) -> None:
+        gone = await self.waiting_name("Rook Cousins", "concept")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.join_by_ai(self.g, self.one.id, self.rook, gone, any_kind=True)
+
+    async def test_a_join_the_dm_undid_is_never_made_again(self) -> None:
+        league = await self.add("Explorer's League", "faction")
+        gone = await self.waiting_name("Explorer League", "concept")
+        done = await self.memory.join_by_ai(self.g, self.one.id, league, gone, any_kind=True)
+        assert done.batch is not None
+        await self.memory.undo(self.g, self.one.id, done.batch)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.join_by_ai(self.g, self.one.id, league, gone, any_kind=True)
+
+    async def test_any_kind_is_only_for_a_final_s(self) -> None:
+        league = await self.add("Explorer's League", "faction")
+        gone = await self.waiting_name("Explorer Lodge", "concept")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.join_by_ai(self.g, self.one.id, league, gone, any_kind=True)
+
+    async def test_any_kind_still_refuses_a_secret_name_on_the_kept_entry(self) -> None:
+        league = await self.add("Explorer's League", "faction")
+        await self.memory.add_alias(
+            self.g, self.one.id, league, "The Hidden Hand", kind="full", source=DM,
+            status=CONFIRMED, secret=True,
+        )  # fmt: skip
+        gone = await self.waiting_name("Explorer League", "concept")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.join_by_ai(self.g, self.one.id, league, gone, any_kind=True)

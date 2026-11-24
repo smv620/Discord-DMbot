@@ -146,6 +146,21 @@ def _memory(interaction: discord.Interaction) -> MemoryStore | None:
     return _bot(interaction).memory
 
 
+async def seen_for(
+    interaction: discord.Interaction, campaign: Campaign, dm: bool
+) -> frozenset[str] | None:
+    """What this person may read the names of, for `CampaignLookup.for_viewer` (#4537 5b,
+    #4802): None for a DM (everything); anyone else holds what their own characters know, from
+    the gate (`entries_seen_by`). With no story store to ask, nothing is held (failing closed: the
+    people at the table still show)."""
+    if dm:
+        return None
+    memory = _memory(interaction)
+    if memory is None:
+        return frozenset()
+    return await memory.entries_seen_by(campaign.guild_id, campaign.id, interaction.user.id)
+
+
 def _md(text: str) -> str:
     """A name as typed or heard, shown as-is (no stray bold or italics)."""
     return discord.utils.escape_markdown(text)
@@ -1137,7 +1152,7 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
 # ---- checking the names DMbot suggests --------------------------------------------------
 
 
-SPELLED_OUT = "Spelled out at the table"  # a suggestion's note when someone spelled it (#2168)
+SPELLED_OUT = name_words.SPELLED_OUT
 REVIEW_LABEL_MAX = 25  # review buttons fit a phone (#394)
 
 
@@ -1778,7 +1793,7 @@ class SuggestionReview(_Menu):
         """The current suggestion's text, with its buttons set for it."""
         self.match = await _review_match(memory, campaign, entity)
         # A name read from the DM's background already has its kind; "Yes" confirms it as that.
-        self.known_kind = background_kind(entity)
+        self.known_kind = name_words.card_guess(entity.source, entity.type, entity.role)
         self.name = entity.name
         self.spelled = entity.name if entity.description.startswith(SPELLED_OUT) else ""
         self.fix_to = spelled_fix(entity)
