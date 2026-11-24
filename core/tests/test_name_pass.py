@@ -3,8 +3,10 @@ what is asked, and which answers are believed. No database, no AI."""
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import unittest
+from typing import Any
 
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.transcript import name_pass as np
@@ -26,42 +28,78 @@ def make(*, secret: bool = True) -> CampaignLookup:
     return CampaignLookup.build(LookupData(1, tuple(entities), tuple(aliases), (), (), (), ()))
 
 
+def held(lookup: Any) -> frozenset[str]:
+    """A table that holds every entry the DM hasn't kept back (#4802: the pass is given the gate's
+    table view; here, the entries not marked "Players don't know yet")."""
+    return frozenset(e.id for e in lookup.entities.values() if not e.hidden_from_players)
+
+
+def cands(lines: Any, lookup: Any, **kw: Any) -> Any:
+    return np.candidates(lines, lookup, table=held(lookup), **kw)
+
+
+def surv(lines: Any, lookup: Any, *more: Any, **kw: Any) -> Any:
+    return np.survey(lines, lookup, *more, table=held(lookup), **kw)
+
+
 LINES = ["Keirandal drew his bow.", "Then Keirandal said no.", "We followed Keirandal home."]
 
 
 class Finding(unittest.TestCase):
     def test_a_misheard_list_name_is_a_candidate_with_its_list_name_near(self) -> None:
-        got = np.candidates(LINES, make())
+        got = cands(LINES, make())
         self.assertEqual([c.heard for c in got], ["Keirandal"])
         self.assertEqual((got[0].times, got[0].near[0].name), (3, "Kethrandil"))
         self.assertEqual(got[0].near[0].kind, "player character")
         self.assertTrue(all("Keirandal" in line for line in got[0].lines))
 
+    def test_a_name_the_table_doesnt_hold_is_never_asked_about_one_it_holds_is(self) -> None:
+        # (#4802, ruling Q2: what the table may read is the gate's table view, not the flags)
+        lookup = make()
+        everyone = frozenset(lookup.entities)
+        asked = np.candidates(LINES, lookup, table=everyone)
+        self.assertEqual([c.heard for c in asked], ["Keirandal"])
+        self.assertEqual(np.candidates(LINES, lookup, table=everyone - {KETH}), [])
+        self.assertTrue(np.secret_test(lookup, everyone - {KETH})("Keirandal"))
+        self.assertFalse(np.secret_test(lookup, everyone)("Keirandal"))
+
+    def test_the_dm_only_kinds_stay_out_even_when_the_table_holds_them(self) -> None:
+        # (as before #4802: a story thread or a deed is the DM's by kind)
+        lookup = make()
+        thread = dataclasses.replace(lookup.entities[KETH], type="quest")
+        quest = dataclasses.replace(lookup, entities={**lookup.entities, KETH: thread})
+        self.assertIn(KETH, np.kept_from_table(quest, frozenset(quest.entities)))
+        self.assertEqual(np.candidates(LINES, quest, table=frozenset(quest.entities)), [])
+
     def test_the_list_name_itself_an_ordinary_word_and_a_far_name_are_not(self) -> None:
         lines = ["Kethrandil rode on.", "Kindly step aside.", "Then Brannoch laughed."]
-        self.assertEqual(np.candidates(lines, make()), [])
+        self.assertEqual(cands(lines, make()), [])
 
     def test_a_word_close_to_a_secret_name_is_never_a_candidate(self) -> None:
         lines = ["Silas Vain waved.", "Silas Vain left.", "Then Silas Vain sat."]
-        self.assertEqual(np.candidates(lines, make()), [])
+        self.assertEqual(cands(lines, make()), [])
         # the same word is one when there is no secret to be near
         near_a_public = ["Drenwik nodded.", "Then Drenwik left.", "Drenwik sat."]
-        self.assertEqual([c.heard for c in np.candidates(near_a_public, make())], ["Drenwik"])
+        self.assertEqual([c.heard for c in cands(near_a_public, make())], ["Drenwik"])
 
     def test_the_secret_test_agrees_with_the_pass_s_own(self) -> None:
         # (the after-session name step drops a name close to a secret whole, #5133: same test)
         from dmbot.transcript.name_pass import _near, secret_test
 
         for lookup in (make(), make(secret=False)):
-            close = secret_test(lookup)
+            close = secret_test(lookup, held(lookup))
             for word in ("Silas Vain", "Silas Vane", "Drenwik", "Kethrandil", "Brannoch"):
-                self.assertEqual(close(word), _near(lookup, word)[1], (word, lookup.secret_lengths))
-        self.assertTrue(secret_test(make())("Silas Vain"))
-        self.assertFalse(secret_test(make(secret=False))("Silas Vain"))
+                self.assertEqual(
+                    close(word),
+                    _near(lookup, word, np.kept_from_table(lookup, held(lookup)))[1],
+                    (word, lookup.secret_lengths),
+                )
+        self.assertTrue(secret_test(make(), held(make()))("Silas Vain"))
+        self.assertFalse(secret_test(make(secret=False), held(make(secret=False)))("Silas Vain"))
 
     def test_a_word_for_a_person_at_the_table_is_left_alone(self) -> None:
         lines = ["Keirandal rolled.", "Then Keirandal rolled again.", "Keirandal won."]
-        self.assertEqual(np.candidates(lines, make(), people=["keirandal"]), [])
+        self.assertEqual(cands(lines, make(), people=["keirandal"]), [])
 
     def test_a_kept_as_heard_word_is_left_alone(self) -> None:
         base = make()
@@ -70,12 +108,12 @@ class Finding(unittest.TestCase):
         import dataclasses
 
         lookup = dataclasses.replace(base, keep_keys=frozenset({"keirandal"}))
-        self.assertEqual(np.candidates(LINES, lookup), [])
+        self.assertEqual(cands(LINES, lookup), [])
 
 
 class Asking(unittest.TestCase):
     def test_the_question_has_the_word_the_list_names_and_a_short_line_only(self) -> None:
-        got = np.candidates(LINES, make())
+        got = cands(LINES, make())
         text = np.question(got)
         self.assertIn('"Keirandal"', text)
         self.assertIn("Kethrandil (player character)", text)
@@ -85,7 +123,7 @@ class Asking(unittest.TestCase):
 
 class Believing(unittest.TestCase):
     def setUp(self) -> None:
-        self.cands = np.candidates(LINES, make())
+        self.cands = cands(LINES, make())
 
     def answer(self, *items: dict[str, object]) -> str:
         return json.dumps({"answers": list(items)})
@@ -221,8 +259,8 @@ class TheReadersCandidates(unittest.TestCase):
     def test_a_known_name_heard_in_lower_case_is_asked_only_with_the_reader(self) -> None:
         from dmbot.memory.scan import Suggestion
 
-        self.assertEqual(np.candidates(self.LOWER, make()), [])
-        got = np.survey(self.LOWER, make(), extra=[Suggestion("keirandal", 2)]).items
+        self.assertEqual(cands(self.LOWER, make()), [])
+        got = surv(self.LOWER, make(), extra=[Suggestion("keirandal", 2)]).items
         self.assertEqual([c.heard for c in got], ["keirandal"])
         self.assertEqual(got[0].near[0].name, "Kethrandil")
         self.assertTrue(got[0].lines)  # (its lines are found in any case)
@@ -230,7 +268,7 @@ class TheReadersCandidates(unittest.TestCase):
     def test_the_union_never_asks_one_spelling_twice(self) -> None:
         from dmbot.memory.scan import Suggestion
 
-        got = np.survey(LINES, make(), extra=[Suggestion("Keirandal", 3)]).items
+        got = surv(LINES, make(), extra=[Suggestion("Keirandal", 3)]).items
         self.assertEqual(sum(1 for c in got if c.heard.casefold() == "keirandal"), 1)
 
     def test_past_the_limit_the_closest_go_first_and_the_rest_are_counted(self) -> None:
@@ -241,7 +279,7 @@ class TheReadersCandidates(unittest.TestCase):
         lines = [*self.LOWER, "drenwik was there", "drenwik again"]
         extra = [Suggestion("keirandal", 2), Suggestion("drenwik", 9)]
         with patch.object(np, "MAX_CANDIDATES", 1):
-            got = np.survey(lines, make(), extra=extra)
+            got = surv(lines, make(), extra=extra)
         self.assertEqual(len(got.items), 1)
         best = max(n.likeness for n in got.items[0].near)
         other = "drenwik" if got.items[0].heard == "keirandal" else "keirandal"
@@ -249,7 +287,7 @@ class TheReadersCandidates(unittest.TestCase):
         self.assertGreaterEqual(best, 0)  # (the closest first, whatever the hearings)
 
     def test_without_the_reader_the_order_is_today_s(self) -> None:
-        got = np.survey(LINES, make())
+        got = surv(LINES, make())
         self.assertEqual(
             [c.times for c in got.items], sorted((c.times for c in got.items), reverse=True)
         )
@@ -258,7 +296,7 @@ class TheReadersCandidates(unittest.TestCase):
     def test_a_known_name_or_a_person_at_the_table_from_the_reader_is_never_asked(self) -> None:
         from dmbot.memory.scan import Suggestion
 
-        got = np.survey(
+        got = surv(
             self.LOWER, make(), ["Mia"], extra=[Suggestion("kethrandil", 2), Suggestion("mia", 2)]
         ).items
         self.assertEqual(got, [])
@@ -292,6 +330,7 @@ class WhatThePassTellsTheStep(unittest.TestCase):
             name_pass_run.run(
                 store, make(), ask, 1, "c1", "s1", now=0, forget_before=0,  # type: ignore[arg-type]
                 extra=[Suggestion("keirandal", 2)], asked=asked, left_out=left, fixed_keys=fixed,
+                table=held(make()),
             )
         )  # fmt: skip
         return asked, left, fixed
@@ -323,6 +362,7 @@ class WhatThePassTellsTheStep(unittest.TestCase):
                 name_pass_run.run(
                     SimpleNamespace(lines=read), make(), ask, 1, "c1", "s1", now=0,  # type: ignore[arg-type]
                     forget_before=0, extra=[Suggestion("keirandal", 2)], asked=asked,
+                    table=held(make()),
                 )
             )  # fmt: skip
         self.assertEqual(asked, set())  # (so the step's "Sounds like" questions stay)

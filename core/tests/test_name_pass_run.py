@@ -374,6 +374,7 @@ class ThePass(NamesTest):
 
         return await name_pass_run.run(
             self.transcripts, lookup, ask, GUILD, self.campaign.id, self.session,
+            table=frozenset(lookup.entities),
             people=(), agreed={PLAYER}, now=START, forget_before=0, dry_run=dry_run,
         )  # fmt: skip
 
@@ -418,6 +419,7 @@ class ThePass(NamesTest):
         async def count(**kw: Any) -> tuple[int, int]:
             report = await name_pass_run.run(
                 self.transcripts, lookup, new_word, GUILD, self.campaign.id, self.session,
+                table=frozenset(lookup.entities),
                 agreed={PLAYER}, now=START, forget_before=0, dry_run=True, **kw,
             )  # fmt: skip
             return len(report.unsure), len(report.new)
@@ -452,6 +454,30 @@ class ThePass(NamesTest):
         await self.transcripts.undo_respell(GUILD, self.campaign.id, batch)
         self.assertEqual(await self.texts(), before)
 
+    async def test_a_name_the_table_doesnt_hold_is_never_written_one_it_holds_is(self) -> None:
+        """#4802, ruling Q2: the lines are the shared transcript, so the gate's table view decides
+        which names the pass may write into them."""
+        from dmbot.transcript import name_pass_run
+
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+        lookup = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
+
+        async def ask(_system: str, _question: str) -> str:
+            return str(reply({"n": 1, "answer": "is", "name": "Kethrandil"}).text)
+
+        async def run(table: frozenset[str]) -> Any:
+            return await name_pass_run.run(
+                self.transcripts, lookup, ask, GUILD, self.campaign.id, self.session,
+                agreed={PLAYER}, now=START, forget_before=0, table=table,
+            )  # fmt: skip
+
+        before = await self.texts()
+        report = await run(frozenset())  # (the table holds nothing: not asked, not written)
+        self.assertEqual((report.fixed, report.unsure, report.new), ((), (), ()))
+        self.assertEqual(await self.texts(), before)
+        await run(frozenset(lookup.entities))
+        self.assertEqual((await self.texts())[0], "Kethrandil drew his bow.")
+
     async def test_a_person_who_withdraws_while_the_ai_answers_has_no_line_written(self) -> None:
         """#2655 review: consent is read again after the AI call."""
         from dmbot.transcript import name_pass_run
@@ -470,6 +496,7 @@ class ThePass(NamesTest):
         before = await self.texts()
         report = await name_pass_run.run(
             self.transcripts, lookup, ask, GUILD, self.campaign.id, self.session,
+            table=frozenset(lookup.entities),
             agreed={PLAYER}, now=START, forget_before=0, consenting=now_agreed,
         )  # fmt: skip
         self.assertEqual(report.fixed, ())
@@ -494,6 +521,7 @@ class ThePass(NamesTest):
         asked: set[str] = set()
         report = await name_pass_run.run(
             self.transcripts, lookup, ask, GUILD, self.campaign.id, self.session,
+            table=frozenset(lookup.entities),
             agreed={PLAYER}, now=START, forget_before=0, consenting=now_agreed, asked=asked,
         )  # fmt: skip
         self.assertEqual((report.unsure, report.new), ((), ()))
@@ -506,6 +534,7 @@ class ThePass(NamesTest):
 
         report = await name_pass_run.run(
             self.transcripts, lookup, ask_kept, GUILD, self.campaign.id, self.session,
+            table=frozenset(lookup.entities),
             agreed={PLAYER}, now=START, forget_before=0, consenting=now_agreed,
         )  # fmt: skip
         self.assertEqual(len(report.new), 1)
@@ -574,6 +603,7 @@ class ThePass(NamesTest):
         with self.assertLogs("dmbot.transcript.name_pass_run", "WARNING") as logged:
             report = await name_pass_run.run(
                 self.transcripts, lookup, ask, GUILD, self.campaign.id, self.session,
+                table=frozenset(lookup.entities),
                 people=(), agreed={PLAYER}, now=START, forget_before=0,
             )  # fmt: skip
         self.assertTrue(report.cut)

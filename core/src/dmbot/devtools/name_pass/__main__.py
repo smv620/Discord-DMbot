@@ -241,6 +241,7 @@ async def main_async(args: argparse.Namespace) -> int:
                 people=people, known=known, agreed=agreed, now=now,
                 forget_before=now - int(memory.keep_days * 86400),
                 dry_run=args.dry_run, game_only=args.game_only, extra=extra,
+                table=await memory.entries_held(args.guild, session.campaign_id),  # (as live)
             )  # fmt: skip
         finally:
             await ai.close()

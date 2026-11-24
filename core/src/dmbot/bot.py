@@ -12655,8 +12655,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )  # (the reply itself: its `cut` flag is logged, #2649)
 
         now = int(time.time())
+        # What the table may read (#4802, ruling Q2): the pass writes into the shared transcript,
+        # so the gate's table view decides which names it may write or ask about; read once
+        table = await self.memory.entries_held(gid, cid)
         report = await name_pass_run.run(
-            self.transcripts, lookup, ask, gid, cid, session_id,
+            self.transcripts, lookup, ask, gid, cid, session_id, table=table,
             people=people, known=await self.memory.known_keys(gid, cid), agreed=agreed, now=now,
             forget_before=now - int(self.memory.keep_days * 86400), game_only=game_only,
             consenting=recheck or (lambda: self.consent.consenting(gid)), extra=extra, asked=asked,

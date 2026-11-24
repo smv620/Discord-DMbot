@@ -28,12 +28,12 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import name_key
+from dmbot.memory.models import DM_ONLY_TYPES, name_key
 from dmbot.memory.scan import Suggestion, alike, find_new_names, group_alike, sound_keys
 from dmbot.transcript.cleaner import text_names_a_secret
 
@@ -118,11 +118,24 @@ def _kind_of(lookup: CampaignLookup, entity_id: str) -> str:
     return "player character" if entity.is_player_character else entity.type.replace("_", " ")
 
 
-def _near(lookup: CampaignLookup, spelling: str) -> tuple[list[Near], bool]:
+def kept_from_table(lookup: CampaignLookup, table: Collection[str]) -> frozenset[str]:
+    """The entries the table may not read in the shared transcript (#4802, Supervisor's ruling
+    Q2): every entry the table doesn't hold (`table`: the gate's table view, read once per pass by
+    the caller, `MemoryStore.entries_held`), and the DM-only kinds whatever the table holds, as
+    before. The pass never writes one of their names into a line, nor asks about a spelling close
+    to one."""
+    return frozenset(
+        e.id for e in lookup.entities.values() if e.id not in table or e.type in DM_ONLY_TYPES
+    )
+
+
+def _near(
+    lookup: CampaignLookup, spelling: str, hidden: Collection[str]
+) -> tuple[list[Near], bool]:
     """The list names `spelling` is close to, most alike first (at most `MAX_NEAR`), and whether it
-    is also close to a secret name (then it is never asked about)."""
+    is also close to a secret name or one the table doesn't hold (`hidden`, `kept_from_table`):
+    then it is never asked about."""
     mine = set(sound_keys(spelling))
-    hidden = lookup.hidden
     best: dict[str, Near] = {}
     secret_close = False
     for entry in lookup.names:
@@ -150,11 +163,12 @@ def _near(lookup: CampaignLookup, spelling: str) -> tuple[list[Near], bool]:
     return ranked, secret_close
 
 
-def secret_test(lookup: CampaignLookup) -> Callable[[str], bool]:
-    """Whether a spelling is close to a secret or DM-only name by sound and letters, as this pass's
-    own `_near` judges it, with the lookup's secret entries picked out once (the after-session name
-    step asks it for many spellings and drops such a name whole, design section 5)."""
-    hidden = lookup.hidden
+def secret_test(lookup: CampaignLookup, table: Collection[str]) -> Callable[[str], bool]:
+    """Whether a spelling is close to a secret name, or one the table doesn't hold
+    (`kept_from_table`), by sound and letters, as this pass's own `_near` judges it, with those
+    entries picked out once (the after-session name step asks it for many spellings and drops
+    such a name whole, design section 5)."""
+    hidden = kept_from_table(lookup, table)
     secret = [e for e in lookup.names if not e.person and (e.secret or e.entity_id in hidden)]
 
     def close(spelling: str) -> bool:
@@ -195,12 +209,16 @@ def survey(
     lookup: CampaignLookup,
     people: Iterable[str] = (),
     extra: Sequence[Suggestion] = (),
+    *,
+    table: Collection[str],
 ) -> Survey:
     """The words in `lines` (cleaned text) worth asking PlotBot about, most heard first, and how
     many were left alone. `people`: the names of the people at the table, each whole name and each
     word of it. `extra` (docs/design/session_names.md, section 7, slice 4): the spellings the name
     reader found, capitals or none, joined to the capital-letter scan's (the union, by key), so a
-    known name heard in lower case is asked about too; each goes through the same tests."""
+    known name heard in lower case is asked about too; each goes through the same tests. `table`:
+    the entries the table holds (`kept_from_table`, #4802)."""
+    hidden = kept_from_table(lookup, table)
     skip = {entry.key for entry in lookup.names} | set(lookup.keep_keys)
     skip |= {key for key in lookup.people_by_key}
     skip |= {p.casefold() for p in people}
@@ -227,7 +245,7 @@ def survey(
         near: dict[str, Near] = {}
         secret = False
         for spelling in spellings:
-            ranked, close_to_secret = _near(lookup, spelling)
+            ranked, close_to_secret = _near(lookup, spelling, hidden)
             secret = secret or close_to_secret
             for n in ranked:
                 if n.entity_id not in near or n.likeness > near[n.entity_id].likeness:
@@ -268,9 +286,13 @@ def survey(
 
 
 def candidates(
-    lines: Sequence[str], lookup: CampaignLookup, people: Iterable[str] = ()
+    lines: Sequence[str],
+    lookup: CampaignLookup,
+    people: Iterable[str] = (),
+    *,
+    table: Collection[str],
 ) -> list[Candidate]:
-    return survey(lines, lookup, people).items
+    return survey(lines, lookup, people, table=table).items
 
 
 def question(cands: Sequence[Candidate]) -> str:
