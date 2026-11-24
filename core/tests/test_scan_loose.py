@@ -284,6 +284,7 @@ class TheBotStep(unittest.TestCase):
 
         bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
         bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)  # (#5055 B)
+        bot._still_recorded = lambda *a: DMBot._still_recorded(bot, *a)  # (#5187)
         return asyncio.run(DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1"))
 
     def ends(self, folder: str) -> list[tuple[str, str, str]]:
@@ -428,10 +429,58 @@ class TheBotStep(unittest.TestCase):
 
             bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
             bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)
+            bot._still_recorded = lambda *a: DMBot._still_recorded(bot, *a)
             made = asyncio.run(
                 DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1", recheck=recorded)
             )
             self.assertEqual(made, ["Vorna"])
+
+    def test_a_speaker_who_stops_late_is_never_sent_to_the_kinds_ai(self) -> None:
+        # (#5187: who is recorded is asked again right before the kinds AI, after the step's last
+        # awaits; switch off too, the live path)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        for on in (True, False):
+            with self.subTest(switch=on), tempfile.TemporaryDirectory() as d:
+                bot = stand_in(d, {}, on=on, texts=texts)
+                stops = bot.consent.consenting
+
+                async def lines(*_: Any) -> list[Any]:
+                    return [SimpleNamespace(user_id=2 if "Vorna" in t else 1, text=t,
+                                            topic="game", typed=False) for t in texts]  # fmt: skip
+
+                bot.transcripts = SimpleNamespace(lines=lines)
+                bot.consent.consenting.return_value = {1, 2}
+
+                async def asks(*_: Any, stops: Any = stops) -> list[Any]:
+                    stops.return_value = {1}  # (speaker 2 stops during a late await)
+                    return []
+
+                bot._take_name_asks = asks
+                self.assertEqual(self.run_step(bot, texts), ["Mira"])
+                sent = bot._scan_kinds.await_args.args[3]
+                self.assertFalse(any("Vorna" in t for t in sent))
+
+    def test_with_no_stored_transcript_a_late_stop_suggests_nothing(self) -> None:
+        # (#5187: who said what can't be told apart, so nothing goes out this time)
+        from dmbot.bot import DMBot
+
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, on=False)
+
+            async def asks(*_: Any) -> list[Any]:
+                bot.consent.consenting.return_value = {1}
+                return []
+
+            bot._take_name_asks = asks
+            bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+            bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)
+            bot._still_recorded = lambda *a: DMBot._still_recorded(bot, *a)
+            made = asyncio.run(
+                DMBot._propose_new_names(bot, 5, "c1", TEXTS, set(), None, agreed={1, 2})
+            )
+            self.assertEqual(made, [])
+            bot._scan_kinds.assert_not_awaited()
 
     def test_after_the_reader_a_stopped_speakers_lines_are_never_kept(self) -> None:
         # (#5178: who is recorded is asked again after the reader; nobody now, so no line of the
