@@ -16,6 +16,7 @@ from typing import Any
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _tell
 
 log = logging.getLogger(__name__)
@@ -27,7 +28,6 @@ FAILED = "Something went wrong, so nothing was changed. Try again in a moment."
 UNDO = "↩️ Read them as play"
 SHOW = "👀 Show them"
 NOTHING_TO_SHOW = "No lines of people recorded now are left to show."
-MESSAGE_LIMIT = 2000
 _TEMPLATE = r"dmbot:recaplines:undo:(?P<campaign>[0-9a-f]{32}):(?P<session>[0-9a-f]{32})"
 _SHOW_TEMPLATE = r"dmbot:recaplines:show:(?P<campaign>[0-9a-f]{32}):(?P<session>[0-9a-f]{32})"
 
@@ -72,7 +72,7 @@ def show_text(
         line = f"> **{discord.utils.escape_markdown(names.get(speaker) or 'Someone')}:** " + (
             discord.utils.escape_markdown(discord.utils.escape_mentions(said))
         )
-        if used + len(line) + 1 > MESSAGE_LIMIT - MORE_ROOM:
+        if used + len(line) + 1 > MESSAGE_MAX - MORE_ROOM:
             break
         out.append(line)
         used += len(line) + 1
