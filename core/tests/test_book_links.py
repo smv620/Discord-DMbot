@@ -566,7 +566,12 @@ class Screens(Setup):
         line = "📖 **In your adventure:** Captain Varn (Chapter 1)"
         dm = card_text(lookup.for_viewer(True), who, [], secrets=True, book_line=line)
         players = card_text(
-            lookup.for_viewer(False), who, [], secrets=False, book_line=line, seen={who}
+            lookup.for_viewer(False, frozenset({who})),
+            who,
+            [],
+            secrets=False,
+            book_line=line,
+            seen={who},
         )
         assert dm is not None and players is not None
         self.assertIn(line, dm)

@@ -292,7 +292,11 @@ class Stored(ConfirmedMemoryTest):
         )
         mine = card_text(lookup.for_viewer(True), self.kesh, connections, secrets=True)
         players = card_text(
-            lookup.for_viewer(False), self.kesh, connections, secrets=False, seen={self.kesh}
+            lookup.for_viewer(False, frozenset(lookup.entities)),  # (even held: the DM's by kind)
+            self.kesh,
+            connections,
+            secrets=False,
+            seen={self.kesh},
         )
         self.assertIn("Saved the mill", mine or "")
         self.assertNotIn("Saved the mill", players or "")

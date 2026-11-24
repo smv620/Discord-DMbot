@@ -290,11 +290,14 @@ class Clues(ConfirmedMemoryTest):
         self.assertIn("🔒 **Only some people know this:** Cerric, Kesh", dm)
         self.assertIsNone(name_card.card_text(lookup, self.secret, connections, secrets=False))
 
-    async def view(self, secrets: bool) -> Any:
+    async def view(self, secrets: bool, also: frozenset[str] = frozenset()) -> Any:
         from dmbot.memory.lookup import CampaignLookup
 
-        # (a manager who isn't a DM and plays no one holds the common knowledge, from the gate)
-        seen = None if secrets else await self.memory.entries_seen_by(GUILD_A, self.c, 987_654)
+        # (a manager who isn't a DM and plays no one holds the common knowledge, from the gate;
+        # `also`: what a player's own character knows besides, #4802)
+        seen = (
+            None if secrets else await self.memory.entries_seen_by(GUILD_A, self.c, 987_654) | also
+        )
         return CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c)).for_viewer(
             secrets, seen
         )
@@ -325,7 +328,11 @@ class Clues(ConfirmedMemoryTest):
         await self.limit(self.cerric)
         connections = await self.memory.relations(GUILD_A, self.c, entity_id=self.cerric)
         other = name_card.card_text(
-            await self.view(False), self.cerric, connections, secrets=False, seen={self.cerric}
+            await self.view(False, frozenset({self.cerric})),  # (a player who knows Cerric)
+            self.cerric,
+            connections,
+            secrets=False,
+            seen={self.cerric},
         )
         dm = name_card.card_text(
             await self.view(True), self.cerric, connections, secrets=True, table=frozenset()
