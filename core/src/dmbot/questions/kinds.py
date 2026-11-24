@@ -30,6 +30,7 @@ REVEALS: Final = "reveals"  # what the characters learned, waiting to be kept (#
 DEEDS: Final = (
     "deeds"  # deeds the party did that mattered to someone, waiting to be recorded (#3591, #3590)
 )
+HEADS_UPS: Final = "heads_ups"  # continuity heads-ups waiting for the DM (#3695, #5147)
 
 # In the order the list shows them (the ones people answer most first).
 ORDER: Final[tuple[str, ...]] = (
@@ -47,6 +48,7 @@ ORDER: Final[tuple[str, ...]] = (
     JOINS,
     LEAVES,
     DEEDS,
+    HEADS_UPS,
     REVEALS,
     MAPS,
     CLAIMS,
@@ -71,6 +73,7 @@ LABELS: Final[dict[str, str]] = {
     JOINS: "New in the party",
     LEAVES: "Still in the party?",
     DEEDS: "Deeds to record",
+    HEADS_UPS: "Heads-ups",
     REVEALS: "Things the characters learned",
     MAPS: "Maps waiting for your yes",
     CLAIMS: "Facts to check",

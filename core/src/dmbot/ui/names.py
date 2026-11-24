@@ -23,7 +23,7 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
-from dmbot.memory import heard_rules, name_reader, tags
+from dmbot.memory import heard_rules, name_reader, name_words, tags
 from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.list_names import split_list
 from dmbot.memory.lookup import CampaignLookup
@@ -49,7 +49,7 @@ from dmbot.memory.name_longer import longer_names, widens
 from dmbot.memory.scan import MAX_SUGGESTIONS, Match, near_match_in, sound_keys
 from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.sounds import sound_codes
-from dmbot.transcript.respell import contains
+from dmbot.recaps import heard_fix
 from dmbot.ui import all_names, logic, name_origin, name_places, player_id, split_words
 from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import (
@@ -1146,36 +1146,13 @@ def _heard(entity: Entity) -> str:
     return f" · {_md(text[:1].lower() + text[1:])}" if text else ""
 
 
-HEARD_AS_SHOWN = 3  # other spellings named on the card; the rest are "and N more" (#5133)
-
-
-def _times(n: int) -> str:
-    return "once" if n == 1 else f"{n} times"
+HEARD_AS_SHOWN = name_words.HEARD_AS_SHOWN
 
 
 def heard_line(times: int, typed: int, also: Sequence[str], *, written: bool = False) -> str:
-    """How a waiting name was found, in the words Supervisor ruled for slice 3c (#5133): "Heard 5
-    times, sometimes as *Rothgar* or *hroth gar*.", "Heard once.", "Typed once in chat, and heard 3
-    times, sometimes as *Rothgar*.", or for the DM's own text "Found 2 times in your text, …". At
-    most three other spellings are named, then "and N more": the reply to a yes names every one
-    it keeps (slice 3c-2). Counts and the spellings only."""
-    shown = [f"*{_md(a)}*" for a in also[:HEARD_AS_SHOWN]]
-    named = ""
-    if shown:
-        named = shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + f" or {shown[-1]}"
-    rest = len(also) - len(shown)
-    spelled = f", sometimes as {named}" + (f" and {rest} more" if rest > 0 else "") if also else ""
-    times = max(times, 1)
-    typed = min(max(typed, 0), times)
-    if written:
-        return f"Found {_times(times)} in your text{spelled}."
-    if not typed:
-        return f"Heard {_times(times)}{spelled}."
-    # (heard: the hearings that weren't typed; "sometimes as", since which spelling each one was
-    # isn't kept, so "heard 3 times as *Rothgar*" could say more than DMbot knows)
-    heard = times - typed
-    also_heard = f", and heard {_times(heard)}" if heard else ""
-    return f"Typed {_times(typed)} in chat{also_heard}{spelled}."
+    """How a waiting name was found (#5133 slice 3c): `name_words.heard_line`, with each other
+    spelling in italics for Discord."""
+    return name_words.heard_line(times, typed, also, written=written, mark=lambda a: f"*{_md(a)}*")
 
 
 def singled_line(said: str, times: int) -> str:
@@ -1184,47 +1161,27 @@ def singled_line(said: str, times: int) -> str:
     back to it: “gemstone mine” (heard 4 times)." The quote is the story's own words as heard
     (`Entity.described`); counts only otherwise."""
     words = " ".join(said.split())
+    times = max(times, 1)
+    heard = "once" if times == 1 else f"{times} times"  # (as `name_words.heard_line` counts)
     return (
         f"🔖 Not a name, but the story keeps coming back to it: \u201c{_md(words)}\u201d "
-        f"(heard {_times(max(times, 1))})."
+        f"(heard {heard})."
     )
 
 
 def heard_times(entity: Entity, found: Found | None = None) -> int:
-    """How many times a waiting name was heard: the count kept with what made it a name (0611),
-    else the one the after-session step wrote in its note ("Heard 5 times"), else 1."""
-    if found is not None and found.times > 0:
-        return found.times
-    said = re.search(r"\b(\d+)\b", entity.description)
-    return max(int(said.group(1)), 1) if said else 1
+    """How many times a waiting name was heard (`name_words.heard_times`)."""
+    return name_words.heard_times(entity.description, None if found is None else found.times)
 
 
 def background_kind(entity: Entity) -> str:
     """The kind a suggestion was given when it was read (npc, place…), or "" when it has none to
-    confirm as (an idea, or nothing guessed). From the DM's background (#2167) or from the name
-    scan, whose AI guesses a kind from the sentence (#2937)."""
-    if entity.source not in (BACKGROUND_SOURCE, "scan"):  # marked by where it came from
-        return ""
-    if entity.type == "character":
-        # (read from a text that says so, #3553; confirmed with its player)
-        return {"npc": "npc", PLAYER_CHARACTER: PLAYER_CHARACTER}.get(entity.role or "", "")
-    return entity.type if entity.type in ("place", "faction", "item", "event") else ""
+    confirm as (an idea, or nothing guessed): `name_words.guess_kind`."""
+    return name_words.guess_kind(entity.source, entity.type, entity.role)
 
 
-def a_kind(kind: str) -> str:
-    """ "a place", "an item": the kind with its article."""
-    word = kind_label(kind)
-    an = word.casefold().startswith(
-        ("a", "e", "i", "o", "u", "npc")
-    )  # ("an NPC": said "en-pee-see")
-    return f"{'an' if an else 'a'} {word}"
-
-
-def kind_label(kind: str) -> str:
-    """ "person", "place"…: a kind in plain words (the same ones the background reader uses)."""
-    from dmbot.memory.background import LABELS
-
-    return LABELS.get(kind, (kind, kind))[0]
+a_kind = name_words.a_kind
+kind_label = name_words.kind_label
 
 
 def _bold_kind(kind: str) -> str:
@@ -1429,23 +1386,17 @@ def _italic_and(spellings: Sequence[str]) -> str:
 
 
 def rules_note(name: str, kind: str, rules: Sequence[str], fixed: str) -> str:
-    """The reply to the new card's yes (#5133 slice 3c-2b, as ruled): what was kept, and which
-    heard spellings now read as it. `fixed`: "fixed" (this session's transcript too), "later"
-    (from now on only: an entry not everyone at the table may read about), "fixing" (the wait
-    line) or "failed"."""
-    if fixed == "failed":
-        return (
-            f"Kept **{_md(name)}**, but this session's transcript couldn't be fixed. "
-            "Press 🔁 Try again."
-        )
-    head = f"✅ Kept **{_md(name)}** as {a_kind(kind)}"
-    if fixed == "fixing":
-        return f"{head}, and DMbot is fixing this session's transcript."
-    if not rules:
-        return f"{head}."
-    verb = "reads" if len(rules) == 1 else "read"
-    when = "in this session's transcript and from now on" if fixed == "fixed" else "from now on"
-    return f"{head}. {_italic_and(rules)} now {verb} as {_md(name)}, {when}."
+    """The reply to the new card's yes (#5133 slice 3c-2b): `name_words.rules_note`, in Discord's
+    markdown."""
+    return name_words.rules_note(
+        name,
+        kind,
+        rules,
+        fixed,
+        bold=lambda n: f"**{_md(n)}**",
+        italic=lambda r: f"*{_md(r)}*",
+        plain=_md,
+    )
 
 
 def not_kind_label(kind: str) -> str:
@@ -1504,11 +1455,13 @@ async def start_review(
 
 
 def _surest(entity: Entity, found: Found | None) -> tuple[int, int, int, str]:
-    """The waiting list's order (#5133 slice 3c; design section 6)."""
-    if found is None:
-        return (2, 0, entity.created_at, entity.name)
-    sure = found.how in ("introduced", "typed")
-    return (0 if sure else 1, -heard_times(entity, found), entity.created_at, entity.name)
+    """The waiting list's order (#5133 slice 3c; design section 6): `name_words.surest`."""
+    return name_words.surest(
+        None if found is None else found.how,
+        0 if found is None else heard_times(entity, found),
+        entity.created_at,
+        entity.name,
+    )
 
 
 async def _found(memory: MemoryStore, campaign: Campaign, entity: Entity) -> Found | None:
@@ -2344,21 +2297,15 @@ class SuggestionReview(_Menu):
         self, interaction: discord.Interaction, campaign: Campaign, session: str | None
     ) -> list[str] | None:
         """That session's lines, of the people who agree now, for the rule guard's word test only
-        (nothing is shown or kept). None when they can't be read: then no rule is made."""
-        transcripts = getattr(interaction.client, "transcripts", None)
-        if transcripts is None or session is None:
-            return None
-        try:
-            # (who counts as recorded in this campaign, imports' speakers too, #3305)
-            agreed = await cast(Any, interaction.client).consent.recorded_in(
-                campaign.guild_id, campaign.id
-            )
-            lines = await transcripts.lines(campaign.guild_id, session)
-        except Exception:
-            log.exception("Couldn't read the session for the new name's rules")
-            return None
-        kept = [x.text for x in lines if x.user_id in agreed and not x.sidebar]
-        return kept or None  # (nothing left to test the words against: no rule, as unread)
+        (`heard_fix.session_lines`). None when they can't be read: then no rule is made."""
+        client = cast(Any, interaction.client)
+        return await heard_fix.session_lines(
+            getattr(client, "transcripts", None),
+            client.consent,
+            campaign.guild_id,
+            campaign.id,
+            session,
+        )
 
     async def _fix_transcript(
         self,
@@ -2368,58 +2315,28 @@ class SuggestionReview(_Menu):
         kept: _Kept,
     ) -> str:
         """This session's cleaned transcript follows the rules just made (#5133 slice 3c-2b), in
-        the yes's Undo, as Fix spelling's does (#2170): only for an entry everyone at the table may
-        read about (the transcript is open to the whole server), never inside a longer name, and
-        never completing a name players must not read. Says what happened; never raises."""
+        the yes's Undo (`heard_fix.fix_transcript`, which the website's yes calls too). Says what
+        happened; never raises."""
         kept.failed = False
-        if not kept.rules:
-            return rules_note(kept.name, kept.kind, (), "fixed")
-        transcripts = getattr(interaction.client, "transcripts", None)
-        gid, cid = campaign.guild_id, campaign.id
-        try:
-            entity = await memory.entity(gid, cid, kept.entity_id)
-            held = await memory.entries_held(gid, cid)
-            if (
-                transcripts is None
-                or kept.session_id is None
-                or entity is None
-                or entity.type in DM_ONLY_TYPES
-                or entity.id not in held
-            ):
-                return rules_note(kept.name, kept.kind, kept.rules, "later")
+
+        async def waiting() -> None:
             await _replace(
                 interaction, rules_note(kept.name, kept.kind, kept.rules, "fixing"), None
-            )  # (the wait, #2564: one session's lines, one change for each spelling)
-            everyone = await memory.aliases(gid, cid, include_secret=True)
-            entities = await memory.entities(gid, cid)
-            private = {
-                e.id: e.name for e in entities if e.id not in held or e.type in DM_ONLY_TYPES
-            }
-            hidden = [a.text for a in everyone if a.secret or a.entity_id in private]
-            hidden += private.values()
-            now = int(time.time())
-            for old in kept.rules:
-                longer = [
-                    a.text for a in everyone if a.key != name_key(old) and contains(a.text, old)
-                ]
-                done = await transcripts.respell_names(
-                    gid,
-                    cid,
-                    kept.batch,
-                    old,
-                    entity.name,
-                    longer,
-                    hidden,
-                    now=now,
-                    forget_before=now - int(memory.keep_days * 86400),
-                    session_id=kept.session_id,
-                )
-                log.info("New name's rules: %d lines of this session", done.lines)  # counts only
-        except Exception:
-            log.exception("Couldn't fix the session's transcript for a new name's rules")
-            kept.failed = True
-            return rules_note(kept.name, kept.kind, kept.rules, "failed")
-        return rules_note(kept.name, kept.kind, kept.rules, "fixed")
+            )
+
+        how = await heard_fix.fix_transcript(
+            getattr(interaction.client, "transcripts", None),
+            memory,
+            campaign.guild_id,
+            campaign.id,
+            entity_id=kept.entity_id,
+            session_id=kept.session_id,
+            batch=kept.batch,
+            rules=kept.rules,
+            on_start=waiting,
+        )
+        kept.failed = how == heard_fix.FAILED
+        return rules_note(kept.name, kept.kind, kept.rules, how)
 
     async def _kept_now(
         self, interaction: discord.Interaction

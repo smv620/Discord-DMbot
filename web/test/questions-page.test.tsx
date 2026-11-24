@@ -305,12 +305,15 @@ describe("new names to check, answered on the page (#3438)", () => {
     expect(within(line).queryByRole("heading")).toBeNull();
   });
 
-  it("says nothing is waiting when no recap has names left", async () => {
+  it("says the names wait outside a recap, never that nothing waits, while the count is above 0 (#5186)", async () => {
     const api = mockApi("table");
     api.campaignNameChecks = async () => ({ recaps: [] });
     const { line } = await openNames(api);
     fireEvent.click(within(line).getByRole("button", { name: `${w.showHere}: ${kindWords("names").label}` }));
-    expect(await within(line).findByText(w.noneHere)).toBeTruthy();
+    const count = Number(/· (\d+)/.exec(line.textContent ?? "")?.[1]);
+    expect(count).toBeGreaterThan(0);
+    expect(await within(line).findByText(w.outsideRecap(count))).toBeTruthy();
+    expect(within(line).queryByText(w.noneHere)).toBeNull();
   });
 
   it("says so when the list can't be read", async () => {

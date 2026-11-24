@@ -1629,6 +1629,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
   const made = new Map<number, string>();
   const staleSeen = new Set<string>(); // recaps whose scene 3 already answered `stale` (#2577)
   const namesUndone = new Set<string>(); // name fixes undone (#2645), by recap and id
+  const moreNamesPressed = new Set<string>(); // campaigns whose 📝 More names was pressed (#5081)
   // The after-session report (#2661) the pretend API keeps by campaign and session.
   const reports = new Map<string, { made: boolean; failed?: boolean; tries: number; answers: Map<string, ReportAnswer>; looks?: number }>();
   const reportItems = (): { contradictions: ReportContradiction[]; differences: SessionReport["differences"] } => {
@@ -2108,6 +2109,17 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!stalled) onLook?.({ stage: "working", startedAt: at, updatedAt: now - 1, serverNow: now, state: "running" });
       namesUndone.add(`${recapRef}:${id}`);
       return { putBack: 8 };
+    },
+    async moreNames(campaignRef, onLook) {
+      calls.push(`moreNames:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.includes("player")) throw new ApiError("not-found");
+      onLook?.({ done: 20, total: 120 }); // (core's real shape: counts, no stage)
+      // The pretend bot makes 12 and 40 still wait; asking again finds none.
+      const first = !moreNamesPressed.has(campaignRef);
+      moreNamesPressed.add(campaignRef);
+      return first ? { made: 12, left: 40 } : { made: 0, left: 0 };
     },
     async makeRecap(recapRef, replace) {
       calls.push(`makeRecap:${recapRef}${replace ? ":replace" : ""}`);
@@ -5032,7 +5044,21 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const names = [
         { id: "a".repeat(32), name: "Brannoch", note: "A smith in Eastmarch.", scene: "The party reached Brannoch's forge as the storm broke.", playersText: "The smith of Eastmarch." },
         { id: "b".repeat(32), name: "Veshla", note: "Spoken of as the queen's rider." },
-        { id: "c".repeat(32), name: "Garrick", note: "" },
+        {
+          id: "c".repeat(32),
+          name: "Garrick",
+          note: "",
+          // How the session-names reader found it (#5144): heard five times, with a guess and the line that made it a name.
+          found: {
+            how: "introduced" as const,
+            times: 5,
+            typed: 0,
+            also: ["Garrik", "gar rick"],
+            heard: "Garrick: a new name? Heard 5 times, sometimes as Garrik or gar rick.",
+            guess: "npc",
+            line: { speaker: "Mira", at: 2210, text: "This is Garrick, the ferryman." },
+          },
+        },
         // Lists of names (#3406): a split or a group is offered on these; "Brannoch and Veshla" has a group DMbot knows.
         { id: "f".repeat(32), name: "Aldmoor, Quillgate and Fenwick", note: "Three towns named together.", isList: true, groups: [] as NameGroupHint[] },
         {

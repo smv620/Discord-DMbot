@@ -98,6 +98,10 @@ function measure(vw) {
   const shown = (el) => {
     const r = el.getBoundingClientRect();
     const s = getComputedStyle(el);
+    // Inside a closed <details> (past its summary) nothing can be tapped, though the browser still reports a box for it (#5176).
+    for (let d = el.closest("details"); d; d = d.parentElement?.closest("details") ?? null) {
+      if (!d.open && !(el.closest("summary") && el.closest("details") === d)) return false;
+    }
     return r.width > 0 && r.height > 0 && s.visibility !== "hidden" && s.display !== "none";
   };
   const inOwnScrollBox = (el) => {
@@ -164,6 +168,18 @@ const pages = [
     // A suggestion fills the box, which brings the Hear it button.
     await page.getByRole("button", { name: /Suggest/ }).first().click();
     await page.getByRole("button", { name: /Hear it/ }).first().waitFor();
+  }],
+  // The first name to check with every box in its card opened (Change the words, Something else, where it was said):
+  // closed boxes are skipped by the check, so this is the state a DM on a phone is in when using them (#5176).
+  ["a recap's name to check, every box open (#5176)", `/account/recaps/${REF}?demo=table`, async (page) => {
+    await page.getByText("Names in this recap").first().click();
+    await page.getByRole("button", { name: /Suggest/ }).first().waitFor();
+    const card = page.locator("ul.name-checks > li").first();
+    await card.waitFor();
+    for (const summary of await card.locator("summary").all()) {
+      if (!(await summary.evaluate((el) => el.parentElement.open))) await summary.click();
+    }
+    if ((await card.locator("details[open]").count()) < 2) throw new Error("the name's boxes did not open");
   }],
   ["transcripts", "/account/transcripts?demo=table"],
   ["transcripts, signed out (the line at the top)", "/account/transcripts?demo=signed-out"],
