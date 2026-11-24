@@ -11,6 +11,9 @@ from dmbot.memory.name_found import Found
 from dmbot.recaps import heard_fix
 from dmbot.recaps import name_answers as na
 
+# (The stand-ins are typed Any: the real Database and consent objects are not needed, and the
+# functions only read the few attributes the stand-ins give.)
+
 
 class YesNoteTest(unittest.TestCase):
     def test_a_yes_note_reads_back_what_was_written(self) -> None:
@@ -19,6 +22,20 @@ class YesNoteTest(unittest.TestCase):
             na.read_yes_note(note),
             ("fixed", "place", "Hrothgar Hall", ["Rothgar Hall", "Roth Gar"]),
         )
+
+    def test_each_stage_reads_back(self) -> None:
+        for fixed in ("fixed", "later", "failed"):  # (the three stages the page reads)
+            with self.subTest(fixed):
+                note = na.yes_note(fixed, "place", "Hrothgar Hall", ["Rothgar Hall"])
+                self.assertEqual(
+                    na.read_yes_note(note), (fixed, "place", "Hrothgar Hall", ["Rothgar Hall"])
+                )
+
+    def test_the_note_format_is_pinned(self) -> None:
+        # (a stored row is read back by this format, so the literal text is checked, not just
+        # the round trip: a swap made on both sides would otherwise pass)
+        note = na.yes_note("fixed", "place", "Hrothgar Hall", ["Rothgar Hall"])
+        self.assertEqual(note, "fixed|place|Hrothgar Hall|Rothgar Hall")
 
     def test_a_note_with_no_rules_reads_back_with_an_empty_list(self) -> None:
         note = na.yes_note("fixed", "place", "Hrothgar Hall", [])
@@ -48,6 +65,14 @@ class YesNoteTest(unittest.TestCase):
 
 
 class FoundTextTest(unittest.TestCase):
+    def test_the_found_text_format_is_pinned(self) -> None:
+        # (Found is (how, line_ref, typed, times), but the text is written and read as
+        # times then typed; the literal text is checked so a swap on both sides still fails)
+        self.assertEqual(
+            na.found_text(Found("introduced", "s1:1000:7", 2, 5)),
+            "introduced|5|2|s1:1000:7",
+        )
+
     def test_what_made_a_name_a_name_reads_back(self) -> None:
         text = na.found_text(Found("introduced", "s1:1000:7", 2, 5))
         self.assertEqual(na.read_found(text), ("introduced", "s1:1000:7", 5, 2))
@@ -93,6 +118,11 @@ class SessionLinesTest(unittest.IsolatedAsyncioTestCase):
         transcripts: Any = SimpleNamespace(lines=AsyncMock(return_value=lines))
         consent: Any = SimpleNamespace(recorded_in=AsyncMock(return_value=frozenset({7})))
         self.assertEqual(await heard_fix.session_lines(transcripts, consent, 1, "c", "s1"), ["a"])
+
+    async def test_a_consent_lookup_that_fails_gives_none(self) -> None:
+        transcripts: Any = SimpleNamespace(lines=AsyncMock(return_value=[]))
+        consent: Any = SimpleNamespace(recorded_in=AsyncMock(side_effect=RuntimeError("down")))
+        self.assertIsNone(await heard_fix.session_lines(transcripts, consent, 1, "c", "s1"))
 
     async def test_with_nobody_recorded_there_is_nothing_to_test_against(self) -> None:
         lines: Any = [SimpleNamespace(user_id=8, text="b", sidebar=None)]
