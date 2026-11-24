@@ -6,7 +6,8 @@ can be made again and checked.
 It reads the release's `final/` lists: the English, American and British word lists of every size
 up to 60 (the usual spell-checker size). It keeps only entries of lower-case letters a to z, so
 proper nouns, abbreviations, contractions and words with accents are left out. It writes them
-sorted, one a line, gzipped with no timestamp, so the same release always gives the same bytes.
+sorted, one a line, gzipped with no timestamp and no file name, so the same release always gives
+the same bytes.
 The release's `Copyright` file goes beside the list as `SCOWL-Copyright.txt`, word for word.
 Never run by the bot.
 """
@@ -40,7 +41,8 @@ def words_of(release: Path) -> list[str]:
 
 def write(words: Sequence[str], out: Path) -> None:
     data = ("\n".join(words) + "\n").encode("ascii")
-    with gzip.GzipFile(out, "wb", compresslevel=9, mtime=0) as file:
+    # (no name or time in the header: the bytes depend on the words only)
+    with out.open("wb") as raw, gzip.GzipFile("", "wb", 9, raw, mtime=0) as file:
         file.write(data)
 
 

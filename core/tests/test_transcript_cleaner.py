@@ -247,9 +247,22 @@ class TrapsTest(unittest.TestCase):
                 heard = f"the {name.lower()} attacks"
                 self.assertEqual(text(heard, names), heard)
 
-    def test_a_secret_or_two_word_name_never_gets_capitals_from_lower_case(self) -> None:
-        self.assertEqual(text("the hooded stranger walks in"), "the hooded stranger walks in")
+    def test_a_secret_unconfirmed_or_two_word_name_never_gets_capitals_from_lower_case(
+        self,
+    ) -> None:
+        secret = lookup(more=(entity(MAREN, "Zarvok"),),
+                        more_aliases=(alias(MAREN, "Zarvok", secret=True),))  # fmt: skip
+        self.assertEqual(text("we meet zarvok", secret), "we meet zarvok")
+        self.assertEqual(text("we meet hrothgar"), "we meet hrothgar")  # (only proposed)
         self.assertEqual(text("we reach bryn shander"), "we reach bryn shander")
+
+    def test_a_common_word_a_game_term_or_a_no_name_keeps_its_lower_case(self) -> None:
+        # (#5154: the scan's common words, its game terms and `not_names` guard as the list does)
+        for name, heard in (("June", "in june we ride"), ("Tiefling", "a tiefling waits"),
+                            ("Thats", "thats it")):  # fmt: skip
+            with self.subTest(name=name):
+                names = lookup(more=(entity(MAREN, name),), more_aliases=(alias(MAREN, name),))
+                self.assertEqual(text(heard, names), heard)
 
     def test_the_secret_identity_is_never_revealed(self) -> None:
         heard = "the hooded stranger walks in"

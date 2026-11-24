@@ -7,8 +7,9 @@ screen (`Fix.sure` False), and anything less is left as heard (a wrong fix is wo
 missed one):
 
 - **Same letters, other spelling:** "Kazeth" → "Ka'zeth", "Bryn shander" → "Bryn
-  Shander" (`scene.find_mentions` finds them). A word in lower case is only fixed if
-  its letters differ, so "ring the bell" never becomes "Bell".
+  Shander" (`scene.find_mentions` finds them). A word in lower case gets capitals only
+  when it is a one-word name and no ordinary word (`_capitals_safe`, #5154), so "ring the
+  bell" never becomes "Bell", while "hrothgar" becomes "Hrothgar".
 - **A spelling the DM fixed:** "Sara" → "Cerric", once the DM said that's who it means.
 - **Sounds like one name:** a word speech-to-text didn't know ("Beleros"), or a name it
   split ("Ka Zeth"), that sounds like exactly one confirmed name (`lookup.by_sound`) and
@@ -51,7 +52,6 @@ from dmbot.memory.scene import WORD, find_mentions, group_sizes
 from dmbot.memory.sounds import sound_codes
 from dmbot.names import not_names
 from dmbot.names.english import is_english_word
-from dmbot.names.not_names import CREATURE_KINDS
 from dmbot.secrets_match import names_a_secret
 from dmbot.transcript.close_calls import CloseCalls
 
@@ -474,8 +474,8 @@ def _known_names(lookup: CampaignLookup, heard: str, person_keys: set[str]) -> l
 
 def _respelled(lookup: CampaignLookup, said: str) -> str | None:
     """How a known name is written, if `said` has the same letters spelled another way.
-    A word in lower case with the same letters is a real word ("bell"), so only its
-    punctuation or accents are fixed, never its capitals."""
+    A word in lower case with the same letters gets the name's capitals only when the name is
+    one word that is no ordinary word (`_capitals_safe`, #5154): "bell" stays "bell"."""
     texts = {
         e.text
         for e in lookup.by_key.get(name_key(said), ())
@@ -501,7 +501,7 @@ def _capitals_safe(name: str) -> bool:
         is_english_word(word)
         or word in COMMON
         or word in GAME_TERMS
-        or word in CREATURE_KINDS
+        or word in not_names.CREATURE_KINDS
         or not_names.is_not_name(name)
     )
 
