@@ -15,7 +15,7 @@ from dmbot.db import Database
 from dmbot.memory import descriptions
 from dmbot.memory.kinds import KIND_LABELS
 from dmbot.recaps import name_answers
-from dmbot.web import name_checks, recaps
+from dmbot.web import name_checks
 from dmbot.web.recaps import RecapError, _scoped
 from dmbot.web.sessions import Session
 
@@ -74,7 +74,7 @@ async def read_answers(
     """DMbot's ranked answers for these waiting names of the recap's campaign. A DM only; anyone
     else gets "not found". Reads the door and nothing else."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, _at, _row = await recaps._one(conn, ref, session, marks=False)
+        gid, cid, _at = await name_checks._recap_or_other(conn, ref, session)
         await _scoped(conn, gid)
         cur = await conn.execute(
             "SELECT dmbot_web_who_answers(%s, %s, %s) AS r", (gid, cid, sorted(set(ids)))

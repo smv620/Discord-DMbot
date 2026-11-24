@@ -133,6 +133,22 @@ class AnswerStore:
             )
             return int(cur.rowcount)
 
+    async def link_orphans(self, guild_id: int) -> int:
+        """Keep every proposed name that no recap has linked at session 0, "no recap" (#5186), so
+        the website's list can open it as it opens a recap's: the same list, card and answers,
+        which all go by this link. Ids only; repeats change nothing. Returns how many were new."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "INSERT INTO recap_name_checks (guild_id, campaign_id, session_at, entity_id)"
+                " SELECT e.guild_id, e.campaign_id, 0, e.id FROM memory_entities e"
+                " WHERE e.guild_id = %s AND e.status = 'proposed' AND e.merged_into IS NULL"
+                " AND NOT EXISTS (SELECT 1 FROM recap_name_checks k WHERE k.guild_id = e.guild_id"
+                " AND k.campaign_id = e.campaign_id AND k.entity_id = e.id)"
+                " ON CONFLICT DO NOTHING",
+                (guild_id,),
+            )
+            return int(cur.rowcount)
+
     async def claim_next(self, guild_id: int) -> Answer | None:
         """The oldest waiting answer (or a stalled one), marked as being worked on."""
         now = int(self._now() * 1000)  # milliseconds, so two claims of one row never match
