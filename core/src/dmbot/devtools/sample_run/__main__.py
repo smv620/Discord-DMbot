@@ -563,6 +563,8 @@ async def run(
         # bot spent before it stopped (the db is open on every path only until the next line).
         ledger = await _ledger(db, args.guild, where[0], say) if where else []
         await db.close()
+        for done_cid in where:  # (this run is over: its campaign may be replaced again, #5247)
+            steps.MADE_HERE.discard(done_cid)
         if decider:  # the run's decisions, all stages together: counts and agreement only
             if metrics is not None:
                 metrics["spend: decisions ($)"] = round(decider[0].run.cost, 4)
