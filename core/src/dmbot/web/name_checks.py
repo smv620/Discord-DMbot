@@ -18,7 +18,9 @@ from dmbot.db import Database
 from dmbot.memory import name_words
 from dmbot.memory.models import NAME_MAX, MemoryRuleError, lookup_key
 from dmbot.memory.name_longer import MAX_OFFERED, longer_names
+from dmbot.memory.name_words import SPELLED_OUT
 from dmbot.memory.places import LINE_CHARS, cut, find_in, trimmed
+from dmbot.memory.scan import card_sound_keys, near_match_in
 from dmbot.names import not_names
 from dmbot.recaps import name_answers
 from dmbot.recaps.notify import job_ref, parse_ref
@@ -119,6 +121,7 @@ async def read_checks(
         ]
         for card in waiting:  # (in this same read, so every door answers from one moment)
             await _with_groups(conn, gid, cid, card)
+            await _with_sounds_like(conn, gid, cid, card)
         # What made each name a name (#5144): how it was heard, DMbot's guess, the line.
         cur = await conn.execute(
             "SELECT dmbot_recap_name_found(%s, %s, %s, %s, %s) AS r",
@@ -130,6 +133,35 @@ async def read_checks(
         # The players' line a shared lore upload filled in (#3833): the DM's alone, as above.
         await players_lines.attach(conn, gid, cid, waiting)
     return {"names": waiting, "known": got["known"], "kinds": name_answers.kinds()}
+
+
+async def _with_sounds_like(conn: Any, gid: int, cid: str, card: dict[str, Any]) -> None:
+    """The known name this waiting one sounds like, as Discord's card says it ("Sounds like X. The
+    same, or new?", #5215): worked out now, with the card's own code (`card_sound_keys`, then the
+    door's rows, then `near_match_in`), never stored, so a known name renamed, made secret or merged
+    since is read as it is. `spelled`: someone spelled it out at the table, which Discord words as
+    "Same name, spelled …". `soundsLike` is null when there is no one clear match. The DM only (the
+    door answers nobody else); a name that cannot be read just has none."""
+    name = str(card.get("name", ""))
+    card["soundsLike"] = None
+    codes = list(card_sound_keys(name))
+    if not codes:
+        return
+    try:
+        cur = await conn.execute(
+            "SELECT dmbot_web_sound_alikes(%s, %s, %s) AS r", (gid, cid, codes)
+        )
+        rows = (await cur.fetchone() or {}).get("r") or []
+    except Exception:
+        return  # (a card without it is today's card)
+    own = str(card.get("id"))
+    found = near_match_in(name, ((r["id"], r["text"], r["name"]) for r in rows if r["id"] != own))
+    if found is not None:
+        card["soundsLike"] = {
+            "id": found.entity_id,
+            "name": found.name,
+            "spelled": str(card.get("note", "")).startswith(SPELLED_OUT),
+        }
 
 
 async def _with_groups(conn: Any, gid: int, cid: str, card: dict[str, Any]) -> None:

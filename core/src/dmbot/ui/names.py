@@ -1137,7 +1137,7 @@ class CharacterForm(discord.ui.Modal, title="Add a player's character"):
 # ---- checking the names DMbot suggests --------------------------------------------------
 
 
-SPELLED_OUT = "Spelled out at the table"  # a suggestion's note when someone spelled it (#2168)
+SPELLED_OUT = name_words.SPELLED_OUT
 REVIEW_LABEL_MAX = 25  # review buttons fit a phone (#394)
 
 
