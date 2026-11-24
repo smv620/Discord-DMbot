@@ -13231,15 +13231,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if checked is None:
             return []
         found = checked
+        folded: list[str] = []  # (joined at once to a known name, #5215 slice 3)
         added = await self._add_scan_names(
             gid, cid, found, kinds,
             session_id=session_id, heard_in=heard_in, session_at=session_at, refused=refused,
             still=nobody_stopped,
             found_how=found_how, read_in=read_in, read=read, described=described_words,
+            folded=folded,
         )  # fmt: skip
+        if folded and session_id is not None:  # (told as DMbot's own joins: one count line)
+            try:
+                folded_in = await self.campaigns.get(gid, cid)
+                if folded_in is not None:
+                    await DMBot._post_joined(self, gid, cid, session_id, folded_in, len(folded))
+            except Exception as exc:
+                log.warning("Final-s joins: couldn't tell the DM (%s)", type(exc).__name__)
         if late_stop and asked and session_id is not None:
             # (the name pass's words a stop left unmade wait for the next scan, never lost)
-            made = {name_key(n) for n in added} | set(refused)
+            made = {name_key(n) for n in [*added, *folded]} | set(refused)
             unmade = [(n, t) for n, t in asked if name_key(n) not in made]
             if unmade:
                 await self._keep_name_asks(gid, cid, session_id, unmade)
@@ -13359,6 +13368,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         read: Sequence[name_reader.Found] = (),
         described: Mapping[str, str] | None = None,
         still: Callable[[], Awaitable[bool]] | None = None,
+        folded: list[str] | None = None,
     ) -> list[str]:
         """Make each suggestion a name to check, as the scan does: proposed, source scan, "Heard N
         times", its other spellings as aliases, and where it was said when the lines are given.
@@ -13382,32 +13392,53 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )  # counts only
                 break
             written = None
+            how = (found_how or {}).get(name_key(suggestion.name))
+
+            async def make(
+                kind: str, fold: bool, name: Suggestion = suggestion, how: Any = how
+            ) -> Any:
+                return await self.memory.add_entity(
+                    gid,
+                    cid,
+                    type=kind,
+                    name=name.name,
+                    source="scan",
+                    description=f"Heard {name.times} times",
+                    session_started_at=session_at,
+                    # a description, not a name (#5173): it reads "the gemstone mine"
+                    described=(described or {}).get(name_key(name.name))
+                    if how is not None and how.why == name_reader.SINGLED_OUT
+                    else None,
+                    # (a known name but for a final "s": made and joined at once, for the DM's
+                    # Check guesses, #5215 slice 3)
+                    fold=fold,
+                )
+
             # (a kind the campaign's ontology does not allow falls back to none: the card asks)
             for kind in dict.fromkeys((kinds.get(suggestion.name, "concept"), "concept")):
                 try:
-                    how = (found_how or {}).get(name_key(suggestion.name))
-                    written = await self.memory.add_entity(
-                        gid,
-                        cid,
-                        type=kind,
-                        name=suggestion.name,
-                        source="scan",
-                        description=f"Heard {suggestion.times} times",
-                        session_started_at=session_at,
-                        # a description, not a name (#5173): it reads "the gemstone mine"
-                        described=(described or {}).get(name_key(suggestion.name))
-                        if how is not None and how.why == name_reader.SINGLED_OUT
-                        else None,
-                        # (a known name but for a final "s": made and joined at once, for the
-                        # DM's Check guesses, #5215 slice 3)
-                        fold=True,
-                    )
+                    try:
+                        written = await make(kind, True)
+                    except MemoryRuleError:
+                        raise
+                    except Exception as exc:
+                        # (the join failed, and the name with it, in its one write: made again
+                        # as an ordinary waiting name, never lost, #5215 slice 3)
+                        log.warning("Final-s join failed (%s)", type(exc).__name__)
+                        written = await make(kind, False)
                     break
                 except MemoryRuleError as exc:
                     log.info("Skipped a suggested name: %s", exc)
             if written is None:
                 if refused is not None:
                     refused.add(name_key(suggestion.name))
+                continue
+            if written.value.merged_into is not None:
+                # Joined at once to the known name it is but for a final "s" (#5215 slice 3): it
+                # is in Check guesses, not a new name to check, and its other spellings and places
+                # are left off (they would go on a joined entry; Undo gives back the name alone)
+                if folded is not None:
+                    folded.append(suggestion.name)
                 continue
             added.append(suggestion.name)
             if still is not None and not await still():  # (the name's write was an await too)

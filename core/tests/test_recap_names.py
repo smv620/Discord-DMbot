@@ -222,9 +222,15 @@ class TheStoredList(DatabaseTest):
         self.assertEqual(await self.store.names_waiting(GUILD, self.cid), [])
 
 
+# What `add_entity` gives back: a new waiting entry, never joined (#5215 slice 3)
+MADE = SimpleNamespace(value=SimpleNamespace(id="e1", merged_into=None))
+
+
 def bot_with(**kw: Any) -> Any:
     memory = SimpleNamespace(
-        known_keys=AsyncMock(return_value=["mira"]), add_entity=AsyncMock(), entities=AsyncMock()
+        known_keys=AsyncMock(return_value=["mira"]),
+        add_entity=AsyncMock(return_value=MADE),
+        entities=AsyncMock(),
     )
     recaps = SimpleNamespace(
         set_names_state=AsyncMock(return_value=True),
@@ -313,6 +319,16 @@ class TheDMScreenNotice(unittest.IsolatedAsyncioTestCase):
         bot.post.reset_mock()
         await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, self.job(), self.CAMPAIGN)
         bot.post.assert_not_awaited()
+
+    async def test_a_name_joined_at_once_is_not_counted_as_new(self) -> None:
+        # (#5215 slice 3: "Zarathon Keep" joined a known "Zarathon Keeps": it is in Check guesses)
+        bot = bot_with()
+        joined = SimpleNamespace(value=SimpleNamespace(id="e0", merged_into="e9"))
+        bot.memory.add_entity.side_effect = [joined, MADE]
+        await DMBot._queue_recap_names(cast(Any, bot), GUILD, CID, self.job(), self.CAMPAIGN)
+        self.assertTrue(all(c.kwargs["fold"] for c in bot.memory.add_entity.await_args_list))
+        (call,) = bot.post.await_args_list
+        self.assertIn("1 new name in the recap", call.args[1])
 
     async def test_the_dm_also_gets_a_private_message_with_the_check(self) -> None:
         bot = bot_with()

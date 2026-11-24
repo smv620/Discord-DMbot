@@ -4946,7 +4946,8 @@ class MemoryStore:
         the DM sees it in Check guesses, ✅ keeps it, and ↩️ Undo ("Not the same") gives it back as
         its own waiting name, never joined again (`_ai_join_refusal`). Anything else, or a join a
         limit refuses, stays an ordinary waiting name. The entry returned is the one made (its
-        `merged_into` set when it was joined)."""
+        `merged_into` set when it was joined), with the make's batch: the join's own Undo is the
+        DM's, in Check guesses."""
         if hidden_from_players and source != DM:
             raise MemoryRuleError(ONLY_DM_SAYS)
         check_named(type, name)
@@ -4970,7 +4971,9 @@ class MemoryStore:
                 session_started_at=session_started_at, described=described,
             )  # fmt: skip
             made = Written(_entity(row), w.batch)
-            plain = status == PROPOSED and described is None and played_by is None
+            # (a reader's plain waiting name only, never the DM's own: a DM write is reviewed by
+            # `_write` under its own source, which the join's changing of the source would skip)
+            plain = status == PROPOSED and described is None and played_by is None and source != DM
             if fold and plain and await self._fold_join_in(w, row):
                 joined = await w.get(ENTITIES, str(row["id"]))
                 assert joined is not None
@@ -4988,11 +4991,14 @@ class MemoryStore:
         name = str(gone["name"])
         if len(name.split()) < JOIN_WORDS:
             return False
+        # (the same names as `sound_alikes` reads, secret ones included only to be counted)
         rows = await w.select(
             ALIASES,
             " AND status = 'confirmed' AND sound_codes && %s::text[] AND entity_id <> %s",
             [list(card_sound_keys(name)), str(gone["id"])],
         )
+        if not rows:
+            return False
         live = {
             str(e["id"]): str(e["name"])
             for e in await w.select(
@@ -5013,7 +5019,12 @@ class MemoryStore:
         keep = await _entity_row(w, target)
         if await _ai_join_refusal(w, keep, gone, any_kind=True):
             return False
+        if w.asked or w.join_asked:
+            return False  # (a question this write asked would move into the join's batch)
         w.new_batch()  # (its own Undo: the waiting entry it was made as stays)
+        # (each change row carries the source in force when it is written: the make's rows stay
+        # `scan`, the join's are `who`, as Check guesses and the undo-sticks rule read them;
+        # `_write`'s own work after the yield never reads the source)
         w.source = WHO_SOURCE
         await self._merge_in(
             w, target, str(gone["id"]), source=WHO_SOURCE, dm_said_same=True, keep_own_flags=True

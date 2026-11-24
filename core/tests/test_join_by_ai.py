@@ -401,18 +401,30 @@ class FoldAtTheRead(Base):
         self.assertEqual((row["status"], row["merged_into"]), ("proposed", None))
         with self.assertRaises(MemoryRuleError):
             await self.memory.join_by_ai(self.g, self.one.id, league, made.value.id, any_kind=True)
+        # (the next read: the spelling is a known word now, so the session step never makes it
+        # again; were it made, it would wait on its own, and nothing is joined)
+        self.assertIn("explorer league", await self.memory.known_keys(self.g, self.one.id))
+        self.assertEqual(await self.memory.waiting_joins(self.g, self.one.id), [])
 
     async def test_two_fits_or_a_secret_fit_stay_ordinary_waiting_names(self) -> None:
         await self.add("Explorer's League", "faction")
         await self.add("Explorers Leagues", "faction")
         self.assertIsNone((await self.found("Explorer League")).value.merged_into)
-        hand = await self.add("Silver Hand", "faction")
+        # (a secret name on another entry that also fits: the DM is asked, never told whose)
+        crows = await self.add("Crow Wardens", "faction")
         await self.memory.add_alias(
-            self.g, self.one.id, hand, "Silver Hands Guild", kind="full", source=DM,
+            self.g, self.one.id, crows, "Ravens Council", kind="full", source=DM,
             status=CONFIRMED, secret=True,
         )  # fmt: skip
-        await self.add("Silver Hand Guild", "faction")
-        self.assertIsNone((await self.found("Silver Hand Guilds")).value.merged_into)
+        await self.add("Raven Council", "faction")
+        self.assertIsNone((await self.found("Raven Councils")).value.merged_into)
+        # (a secret name on the entry it would join: refused by the join's own limits)
+        market = await self.add("Night Market", "faction")
+        await self.memory.add_alias(
+            self.g, self.one.id, market, "The Quiet Hands", kind="full", source=DM,
+            status=CONFIRMED, secret=True,
+        )  # fmt: skip
+        self.assertIsNone((await self.found("Night Markets")).value.merged_into)
 
     async def test_a_failed_join_leaves_nothing(self) -> None:
         from unittest.mock import patch
@@ -422,9 +434,20 @@ class FoldAtTheRead(Base):
         async def broken(*_a: Any, **_k: Any) -> None:
             raise RuntimeError("down")
 
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM memory_changes")
+            before = await cur.fetchone()
         with patch.object(type(self.memory), "_merge_in", broken), self.assertRaises(RuntimeError):
             await self.found("Explorer League")
         async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM memory_changes")
+            self.assertEqual(await cur.fetchone(), before)
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_aliases WHERE key = 'explorer league'"
+            )
+            spelled = await cur.fetchone()
+            assert spelled is not None
+            self.assertEqual(spelled["n"], 0)
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM memory_entities WHERE name = 'Explorer League'"
             )
