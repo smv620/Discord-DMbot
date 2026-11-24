@@ -19,11 +19,10 @@ from dmbot.devtools import why_missed
 from dmbot.memory import name_reader, trace_note
 from dmbot.memory import name_trace as nt
 from dmbot.memory import trace_note as tn
-from dmbot.memory.claims import ClaimStore, Extracted
+from dmbot.memory.claims import ClaimStore, Extracted, Proposed
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.models import HOW_PLAN, REJECTED
-from tests import test_linker
-from tests.test_linker import said
+from tests.test_linker import EVERYONE, PLAYER, THE_DM, said
 from tests.test_memory_store import GUILD_A, ConfirmedMemoryTest
 
 
@@ -34,8 +33,16 @@ class TheStoryTrace(ConfirmedMemoryTest):
         self.claims = ClaimStore(self.memory)
         self.bram = await self.add("Bram", type="character")
 
-    propose = test_linker.Linking.propose
-    entries = test_linker.Linking.entries
+    async def propose(self, *found: Extracted, **kw: Any) -> Proposed:
+        return await self.claims.propose(
+            GUILD_A, self.c, list(found), kw.pop("speakers", None) or {"1": PLAYER, "2": THE_DM},
+            said=None, opted_in=EVERYONE, prompt_version="p1", model="m1",
+            session_started_at=500, dms={THE_DM}, **kw,
+        )  # fmt: skip
+
+    async def entries(self) -> dict[str, Any]:
+        found = await self.memory.entities(GUILD_A, self.c, statuses=("proposed",))
+        return {e.name: e for e in found}
 
     async def traced(self, *found: Extracted, **kw: Any) -> list[tuple[str, str, str]]:
         """(name, reason, why) of each note, in order, from a story read."""
