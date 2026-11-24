@@ -223,7 +223,9 @@ def _not_stored_why(
     _place, last = max(ended or found, key=lambda pair: pair[0])
     if last.reason == trace_note.LISTED:
         return "never stored: the lore read listed it in pass 1, but pass 2 gave no line for it"
-    into = f" ({last.why})" if last.reason == trace_note.FOLDED and last.why else ""
+    # (the name it folded into, or the rule that dropped its claim: fixed words, #5123)
+    shown = (trace_note.FOLDED, trace_note.CLAIM_DROPPED)
+    into = f" ({last.why})" if last.reason in shown and last.why else ""
     return f"never stored: {last.source} ended it as {last.reason}{into}"
 
 

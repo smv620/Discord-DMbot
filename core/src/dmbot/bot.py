@@ -359,6 +359,7 @@ from dmbot.memory import (
     scene_move_step,
     scene_step,
     time_limits,
+    trace_note,
     voyage,
     waiting_now,
     web_actions,
@@ -10865,46 +10866,57 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await self.add_short_names(
                     gid, cid, extractor.heard_texts(lines, agreed, recap_lines)
                 )
-                report = await extractor.run(
-                    self.extractor_ai,
-                    ClaimStore(self.memory),
-                    lines,
-                    guild_id=gid,
-                    campaign_id=cid,
-                    dm_ids=dm_ids,
-                    consenting=consenting,
-                    model=lambda: self.extractor_ai.model if self.extractor_ai else "",
-                    session_started_at=session.started_at,
-                    recap_lines=recap_lines,
-                    tally=tally,
-                    max_calls=allowed,
-                    skip=skip,
-                    after_ms=after_ms,
-                    readings=self.settings.story_readings_on,
-                    theories=self.settings.story_threads_on,  # (#4655: guesses at mysteries)
-                    mysteries=await _open_mysteries(self, gid, cid),
-                    deeds=self.settings.story_deeds_on,
-                    deed_store=DeedProposals(self.memory)
-                    if self.settings.story_deeds_on and self.memory is not None
-                    else None,
-                    reveals=self.settings.story_reveals_on,
-                    reveals_precheck=self.settings.story_reveals_precheck,
-                    reveal_store=RevealProposals(self.memory)
-                    if self.settings.story_reveals_on and self.memory is not None
-                    else None,
-                    met=self.settings.met_unnamed_on,
-                    met_store=MetStore(self.memory._db)
-                    if self.settings.met_unnamed_on and self.memory is not None
-                    else None,
-                    session_id=sid,
-                    family_only=self.settings.story_family_only,
-                    imported=await transcripts.is_import(gid, sid),
-                    count_call=count_call,
-                    progress=progress,
-                    languages=self.settings.session_languages_on,
-                    weather=self.settings.weather_notes_on,
-                    leaves=self.settings.party_leaves_on and not old_import,
-                )
+                # (#5123, dev tools: where the story reader's own new names end, on the test
+                # server's sample campaigns only; nothing is collected otherwise)
+                traced_from = await self._story_trace_start(gid, cid)
+                with (
+                    trace_note.collecting()
+                    if traced_from is not None
+                    else contextlib.nullcontext() as noted,
+                    trace_note.from_source(trace_note.STORY),
+                ):
+                    report = await extractor.run(
+                        self.extractor_ai,
+                        ClaimStore(self.memory),
+                        lines,
+                        guild_id=gid,
+                        campaign_id=cid,
+                        dm_ids=dm_ids,
+                        consenting=consenting,
+                        model=lambda: self.extractor_ai.model if self.extractor_ai else "",
+                        session_started_at=session.started_at,
+                        recap_lines=recap_lines,
+                        tally=tally,
+                        max_calls=allowed,
+                        skip=skip,
+                        after_ms=after_ms,
+                        readings=self.settings.story_readings_on,
+                        theories=self.settings.story_threads_on,  # (#4655: guesses at mysteries)
+                        mysteries=await _open_mysteries(self, gid, cid),
+                        deeds=self.settings.story_deeds_on,
+                        deed_store=DeedProposals(self.memory)
+                        if self.settings.story_deeds_on and self.memory is not None
+                        else None,
+                        reveals=self.settings.story_reveals_on,
+                        reveals_precheck=self.settings.story_reveals_precheck,
+                        reveal_store=RevealProposals(self.memory)
+                        if self.settings.story_reveals_on and self.memory is not None
+                        else None,
+                        met=self.settings.met_unnamed_on,
+                        met_store=MetStore(self.memory._db)
+                        if self.settings.met_unnamed_on and self.memory is not None
+                        else None,
+                        session_id=sid,
+                        family_only=self.settings.story_family_only,
+                        imported=await transcripts.is_import(gid, sid),
+                        count_call=count_call,
+                        progress=progress,
+                        languages=self.settings.session_languages_on,
+                        weather=self.settings.weather_notes_on,
+                        leaves=self.settings.party_leaves_on and not old_import,
+                    )
+                if noted is not None and traced_from is not None:
+                    await self._write_story_trace(gid, cid, sid, noted, traced_from)
             log.info(report.line())
             if report.names_over_cap and self.import_job is not None:
                 # (#5055 A: names held for a later session, for the sample run only. They are not
@@ -11071,6 +11083,47 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await self.transcripts.mark_read(gid, cid, uid, started)
         return len(chosen)
 
+    async def _story_trace_start(self, gid: int, cid: str) -> frozenset[int] | None:
+        """Who is recorded when the story reader starts, when its names are traced (#5123, dev
+        tools: the test server's sample campaigns, as `name_trace.write` checks again); else
+        None, and nothing is collected."""
+        settings = self.settings
+        if not settings.name_trace_dir or settings.name_trace_guild != gid:
+            return None
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or not name_trace.is_sample(campaign.name):
+            return None
+        return frozenset(await self.consent.consenting(gid))
+
+    async def _write_story_trace(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        noted: Sequence[trace_note.Note],
+        before: frozenset[int],
+    ) -> None:
+        """The story reader's rows of the per-name trace (#5123), in order, so `why_missed` takes
+        each name's last one. Its names came only from claims whose speakers were all recorded;
+        if anyone stopped while it read, no name is written, only one count row (consent has no
+        exception: a name might be theirs). Never raises: the read is done without it."""
+        try:
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not noted:
+                return
+            stopped = bool(before - set(await self.consent.consenting(gid)))
+            rows = (
+                [name_trace.Row(trace_note.STORY, "", name_reader.STOPPED, times=len(noted))]
+                if stopped
+                else [name_trace.Row(src, name, reason, why) for src, name, reason, why in noted]
+            )
+            name_trace.write(
+                self.settings.name_trace_dir, campaign.name, cid, sid, rows,
+                guild_id=gid, test_guild=self.settings.name_trace_guild,
+            )  # fmt: skip
+        except Exception as exc:  # (a dev tool)
+            log.warning("Story name trace failed: %s", type(exc).__name__)
+
     async def _extract_put_back(
         self,
         gid: int,
@@ -11113,43 +11166,54 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         ]
         skip = await self._people_keys(gid, users, cid)
         try:
-            report = await extractor.run(
-                self.extractor_ai,
-                ClaimStore(self.memory),
-                only,
-                guild_id=gid,
-                campaign_id=cid,
-                dm_ids={*campaign.dm_user_ids},
-                consenting=lambda: self.consent.consenting(gid),
-                model=lambda: self.extractor_ai.model if self.extractor_ai else "",
-                session_started_at=session.started_at,
-                recap_lines=await self._recap_lines(gid, sid),
-                max_calls=allowed,
-                skip=skip,
-                after_ms=0,
-                readings=self.settings.story_readings_on,
-                theories=self.settings.story_threads_on,  # (#4655: guesses at mysteries)
-                mysteries=await _open_mysteries(self, gid, cid),
-                deeds=self.settings.story_deeds_on,
-                deed_store=DeedProposals(self.memory)
-                if self.settings.story_deeds_on and self.memory is not None
-                else None,
-                reveals=self.settings.story_reveals_on,
-                reveals_precheck=self.settings.story_reveals_precheck,
-                reveal_store=RevealProposals(self.memory)
-                if self.settings.story_reveals_on and self.memory is not None
-                else None,
-                met=self.settings.met_unnamed_on,
-                met_store=MetStore(self.memory._db)
-                if self.settings.met_unnamed_on and self.memory is not None
-                else None,
-                session_id=sid,
-                family_only=self.settings.story_family_only,
-                imported=await transcripts.is_import(gid, sid),
-                count_call=lambda: transcripts.record_extraction(
-                    gid, sid, through_ms=0, calls=1, now=int(time.time())
-                ),
-            )
+            # (#5123, dev tools: where the story reader's own new names end, on the test
+            # server's sample campaigns only; nothing is collected otherwise)
+            traced_from = await self._story_trace_start(gid, cid)
+            with (
+                trace_note.collecting()
+                if traced_from is not None
+                else contextlib.nullcontext() as noted,
+                trace_note.from_source(trace_note.STORY),
+            ):
+                report = await extractor.run(
+                    self.extractor_ai,
+                    ClaimStore(self.memory),
+                    only,
+                    guild_id=gid,
+                    campaign_id=cid,
+                    dm_ids={*campaign.dm_user_ids},
+                    consenting=lambda: self.consent.consenting(gid),
+                    model=lambda: self.extractor_ai.model if self.extractor_ai else "",
+                    session_started_at=session.started_at,
+                    recap_lines=await self._recap_lines(gid, sid),
+                    max_calls=allowed,
+                    skip=skip,
+                    after_ms=0,
+                    readings=self.settings.story_readings_on,
+                    theories=self.settings.story_threads_on,  # (#4655: guesses at mysteries)
+                    mysteries=await _open_mysteries(self, gid, cid),
+                    deeds=self.settings.story_deeds_on,
+                    deed_store=DeedProposals(self.memory)
+                    if self.settings.story_deeds_on and self.memory is not None
+                    else None,
+                    reveals=self.settings.story_reveals_on,
+                    reveals_precheck=self.settings.story_reveals_precheck,
+                    reveal_store=RevealProposals(self.memory)
+                    if self.settings.story_reveals_on and self.memory is not None
+                    else None,
+                    met=self.settings.met_unnamed_on,
+                    met_store=MetStore(self.memory._db)
+                    if self.settings.met_unnamed_on and self.memory is not None
+                    else None,
+                    session_id=sid,
+                    family_only=self.settings.story_family_only,
+                    imported=await transcripts.is_import(gid, sid),
+                    count_call=lambda: transcripts.record_extraction(
+                        gid, sid, through_ms=0, calls=1, now=int(time.time())
+                    ),
+                )
+            if noted is not None and traced_from is not None:
+                await self._write_story_trace(gid, cid, sid, noted, traced_from)
         except Exception as exc:  # a batch may already be stored: done, never run twice
             log.warning("Put-back lines: the extractor failed (%s)", type(exc).__name__)
             return True
