@@ -358,6 +358,7 @@ from dmbot.memory import (
     scan_kinds,
     scene_move_step,
     scene_step,
+    singled_out,
     time_limits,
     trace_note,
     voyage,
@@ -1068,8 +1069,13 @@ class EarlyRead:
     read_in: tuple[Line, ...]
 
     def spellings(self) -> list[Suggestion]:
-        """What it found, as candidates for the name pass."""
-        return [Suggestion(f.name, max(f.times, 1)) for f in self.read]
+        """What it found, as candidates for the name pass: never a thing or a place singled out
+        with no name (#5173), which is a description, not a spelling of a name."""
+        return [
+            Suggestion(f.name, max(f.times, 1))
+            for f in self.read
+            if f.why != name_reader.SINGLED_OUT
+        ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -12814,6 +12820,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         skip = set(await self.memory.known_keys(gid, cid)) | await self._people_keys(
             gid, users, cid
         )
+        if self.settings.session_names_on:  # ("mine" once "gemstone mine" is kept, #5173)
+            skip |= await _described_heads(self.memory, gid, cid)
         # Beside the name reader, the scan's rule is loosened (docs/design/session_names.md,
         # section 3): a word also said in lower case may be a name, and a name may hold "of" or a
         # possessive. The reader then judges: a name made only of ordinary words ("Hope") goes on
@@ -12835,6 +12843,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         settled = name_groups.Settled()
         found_how: dict[str, name_groups.Group] = {}  # (3b: none with the switch off)
+        singled: list[name_reader.Found] = []  # the reader's singled-out things (#5173, slice 6)
+        described_keys: set[str] = set()  # (the kept ones: never held for "More names")
+        described_words: dict[str, str] = {}  # (their words as the story said them: the mark)
         read: list[name_reader.Found] = []
         read_in: list[Line] = []  # the lines the reader read, numbered from 1 in this order
         unread: int | None = None  # the reader's batches not read; None: it did not read at all
@@ -12897,13 +12908,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         agreed_now, lines, heard_in, read, read_in, said_by
                     )
                     spelled, scan_rows = scanned_names(loose)
+                # A thing or a place singled out with no name (#5173) is decided apart, by
+                # `singled_out` below: it is a description, never grouped by sound with a name
+                singled = [f for f in read if f.why == name_reader.SINGLED_OUT]
             if loose and unread is None:
                 # The reader did not read (nothing to read, a plan without it, a failure): the scan
                 # alone never decides with the loosened rule, so its usual list stands.
                 loose = False
                 spelled, scan_rows = scanned_names(False)
             scan_keys = {name_key(f.name) for f in spelled}
-            read_keys = {name_key(f.name) for f in read}
+            # (a singled-out phrase is no name: never a reader's name for the trace, #5173)
+            read_keys = {name_key(f.name) for f in read if f.why != name_reader.SINGLED_OUT}
             # Section 5, in its order (`name_groups`): grouping by sound before any count, a group
             # close to a secret dropped whole, the group's hearings against its reason's need, the
             # spelling to show, most sure first. A typed line counts only where the spelling was
@@ -12935,6 +12950,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     f.name, f.times, why=f.why, typed=typed_by_reader(f.lines), kind=f.kind
                 )
                 for f in read
+                if f.why != name_reader.SINGLED_OUT
             ]
             closeness = await self._name_closeness(gid, cid)
             heard_wrong: Callable[[str], name_scan.Match | None]
@@ -12962,6 +12978,52 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             split: list[Suggestion] = []
             if loose:  # "Wulfgar of Icewind Dale" is two names when the reader named a part of it
                 every, split = name_scan.split_joined(every, read_keys, skip)
+            singled_hidden = 0  # (singled-out phrases close to a secret: counted, never named)
+            if singled:
+                # Slice 6 (#5173, Supervisor's ruling): at most 3 a session, inside the session's
+                # 10 (never on top, never held for "More names": past 3 they are dropped), after
+                # the names DMbot is sure of (introduced or typed), so a description never pushes
+                # one out; the names they displace past the 10 wait as before.
+                picked = await self._singled_out(gid, cid, singled, read_in, skip)
+                close = [k for k in picked.kept if near_secret(k.name)]
+                singled_hidden = len(close)
+                picked.kept = [k for k in picked.kept if not near_secret(k.name)]
+                for k in picked.kept:
+                    typed = sum(
+                        1 for n in k.lines if n.isdigit() and 0 < int(n) <= len(read_in)
+                        and read_in[int(n) - 1].typed
+                    )  # fmt: skip
+                    # (never "typed" as its how, even when a hearing was typed: the card must say
+                    # it is a description; the typed count still goes on the card)
+                    found_how[name_key(k.name)] = name_groups.Group(
+                        k.name, (), k.times, name_reader.SINGLED_OUT, False, k.kind,
+                        typed_times=typed,
+                    )  # fmt: skip
+                    if k.kind in LORE_KINDS:
+                        reader_kinds[k.name] = LORE_KINDS[k.kind]
+                mine = {name_key(k.name) for k in picked.kept}
+                described_keys |= mine
+                described_words.update({name_key(k.name): k.said for k in picked.kept})
+                sure = {name_key(g.name) for g in settled.offered if g.sure}
+                every = [
+                    *(s for s in every if name_key(s.name) in sure),
+                    *(Suggestion(k.name, k.times) for k in picked.kept),
+                    *(s for s in every if name_key(s.name) not in sure | mine),
+                ]
+                trace += [
+                    name_trace.Row(name_trace.READER, n, why, name_reader.SINGLED_OUT, times=t)
+                    for n, why, t in picked.refused
+                ]
+                trace += [  # (each candidate's own shorter returns: "the mine" for its mine)
+                    name_trace.Row(
+                        name_trace.READER,
+                        n,
+                        singled_out.SHORTER_RETURN,
+                        name_reader.SINGLED_OUT,
+                        times=t,
+                    )
+                    for n, t in picked.shorter_returns
+                ]
             # An ordinary word the reader didn't also find is never suggested by the scan alone
             # (design section 3). Its trace says when the reader could not say (a call's fault).
             why_ordinary = name_scan.ORDINARY_PART_READ if unread else name_scan.ORDINARY
@@ -12984,7 +13046,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ),
                 *(
                     [name_trace.Row(name_trace.SCAN, "", name_groups.NEAR_SECRET, times=hidden)]
-                    if (hidden := settled.near_secret)
+                    if (hidden := settled.near_secret + singled_hidden)
                     else []
                 ),
                 *(
@@ -13080,7 +13142,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             past = [
                 HeldName(f.name, f.times, f.also)
                 for f in every[MAX_SUGGESTIONS:]
-                if name_key(f.name) not in offered
+                if name_key(f.name) not in offered and name_key(f.name) not in described_keys
             ]
             if past:
                 try:  # (a count must never stop the scan: the 10 are offered either way)
@@ -13117,7 +13179,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             gid, cid, found, kinds,
             session_id=session_id, heard_in=heard_in, session_at=session_at, refused=refused,
             still=nobody_stopped,
-            found_how=found_how, read_in=read_in, read=read,
+            found_how=found_how, read_in=read_in, read=read, described=described_words,
         )  # fmt: skip
         if late_stop and asked and session_id is not None:
             # (the name pass's words a stop left unmade wait for the next scan, never lost)
@@ -13239,6 +13301,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         found_how: Mapping[str, name_groups.Group] | None = None,
         read_in: Sequence[Line] = (),
         read: Sequence[name_reader.Found] = (),
+        described: Mapping[str, str] | None = None,
         still: Callable[[], Awaitable[bool]] | None = None,
     ) -> list[str]:
         """Make each suggestion a name to check, as the scan does: proposed, source scan, "Heard N
@@ -13247,9 +13310,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         given, gets the key of each the store refused (for the scan's trace). `found_how`,
         `read_in` and `read` are the scan's own (what made each a name, for the 3b card); "More
         names" gives none, so its names are found by the scan (#5168: they were the scan's locals,
-        out of reach here once the two were split). `still`: whether everyone whose lines these
-        names hold is still recorded, asked before each name (#5190: each name awaits several
-        writes); False stops here, and the names not made yet are not suggested this time."""
+        out of reach here once the two were split). `described`: by name key, the words a
+        singled-out thing or place was said in (#5173), kept as its mark. `still`: whether
+        everyone whose lines these names hold is still recorded, asked before each name (#5190:
+        each name awaits several writes); False stops here, and the names not made yet are not
+        suggested this time."""
         assert self.memory is not None
         added: list[str] = []
         for done, suggestion in enumerate(found):
@@ -13264,6 +13329,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # (a kind the campaign's ontology does not allow falls back to none: the card asks)
             for kind in dict.fromkeys((kinds.get(suggestion.name, "concept"), "concept")):
                 try:
+                    how = (found_how or {}).get(name_key(suggestion.name))
                     written = await self.memory.add_entity(
                         gid,
                         cid,
@@ -13272,6 +13338,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         source="scan",
                         description=f"Heard {suggestion.times} times",
                         session_started_at=session_at,
+                        # a description, not a name (#5173): it reads "the gemstone mine"
+                        described=(described or {}).get(name_key(suggestion.name))
+                        if how is not None and how.why == name_reader.SINGLED_OUT
+                        else None,
                     )
                     break
                 except MemoryRuleError as exc:
@@ -13577,6 +13647,43 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         return heard_wrong, near_secret
 
+    async def _singled_out(
+        self,
+        gid: int,
+        cid: str,
+        found: Sequence[name_reader.Found],
+        read_in: Sequence[Line],
+        skip: Collection[str],
+    ) -> singled_out.Decided:
+        """Which of the reader's singled-out things and places are offered (#5173, slice 6;
+        `memory/singled_out.py`): the reader's lines by its numbers (only the speakers recorded
+        now, read after every await), the names never to suggest, the campaign's live names (the
+        only ones a head word is refused by) and the player characters, whose own gear is never
+        singled out (their names, nicknames and first names: "Cerric's" for Cerric Ambere)."""
+        assert self.memory is not None
+        try:
+            live = await self.memory.entities(gid, cid)
+            pcs = {e.id for e in live if e.is_player_character}
+            aliases = await self.memory.aliases(gid, cid)
+            players = singled_out.player_keys(
+                [
+                    *(e.name for e in live if e.id in pcs),
+                    *(a.text for a in aliases if a.entity_id in pcs and a.status == "confirmed"),
+                ]
+            )
+            names = {name_key(e.name) for e in live}
+            # (a kept description's head word refuses a later phrase with it: "the old mine")
+            names |= singled_out.described_heads(e.described for e in live if e.described)
+        except Exception as exc:  # (nothing is offered: a head word can't be checked)
+            log.warning(
+                "Singled out: the campaign's names could not be read (%s)", type(exc).__name__
+            )
+            return singled_out.Decided()
+        # (consent, after the awaits: a line of someone who stopped being recorded is not read)
+        agreed = set(await self.consent.consenting(gid))
+        texts = {str(i): x.text for i, x in enumerate(read_in, 1) if x.user_id in agreed}
+        return singled_out.decide(found, texts, set(skip), players, names)
+
     async def _read_session_names(
         self,
         gid: int,
@@ -13608,6 +13715,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # name" from a known name or a person at the table (the Expert, on #5087).
             known = await self.memory.known_keys(gid, cid)
             rejected = await self.memory.rejected_keys(gid, cid)
+            # (a kept description's own head word, "mine" for "gemstone mine", as a known name)
+            known = set(known) | await _described_heads(self.memory, gid, cid)
             skip = {k: name_reader.KNOWN_NAME for k in known}
             skip.update({k: name_reader.NOT_A_NAME for k in rejected})
             skip.update({k: name_reader.AT_TABLE for k in people})
@@ -18644,6 +18753,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
 
 # ---- slash commands ----------------------------------------------------------
+
+
+async def _described_heads(memory: Any, gid: int, cid: str) -> set[str]:
+    """The head words of the campaign's kept descriptions that no other shares
+    (`singled_out.described_heads`): never suggested as a name of their own (#5173, the Expert).
+    Nothing when the entries can't be read: the scan still runs, a head word is a nicety."""
+    try:
+        live = await memory.entities(gid, cid)
+    except Exception as exc:
+        log.warning("Described heads could not be read (%s)", type(exc).__name__)
+        return set()
+    return singled_out.described_heads(e.described for e in live if e.described)
 
 
 def _answer_in_the_way(

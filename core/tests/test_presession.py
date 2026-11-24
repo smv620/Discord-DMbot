@@ -55,6 +55,19 @@ class Wording(unittest.TestCase):
         )
         self.assertEqual(note.waiting, 3)
 
+    def test_a_described_entry_starts_its_line_with_a_capital(self) -> None:
+        # (#5179: recall and the conditions give "the gemstone mine", as the story said it; a line
+        # that starts with it is a sentence, so only its first letter is raised)
+        note = compose(
+            Facts(None, None, ["the gemstone mine is in Bryn Shander"],
+                  [("the gemstone mine", "destroyed")], 0)
+        )  # fmt: skip
+        assert note is not None
+        self.assertEqual(
+            note.lines,
+            ("• The gemstone mine is in Bryn Shander", "• The gemstone mine is destroyed"),
+        )
+
     def test_quiet_threads_are_one_line_with_up_to_three_names_and_a_count(self) -> None:
         self.assertIsNone(compose(Facts(quiet_threads=())))
         note = compose(Facts(quiet_threads=["The Missing Heir", "Mira's debt"]))

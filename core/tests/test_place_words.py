@@ -172,7 +172,7 @@ class OnTheCard(unittest.TestCase):
 
     def setUp(self) -> None:
         def entity(eid: str, name: str, kind: str) -> SimpleNamespace:
-            return SimpleNamespace(id=eid, name=name, type=kind, status=CONFIRMED)
+            return SimpleNamespace(id=eid, name=name, type=kind, status=CONFIRMED, described=None)
 
         self.tavin = entity("t" * 32, "Tavin", "character")
         self.town = entity("a" * 32, "Aldmoor", "place")
@@ -214,9 +214,11 @@ class OnTheCard(unittest.TestCase):
 
     def test_every_back_reading_on_the_towns_card_and_in_its_lines(self) -> None:
         silver = SimpleNamespace(
-            id="s" * 32, name="Silver Lanterns", type="faction", status=CONFIRMED
+            id="s" * 32, name="Silver Lanterns", type="faction", status=CONFIRMED, described=None
         )
-        sword = SimpleNamespace(id="w" * 32, name="Heartseeker", type="item", status=CONFIRMED)
+        sword = SimpleNamespace(
+            id="w" * 32, name="Heartseeker", type="item", status=CONFIRMED, described=None
+        )
         self.lookup.entities.update({silver.id: silver, sword.id: sword})
         rows = _rows(
             self.lookup,
@@ -246,7 +248,9 @@ class OnTheCard(unittest.TestCase):
         inside = self.relation(self.town.id, self.region.id)
         rows = _rows(self.lookup, self.region.id, [inside], False)
         self.assertEqual([connection_line(r) for r in rows], ["has **Aldmoor** inside it"])
-        fair = SimpleNamespace(id="f" * 32, name="The Fair", type="event", status=CONFIRMED)
+        fair = SimpleNamespace(
+            id="f" * 32, name="The Fair", type="event", status=CONFIRMED, described=None
+        )
         self.lookup.entities[fair.id] = fair
         rows = _rows(self.lookup, self.town.id, [self.relation(fair.id, self.town.id)], False)
         self.assertEqual([connection_line(r) for r in rows], ["is where **The Fair** took place"])

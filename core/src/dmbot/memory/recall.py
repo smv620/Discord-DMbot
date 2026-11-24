@@ -42,6 +42,7 @@ from dmbot.memory import gate, kin, link_words
 from dmbot.memory._changes import Scope
 from dmbot.memory.beliefs import party_id, party_knows_by
 from dmbot.memory.continuity import _predicate_words
+from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import KIND_LABELS
 from dmbot.memory.models import DM_ONLY_TYPES, ROLE_LABELS, name_key
@@ -430,7 +431,9 @@ class RecallService:
                 (*scope.ids, [ROSTER_GROUP_LINK, *ROSTER_TIES], ids, ids),
             )
             relations = [r for r in await cur.fetchall() if str(r["source"]) not in PLAN_SOURCES]
-        names = {i: str(e["name"]) for i, e in shown.items()}
+        # (the names in a tie or a group read as in a sentence: a described entry as the story
+        # said it, #5179; the entry's own `name` below stays its stored name, the sort key)
+        names = {i: _said(e) for i, e in shown.items()}
         groups: dict[str, list[str]] = {}
         ties: dict[str, list[str]] = {}
         for r in relations:
@@ -468,7 +471,7 @@ class RecallService:
                 "group" if is_group
                 else ROLE_LABELS.get(str(role), "") if role else ""
             ) or onto.types[kind_key].label  # fmt: skip
-            own = names[entity_id]
+            own = str(e["name"])
             others = [t for t in dict.fromkeys(aliases.get(entity_id, [])) if t != own]
             g = list(dict.fromkeys(groups.get(entity_id, [])))
             t = list(dict.fromkeys(ties.get(entity_id, [])))
@@ -643,7 +646,7 @@ class RecallService:
         # an unnamed person is never named: those stay out by kind.
         hide_clue = " AND NOT unnamed AND NOT type = ANY(%s)" if audience == PLAYERS else ""
         cur = await scope.conn.execute(
-            f"SELECT id, type, name, {note}, {line}, role FROM memory_entities"
+            f"SELECT id, type, name, described, {note}, {line}, role FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
             f" AND status = ANY(%s) AND type <> 'person'{hide_clue}",
             (*scope.ids, list(ids), live, *([list(DM_ONLY_TYPES)] if hide_clue else [])),
@@ -819,7 +822,7 @@ class _Found:
     def _entry_text(self, e: Mapping[str, object], entity_id: str) -> str:
         kind = KIND_LABELS.get(str(e["type"]), str(e["type"]))
         role = ROLE_LABELS.get(str(e["role"])) if e.get("role") else None
-        words = f"{e['name']} ({kind}{', ' + role if role else ''}"
+        words = f"{_said(e)} ({kind}{', ' + role if role else ''}"
         if self.audience == DM_SCREEN and entity_id in self.conditions:
             words += f", {self.conditions[entity_id]}"
         words += ")"
@@ -838,7 +841,7 @@ class _Found:
         detail = f.detail
         if self.guard and f.predicate == FALLBACK_PREDICATE:
             detail = safe_label(detail, self.guard)
-        a, b = walk.entities[f.subject_id]["name"], walk.entities[f.object_id]["name"]
+        a, b = _said(walk.entities[f.subject_id]), _said(walk.entities[f.object_id])
         # (a kind that reads one way, made two-way by the DM, #4164: the AI is given the card's own
         # pair words, "A and B are connected (“sworn to”)", never one-way words that leave B out)
         # (a campaign's own two-way kind reads two way by its own nature, mark or not: it keeps its
@@ -853,6 +856,13 @@ class _Found:
             return f"{a} and {b} {link_words.pair_words(f.predicate, detail)}"
         what = _predicate_words(self.onto, f.predicate, detail, f.directional)
         return f"{a} {what} {b}"
+
+
+def _said(e: Mapping[str, object]) -> str:
+    """An entry inside a sentence: its name, or a thing or a place with no name as the story said
+    it, "the gemstone mine" (#5179; `entity_words.in_sentence`), never as if it were a name."""
+    described = e.get("described")
+    return in_sentence(str(e["name"]), str(described) if described else None)
 
 
 def _cut(
