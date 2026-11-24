@@ -4,7 +4,7 @@
 // someone peeking behind the DM screen gets nothing and sees nothing. Switched off until CloudDev's door
 // (PR 2693) is merged and deployed: WEB_READINGS_LIVE moves with the What's new entry "What people believe,
 // on the Story Graph".
-export const WEB_READINGS_LIVE = false;
+export const WEB_READINGS_LIVE = true;
 
 export const readingWords = {
   heading: "What people believe",
