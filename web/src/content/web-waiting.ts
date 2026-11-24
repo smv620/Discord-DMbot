@@ -5,7 +5,7 @@
 // answers only a DM of the campaign. WEB_WAITING_LIVE moves with the What's new entry "What is waiting
 // for you, on the Story Graph"; it needs CloudDev's #2638 and #2654 deployed and dev1 to have seen one fact
 // confirmed and one "Which Mara?" answered from the site.
-export const WEB_WAITING_LIVE = false;
+export const WEB_WAITING_LIVE = true;
 
 /** Where "Proposed" differs from "Now" (#4429, the owner, 2026-11-15): the connection phrases are compared word by word, from the front and
  * from the back; what is left in the middle of the proposed one is bold. A wholly new phrase ("ally of" for "knows") is bold whole. The names

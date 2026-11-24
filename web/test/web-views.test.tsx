@@ -127,7 +127,8 @@ describe("a DM's Full View and Players View", () => {
     }
     expect(button).toBeTruthy();
     fireEvent.click(button!);
-    expect(await screen.findByRole("alert")).toBeTruthy();
+    // (the Story Graph's waiting list is on now, so another alert may stand beside the reveal's own)
+    expect((await screen.findAllByRole("alert")).length).toBeGreaterThan(0);
   });
 });
 
