@@ -12,7 +12,12 @@ import unittest
 from types import SimpleNamespace
 from typing import Any
 
-from dmbot.devtools.name_pass.__main__ import parse_args, reader_lines, reader_spellings
+from dmbot.devtools.name_pass.__main__ import (
+    parse_args,
+    reader_lines,
+    reader_spellings,
+    recorded_check,
+)
 from dmbot.memory import name_reader
 from dmbot.memory.scan import Suggestion
 
@@ -94,6 +99,18 @@ class TheReaderSpellings(unittest.TestCase):
     def test_with_no_line_to_read_the_reader_is_not_called(self) -> None:
         (spellings, unread), seen = self.run_it([])
         self.assertEqual((spellings, unread, seen), ([], 0, {}))
+
+    def test_an_import_s_reader_asks_the_import_s_own_rule_between_batches(self) -> None:
+        # (Supervisor, on #5193: the same rule as its lines, or an import-only speaker is dropped
+        # after the first batch)
+        async def agrees() -> set[int]:
+            return {1}
+
+        async def recorded() -> set[int]:
+            return {1, 7}
+
+        self.assertIs(recorded_check(True, agrees, recorded), recorded)
+        self.assertIs(recorded_check(False, agrees, recorded), agrees)
 
     def test_the_flag(self) -> None:
         args = parse_args(["--guild", "1", "--session", "abc", "--reader", "--yes"])

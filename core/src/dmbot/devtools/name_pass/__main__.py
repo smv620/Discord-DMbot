@@ -90,6 +90,18 @@ def reader_lines(stored: Sequence[Line], agreed: Collection[int], game_only: boo
     ]
 
 
+def recorded_check(
+    game_only: bool,
+    consenting: Callable[[], Awaitable[Collection[int]]],
+    recorded_in: Callable[[], Awaitable[Collection[int]]],
+) -> Callable[[], Awaitable[Collection[int]]]:
+    """Who the reader asks again between batches: on an import, the import's own rule
+    (`recorded_in`, #3305, as the bot's import reads since #5184), the same as the lines it was
+    given, so a speaker only the uploader confirmed is not dropped after the first batch; on a
+    live session, who still agrees."""
+    return recorded_in if game_only else consenting
+
+
 async def reader_spellings(
     read: Callable[..., Awaitable[Read]],
     lines: Sequence[Line],
@@ -210,7 +222,11 @@ async def main_async(args: argparse.Namespace) -> int:
                     people=people,
                     dms=set(campaign.dm_user_ids),
                     rules=(campaign.target_ruleset, campaign.fallback_ruleset),
-                    consenting=lambda: consent.consenting(args.guild),
+                    consenting=recorded_check(
+                        args.game_only,
+                        lambda: consent.consenting(args.guild),
+                        lambda: consent.recorded_in(args.guild, session.campaign_id),
+                    ),
                     max_tokens=OUTPUT_FLOOR,
                 )
                 # (counts only: the spellings are transcript words, never in the counts line)
