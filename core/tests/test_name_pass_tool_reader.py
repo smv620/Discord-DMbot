@@ -21,6 +21,10 @@ def line(user: int, text: str, topic: str = "game", sidebar: str = "", typed: bo
     return SimpleNamespace(user_id=user, text=text, topic=topic, sidebar=sidebar, typed=typed)
 
 
+async def nobody() -> set[int]:
+    return set()
+
+
 class TheReaderSpellings(unittest.TestCase):
     def run_it(self, stored: list[Any]) -> tuple[Any, dict[str, Any]]:
         seen: dict[str, Any] = {}
@@ -39,7 +43,7 @@ class TheReaderSpellings(unittest.TestCase):
                 people={"sam"},
                 dms={9},
                 rules=("2024", "2014"),
-                consenting=lambda: None,
+                consenting=nobody,
                 max_tokens=16000,
             )
         )
