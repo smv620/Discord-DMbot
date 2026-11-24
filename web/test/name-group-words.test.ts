@@ -28,7 +28,7 @@ describe("name group words (#3406)", () => {
     );
   });
 
-  it("the held What's new entry exists and is held", () => {
-    expect(held.map((h) => h.title)).toContain("Split a list of names, or say it is a group");
+  it("the What's new entry exists and is no longer held (the switch is on, #4841)", () => {
+    expect(held.map((h) => h.title)).not.toContain("Split names or make a group");
   });
 });
