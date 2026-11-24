@@ -126,6 +126,7 @@ class Steps(DatabaseTest):
         self.campaigns = steps.campaign_store(self.db)
         self.transcripts = TranscriptStore(self.db)
         self.said: list[str] = []
+        steps.MADE_HERE.clear()  # (each test is its own invocation of the tool)
 
     def say(self, line: str) -> None:
         self.said.append(line)
@@ -193,6 +194,9 @@ class Steps(DatabaseTest):
         first = await steps.fresh_campaign(
             self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say
         )
+        steps.MADE_HERE.discard(
+            first.id
+        )  # (its run has ended, as `run` does: --repeat replaces it)
         again = await steps.fresh_campaign(
             self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say
         )
@@ -284,7 +288,7 @@ class Steps(DatabaseTest):
         self.assertIsNone(await self.campaigns.get(GUILD, old.id))
         self.assertFalse(any("background work" in line for line in self.said))
 
-    async def test_work_that_never_settles_is_said_and_the_campaign_is_deleted_anyway(self) -> None:
+    async def test_work_that_never_settles_is_said_and_the_campaign_is_kept(self) -> None:
         from unittest import mock
 
         old = await self.made(name=sample_name.name_for(5))
@@ -302,11 +306,49 @@ class Steps(DatabaseTest):
                 self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say, sleep=sleep,
                 settle_s=0.0,
             )  # fmt: skip
-        self.assertIsNone(await self.campaigns.get(GUILD, old.id))
+        # (#5247: a busy campaign may be another run's, still going: never deleted mid-work)
+        self.assertIsNotNone(await self.campaigns.get(GUILD, old.id))
         self.assertIn(
-            "1 old sample campaign(s) still had background work after the wait: deleted",
+            "1 old sample campaign(s) still had background work after the wait: kept, not deleted "
+            "(a run may still be using it)",
             self.said,
         )
+
+    async def test_two_runs_planned_at_once_never_delete_each_others_campaigns(self) -> None:
+        """#5247: two invocations with one deploy label. This one's own campaign is never deleted
+        by its own room-making; the other's, still busy, is kept; an older one past the keep rule
+        is still deleted, once."""
+        from unittest import mock
+
+        stale = await self.made(name=sample_name.name_for(5))
+        for n in (6, 7):
+            await self.made(name=sample_name.name_for(n))
+        mine = await steps.make_campaign(self.campaigns, GUILD, DM, deploy=31, run=1, say=self.say)
+        theirs = await self.made(name=sample_name.name_for(31, 2))
+
+        async def busy(db: Any, guild: int, campaign_id: str) -> int:
+            return 1 if campaign_id == theirs.id else 0
+
+        async def sleep(_s: float) -> None:
+            return None
+
+        with mock.patch.object(steps, "busy_count", busy):
+            await steps.clear_for_deploy(
+                self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say, sleep=sleep,
+                settle_s=0.0,
+            )  # fmt: skip
+        self.assertIsNotNone(await self.campaigns.get(GUILD, mine.id))
+        self.assertIsNotNone(await self.campaigns.get(GUILD, theirs.id))
+        self.assertIsNone(await self.campaigns.get(GUILD, stale.id))
+        self.assertIn("1 campaign(s) of runs still going were kept", self.said)
+        # (once its run has ended, a later run of the same deploy may replace it, as --repeat does)
+        steps.MADE_HERE.discard(mine.id)
+        with mock.patch.object(steps, "busy_count", busy):
+            await steps.clear_for_deploy(
+                self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say, sleep=sleep,
+                settle_s=0.0,
+            )  # fmt: skip
+        self.assertIsNone(await self.campaigns.get(GUILD, mine.id))
 
     async def test_an_idle_campaign_has_no_background_work(self) -> None:
         old = await self.made(name=sample_name.name_for(5))
