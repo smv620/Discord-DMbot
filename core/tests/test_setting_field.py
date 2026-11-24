@@ -158,9 +158,42 @@ class Picking(unittest.IsolatedAsyncioTestCase):
 
     def test_the_label_follows_the_state(self) -> None:
         self.assertEqual(
-            self.picks(DM, SettingField(PLACE, "X", False))[0].item.label, "Pick another"
+            self.picks(DM, SettingField(None, None, False))[0].item.label, "Choose a world"
         )
-        self.assertEqual(self.picks(DM, SettingField(None, None, False))[0].item.label, "Pick one")
+
+    def test_no_setting_says_choose_a_world(self) -> None:
+        item = self.picks(DM, SettingField(None, None, False))[0].item
+        self.assertEqual(item.label, "Choose a world")
+        self.assertEqual(str(item.emoji), "🌍")
+
+    def test_a_kept_setting_shows_its_name(self) -> None:
+        self.assertEqual(
+            self.picks(DM, SettingField(PLACE, "Faerûn", False))[0].item.label, "Faerûn"
+        )
+
+    def test_a_long_name_is_cut_to_80_with_an_ellipsis(self) -> None:
+        label = self.picks(DM, SettingField(PLACE, "a" * 120, False))[0].item.label
+        self.assertEqual(len(label), 80)
+        self.assertTrue(label.endswith("…"))
+
+    def test_a_guessed_setting_is_not_shown_as_chosen(self) -> None:
+        self.assertEqual(
+            self.picks(DM, SettingField(PLACE, "Faerûn", True))[0].item.label, "Choose a world"
+        )
+        keep = [
+            i
+            for i in settings_view(
+                campaign(), None, DM, "", None, SettingField(PLACE, "Faerûn", True)
+            ).children
+            if isinstance(i, KeepSettingButton)
+        ]
+        self.assertEqual(len(keep), 1)
+
+    def test_after_a_pick_the_redrawn_card_shows_the_new_name(self) -> None:
+        # (a pick is drawn again with the new field, so the button shows the picked world)
+        self.assertEqual(
+            self.picks(DM, SettingField(PLACE, "Faerûn", False))[0].item.label, "Faerûn"
+        )
 
     async def test_the_button_opens_the_list_and_refuses_a_non_dm(self) -> None:
         it = press(DM, found=campaign())

@@ -139,8 +139,7 @@ class KeepSettingButton(
 OWN = "own"  # the menu's last choice: a world that isn't in the list
 OWN_LABEL = "Somewhere of my own"
 PICK_TEXT = "🌍 **Which world is your story in?**\nPick one, or choose {own}."
-PICK_LABEL = "Pick another"
-PICK_NONE_LABEL = "Pick one"
+CHOOSE_LABEL = "Choose a world"  # (no world chosen yet, or DMbot only guessed one: the DM keeps it)
 FORM_TITLE = "Your world's name"
 FORM_HINT = "Like Golarion or Middle Vale"
 
@@ -183,13 +182,20 @@ class PickButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:setpick:{_CAMPAIGN}",
 ):
-    """Pick another (or Pick one, with no setting yet): opens the list of worlds in place. DM
-    only, checked again on every press."""
+    """The world button: shows the chosen world's name, or "Choose a world". It opens the list of
+    worlds in place. DM only, checked again on every press."""
 
-    def __init__(self, campaign_id: str, *, has_setting: bool = True) -> None:
+    def __init__(self, campaign_id: str, *, world: str | None = None) -> None:
+        # (Discord cuts labels at 80 characters, so a long world name is cut here with an ellipsis;
+        # a button rebuilt after a restart is only a handle, its label comes from the message)
+        label = (
+            CHOOSE_LABEL
+            if not world
+            else (world if len(world) <= 80 else world[:79].rstrip() + "…")
+        )
         super().__init__(
             discord.ui.Button(
-                label=PICK_LABEL if has_setting else PICK_NONE_LABEL,
+                label=label,
                 emoji="🌍",
                 style=discord.ButtonStyle.secondary,
                 row=4,
