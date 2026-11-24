@@ -14,6 +14,7 @@ from dmbot.memory.models import BACKGROUND_SOURCE, NPC, PLAYER_CHARACTER
 
 HEARD_AS_SHOWN = 3  # other spellings named on the card; the rest are "and N more" (#5133)
 SURE_HOWS = ("introduced", "typed")  # found by a name said out loud or typed: asked first
+SPELLED_OUT = "Spelled out at the table"  # a suggestion's note when someone spelled it (#2168)
 
 
 def _times(n: int) -> str:

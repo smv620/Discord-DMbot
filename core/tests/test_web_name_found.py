@@ -5,7 +5,7 @@ who no longer agrees), in Discord's words and order. Invented names throughout."
 from __future__ import annotations
 
 import unittest
-from typing import Any
+from typing import Any, cast
 
 from dmbot.consent import TERMS_VERSION
 from dmbot.memory import name_words
@@ -14,6 +14,7 @@ from dmbot.recaps import name_answers as na
 from dmbot.transcript.models import Line, line_ref
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import name_checks as web_checks
+from dmbot.web.recaps import RecapError
 from tests.test_web_api import ALICE
 from tests.test_web_name_checks import AT, GUILD, WithChecks
 
@@ -259,6 +260,67 @@ class TheYes(TheFoundCard):
         tools = na.HeardTools(TranscriptStore(self.db), FakeConsent(ALICE.id))
         why = await na.apply(self.memory, GUILD, {ALICE.id}, answer, kept, self.answers, tools)
         self.assertEqual((why, kept.batch), ("", None))
+
+
+class TheSoundsLike(TheFoundCard):
+    """ "Sounds like X" on the website's card, worked out at read time with Discord's own code and a
+    DM-only door (#5215)."""
+
+    async def card_of(self, name: str) -> dict[str, Any]:
+        names = (await self.listed())["names"]
+        return next(n for n in names if n["name"] == name)
+
+    async def test_a_one_letter_difference_from_a_known_name_is_offered(self) -> None:
+        known = await self.known("Explorer's League", "faction")
+        await self.suggest("Explorer League")
+        card = await self.card_of("Explorer League")
+        self.assertEqual(
+            card["soundsLike"], {"id": known, "name": "Explorer's League", "spelled": False}
+        )
+
+    async def test_a_name_nothing_sounds_like_has_none(self) -> None:
+        await self.known("Oakmere", "place")
+        await self.suggest("Brannoch")
+        self.assertIsNone((await self.card_of("Brannoch"))["soundsLike"])
+
+    async def test_a_secret_known_name_is_never_sent(self) -> None:
+        await self.known("Explorer's League", "faction", secret=True)
+        await self.suggest("Explorer League")
+        self.assertIsNone((await self.card_of("Explorer League"))["soundsLike"])
+
+    async def test_a_known_name_renamed_since_shows_its_new_name(self) -> None:
+        known = await self.known("Explorer's League", "faction")
+        await self.suggest("Explorer League")
+        await self.memory.rename_entity(GUILD, self.one.id, known, "Explorers League", source="dm")
+        card = await self.card_of("Explorer League")
+        self.assertEqual(card["soundsLike"]["id"], known)
+        self.assertEqual(card["soundsLike"]["name"], "Explorers League")
+
+    async def test_a_name_spelled_out_at_the_table_says_so(self) -> None:
+        await self.known("Explorer's League", "faction")
+        written = await self.memory.add_entity(
+            GUILD, self.one.id, type="concept", name="Explorer League", source="scan",
+            description="Spelled out at the table: Explorer League",
+        )  # fmt: skip
+        await self.answers.link(GUILD, self.one.id, AT, [written.value.id])
+        self.assertTrue((await self.card_of("Explorer League"))["soundsLike"]["spelled"])
+
+    async def test_a_player_gets_no_list_at_all_so_no_match(self) -> None:
+        await self.known("Explorer's League", "faction")
+        await self.suggest("Explorer League")
+        bob = await self.session_of_bob()
+        with self.assertRaises(RecapError):
+            await web_checks.read_checks(self.web, bob, self.ref)
+
+    async def session_of_bob(self) -> Any:
+        from dmbot.web import sessions
+        from tests.test_recap_web import BOB, NOW
+        from tests.test_web_api import THURSDAY
+
+        token = await sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        found = await sessions.find(self.web, token, now=NOW)
+        assert found is not None
+        return found
 
 
 class TheGuessOnEveryName(TheFoundCard):

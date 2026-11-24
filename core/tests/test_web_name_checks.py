@@ -310,7 +310,7 @@ class TheList(WithChecks):
         await self.known("Oakmere")
         got = await self.listed()
         self.assertEqual(
-            got["names"],
+            [{k: v for k, v in n.items() if k != "soundsLike"} for n in got["names"]],
             [{"id": mira, "name": "Mirelle", "note": "Used in a recap", "answering": False,
               "error": "", "longerNames": [], "guess": None}],
         )  # fmt: skip
