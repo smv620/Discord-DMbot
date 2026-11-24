@@ -2941,6 +2941,8 @@ export interface WaitingClaim {
   at?: number | null;
   /** Set while a name in it could be two entries (Family ties, #3463): the questions still to answer. */
   choices?: WaitingChoice[];
+  /** What "travels with" means, when this claim says a companion goes along (#5165, core #5164's words); missing for any other. */
+  means?: string;
   /** The first meeting's reminder, in Discord's marks (`**name**` bold, a backslash escapes); shown only with FIRST_FEELING_LIVE (#4942). */
   startingFeeling?: string | null;
 }
@@ -2952,6 +2954,8 @@ export interface WaitingChoice {
 }
 export interface WaitingBackstory {
   id: string;
+  /** What "travels with" means, when this connection is that one (#5165); missing for any other. */
+  means?: string;
   subject: string;
   object: string;
   /** The connection in words, "knows" or "grew up in". */
