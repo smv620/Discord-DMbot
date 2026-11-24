@@ -165,4 +165,4 @@ class TheNames(Party):
         # With no story store to ask, nothing is held (failing closed)
         bare = self.interaction(CARA)
         bare.client.memory = None
-        self.assertEqual(await name_lists.seen_for(bare, campaign, False), frozenset())
+        self.assertEqual(await names_ui.seen_for(bare, campaign, False), frozenset())
