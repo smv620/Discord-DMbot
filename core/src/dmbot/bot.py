@@ -13397,6 +13397,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             async def make(
                 kind: str, fold: bool, name: Suggestion = suggestion, how: Any = how
             ) -> Any:
+                assert self.memory is not None  # (checked before the loop)
                 return await self.memory.add_entity(
                     gid,
                     cid,
