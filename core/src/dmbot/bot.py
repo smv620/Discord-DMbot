@@ -12947,7 +12947,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 for f in spelled
             ] + [
                 name_groups.Spelling(
-                    f.name, f.times, why=f.why, typed=typed_by_reader(f.lines), kind=f.kind
+                    f.name,
+                    f.times,
+                    why=f.why,
+                    typed=typed_by_reader(f.lines),
+                    kind=f.kind,
+                    unsure=f.sense == name_reader.UNSURE,  # (a rules word, #5214 2a)
                 )
                 for f in read
                 if f.why != name_reader.SINGLED_OUT

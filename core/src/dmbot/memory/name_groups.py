@@ -15,7 +15,10 @@ Supervisor's ruling on #5133):
 5. the spelling shown: a part never leads its whole, nor a split spelling the joined one; then a
    typed one, else the most heard, else the first found (rule 4); with capitals when nothing typed
    or capitalised was heard;
-6. the groups are ordered by how sure DMbot is: introduced or typed first, then times heard.
+6. the groups are ordered by how sure DMbot is: introduced or typed first, then times heard; a
+   rules word the reader was unsure was used as a name comes after every other suggestion, needs 2
+   hearings, and at most `UNSURE_CAP` are offered a session (#5214 part 2a; the rest end
+   `UNSURE_OVER`, dropped and traced, never held).
 
 Every spelling ends exactly once: offered (the shown one), or with one fixed reason. Pure: no store,
 no Discord, no AI. Names, never lines, so nothing here is logged.
@@ -52,6 +55,9 @@ GROUPED = "grouped_into_another"  # one spelling of a group whose shown spelling
 # Slice 4 (#5133): close to a known name and asked of PlotBot's name pass, which fixed it, said
 # it is new, or asked the DM: never a second "Sounds like" question
 TO_NAME_PASS = "decided_by_name_pass"
+# #5214 part 2a: a rules word the reader was unsure was used as a name, past the session's cap
+UNSURE_OVER = "unsure_over_the_number"
+UNSURE_CAP = 2  # (Supervisor's ruling on #5214; the reader's own `name_reader.UNSURE_CAP`)
 # Close to a known name, but past the pass's limit: the card asks it (the Expert, on #5133)
 PASS_OVER = "pass_over_the_number"
 # (a count row only, never a name: spellings dropped as close to a secret)
@@ -70,6 +76,7 @@ class Spelling:
     typed: int = 0
     kind: str = ""
     ordinary: bool = False  # (the loosened scan's mark: every word also said in lower case)
+    unsure: bool = False  # a rules word the reader was unsure was used as a name (#5214 2a)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,6 +92,7 @@ class _Key:
     typed: int
     kind: str
     ordinary: bool  # the scan alone found it, and every word is said in lower case too
+    unsure: bool = False  # only the reader found it, unsure it was used as a name (#5214 2a)
 
     @property
     def times(self) -> int:
@@ -103,6 +111,7 @@ class Group:
     kind: str  # the reader's kind given most, '' when none gave one
     heard_wrong: Match | None = None  # the known name it is close to (the card asks, until slice 4)
     typed_times: int = 0  # of its hearings, how many a person typed (the card says so, 3c)
+    unsure: bool = False  # every spelling a rules word the reader was unsure of (#5214 2a)
 
     @property
     def sure(self) -> bool:
@@ -144,9 +153,11 @@ def _why(whys: Iterable[str]) -> str:
     return min(whys, key=lambda w: WHY_ORDER.index(w) if w in WHY_ORDER else len(WHY_ORDER))
 
 
-def needed(why: str, typed: bool) -> int:
+def needed(why: str, typed: bool, unsure: bool = False) -> int:
     """The hearings a group needs (section 5's table): introduced or typed, once; anything else,
-    twice in the group."""
+    twice in the group; a rules word the reader was unsure of, twice whatever its reason (#5214)."""
+    if unsure:
+        return MIN_TIMES
     return 1 if why == INTRODUCED or typed else MIN_TIMES
 
 
@@ -275,6 +286,7 @@ def _merged(spellings: Iterable[Spelling]) -> list[_Key]:
                 typed=max(s.typed for s in found),
                 kind=next((s.kind for s in read if s.kind), ""),
                 ordinary=bool(scan) and not read and all(s.ordinary for s in scan),
+                unsure=bool(read) and not scan and all(s.unsure for s in read),
             )
         )
     return out
@@ -307,13 +319,14 @@ def settle(
         times = max(sum(k.scan for k in group), sum(k.read for k in group))
         why = _why(k.why for k in group)
         typed = any(k.typed for k in group)
+        unsure = all(k.unsure for k in group)
         heard_as = _shown(group)
         shown = proposed(heard_as, group)
         # 4. the group's hearings against what its strongest reason needs. An ordinary word the
         # scan alone found is never offered, typed or not ("i hope so" typed in chat is no name).
         if all(k.ordinary for k in group):
             refusal = ORDINARY
-        elif times < needed(why, typed):
+        elif times < needed(why, typed, unsure):
             refusal = TOO_FEW
         else:
             refusal = ""
@@ -339,7 +352,20 @@ def settle(
                 # (each key's typed lines, never more than the group's hearings: a key the scan
                 # alone found and one the reader alone found are each counted in `times` once)
                 min(sum(k.typed for k in group), times),
+                unsure,
             )
         )
-    out.offered.sort(key=lambda g: (not g.sure, -g.times, g.name.casefold()))
+    # (an unsure rules word after every other suggestion, and at most UNSURE_CAP of them: #5214)
+    out.offered.sort(key=lambda g: (g.unsure, not g.sure, -g.times, g.name.casefold()))
+    unsure_seen = 0
+    kept: list[Group] = []
+    for g in out.offered:
+        if g.unsure:
+            unsure_seen += 1
+            if unsure_seen > UNSURE_CAP:
+                out.refused.append((g.name, UNSURE_OVER, g.times))
+                out.refused += [(o, UNSURE_OVER, 0) for o in g.also]
+                continue
+        kept.append(g)
+    out.offered = kept
     return out

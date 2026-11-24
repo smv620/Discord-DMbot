@@ -1215,6 +1215,7 @@ def suggestion_text(
     players: str = "",  # the DM's card only: the caller checks the DM (SuggestionReview.prepare)
     counts: tuple[int, int] | None = None,  # (times heard, typed) when kept (#5133 3b): 3c's line
     singled: bool = False,  # a thing or a place the story singled out, with no name (#5173)
+    rules_word: bool = False,  # a rules word the session used like a name (#5214 part 2a)
 ) -> str:
     # A name read from the DM's writing was read, not heard.
     verb = "written" if entity.source == BACKGROUND_SOURCE else "heard"
@@ -1278,6 +1279,8 @@ def suggestion_text(
     else:
         head = f"📝 **{title}**{told}{heard}"
     ask = f"\n{question}" if question else ""
+    if rules_word:  # (why DMbot asks about a word it otherwise leaves out, the Expert's words)
+        ask = f"\n{RULES_WORD_LINE}{ask}"
     text = f"{head}{seen}{where}{around}{others}{read}{ask}{more}"
     if seen and len(text) > SUGGESTION_MAX:  # the scene is the part left out of a long card
         text = f"{head}{where}{around}{others}{read}{ask}{more}"
@@ -1286,6 +1289,9 @@ def suggestion_text(
     return text
 
 
+RULES_WORD_LINE = (
+    "This is also a rules word. DMbot is asking because the session used it like a name."
+)
 # a question's text stays under this (Discord's limit, with the group line after)
 SUGGESTION_MAX = MESSAGE_MAX - 300
 SCENE_TITLE = "📍 *DMbot's summary of the scene:*"
@@ -1825,6 +1831,13 @@ class SuggestionReview(_Menu):
                 else None
             ),
             singled=self.singled,
+            # (a name the reader found that is a rules word: it was offered on the reader's word
+            # that the session used it like a name, #5214 part 2a)
+            rules_word=self.found is not None
+            and not self.singled
+            and name_reader.rules_word(
+                entity.name, entity.type, (campaign.target_ruleset, campaign.fallback_ruleset)
+            ),
         )
         if self.group is not None:  # say which group, so "Yes, that group" has a "that"
             inside = _and([f"**{_md(logic.shorten(m, 40))}**" for m in self.group.members[:5]])
