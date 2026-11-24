@@ -12,12 +12,19 @@ from __future__ import annotations
 # source (the card's guess is worked out from them by `ui/names.background_kind`'s own rule, in
 # `web/name_found.py`), its other spellings (not secret, not rejected) and the one line that made
 # it a name. The line is read now: its words and speaker's name are sent only when that speaker has
-# a consent row for this server at this moment and the session's transcript is not deleted; a line
+# a consent row under the current wording (`terms`) and, while an outside company hears the voices,
+# for that company (`outside`), the rule of `consent._select` that the card's `first_places` reads
+# through `consent.consenting` (the same as 0604 and 0606: both arrive as arguments because the
+# database cannot know them), and the session's transcript is not deleted. The card reads no
+# `import_consents` for this line, so an imported session's speaker who only confirmed an import
+# is not shown here either, and nobody with a refusal on record is: the two places show a line
+# exactly when each other do. A line
 # whose speaker no longer agrees comes back with no words at all, and the page leaves it out with
 # nothing in its place (as Discord's card does). Nothing is copied or kept, and nothing is
 # written. A name with a secret spelling is left out, as in the recap's other doors.
 SQL = r"""
-    CREATE FUNCTION dmbot_recap_name_found(g BIGINT, c TEXT, at_ BIGINT) RETURNS JSONB
+    CREATE FUNCTION dmbot_recap_name_found(
+        g BIGINT, c TEXT, at_ BIGINT, terms INTEGER, outside TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
@@ -56,7 +63,9 @@ SQL = r"""
                           ON l.guild_id = t.guild_id AND l.session_id = t.id
                         CROSS JOIN LATERAL (
                             SELECT EXISTS (SELECT 1 FROM consent n
-                                           WHERE n.guild_id = g AND n.user_id = l.user_id)
+                                           WHERE n.guild_id = g AND n.user_id = l.user_id
+                                             AND n.terms_version = terms
+                                             AND (outside IS NULL OR n.outside_to = outside))
                                    AS agreed) ok
                         WHERE f.line_ref ~ '^.*:[0-9]{1,18}:[0-9]{1,18}$'
                           AND t.guild_id = g AND t.campaign_id = c
@@ -88,15 +97,15 @@ SQL = r"""
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_recap_name_found(BIGINT, TEXT, BIGINT)'
+            'ALTER FUNCTION dmbot_recap_name_found(BIGINT, TEXT, BIGINT, INTEGER, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_recap_name_found(BIGINT, TEXT, BIGINT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_recap_name_found(BIGINT, TEXT, BIGINT, INTEGER, TEXT) FROM PUBLIC;
     """
 
 ISOLATED_TABLES: tuple[str, ...] = ()
 
 WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
-    ("dmbot_recap_name_found", "dmbot_recap_name_found(BIGINT, TEXT, BIGINT)"),
+    ("dmbot_recap_name_found", "dmbot_recap_name_found(BIGINT, TEXT, BIGINT, INTEGER, TEXT)"),
 )

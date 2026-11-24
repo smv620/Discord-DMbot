@@ -5,11 +5,14 @@ who no longer agrees), in Discord's words and order. Invented names throughout."
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.memory import name_words
 from dmbot.memory.name_found import NameFound
 from dmbot.transcript.models import Line, line_ref
 from dmbot.transcript.store import TranscriptStore
+from dmbot.web import name_checks as web_checks
 from tests.test_web_api import ALICE
 from tests.test_web_name_checks import AT, GUILD, WithChecks
 
@@ -21,18 +24,36 @@ class TheFoundCard(WithChecks):
         await TranscriptStore(self.db).add_lines(GUILD, sid, [line])
         return line_ref(sid, line.started_ms, speaker)
 
-    async def agree(self, *users: int, leave: tuple[int, ...] = ()) -> None:
+    async def agree(
+        self,
+        *users: int,
+        leave: tuple[int, ...] = (),
+        terms: int = TERMS_VERSION,
+        outside: str | None = None,
+    ) -> None:
         async with self.db.guild(GUILD) as conn:
             for user in users:
                 await conn.execute(
-                    "INSERT INTO consent (guild_id, user_id, granted_at) VALUES (%s, %s, 0)"
-                    " ON CONFLICT DO NOTHING",
-                    (GUILD, user),
+                    "INSERT INTO consent (guild_id, user_id, granted_at, terms_version, outside_to)"
+                    " VALUES (%s, %s, 0, %s, %s) ON CONFLICT DO NOTHING",
+                    (GUILD, user, terms, outside),
                 )
             for user in leave:
                 await conn.execute(
                     "DELETE FROM consent WHERE guild_id = %s AND user_id = %s", (GUILD, user)
                 )
+
+    async def card(self, *, outside: str | None = None) -> dict[str, Any]:
+        (card,) = (
+            await web_checks.read_checks(self.web, self.session, self.ref, outside_engine=outside)
+        )["names"]
+        return card
+
+    async def one_line(self) -> str:
+        harrow = await self.suggest("Harrow")
+        ref = await self.line_for(ALICE.id, "We rode to Harrow at dawn")
+        await self.keep(harrow, "introduced", ref, times=2)
+        return harrow
 
     async def keep(self, entity: str, how: str, ref: str | None, *, times: int, typed: int = 0):
         await NameFound(self.db).keep(
@@ -90,6 +111,42 @@ class TheFoundCard(WithChecks):
         await self.keep(place.value.id, "place", None, times=3)
         (card,) = (await self.listed())["names"]
         self.assertEqual(card["found"]["guess"], "place")
+
+    async def test_the_line_follows_the_bots_consent_rule_not_any_consent_row(self) -> None:
+        """Current wording, and for the outside company while one hears the voices
+        (`consent._select`, as the card's `first_places` reads it)."""
+        await self.one_line()
+        await self.agree(ALICE.id, terms=TERMS_VERSION - 1)  # (agreed to older wording only)
+        self.assertIsNone((await self.card())["found"]["line"])
+
+    async def test_an_outside_company_that_is_not_the_one_agreed_to_shows_no_words(self) -> None:
+        await self.one_line()
+        await self.agree(ALICE.id, outside="company-a")
+        self.assertIsNone((await self.card(outside="company-b"))["found"]["line"])
+        shown = (await self.card(outside="company-a"))["found"]["line"]
+        self.assertEqual(shown["text"], "We rode to Harrow at dawn")
+
+    async def test_a_speaker_who_only_confirmed_an_import_or_who_refused_shows_no_words(
+        self,
+    ) -> None:
+        """The card reads `consent.consenting` for this line, so an import confirmation alone does
+        not show it, and a refusal on record never does: the two places agree."""
+        await self.one_line()
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id, basis,"
+                " confirmed_by, confirmed_at, terms_version) VALUES (%s, %s, %s, 'i1', %s,"
+                " 'uploader_confirmed', %s, 0, %s)",
+                (GUILD, self.one.id, "a" * 32, ALICE.id, ALICE.id, TERMS_VERSION),
+            )
+        self.assertIsNone((await self.card())["found"]["line"])
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO consent_refusals (guild_id, user_id, kind, refused_at)"
+                " VALUES (%s, %s, 'declined', 0)",
+                (GUILD, ALICE.id),
+            )
+        self.assertIsNone((await self.card())["found"]["line"])
 
 
 class TheWords(unittest.TestCase):

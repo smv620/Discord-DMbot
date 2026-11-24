@@ -1277,7 +1277,7 @@ def create_app(
     async def me_recap_name_checks(ref: str, signed: Signed) -> dict[str, Any]:
         session, _token = signed
         try:
-            return await read_checks(db, session, ref)
+            return await read_checks(db, session, ref, outside_engine=settings.outside_engine)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -1288,7 +1288,9 @@ def create_app(
     async def me_recap_name_check(ref: str, entity_id: str, signed: Signed) -> dict[str, Any]:
         session, _token = signed
         try:
-            return await read_one_name_check(db, session, ref, entity_id)
+            return await read_one_name_check(
+                db, session, ref, entity_id, outside_engine=settings.outside_engine
+            )
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
