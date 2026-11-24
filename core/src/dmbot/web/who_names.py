@@ -85,13 +85,15 @@ async def read_answers(
     return answers_by_name(list(got["answers"]))
 
 
-async def read_one(db: Database, session: Session, ref: str, entity_id: str) -> dict[str, Any]:
+async def read_one(
+    db: Database, session: Session, ref: str, entity_id: str, *, outside_engine: str | None = None
+) -> dict[str, Any]:
     """One name to check on its own page: its card from the recap's list, DMbot's answers for it
     (an empty list when it has none yet), and the kinds a new entry can be made as. A name that is
     not waiting in this recap is "not found" (the recap's list holds suggestions only; a person the
     story never named is on the Questions page, read with `read_answers`)."""
     ent = name_checks._entity_id(entity_id)
-    listed = await name_checks.read_checks(db, session, ref)
+    listed = await name_checks.read_checks(db, session, ref, outside_engine=outside_engine)
     card = next((n for n in listed["names"] if str(n.get("id")) == ent), None)
     if card is None:
         raise RecapError("not_found")

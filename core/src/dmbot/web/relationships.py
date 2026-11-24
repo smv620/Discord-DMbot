@@ -1323,9 +1323,27 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "heard-",
             "deed-",
             "continuity-",
+            "names-more",
         )
     ):
         raise RecapError("not_found")
+    if got["action"] == "names-more":
+        # 📝 More names (#5081): how many names now wait in the name check and how many are still
+        # behind the button, as Discord says it; counts only, with the wait shown (the wait rule)
+        counts = str(got.get("counts") or "")
+        sized = re.fullmatch(r"made:(\d+) left:(\d+)", counts)
+        waited = _reading_answer(got)
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "made": int(sized[1]) if sized and got["state"] == "done" else None,
+            "left": int(sized[2]) if sized and got["state"] == "done" else None,
+            "waits": waited["waits"],
+            "progress": {
+                "done": int(got.get("progressDone") or 0),
+                "total": int(got.get("progressTotal") or 0),
+            },
+        }
     if str(got["action"]).startswith(
         ("thread-", "part-", "branch-", "lang-", "secret-", "progress-", "clue-")
     ):
