@@ -544,6 +544,45 @@ def sound_keys(name: str) -> tuple[str, ...]:
     return sound_codes(name.replace(" ", ""))
 
 
+# A final "s" a sound code doesn't forgive (#5215): "Explorer League" and "Explorer's League" have
+# different codes, so the card never compared them. Only words whose stem has this many letters:
+# "Harps" and "Harp" stay apart, as they were.
+S_FOLD_STEM = 5
+S_FOLD_WORDS = 4  # (every word may gain or lose its "s": 2 ** 4 spellings at most, a short query)
+_FINAL_S = re.compile(r"(?:['’]s|s)$", re.IGNORECASE)
+
+
+def s_folds(name: str) -> tuple[str, ...]:
+    """`name` with a final "s" or "'s" taken off, or added to, each word whose stem has 5 letters
+    or more (#5215): "Explorer League" gives "Explorers League", "Explorer Leagues" and
+    "Explorers Leagues" too. `name` itself first. Only for finding candidates: the spelling tests
+    still decide, and `name_key` and the sound codes never change."""
+    options: list[tuple[str, ...]] = []
+    long_words = 0
+    for word in name.split():
+        stem = _FINAL_S.sub("", word)
+        if stem != word and len(name_key(stem)) >= S_FOLD_STEM:
+            options.append((word, stem))
+        elif stem == word and len(name_key(word)) >= S_FOLD_STEM:
+            options.append((word, word + "s"))
+        else:
+            options.append((word,))
+            continue
+        long_words += 1
+        if long_words > S_FOLD_WORDS:
+            options[-1] = (word,)
+    spellings: list[str] = [""]
+    for choices in options:
+        spellings = [f"{done} {w}".strip() for done in spellings for w in choices]
+    return tuple(dict.fromkeys(spellings))
+
+
+def card_sound_keys(name: str) -> tuple[str, ...]:
+    """The sound codes a waiting name's card looks known names up by (#5215): its own and those of
+    each final-"s" fold, so "Explorer League" finds "Explorer's League"."""
+    return tuple(dict.fromkeys(code for spelling in s_folds(name) for code in sound_keys(spelling)))
+
+
 def _same_thing(a: str, b: str) -> bool:
     """Is the shorter one part of the longer ("Vane" in "Oskar Vane"), or do they sound
     and look alike (one-word names: as alike as the Cleaner needs, "Kael" isn't
