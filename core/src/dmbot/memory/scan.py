@@ -102,6 +102,46 @@ GAME_TERMS = _words(
     artificer dwarf elf elves halfling human gnome dragonborn tiefling orc goliath aasimar
     """
 )
+# The 2024 PHB's eighteen skills and six abilities (#5214): a rules phrase is never a name, nor is
+# one with a roll after it ("Animal Handling check", "Wisdom saving throw"). The one-word ones are
+# in GAME_TERMS; these are the rest. The short ability forms ("Dex") count only with a roll word
+# after them ("Dex save"): alone, "Dex" may well be someone's name.
+SKILLS = (
+    "acrobatics", "animal handling", "arcana", "athletics", "deception", "history", "insight",
+    "intimidation", "investigation", "medicine", "nature", "perception", "performance",
+    "persuasion", "religion", "sleight of hand", "stealth", "survival",
+)  # fmt: skip
+ABILITIES = ("strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma")
+ABILITY_SHORT = frozenset({"str", "dex", "con", "int", "wis", "cha"})
+RULES_PHRASES = frozenset(SKILLS) | frozenset(ABILITIES)
+# What is said after a rules word to make a roll of it, longest first
+ROLL_WORDS = ("saving throw", "check", "roll", "save")
+_ROLL_AFTER = re.compile(
+    r"\s+(?:" + "|".join(re.escape(w).replace(r"\ ", r"\s+") for w in ROLL_WORDS) + r")$",
+    re.IGNORECASE,
+)
+_ROLL_KEYS = frozenset(name_key(w) for w in ROLL_WORDS)
+RULES_WORD = "rules_word"  # a rules word or phrase, with a roll after it or not (#5214)
+
+
+def without_roll(name: str) -> str:
+    """`name` without a roll said after it: "Animal Handling check" is "Animal Handling", "Strahd
+    check" is "Strahd" (#5214). Unchanged when nothing is left, or no roll word ends it."""
+    bare = _ROLL_AFTER.sub("", name.strip())
+    return bare if bare.strip() else name
+
+
+def is_rules_phrase(name: str) -> bool:
+    """Whether `name` is a rules word or phrase, with a roll after it or not (#5214): a skill, an
+    ability, a condition, a class or another game term ("Insight", "Animal Handling check", "Dex
+    save", "Wisdom saving throw"). Only ever refuses: it never makes anything a name."""
+    core = without_roll(name)
+    key = name_key(core)
+    if not key:
+        return False
+    if key in GAME_TERMS or key in RULES_PHRASES or key in _ROLL_KEYS:
+        return True  # (a roll word alone too: "Check" left over beside a known "Strahd")
+    return core != name and key in ABILITY_SHORT
 
 
 @dataclass(frozen=True, slots=True)
@@ -385,6 +425,7 @@ def find_new_names(
     mid_sentence: set[str] = set()
     led_times: Counter[str] = Counter()  # sightings of a name inside a longer led name (#5055)
     led_by: dict[str, set[str]] = {}
+    rules_words: dict[str, tuple[str, str]] = {}  # (#5214, for `refusals`)
     for words in sentences:
         # (loose: no word is ruled out for being said in lower case, design rule 2)
         for text, mid, led_key in _candidates(
@@ -400,6 +441,14 @@ def find_new_names(
             key = name_key(text)
             if not key or len(text) > NAME_MAX or key in skip:
                 continue
+            if is_rules_phrase(text):  # ("Animal Handling", "Dex save": never a name, #5214)
+                rules_words.setdefault(key, (text, RULES_WORD))
+                continue
+            core = without_roll(text)
+            if core != text:  # ("Strahd check": a hearing of Strahd, never a new name, #5214)
+                if name_key(core) in skip:
+                    continue
+                text, key = core, name_key(core)
             counts[key] += 1
             if led_key:
                 led_times[key] += 1
@@ -434,6 +483,8 @@ def find_new_names(
             left_out.setdefault(name_key(run), (run, TOO_LONG))
         for run in small_runs or ():
             left_out.setdefault(name_key(run), (run, SMALL_WORD))
+        for key, refused in rules_words.items():
+            left_out.setdefault(key, refused)
         refusals += sorted(left_out.values(), key=lambda r: (r[1], r[0].casefold()))
     found.sort(key=lambda s: (-s.times, s.name))
     return found if unlimited else found[:MAX_SUGGESTIONS]

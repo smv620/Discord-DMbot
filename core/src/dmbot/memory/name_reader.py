@@ -37,7 +37,7 @@ from typing import Any, Protocol
 from dmbot.memory.background import KINDS, in_the_rules
 from dmbot.memory.claims import LINES_MAX, reads_like_instruction
 from dmbot.memory.models import NAME_MAX, name_key
-from dmbot.memory.scan import COMMON, GAME_TERMS, Suggestion
+from dmbot.memory.scan import COMMON, GAME_TERMS, Suggestion, is_rules_phrase, without_roll
 from dmbot.names import not_names
 
 log = logging.getLogger(__name__)
@@ -240,6 +240,11 @@ def check(
         return None, NOT_IN_LINES
     if key in skip:
         return None, skip[key]
+    core = name_key(without_roll(name))
+    if core != key and core in skip:
+        return None, skip[core]  # ("Strahd check": a hearing of a name DMbot has, #5214)
+    if is_rules_phrase(name):
+        return None, RULES_WORD  # ("Animal Handling check", "Dex save", #5214)
     if key in GAME_TERMS or (rules is not None and in_the_rules(name, KINDS[kind], *rules)):
         return None, RULES_WORD
     if key in COMMON or not_names.is_not_name(name) or not_names.shape_of(name) is not None:
