@@ -482,9 +482,11 @@ def _possessives(
     stays as said with an NPC called Hope. Never a plural ("hrothgars"): it is too easily an
     ordinary word. (A name ending in s with only an apostrophe after it, "belleros'", is the name
     itself as a word, so the main pass already gives it its capitals.) Only the capitals change
-    here: a possessive spelled some other way is left to the other fixes."""
+    here: a possessive spelled some other way is left as heard."""
+    if not any(ending in heard for ending in _POSSESSIVE):
+        return []  # (most lines: no second look at their words)
     words = list(WORD.finditer(heard))
-    secret = _secret_spans(lookup, words)
+    secret: list[tuple[int, int]] | None = None  # (worked out once a possessive is found)
     out = []
     for w in words:
         said = w.group()
@@ -492,12 +494,22 @@ def _possessives(
         span = (w.start(), w.end())
         if stem == said or not stem[:1].islower():
             continue  # (not a possessive, or written with a capital already)
+        if secret is None:
+            secret = _secret_spans(lookup, words)
         if any(span[0] < end and start < span[1] for start, end in (*taken, *secret)):
             continue  # (inside a name already fixed, or a secret one: never touched)
         key = name_key(stem)
-        if key in person_keys or key in lookup.keep_keys or is_dm_word(stem):
+        if (
+            key in person_keys
+            or key in lookup.keep_keys
+            or name_key(said) in lookup.keep_keys  # (the DM kept the possessive itself as heard)
+            or is_dm_word(stem)
+        ):
             continue  # (someone at the table, a word to keep as heard, or "GM")
         ids = {e.entity_id for e in lookup.by_key.get(key, ()) if e.confirmed and not e.secret}
+        # (a DM's spelling rule for the word points at an entry too: two answers, not sure which,
+        # as the main pass decides for the name alone)
+        ids |= set(lookup.fixes.get(key, ()))
         entity = lookup.entities.get(next(iter(ids))) if len(ids) == 1 else None
         if entity is None or entity.status != CONFIRMED:
             continue

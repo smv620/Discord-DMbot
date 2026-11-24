@@ -251,10 +251,17 @@ class TrapsTest(unittest.TestCase):
         # (#5207: by the same rule as the name alone; either apostrophe; first word too)
         names = lookup(more=(entity(MAREN, "Strahd"),), more_aliases=(alias(MAREN, "Strahd"),))
         self.assertEqual(text("in strahd's castle", names), "in Strahd's castle")
+        # (the record the DM screen and Undo read)
+        fix = clean(names, "in strahd's castle", scene=EVERYONE).fixes[0]
+        self.assertEqual(
+            (fix.start, fix.end, fix.heard, fix.written, fix.entity_id, fix.how, fix.sure),
+            (3, 11, "strahd's", "Strahd's", MAREN, SPELLING, True),
+        )
         self.assertEqual(text("in strahd’s castle", names), "in Strahd’s castle")
         self.assertEqual(text("strahd's men wait", names), "Strahd's men wait")
         self.assertEqual(text("we follow thorin's trail"), "we follow Thorin's trail")
-        # (a name ending in s with only an apostrophe is the name itself, already fixed)
+        # (a name ending in s with only an apostrophe is the name itself, already fixed by the
+        # main pass: this guards the docstring's word, it never reaches the new pass)
         self.assertEqual(text("in belleros' tent"), "in Belleros' tent")
 
     def test_an_ordinary_words_possessive_or_a_plural_keeps_its_lower_case(self) -> None:
@@ -274,6 +281,18 @@ class TrapsTest(unittest.TestCase):
         # (someone at the table with that name: never rewritten, as for the name alone)
         strahd = lookup(more=(entity(MAREN, "Strahd"),), more_aliases=(alias(MAREN, "Strahd"),))
         self.assertEqual(text("strahd's turn", strahd, people=["Strahd"]), "strahd's turn")
+
+    def test_a_dms_rule_wins_over_a_possessives_capitals(self) -> None:
+        # (#5207 review: a "keep as heard" on the possessive itself, and a DM's spelling rule that
+        # makes the word mean two entries, leave it as heard, as for the name alone)
+        strahd = (entity(MAREN, "Strahd"),)
+        kept = lookup(more=strahd, more_aliases=(alias(MAREN, "Strahd"),),
+                      corrections=(correction("strahd's", None, KEEP),))  # fmt: skip
+        self.assertEqual(text("in strahd's castle", kept), "in strahd's castle")
+        two = lookup(more=strahd, more_aliases=(alias(MAREN, "Strahd"),),
+                     corrections=(correction("strahd", CERRIC, FIX),))  # fmt: skip
+        self.assertEqual(text("in strahd castle", two), "in strahd castle")
+        self.assertEqual(text("in strahd's castle", two), "in strahd's castle")
 
     def test_a_secret_unconfirmed_or_two_word_name_never_gets_capitals_from_lower_case(
         self,
