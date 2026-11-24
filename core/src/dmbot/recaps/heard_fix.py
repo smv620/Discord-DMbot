@@ -20,6 +20,19 @@ log = logging.getLogger(__name__)
 FIXED, LATER, FAILED = "fixed", "later", "failed"  # how the session's transcript ended up
 
 
+def session_of_ref(ref: str | None) -> str | None:
+    """The session a line reference points into (`transcript.models.line_ref`:
+    `<session>:<started ms>:<speaker>`), or None."""
+    if not ref:
+        return None
+    parts = ref.rsplit(":", 2)
+    return (
+        parts[0]
+        if len(parts) == 3 and parts[1].isdigit() and parts[2].lstrip("-").isdigit()
+        else None
+    )
+
+
 async def session_lines(
     transcripts: Any, consent: Any, guild_id: int, campaign_id: str, session: str | None
 ) -> list[str] | None:
@@ -98,4 +111,4 @@ async def fix_transcript(
     return FIXED
 
 
-__all__ = ["FAILED", "FIXED", "LATER", "fix_transcript", "session_lines"]
+__all__ = ["FAILED", "FIXED", "LATER", "fix_transcript", "session_lines", "session_of_ref"]
