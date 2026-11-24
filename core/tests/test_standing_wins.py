@@ -54,7 +54,9 @@ class TheWord(unittest.TestCase):
 
 def _lookup() -> Any:
     def entity(eid: str, name: str) -> Any:
-        return SimpleNamespace(id=eid, name=name, type="character", status=CONFIRMED)
+        return SimpleNamespace(
+            id=eid, name=name, type="character", status=CONFIRMED, described=None
+        )
 
     mira, kesh = entity(MIRA, "Mira"), entity(KESH, "Kesh")
     return SimpleNamespace(entities={MIRA: mira, KESH: kesh}, names=(), guarded=frozenset())

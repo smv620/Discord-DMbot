@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from dmbot.memory import name_groups as ng
 from dmbot.memory import name_trace as nt
@@ -341,6 +341,157 @@ class TheBotStep(unittest.TestCase):
             self.assertEqual(
                 sorted(self.run_step(stand_in(d, {"Hope": "creature"}))), ["Hope", "Vorna"]
             )
+
+    def test_a_thing_the_story_keeps_coming_back_to_is_offered_first_and_marked(self) -> None:
+        # (#5173, slice 6: decided apart from the names, first among the session's 10, written
+        # as a description, never on the reader's word: the mine is in two stretches)
+        from dmbot.bot import DMBot
+        from dmbot.memory import singled_out as so
+        from dmbot.memory.name_reader import SINGLED_OUT
+
+        texts = ["We call Vorna home.", "Vorna waves.", *(["The road is cold."] * 80)]
+        for at in (2, 40, 80):
+            texts[at] = "The gemstone mine is shut."
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            mine = Found("gemstone mine", "place", SINGLED_OUT, 3, ("3", "41", "81"))
+            door = Found("door", "place", SINGLED_OUT, 3, ("4", "5", "6"))
+
+            async def read(*_a: Any, **_k: Any) -> Any:
+                return [mine, door], [], 0
+
+            kwargs: list[dict[str, Any]] = []
+
+            async def add_entity(*_: Any, name: str, **kw: Any) -> Any:
+                bot.added.append(name)
+                kwargs.append({"name": name, **kw})
+                return SimpleNamespace(value=SimpleNamespace(id=f"e-{name}"))
+
+            async def entities(*_: Any) -> list[Any]:
+                return []
+
+            bot._read_session_names = read
+            bot.memory.add_entity = add_entity
+            bot.memory.entities = entities
+            bot.memory.aliases = AsyncMock(return_value=[])
+            bot._singled_out = lambda *a: DMBot._singled_out(bot, *a)
+            made = self.run_step(bot, texts)
+            self.assertEqual(made[0], "Gemstone mine")  # (first, one capital only)
+            marked = {k["name"]: k.get("described") for k in kwargs}
+            # (the mark is the story's words as a cited line says them, #5173)
+            self.assertEqual(marked["Gemstone mine"], "gemstone mine")
+            self.assertIsNone(marked.get("Vorna"))
+            self.assertIn((nt.READER, "door", so.ONE_STRETCH), self.ends(d))
+            group = bot._keep_found.await_args_list[0].args[4]
+            self.assertEqual(group.why, SINGLED_OUT)  # (what the card shows: name_found.how)
+
+    def singled_bot(self, d: str, texts: list[str], found: list[Any]) -> Any:
+        """A bot whose reader found `found` (names and singled-out things), with the real
+        `_singled_out` wired in (#5173)."""
+        from dmbot.bot import DMBot
+
+        bot = stand_in(d, {}, texts=texts)
+
+        async def read(*_a: Any, **_k: Any) -> Any:
+            return found, [], 0
+
+        async def no_entities(*_: Any) -> list[Any]:
+            return []
+
+        bot._read_session_names = read
+        bot.memory.entities = no_entities
+        bot.memory.aliases = AsyncMock(return_value=[])
+        bot._singled_out = lambda *a: DMBot._singled_out(bot, *a)
+        return bot
+
+    @staticmethod
+    def mine_texts() -> list[str]:
+        texts = ["We call Vorna home.", "Vorna waves.", *(["The road is cold."] * 80)]
+        for at in (2, 40, 80):
+            texts[at] = "The gemstone mine is shut."
+        return texts
+
+    def test_a_thing_close_to_a_secret_is_never_suggested(self) -> None:
+        # (#5173, the reviewer: unsure whether the campaign's names are close, nothing is risked)
+        from dmbot.memory.name_reader import SINGLED_OUT
+
+        texts = self.mine_texts()
+        mine = Found("gemstone mine", "place", SINGLED_OUT, 3, ("3", "41", "81"))
+        with tempfile.TemporaryDirectory() as d:
+            bot = self.singled_bot(d, texts, [mine])
+            bot._name_closeness = AsyncMock(return_value=None)
+            self.assertNotIn("Gemstone mine", self.run_step(bot, texts))
+            self.assertNotIn("Gemstone mine", [n for _s, n, _r in self.ends(d)])
+
+    def test_a_kept_descriptions_head_word_is_never_offered_again(self) -> None:
+        # (#5173, the Expert: once "gemstone mine" is kept, "the old mine" is a known name)
+        from dmbot.memory.name_reader import KNOWN_NAME, SINGLED_OUT
+
+        texts = ["We call Vorna home.", "Vorna waves.", *(["The road is cold."] * 80)]
+        for at in (2, 40, 80):
+            texts[at] = "The old mine is shut."
+        old = Found("old mine", "place", SINGLED_OUT, 3, ("3", "41", "81"))
+        with tempfile.TemporaryDirectory() as d:
+            bot = self.singled_bot(d, texts, [old])
+            kept = SimpleNamespace(
+                id="e1", name="Gemstone mine", described="gemstone mine", is_player_character=False
+            )
+
+            async def entities(*_: Any) -> list[Any]:
+                return [kept]
+
+            bot.memory.entities = entities
+            self.assertNotIn("Old mine", self.run_step(bot, texts))
+            self.assertIn((nt.READER, "old mine", KNOWN_NAME), self.ends(d))
+
+    def test_a_line_of_someone_who_stopped_being_recorded_is_not_read(self) -> None:
+        from dmbot.memory.name_reader import SINGLED_OUT
+
+        texts = self.mine_texts()
+        mine = Found("gemstone mine", "place", SINGLED_OUT, 3, ("3", "41", "81"))
+        with tempfile.TemporaryDirectory() as d:
+            bot = self.singled_bot(d, texts, [mine])
+            bot.consent.consenting = AsyncMock(return_value=set())  # (stopped meanwhile)
+            self.assertNotIn("Gemstone mine", self.run_step(bot, texts))
+
+    def test_sure_names_come_first_and_a_description_is_never_held(self) -> None:
+        # (#5173: an introduced name is never pushed out by a description; past the 10 on an
+        # import, names wait for "More names" and a description is never held)
+        from dmbot.memory.name_reader import INTRODUCED, SINGLED_OUT
+
+        names = [f"Name{c}" for c in "ABCDEFGHIJK"]  # eleven, each introduced
+        texts = self.mine_texts() + [f"This is {n}." for n in names]
+        found = [Found(n, "person", INTRODUCED, 1, (str(83 + i),)) for i, n in enumerate(names)]
+        found.append(Found("gemstone mine", "place", SINGLED_OUT, 3, ("3", "41", "81")))
+        held: list[Any] = []
+
+        class Holding:
+            def __init__(self, *_a: Any) -> None:
+                pass
+
+            async def hold(self, *_a: Any) -> None:
+                held.extend(_a[-1])
+
+        with tempfile.TemporaryDirectory() as d, patch("dmbot.bot.MoreNames", Holding):
+            bot = self.singled_bot(d, texts, found)
+            bot.import_job = SimpleNamespace(
+                store=SimpleNamespace(set_scan_cut=AsyncMock(), set_names=AsyncMock())
+            )
+            bot.memory._db = None
+            from dmbot.bot import DMBot
+
+            bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+            bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)
+            bot._names_still_recorded = lambda *a, **k: DMBot._names_still_recorded(
+                bot, *a, **k
+            )  # (#5187)
+            made = asyncio.run(
+                DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1", import_scan=True)
+            )
+            self.assertNotIn("Gemstone mine", made)  # (ten sure names fill the ten)
+            self.assertEqual(made[:10], names[:10])
+            self.assertNotIn("Gemstone mine", [h.name for h in held])  # (dropped, not held)
+            self.assertIn("NameK", [h.name for h in held])
 
     def test_with_the_switch_off_the_scan_is_as_before(self) -> None:
         with tempfile.TemporaryDirectory() as d:

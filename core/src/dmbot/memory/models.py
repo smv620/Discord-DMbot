@@ -400,6 +400,11 @@ class Entity:
     length_unit: str | None = None
     length_approx: bool = False
     length_from: str | None = None
+    # A description, not a name (#5173): a thing or a place the story singles out and keeps coming
+    # back to. None for a name; otherwise the words exactly as the story said them, without an
+    # article ("gemstone mine", "Easthaven ferry"), written into a sentence as "the gemstone mine"
+    # (`entity_words.in_sentence`). Back to None when the DM gives it a name.
+    described: str | None = None
 
     @property
     def setting_guessed(self) -> bool:

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 
 from dmbot.db import Database
 
-HOWS = ("introduced", "typed", "addressed", "place", "spoken_of", "scan")
+HOWS = ("introduced", "typed", "addressed", "place", "spoken_of", "scan", "singled_out")  # (0614)
 SURE = frozenset({"introduced", "typed"})  # offered first (section 6)
 
 
