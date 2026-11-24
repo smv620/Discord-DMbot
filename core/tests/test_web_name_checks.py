@@ -312,7 +312,7 @@ class TheList(WithChecks):
         self.assertEqual(
             got["names"],
             [{"id": mira, "name": "Mirelle", "note": "Used in a recap", "answering": False,
-              "error": "", "longerNames": []}],
+              "error": "", "longerNames": [], "guess": None}],
         )  # fmt: skip
         self.assertEqual([k["name"] for k in got["known"]], ["Oakmere"])
         self.assertNotIn("player_character", [k["key"] for k in got["kinds"]])
