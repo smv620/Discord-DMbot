@@ -111,7 +111,16 @@ class AnswerStore:
                 " ON CONFLICT DO NOTHING",
                 (guild_id, campaign_id, session_at, guild_id, campaign_id, ids),
             )
-            return int(cur.rowcount)
+            made = int(cur.rowcount)
+            if session_at != 0:
+                # (a name the "no recap" list took before this recap linked it is on this recap's
+                # list now, and only there: #5186)
+                await conn.execute(
+                    "DELETE FROM recap_name_checks WHERE guild_id = %s AND campaign_id = %s"
+                    " AND session_at = 0 AND entity_id = ANY(%s)",
+                    (guild_id, campaign_id, ids),
+                )
+            return made
 
     async def link_like(
         self, guild_id: int, campaign_id: str, from_entity: str, entity_ids: Sequence[str]

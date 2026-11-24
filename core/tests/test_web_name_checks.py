@@ -176,6 +176,26 @@ class TheOtherNewNames(WithChecks):
         card = (await web.read_checks(self.web, self.session, self.no_recap()))["names"]
         self.assertEqual([n["id"] for n in card], [lone])
 
+    async def test_a_name_taken_before_its_recap_links_it_is_listed_once_not_twice(self) -> None:
+        """The race: the bot's "no recap" linking takes a session's new names at 0 before the recap
+        job links them. Linking drops the 0 row, and a 0 row beside a real link is ignored."""
+        lone = await self.orphan("Brannoch")
+        await self.answers.link_orphans(GUILD)
+        await self.answers.link(GUILD, self.one.id, AT, [lone])
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT session_at FROM recap_name_checks WHERE guild_id = %s AND entity_id = %s",
+                (GUILD, lone),
+            )
+            self.assertEqual([r["session_at"] for r in await cur.fetchall()], [AT])
+            await conn.execute(  # (the 0 row put back, as a racing writer would leave it)
+                "INSERT INTO recap_name_checks (guild_id, campaign_id, session_at, entity_id)"
+                " VALUES (%s, %s, 0, %s)",
+                (GUILD, self.one.id, lone),
+            )
+        got = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual([(r["other"], r["count"]) for r in got["recaps"]], [(False, 1)])
+
     async def test_a_name_with_a_secret_spelling_and_another_campaigns_name_are_not_listed(
         self,
     ) -> None:

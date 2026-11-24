@@ -20,7 +20,14 @@ _JOIN = (
 )
 _LEFT = _JOIN.replace("JOIN recap_jobs j", "LEFT JOIN recap_jobs j", 1)
 _WHERE = "                  AND e.status = 'proposed'\n"
-_WHERE_NEW = _WHERE + "                  AND (j.session_at IS NOT NULL OR k.session_at = 0)\n"
+# (a "no recap" link is ignored once a real one exists: the bot's linking can race a recap's)
+_WHERE_NEW = (
+    _WHERE
+    + "                  AND (j.session_at IS NOT NULL OR (k.session_at = 0 AND NOT EXISTS (\n"
+    + "                       SELECT 1 FROM recap_name_checks k2\n"
+    + "                       WHERE k2.guild_id = k.guild_id AND k2.campaign_id = k.campaign_id\n"
+    + "                         AND k2.entity_id = k.entity_id AND k2.session_at <> 0)))\n"
+)
 
 
 def _dollar(text: str) -> str:
