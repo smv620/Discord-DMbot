@@ -633,6 +633,46 @@ class TheBotStep(unittest.TestCase):
         self.assertNotIn("Quillon", held_names)
         self.assertEqual(len(made) + len(held_names), 11)
 
+    def test_a_stop_while_names_are_written_writes_no_more(self) -> None:
+        # (#5190: each name's writes are awaits; who is recorded is asked before each name)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts, "Vorna")
+        written: list[str] = []
+        real = bot.memory.add_entity
+
+        async def add_entity(*a: Any, name: str, **k: Any) -> Any:
+            written.append(name)
+            bot.consent.consenting.return_value = {1}  # (speaker 2 stops during the first write)
+            return await real(*a, name=name, **k)
+
+        bot.memory.add_entity = add_entity
+        made = self.run_step(bot, texts)
+        self.assertEqual(len(made), 1)  # (the first name made; the next is never written)
+        self.assertEqual(written, made)
+
+    def test_a_line_the_stored_transcript_lacks_makes_a_late_stop_unsure(self) -> None:
+        # (#5190: a line the scan read with no stored twin has no speaker to check)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left.", "A line never saved, about Mira."]  # fmt: skip
+        bot = self.late(texts[:4], "Vorna")
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.run_step(bot, texts), [])
+        bot._scan_kinds.assert_not_awaited()
+
+    def test_a_name_that_lost_hearings_says_so_on_its_card(self) -> None:
+        # (#5190: the card's counts are of what is left: never more typed hearings than hearings)
+        from dmbot.memory import name_groups
+
+        texts = ["We met Mira today.", "Then Mira left.", "Mira again.", "So Mira went."]
+        bot = self.late(texts, "Mira again", on=True)
+        self.stop_in(bot, "_take_name_asks", then=[])
+        self.assertEqual(self.run_step(bot, texts), ["Mira"])
+        group = bot._keep_found.await_args.args[4]
+        self.assertIsInstance(group, name_groups.Group)
+        self.assertEqual(group.times, 3)
+        self.assertLessEqual(group.typed_times, group.times)
+
     def test_after_the_reader_a_stopped_speakers_lines_are_never_kept(self) -> None:
         # (#5178: who is recorded is asked again after the reader; nobody now, so no line of the
         # session is stored as where a name was said)
