@@ -317,9 +317,11 @@ class Threads(ConfirmedMemoryTest):
         names = await self.memory.lookup_data(GUILD_A, self.c)
         whole = CampaignLookup.build(names)
         self.assertIn(self.heir, whole.entities)
-        self.assertNotIn(self.heir, whole.for_viewer(False).entities)
+        everything = frozenset(whole.entities)  # (held and still gone: the DM's by kind, #4802)
+        self.assertNotIn(self.heir, whole.for_viewer(False, everything).entities)
         self.assertEqual(
-            [m for m in find(whole.for_viewer(False), "Missing Heir", secrets=False)], []
+            [m for m in find(whole.for_viewer(False, everything), "Missing Heir", secrets=False)],
+            [],
         )
 
     async def test_a_link_from_the_story_plan_never_reaches_players(self) -> None:

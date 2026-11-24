@@ -17,6 +17,8 @@ from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
 from dmbot.ui import name_card, names
 from tests.test_memory_store import GUILD_A, GUILD_B, ConfirmedMemoryTest
 
+NOBODY = 987_654  # (someone at the table who isn't a DM and plays no one: common knowledge)
+
 
 class Hidden(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
@@ -121,10 +123,13 @@ class Hidden(ConfirmedMemoryTest):
         data = await self.memory.lookup_data(GUILD_A, self.c)
         lookup = CampaignLookup.build(data)
         self.assertIn(self.shadow, lookup.entities)
-        self.assertEqual(lookup.hidden, frozenset({self.shadow}))
-        self.assertNotIn(self.shadow, lookup.for_viewer(secrets=False).entities)
+        # (someone with no character holds the common knowledge, from the gate, #4802: Jack is
+        # common knowledge, the Shadow is kept back)
+        await self.memory.add_common_knowledge(GUILD_A, self.c, "entry", [self.jack], source="dm")
+        seen = await self.memory.entries_seen_by(GUILD_A, self.c, NOBODY)
+        self.assertNotIn(self.shadow, lookup.for_viewer(secrets=False, seen=seen).entities)
         self.assertIn(self.shadow, lookup.for_viewer(secrets=True).entities)
-        self.assertIn(self.jack, lookup.for_viewer(secrets=False).entities)
+        self.assertIn(self.jack, lookup.for_viewer(secrets=False, seen=seen).entities)
 
     async def test_it_comes_back_from_a_backup_and_an_old_backup_restores_as_known(self) -> None:
         data = await self.campaigns.export(GUILD_A, self.c)
@@ -184,7 +189,13 @@ class Hidden(ConfirmedMemoryTest):
         # out through `for_viewer`, and the recap through `entry_hidden`
         self.assertTrue(all(n.entry_hidden and not n.secret for n in mine))
         self.assertEqual(
-            {n.entity_id for n in lookup.for_viewer(False).names if n.entity_id == self.shadow},
+            {
+                n.entity_id
+                for n in lookup.for_viewer(
+                    False, await self.memory.entries_seen_by(GUILD_A, self.c, NOBODY)
+                ).names
+                if n.entity_id == self.shadow
+            },
             set(),
         )
         self.assertFalse(any(n.secret for n in lookup.names if n.entity_id == self.jack))

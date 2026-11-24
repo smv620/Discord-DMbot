@@ -11,6 +11,8 @@ import { PARTY_RECORD_LIVE } from "../content/party-record-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
+import { SINGLED_OUT_LIVE } from "../content/singled-out-switch";
+import { nameFoundWords as foundWords } from "../content/name-found-words";
 import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
 import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
 import { NAME_SOURCES_LIVE } from "../content/name-sources-switch";
@@ -20,6 +22,7 @@ import { PRIVATE_SCENES_LIVE } from "../content/private-scenes-switch";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { PLACE_SPELLING_LIVE } from "../content/place-spelling-switch";
 import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
+import { CONTINUITY_LIVE } from "../content/continuity-switch";
 import { PLOT_THREADS_LIVE } from "../content/plot-threads-switch";
 import { THREADS_LIVE } from "../content/threads-switch";
 import { PLACE_ROUTES_LIVE } from "../content/place-routes-switch";
@@ -437,6 +440,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       {WORLD_NOTES_LIVE && data.canEdit && api.worldNotes !== undefined && (
         <LazyPanel load={() => import("./WorldNotes")} what="DMbot's guesses about your world" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
       )}
+      {CONTINUITY_LIVE && data.canEdit && api.continuityHits !== undefined && (
+        <LazyPanel load={() => import("./Continuity")} what="the heads-ups from this session" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
+      )}
       {THREADS_LIVE && data.canEdit && api.storyThreads !== undefined && (
         <LazyPanel load={() => import("./StoryThreads")} what="the story threads DMbot found" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
       )}
@@ -822,6 +828,7 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
           )}
         </span>
       </div>
+      {SINGLED_OUT_LIVE && row.described === true && <p class="small muted">{foundWords.singled.described}</p>}
       {!canEdit && PLACE_WORLD_LIVE && row.kind === "place" && api.placeWorldTable && (
         <LazyPanel load={() => import("./PlaceWorldLines")} what="the place's land, climate and ruler" props={{ api, refId, row }} />
       )}

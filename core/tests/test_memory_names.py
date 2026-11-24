@@ -1239,10 +1239,10 @@ class NameCards(NamesTest):
         self.assertTrue(full.secret_neighbours)  # the DM's view has the secret link
         self.assertEqual(full.for_viewer(True).secret_neighbours, full.secret_neighbours)
         # Nothing here is DM-only, so this is the early-return path that must still blank it.
-        self.assertFalse(full.hidden)
-        self.assertEqual(full.for_viewer(False).secret_neighbours, {})
+        held = frozenset(full.entities)  # (a player who holds every entry: still no secret link)
+        self.assertEqual(full.for_viewer(False, held).secret_neighbours, {})
         self.assertNotIn(
-            vessa.id, full.for_viewer(False).confirmed_neighbours.get(self.bell.id, ())
+            vessa.id, full.for_viewer(False, held).confirmed_neighbours.get(self.bell.id, ())
         )
 
     async def test_the_dropdown_pages_at_25_names(self) -> None:

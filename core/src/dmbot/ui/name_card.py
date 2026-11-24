@@ -37,6 +37,7 @@ from dmbot.memory import (
     tags,
 )
 from dmbot.memory.backstory_keep import undo_batches
+from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
@@ -117,11 +118,13 @@ from dmbot.ui.dmbot_commands import (
     _tell,
 )
 from dmbot.ui.names import (
+    GIVE_IT_A_NAME,
     GONE,
     KIND_SHORT,
     KINDS,
     NOT_AVAILABLE,
     PC,
+    SAME_AS_DESCRIBED,
     _campaign_for,
     _md,
     _memory,
@@ -131,6 +134,7 @@ from dmbot.ui.names import (
     known_as,
     scene_line,
     scene_of,
+    seen_for,
     sees_secrets,
     split_names,
 )
@@ -316,6 +320,10 @@ def _more(items: list[str], sep: str = ", ") -> str:
     return shown + (f" … and {len(items) - SHOWN} more" if len(items) > SHOWN else "")
 
 
+# A kept entry that is the story's description of a thing or a place, not a name (#5173)
+DESCRIBED_LINE = "\n🔖 Described in the story, no name of its own."
+
+
 @dataclass(frozen=True)
 class Row:
     """One connection as the card reads it from this name's side."""
@@ -437,7 +445,9 @@ def _rows(
             # (a route's length DMbot only read is the DM's until kept: a player never sees it,
             # #4255)
             r = dataclasses.replace(r, **NO_LENGTH)
-        found.setdefault(words, []).append(Row(r.id, words, other.name, r.secret, r, after))
+        # (a description reads as the story said it, "the gemstone mine", #5173)
+        said = in_sentence(other.name, other.described)
+        found.setdefault(words, []).append(Row(r.id, words, said, r.secret, r, after))
     return [row for group in found.values() for row in group]
 
 
@@ -652,6 +662,8 @@ def card_text(
     phrase = kind_phrase(entity, lookup.links.get(entity_id, ()))
     what = f"{phrase} · played by **{_md(player)}**" if player else phrase
     lines = [f"🪪 **{_md(title or entity.name)}** · {what} · {when}"]
+    if entity.described:  # (right under the title, so a busy card never drops it: #5173)
+        lines.append(DESCRIBED_LINE.strip())
     if summary_lines and secrets:
         lines.extend(summary_lines)
     is_item = entity.type == ITEM if item is None else item
@@ -738,9 +750,10 @@ async def _names(interaction: discord.Interaction, campaign: Campaign) -> Campai
         await _tell(interaction, NOT_AVAILABLE)
         return None
     try:  # (without the clues only some people know, unless this person is a DM, #1649)
-        return (await cache.get(campaign.guild_id, campaign.id)).for_viewer(
-            sees_secrets(campaign, interaction.user.id)
-        )
+        dm = sees_secrets(campaign, interaction.user.id)
+        whole = await cache.get(campaign.guild_id, campaign.id)
+        # (anyone else: the names of what their own characters know, from the gate, #4802)
+        return whole.for_viewer(dm, await seen_for(interaction, campaign, dm))
     except Exception:
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
@@ -1201,6 +1214,7 @@ async def show_card(
         leave=leave,
         come_back=come_back,
         catch_up=catch_up,
+        described=entity.described,
     )
     if replace:
         await _replace(interaction, text, view)
@@ -1355,9 +1369,11 @@ class NameCard(_Menu):
         leave: bool = False,
         come_back: bool = False,
         catch_up: Sequence[tuple[str, str, int]] = (),
+        described: str | None = None,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
+        self.described = described  # a description, not a name: ✏️ names it (#5173)
         self.entity_id = entity_id
         self.unique = unique
         grey = discord.ButtonStyle.secondary
@@ -1369,7 +1385,9 @@ class NameCard(_Menu):
             self.add_item(FinishPastButton(campaign_id, entity_id, finish_past))
         # First row: the three edits the names panel names, in its words (#353). Remove
         # says what it does and still asks first.
-        self.add_item(_Button(self._fix, label="✏️ Fix spelling", style=discord.ButtonStyle.primary))
+        # (a description has no spelling to fix: the button names it, Supervisor on #5183)
+        fix = GIVE_IT_A_NAME if described else "✏️ Fix spelling"
+        self.add_item(_Button(self._fix, label=fix, style=discord.ButtonStyle.primary))
         self.add_item(_Button(self._change_kind, label="Change what it is", style=grey))
         self.add_item(_Button(self._remove, label="🗑 Remove this name", style=grey))
         # "Also called", as the card says: right after Add a name, "Add another name"
@@ -1887,7 +1905,12 @@ class NameCard(_Menu):
                 said = await memory.said_as(found[0].guild_id, found[0].id, self.entity_id)
             await interaction.response.send_modal(
                 FixSpellingForm(
-                    self.campaign_id, self.entity_id, found[1], spoken=spoken, said_as=said
+                    self.campaign_id,
+                    self.entity_id,
+                    found[1],
+                    spoken=spoken,
+                    said_as=said,
+                    described=self.described,
                 )
             )
 
@@ -2152,11 +2175,21 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
         *,
         spoken: bool = False,
         said_as: str | None = None,
+        described: str | None = None,
     ) -> None:
         super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign_id = campaign_id
         self.entity_id = entity_id
-        self.name.default = current[:NAME_LIMIT]
+        self.described = described
+        if described:
+            # A description gets a name, not a spelling: the same form as the question's ✏️ Give
+            # it a name… (`names.GiveNameForm`), empty and required (Supervisor on #5183)
+            self.title = "Give it a name"
+            self.name.label = "Its name in your game"
+            self.name.placeholder = "For example: the Glittering Deep"
+            self.name.required = True
+        else:
+            self.name.default = current[:NAME_LIMIT]
         self.spoken = spoken
         self.before = said_as
         if spoken:
@@ -2177,6 +2210,9 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
             return
         campaign, old = found
         new = " ".join(self.name.value.split())
+        if self.described and name_key(new) in (name_key(old), name_key(self.described)):
+            await _tell(interaction, SAME_AS_DESCRIBED)  # (nothing renamed: it stays a description)
+            return
         if PRONOUNCED.search(new):  # how to say it is not how to spell it (#2332)
             await _tell(interaction, SPELLING_AND_SOUND if self.spoken else SPELLING_ONLY)
             return
@@ -4109,7 +4145,19 @@ async def find_typeahead(
     if names is None:  # still loading: nothing this time, ready for the next keystroke
         return []
     secrets = sees_secrets(campaign, interaction.user.id)
-    names = names.for_viewer(secrets)
+    # Anyone else here is a server manager who isn't a DM (`typeahead_campaign`): one read of what
+    # they hold per keystroke, within the time Discord leaves; a slow one suggests nothing this
+    # time, as a cold copy does (#4802)
+    try:  # (a DM reads everything: nothing to wait for)
+        seen = (
+            None
+            if secrets
+            else await asyncio.wait_for(seen_for(interaction, campaign, secrets), TYPEAHEAD_WAIT_S)
+        )
+    except Exception:
+        log.exception("Name type-ahead couldn't read what this person holds")
+        return []
+    names = names.for_viewer(secrets, seen)
     if current.strip():
         matches = find(names, current, secrets=secrets)
     else:

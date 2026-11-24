@@ -24,7 +24,7 @@ no Discord, no AI. Names, never lines, so nothing here is logged.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory.models import name_key
@@ -49,6 +49,11 @@ WHY_ORDER = (INTRODUCED, "addressed", "place", "spoken_of", SCAN)
 TOO_FEW = "too_few_hearings"  # the group's hearings are fewer than its reason needs
 ORDINARY = "ordinary_word"  # the scan alone, and every word of it is said in lower case too
 GROUPED = "grouped_into_another"  # one spelling of a group whose shown spelling is another
+# Slice 4 (#5133): close to a known name and asked of PlotBot's name pass, which fixed it, said
+# it is new, or asked the DM: never a second "Sounds like" question
+TO_NAME_PASS = "decided_by_name_pass"
+# Close to a known name, but past the pass's limit: the card asks it (the Expert, on #5133)
+PASS_OVER = "pass_over_the_number"
 # (a count row only, never a name: spellings dropped as close to a secret)
 NEAR_SECRET = "close_to_a_secret_name"
 
@@ -106,6 +111,26 @@ class Group:
 
     def suggestion(self) -> Suggestion:
         return Suggestion(self.name, self.times, self.also)
+
+
+def leave_to_pass(settled: Settled, passed: Collection[str]) -> int:
+    """Slice 4 (docs/design/session_names.md, section 7; #5133): each offered group close to a
+    known name all of whose spellings the name pass asked about leaves the list, every spelling
+    ending `TO_NAME_PASS`. A group with a spelling the pass never judged stays (the Expert: a
+    "hroth gar" beside a fixed "rothgar" must still be asked somewhere). Returns how many left."""
+    keep: list[Group] = []
+    left = 0
+    for group in settled.offered:
+        spellings = (group.name, *group.also)
+        if group.heard_wrong is not None and all(name_key(s) in passed for s in spellings):
+            settled.refused += [
+                (s, TO_NAME_PASS, group.times if s == group.name else 0) for s in spellings
+            ]
+            left += 1
+        else:
+            keep.append(group)
+    settled.offered = keep
+    return left
 
 
 @dataclass(slots=True)

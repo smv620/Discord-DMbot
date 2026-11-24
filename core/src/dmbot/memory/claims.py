@@ -40,6 +40,7 @@ from dmbot.memory import (
     place_words,
     reputation_words,
     scenes,
+    trace_note,
     unique_item,
     who_answers,
 )
@@ -1284,10 +1285,32 @@ class ClaimStore:
                     lines_by_name.setdefault(name_key(n), set()).update(r["lines"])
             if lists:
                 logger.info("name lists split: %d", lists)  # a count, never a name
+
+            tracing = trace_note.active()
+
+            def traced(names_in: Sequence[str], why: str, rule: str = "") -> None:
+                """Where the story reader's own new names ended (#5123, dev tools: nothing unless
+                a trace is being collected). Only from claims whose speakers are all recorded:
+                `judge` checks consent first, so a stopped speaker's names never get here. A
+                person at the table (`skip`) is never written, as the session's trace never
+                writes one (#5107)."""
+                for n in names_in:
+                    if name_key(n) not in skip:
+                        trace_note.note(" ".join(n.split()), why, rule)
+
+            def traced_rest(names_in: Sequence[str], hit: Sequence[str], rule: str) -> None:
+                """The claim's other new names, which go with it (`why`: the rule)."""
+                traced([n for n in names_in if n not in hit], trace_note.CLAIM_DROPPED, rule)
+
             for claim in claims:  # (the limit was applied once, before the lists were split)
                 reason = judged(claim)
                 claim, reason = turned_companion(claim, reason, judged)
                 unknown: list[str] = []
+                if tracing and reason and reason not in (UNKNOWN_NAME_REASON, NO_SPEAKER_REASON,
+                                                         STOPPED_REASON):  # fmt: skip
+                    # (a claim dropped by a rule takes its new names with it, unless another
+                    # claim keeps them: a later row says so)
+                    traced(_unknown_names(claim, names), trace_note.CLAIM_DROPPED, reason)
                 # A pronoun is a name only where a cited line plainly says so ("My name is We").
                 cued = not_names.cued_in("\n".join((said or {}).get(r, "") for r in claim.lines))
                 if reason == UNKNOWN_NAME_REASON:
@@ -1296,10 +1319,20 @@ class ClaimStore:
                         unknown = []  # dropped below with its reason, not kept waiting
                     elif any(name_key(n) in refused_names for n in unknown):
                         reason = NAME_REJECTED_REASON
+                        if tracing:
+                            hit = [n for n in unknown if name_key(n) in refused_names]
+                            traced(hit, trace_note.DM_SAID_NO)
+                            traced_rest(unknown, hit, reason)
                         unknown = []  # never made into an entry again
                     elif any(name_key(n) in skip for n in unknown):
+                        if tracing:  # (the person at the table is never written)
+                            traced_rest(unknown, [], UNKNOWN_NAME_REASON)
                         unknown = []  # a person at the table: not a story name
                     elif not all(not_names.allowed(n, cued) for n in unknown):
+                        if tracing:
+                            hit = [n for n in unknown if not not_names.allowed(n, cued)]
+                            traced(hit, trace_note.ORDINARY)
+                            traced_rest(unknown, hit, UNKNOWN_NAME_REASON)
                         unknown = []  # a pronoun ("he", "we"): never made into a name (#2358)
                     elif any(
                         kinds := [
@@ -1319,14 +1352,29 @@ class ClaimStore:
                         for k in kinds:
                             if k:
                                 not_a_name[k] += 1
+                        if tracing:
+                            for n, k in zip(unknown, kinds, strict=True):
+                                # (a common noun is a plain word; any other kind is a shape:
+                                # a number, measure, time or address)
+                                if k:
+                                    plain = k == "common_noun"
+                                    traced([n], trace_note.ORDINARY if plain else trace_note.SHAPE)
+                            traced_rest(unknown, [n for n, k in zip(unknown, kinds, strict=True)
+                                                  if k], NOT_A_NAME_REASON)  # fmt: skip
                         reason = NOT_A_NAME_REASON
                         unknown = []
                     elif any(_a_kind_of_creature(n) for n in unknown):
+                        if tracing:
+                            hit = [n for n in unknown if _a_kind_of_creature(n)]
+                            traced(hit, trace_note.RULES)
+                            traced_rest(unknown, hit, RULES_REASON)
                         reason, unknown = RULES_REASON, []
                         rules_dropped += 1
                     elif _generic_items(onto, claim, unknown, said or {}):
                         # A new item that is clearly everyday gear is not made into an entry, so
                         # its claim goes with it (#3373): no owns, carries or kept-in is stored.
+                        if tracing:
+                            traced(unknown, trace_note.ITEM)
                         reason, unknown = ITEM_REASON, []
                     elif any(descriptions.is_described(n) for n in unknown):
                         # A person the story describes but never names ("the woman") is never
@@ -1337,6 +1385,9 @@ class ClaimStore:
                         # end beside a new name: the name goes to the names to check, and the
                         # claim waits on it like any claim with a new name.
                         named = [n for n in unknown if not descriptions.is_described(n)]
+                        if tracing:
+                            traced([n for n in unknown if descriptions.is_described(n)],
+                                   trace_note.DESCRIBED)  # fmt: skip
                         if condition_of(claim) is None and name_key(claim.subject) == name_key(
                             claim.object
                         ):
@@ -1415,7 +1466,13 @@ class ClaimStore:
             # (#5055 A) the new names left past the limit, each once: a name already held from an
             # earlier read is not counted again
             held_before = set(old_mentions)
-            over_cap = len({m for m in others if m not in chosen_new and m not in held_before})
+            past = {m for m in others if m not in chosen_new and m not in held_before}
+            over_cap = len(past)
+            if tracing:  # (they wait for the next session's read, their claims held)
+                traced(
+                    [n for _, _, unknown in work for n in unknown if name_key(n) in past],
+                    trace_note.OVER_CAP,
+                )
             chosen_new = [*for_players, *chosen_new]
             chosen = [*chosen_old, *chosen_new]
             left = bool(left_old or left_new)
@@ -1682,6 +1739,8 @@ class ClaimStore:
                 try:
                     check_named(kind, name)
                 except MemoryRuleError:
+                    for key in group:  # (#5123, dev tools: each spelling it was heard as)
+                        trace_note.note(" ".join(spelling[key].split()), trace_note.STORE_REFUSED)
                     continue  # not a name DMbot can keep: its claims fail the name rules
                 row = await w.insert(
                     ENTITIES,
@@ -1706,17 +1765,24 @@ class ClaimStore:
                 home = str(row["id"])
                 waiting_keys[lead] = home
                 made.append(name)
+                trace_note.note(name, trace_note.STORED)  # (#5123: a name to check, for the DM)
             for key in group:
                 if key in waiting_keys:
                     continue  # the entry's own name, or a spelling it already has
                 try:
                     text = clean_text(spelling[key])
                 except MemoryRuleError:
+                    trace_note.note(" ".join(spelling[key].split()), trace_note.STORE_REFUSED)
                     continue
                 extra = _new_alias(w, home, text, "misheard", PROPOSED, False, None)
                 aliases.append(await w.insert(ALIASES, extra))
                 waiting_keys[key] = home
                 joined += 0 if fresh else 1
+                # (#5123: another spelling of a name the DM is asked about, `why` that name: the
+                # entry it joined, made now or already waiting from an earlier read)
+                if trace_note.active():
+                    into = next((str(e["name"]) for e in entities if str(e["id"]) == home), lead)
+                    trace_note.note(text, trace_note.FOLDED, into)
         return made, joined
 
     async def purge_stopped(

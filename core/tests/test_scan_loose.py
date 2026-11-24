@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 from dmbot.memory import name_groups as ng
 from dmbot.memory import name_trace as nt
@@ -254,7 +254,7 @@ def stand_in(
     async def campaign(*_: Any) -> Any:
         return SimpleNamespace(name="test of the frostmaiden (sample 41b.1)")
 
-    return SimpleNamespace(
+    bot: Any = SimpleNamespace(
         added=added,
         settings=SimpleNamespace(session_names_on=on, name_trace_dir=trace_dir, name_trace_guild=5),
         name_pass_ai=object(),
@@ -274,6 +274,13 @@ def stand_in(
         _keep_places=AsyncMock(),
         consent=SimpleNamespace(consenting=AsyncMock(return_value={1})),  # (#5178)
     )
+    from dmbot.bot import DMBot
+
+    # (slice 4 and #5187: the step's own helpers, run for real on this stand-in)
+    bot._run_reader = lambda *a, **k: DMBot._run_reader(bot, *a, **k)
+    bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)
+    bot._names_still_recorded = lambda *a, **k: DMBot._names_still_recorded(bot, *a, **k)
+    return bot
 
 
 TEXTS = ["We call Hope home.", "Then Hope barks at Vorna.", "I hope so, Vorna said."]
@@ -284,6 +291,7 @@ class TheBotStep(unittest.TestCase):
         from dmbot.bot import DMBot
 
         bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+        bot._run_reader = lambda *a, **k: DMBot._run_reader(bot, *a, **k)  # (slice 4)
         given: list[Any] = []  # (the suggestions written, with their counts)
 
         def add(*a: Any, **k: Any) -> Any:
@@ -341,6 +349,157 @@ class TheBotStep(unittest.TestCase):
             self.assertEqual(
                 sorted(self.run_step(stand_in(d, {"Hope": "creature"}))), ["Hope", "Vorna"]
             )
+
+    def test_a_thing_the_story_keeps_coming_back_to_is_offered_first_and_marked(self) -> None:
+        # (#5173, slice 6: decided apart from the names, first among the session's 10, written
+        # as a description, never on the reader's word: the mine is in two stretches)
+        from dmbot.bot import DMBot
+        from dmbot.memory import singled_out as so
+        from dmbot.memory.name_reader import SINGLED_OUT
+
+        texts = ["We call Vorna home.", "Vorna waves.", *(["The road is cold."] * 80)]
+        for at in (2, 40, 80):
+            texts[at] = "The gemstone mine is shut."
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            mine = Found("gemstone mine", "place", SINGLED_OUT, 3, ("3", "41", "81"))
+            door = Found("door", "place", SINGLED_OUT, 3, ("4", "5", "6"))
+
+            async def read(*_a: Any, **_k: Any) -> Any:
+                return [mine, door], [], 0
+
+            kwargs: list[dict[str, Any]] = []
+
+            async def add_entity(*_: Any, name: str, **kw: Any) -> Any:
+                bot.added.append(name)
+                kwargs.append({"name": name, **kw})
+                return SimpleNamespace(value=SimpleNamespace(id=f"e-{name}"))
+
+            async def entities(*_: Any) -> list[Any]:
+                return []
+
+            bot._read_session_names = read
+            bot.memory.add_entity = add_entity
+            bot.memory.entities = entities
+            bot.memory.aliases = AsyncMock(return_value=[])
+            bot._singled_out = lambda *a: DMBot._singled_out(bot, *a)
+            made = self.run_step(bot, texts)
+            self.assertEqual(made[0], "Gemstone mine")  # (first, one capital only)
+            marked = {k["name"]: k.get("described") for k in kwargs}
+            # (the mark is the story's words as a cited line says them, #5173)
+            self.assertEqual(marked["Gemstone mine"], "gemstone mine")
+            self.assertIsNone(marked.get("Vorna"))
+            self.assertIn((nt.READER, "door", so.ONE_STRETCH), self.ends(d))
+            group = bot._keep_found.await_args_list[0].args[4]
+            self.assertEqual(group.why, SINGLED_OUT)  # (what the card shows: name_found.how)
+
+    def singled_bot(self, d: str, texts: list[str], found: list[Any]) -> Any:
+        """A bot whose reader found `found` (names and singled-out things), with the real
+        `_singled_out` wired in (#5173)."""
+        from dmbot.bot import DMBot
+
+        bot = stand_in(d, {}, texts=texts)
+
+        async def read(*_a: Any, **_k: Any) -> Any:
+            return found, [], 0
+
+        async def no_entities(*_: Any) -> list[Any]:
+            return []
+
+        bot._read_session_names = read
+        bot.memory.entities = no_entities
+        bot.memory.aliases = AsyncMock(return_value=[])
+        bot._singled_out = lambda *a: DMBot._singled_out(bot, *a)
+        return bot
+
+    @staticmethod
+    def mine_texts() -> list[str]:
+        texts = ["We call Vorna home.", "Vorna waves.", *(["The road is cold."] * 80)]
+        for at in (2, 40, 80):
+            texts[at] = "The gemstone mine is shut."
+        return texts
+
+    def test_a_thing_close_to_a_secret_is_never_suggested(self) -> None:
+        # (#5173, the reviewer: unsure whether the campaign's names are close, nothing is risked)
+        from dmbot.memory.name_reader import SINGLED_OUT
+
+        texts = self.mine_texts()
+        mine = Found("gemstone mine", "place", SINGLED_OUT, 3, ("3", "41", "81"))
+        with tempfile.TemporaryDirectory() as d:
+            bot = self.singled_bot(d, texts, [mine])
+            bot._name_closeness = AsyncMock(return_value=None)
+            self.assertNotIn("Gemstone mine", self.run_step(bot, texts))
+            self.assertNotIn("Gemstone mine", [n for _s, n, _r in self.ends(d)])
+
+    def test_a_kept_descriptions_head_word_is_never_offered_again(self) -> None:
+        # (#5173, the Expert: once "gemstone mine" is kept, "the old mine" is a known name)
+        from dmbot.memory.name_reader import KNOWN_NAME, SINGLED_OUT
+
+        texts = ["We call Vorna home.", "Vorna waves.", *(["The road is cold."] * 80)]
+        for at in (2, 40, 80):
+            texts[at] = "The old mine is shut."
+        old = Found("old mine", "place", SINGLED_OUT, 3, ("3", "41", "81"))
+        with tempfile.TemporaryDirectory() as d:
+            bot = self.singled_bot(d, texts, [old])
+            kept = SimpleNamespace(
+                id="e1", name="Gemstone mine", described="gemstone mine", is_player_character=False
+            )
+
+            async def entities(*_: Any) -> list[Any]:
+                return [kept]
+
+            bot.memory.entities = entities
+            self.assertNotIn("Old mine", self.run_step(bot, texts))
+            self.assertIn((nt.READER, "old mine", KNOWN_NAME), self.ends(d))
+
+    def test_a_line_of_someone_who_stopped_being_recorded_is_not_read(self) -> None:
+        from dmbot.memory.name_reader import SINGLED_OUT
+
+        texts = self.mine_texts()
+        mine = Found("gemstone mine", "place", SINGLED_OUT, 3, ("3", "41", "81"))
+        with tempfile.TemporaryDirectory() as d:
+            bot = self.singled_bot(d, texts, [mine])
+            bot.consent.consenting = AsyncMock(return_value=set())  # (stopped meanwhile)
+            self.assertNotIn("Gemstone mine", self.run_step(bot, texts))
+
+    def test_sure_names_come_first_and_a_description_is_never_held(self) -> None:
+        # (#5173: an introduced name is never pushed out by a description; past the 10 on an
+        # import, names wait for "More names" and a description is never held)
+        from dmbot.memory.name_reader import INTRODUCED, SINGLED_OUT
+
+        names = [f"Name{c}" for c in "ABCDEFGHIJK"]  # eleven, each introduced
+        texts = self.mine_texts() + [f"This is {n}." for n in names]
+        found = [Found(n, "person", INTRODUCED, 1, (str(83 + i),)) for i, n in enumerate(names)]
+        found.append(Found("gemstone mine", "place", SINGLED_OUT, 3, ("3", "41", "81")))
+        held: list[Any] = []
+
+        class Holding:
+            def __init__(self, *_a: Any) -> None:
+                pass
+
+            async def hold(self, *_a: Any) -> None:
+                held.extend(_a[-1])
+
+        with tempfile.TemporaryDirectory() as d, patch("dmbot.bot.MoreNames", Holding):
+            bot = self.singled_bot(d, texts, found)
+            bot.import_job = SimpleNamespace(
+                store=SimpleNamespace(set_scan_cut=AsyncMock(), set_names=AsyncMock())
+            )
+            bot.memory._db = None
+            from dmbot.bot import DMBot
+
+            bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+            bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)
+            bot._names_still_recorded = lambda *a, **k: DMBot._names_still_recorded(
+                bot, *a, **k
+            )  # (#5187)
+            made = asyncio.run(
+                DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1", import_scan=True)
+            )
+            self.assertNotIn("Gemstone mine", made)  # (ten sure names fill the ten)
+            self.assertEqual(made[:10], names[:10])
+            self.assertNotIn("Gemstone mine", [h.name for h in held])  # (dropped, not held)
+            self.assertIn("NameK", [h.name for h in held])
 
     def test_with_the_switch_off_the_scan_is_as_before(self) -> None:
         with tempfile.TemporaryDirectory() as d:
@@ -633,6 +792,223 @@ class TheBotStep(unittest.TestCase):
         self.assertNotIn("Quillon", held_names)
         self.assertEqual(len(made) + len(held_names), 11)
 
+    def test_a_stop_while_names_are_written_writes_no_more(self) -> None:
+        # (#5190: each name's writes are awaits; who is recorded is asked before each name)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts, "Vorna")
+        written: list[str] = []
+        real = bot.memory.add_entity
+
+        async def add_entity(*a: Any, name: str, **k: Any) -> Any:
+            written.append(name)
+            bot.consent.consenting.return_value = {1}  # (speaker 2 stops during the first write)
+            return await real(*a, name=name, **k)
+
+        bot.memory.add_entity = add_entity
+        made = self.run_step(bot, texts)
+        self.assertEqual(len(made), 1)  # (the first name made; the next is never written)
+        self.assertEqual(written, made)
+
+    def test_a_line_the_stored_transcript_lacks_makes_a_late_stop_unsure(self) -> None:
+        # (#5190: a line the scan read with no stored twin has no speaker to check)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left.", "A line never saved, about Mira."]  # fmt: skip
+        bot = self.late(texts[:4], "Vorna")
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.run_step(bot, texts), [])
+        bot._scan_kinds.assert_not_awaited()
+
+    def test_a_name_that_lost_hearings_says_so_on_its_card(self) -> None:
+        # (#5190: the card's counts are of what is left; a typed hearing that was the stopped
+        # speaker's no longer counts)
+        from dmbot.memory import name_groups
+
+        texts = ["We met Mira today.", "Then Mira left.", "Mira again.", "So Mira went."]
+        bot = self.late(texts, "Mira again", on=True)
+
+        async def lines(*_: Any) -> list[Any]:
+            return [SimpleNamespace(user_id=2 if t == "Mira again." else 1, text=t, topic="game",
+                                    typed=t in ("Mira again.", "So Mira went."))
+                    for t in texts]  # fmt: skip
+
+        bot.transcripts = SimpleNamespace(lines=lines)
+        self.stop_in(bot, "_take_name_asks", then=[])
+        self.assertEqual(self.run_step(bot, texts), ["Mira"])
+        group = bot._keep_found.await_args.args[4]
+        self.assertIsInstance(group, name_groups.Group)
+        self.assertEqual((group.times, group.typed_times, group.typed), (3, 1, True))
+
+    def test_two_speakers_saying_the_same_words_with_one_copy_stored_is_unsure(self) -> None:
+        # (#5190: one stored copy never vouches for two lines)
+        texts = ["We met Vorna today.", "We met Vorna today.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts[1:], "Vorna")  # (the first copy was never saved)
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.run_step(bot, texts), [])
+
+    def test_with_a_line_never_stored_a_stop_during_the_writes_writes_no_more(self) -> None:
+        # (#5190: whose words an unsaved line is can't be told, so everyone who agreed counts)
+        from dmbot.bot import DMBot
+
+        texts = ["We met Vorna today.", "Then Vorna left.", "We saw Mira today.",
+                 "Then Mira left.", "A line never saved."]  # fmt: skip
+        bot = self.late(texts[:4], "nobody")
+        written: list[str] = []
+        real = bot.memory.add_entity
+
+        async def add_entity(*a: Any, name: str, **k: Any) -> Any:
+            written.append(name)
+            bot.consent.consenting.return_value = {1}  # (speaker 2, with no stored line, stops)
+            return await real(*a, name=name, **k)
+
+        bot.memory.add_entity = add_entity
+        bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+        bot._add_scan_names = lambda *a, **k: DMBot._add_scan_names(bot, *a, **k)
+        bot._names_still_recorded = lambda *a, **k: DMBot._names_still_recorded(bot, *a, **k)
+        made = asyncio.run(
+            DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1", agreed={1, 2})
+        )
+        self.assertEqual(len(written), 1)
+        self.assertEqual(made, written)
+
+    def test_a_stop_during_the_writes_puts_the_name_pass_s_unmade_words_back(self) -> None:
+        # (#5190: never lost; the next scan offers them)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts, "Vorna")
+        self.stop_in(bot, "_take_name_asks", then=[("Glimmerfen", 1)])
+        bot.consent.consenting.return_value = {1, 2}
+        bot._take_name_asks = AsyncMock(return_value=[("Glimmerfen", 1)])
+        real = bot.memory.add_entity
+
+        async def add_entity(*a: Any, name: str, **k: Any) -> Any:
+            bot.consent.consenting.return_value = {1}
+            return await real(*a, name=name, **k)
+
+        bot.memory.add_entity = add_entity
+        bot._keep_name_asks = AsyncMock()
+        made = self.run_step(bot, texts)
+        self.assertNotIn("Glimmerfen", made)
+        bot._keep_name_asks.assert_awaited_once_with(5, "c1", "s1", [("Glimmerfen", 1)])
+
+    def test_a_spelling_only_the_stopped_speaker_said_is_never_kept(self) -> None:
+        # (#5190: not as an alias, nor as the shown name)
+        texts = ["We met Oskar Vane at dawn.", "Oskar Vane smiled.", "Then Vane left.",
+                 "Later Vane came back.", "And Kesh spoke.", "So Kesh left."]  # fmt: skip
+        bot = self.late(texts, "Oskar")
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(sorted(self.run_step(bot, texts)), ["Kesh", "Vane"])
+        vane = [(f.name, f.also) for f in bot.given if "Vane" in (f.name, *f.also)]
+        self.assertEqual(vane, [("Vane", ())])
+
+    def step_said_by(
+        self, bot: Any, texts: list[str], said_by: list[int], session_id: str | None = "s1"
+    ) -> list[str]:
+        from dmbot.bot import DMBot
+
+        given: list[Any] = []
+
+        def add(*a: Any, **k: Any) -> Any:
+            given[:] = a[2]
+            return DMBot._add_scan_names(bot, *a, **k)
+
+        bot._add_scan_names = add
+        bot.given = given
+        bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+        bot._names_still_recorded = lambda *a, **k: DMBot._names_still_recorded(bot, *a, **k)
+        return asyncio.run(
+            DMBot._propose_new_names(
+                bot, 5, "c1", texts, set(), session_id, agreed={1, 2}, said_by=said_by
+            )
+        )
+
+    def test_with_speakers_a_line_fixed_live_never_makes_a_stop_unsure(self) -> None:
+        # (#5199: each line comes with who said it, so a stored copy that reads differently, as
+        # after a fix made live, needs no match: the stopped speaker's lines come out by speaker)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left, as fixed live."]  # fmt: skip
+        bot = self.late([*texts[:3], "Then Mira left."], "Vorna")
+        self.stop_in(bot, "drop_language_suggestions")
+        made = self.step_said_by(bot, texts, [2, 2, 1, 1])
+        self.assertEqual(made, ["Mira"])
+        sent = bot._scan_kinds.await_args.args[3]
+        self.assertFalse(any("Vorna" in t for t in sent))
+
+    def test_with_speakers_and_no_stored_transcript_the_rest_are_still_suggested(self) -> None:
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = stand_in(tempfile.mkdtemp(), {}, on=False, texts=texts)
+        bot.consent.consenting.return_value = {1, 2}
+        bot.transcripts = None
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.step_said_by(bot, texts, [2, 2, 1, 1], session_id=None), ["Mira"])
+
+    def test_with_speakers_the_same_words_said_twice_lose_only_the_stopped_copy(self) -> None:
+        # (#5199: "Vorna" heard once from each, both stored; the one who stays leaves a single
+        # hearing, too few. Without speakers this was unsure and suggested nothing, #5190)
+        texts = ["We met Vorna today.", "We met Vorna today.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts, "nobody")
+        by = [2, 1, 1, 1]
+
+        async def lines(*_: Any) -> list[Any]:
+            return [SimpleNamespace(user_id=u, text=t, topic="game", typed=False)
+                    for u, t in zip(by, texts, strict=True)]  # fmt: skip
+
+        bot.transcripts = SimpleNamespace(lines=lines)
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.step_said_by(bot, texts, by), ["Mira"])
+
+    def test_with_speakers_a_stop_during_the_writes_writes_no_more(self) -> None:
+        # (#5199: between writes, the speakers' own question is asked, even for a line the
+        # stored transcript holds differently, as after a fix made live)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left, as fixed live."]  # fmt: skip
+        bot = self.late([*texts[:3], "Then Mira left."], "nobody")
+        written: list[str] = []
+        real = bot.memory.add_entity
+
+        async def add_entity(*a: Any, name: str, **k: Any) -> Any:
+            written.append(name)
+            bot.consent.consenting.return_value = {1}  # (speaker 2 stops during the first write)
+            return await real(*a, name=name, **k)
+
+        bot.memory.add_entity = add_entity
+        made = self.step_said_by(bot, texts, [2, 2, 1, 1])
+        self.assertEqual(len(written), 1)
+        self.assertEqual(made, written)
+
+    def test_with_speakers_a_stop_during_the_reader_takes_their_lines_out(self) -> None:
+        # (#5199: after the reader, by speaker; none of their lines was saved, so the stored
+        # transcript alone could not say they spoke)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left, as fixed live.",
+                 "We saw Mira today.", "Then Mira left."]  # fmt: skip
+        bot = self.late(texts[2:], "nobody", on=True)  # (none of speaker 2's lines was saved)
+        real = bot._read_session_names
+
+        async def read(*a: Any, **k: Any) -> Any:
+            bot.consent.consenting.return_value = {1}  # (speaker 2 stops while the reader reads)
+            return await real(*a, **k)
+
+        bot._read_session_names = read
+        self.assertEqual(self.step_said_by(bot, texts, [2, 2, 1, 1]), ["Mira"])
+        sent = bot._scan_kinds.await_args.args[3]
+        self.assertFalse(any("Vorna" in t for t in sent))
+        # (taken out right after the reader, so the dev trace is of what is left and is written;
+        # a stop caught only later leaves no trace)
+        names = [n for _s, n, _r in self.ends(bot.settings.name_trace_dir)]
+        self.assertIn("Mira", names)
+        self.assertNotIn("Vorna", names)
+
+    def test_speakers_that_do_not_match_the_lines_are_not_used(self) -> None:
+        # (#5199: a count that doesn't match falls back to matching words, as before)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts, "Vorna")
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.step_said_by(bot, texts, [1]), ["Mira"])
+
     def test_after_the_reader_a_stopped_speakers_lines_are_never_kept(self) -> None:
         # (#5178: who is recorded is asked again after the reader; nobody now, so no line of the
         # session is stored as where a name was said)
@@ -785,3 +1161,135 @@ class RuleTwo(unittest.TestCase):
                 {"given:<module>", "given:g"},
             ),
         )
+
+
+class TheReaderBeforeThePass(unittest.TestCase):
+    """Slice 4 (docs/design/session_names.md, section 7; #5133, Supervisor's ruling B): the name
+    reader reads before PlotBot's name pass, the step reuses that reading, and a group close to a
+    known name that the pass asked about is the pass's, not a "Sounds like" card."""
+
+    def step(self, bot: Any, texts: list[str], **kw: Any) -> list[str]:
+        from dmbot.bot import DMBot
+
+        bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+        bot._run_reader = lambda *a, **k: DMBot._run_reader(bot, *a, **k)  # (slice 4)
+        return asyncio.run(DMBot._propose_new_names(bot, 5, "c1", texts, set(), "s1", **kw))
+
+    def test_with_the_switch_off_nothing_is_read_before_the_pass(self) -> None:
+        from dmbot.bot import DMBot
+
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {"Vorna": "person"}, on=False)
+            got = asyncio.run(
+                DMBot._read_before_pass(bot, 5, "c1", "s1", TEXTS, set(), agreed=None)
+            )
+        self.assertIsNone(got)
+
+    def test_a_thing_singled_out_is_never_a_candidate_for_the_name_pass(self) -> None:
+        # (#5173 with slice 4: "gemstone mine" is a description, not a spelling of a name, so the
+        # name pass never compares it with the known names; the step still decides it apart)
+        from dmbot.bot import EarlyRead
+        from dmbot.memory.name_reader import SINGLED_OUT
+
+        early = EarlyRead(
+            (Found("Vorna", "person", SPOKEN_OF, 2, ("1",)),
+             Found("gemstone mine", "place", SINGLED_OUT, 3, ("3", "4", "5"))),
+            (), 0, (),
+        )  # fmt: skip
+        self.assertEqual([s.name for s in early.spellings()], ["Vorna"])
+
+    def test_with_the_switch_on_it_reads_once_and_the_step_reuses_it(self) -> None:
+        from dmbot.bot import DMBot
+
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {"Vorna": "person"})
+            bot._run_reader = lambda *a, **k: DMBot._run_reader(bot, *a, **k)
+            early = asyncio.run(
+                DMBot._read_before_pass(bot, 5, "c1", "s1", TEXTS, set(), agreed=None)
+            )
+            assert early is not None
+            self.assertEqual([s.name for s in early.spellings()], ["Vorna"])
+
+            async def never(*_a: Any, **_k: Any) -> Any:
+                raise AssertionError("the step read the session again")
+
+            bot._read_session_names = never
+            self.assertIn("Vorna", self.step(bot, TEXTS, early=early))
+
+    def test_a_speaker_who_stops_during_the_pass_is_taken_out_of_the_early_reading(self) -> None:
+        # (#5178/#5199 with slice 4: the early reading was made before the name pass, so the step
+        # asks again who is recorded; a speaker who stopped in between takes their names with them)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        from dmbot.bot import DMBot
+
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {"Vorna": "person", "Mira": "person"}, texts=texts)
+
+            async def lines(*_: Any) -> list[Any]:
+                return [SimpleNamespace(user_id=2 if "Vorna" in t else 1, text=t, topic="game",
+                                        typed=False) for t in texts]  # fmt: skip
+
+            bot.transcripts = SimpleNamespace(lines=lines)
+            bot.consent.consenting.return_value = {1, 2}
+            early = asyncio.run(
+                DMBot._read_before_pass(bot, 5, "c1", "s1", texts, set(), agreed=None)
+            )
+            assert early is not None
+            self.assertEqual(sorted(s.name for s in early.spellings()), ["Mira", "Vorna"])
+            bot.consent.consenting.return_value = {1}  # (speaker 2 stops during the pass)
+            made = self.step(bot, texts, early=early, said_by=[2, 2, 1, 1])
+            sent = bot._scan_kinds.await_args.args[3]
+            traced = [r.name for r in nt.read(Path(d, "trace-c1.jsonl"))]
+        self.assertIn("Mira", made)
+        self.assertNotIn("Vorna", made)
+        # (taken out right after the early reading is used, so the kinds AI never sees their lines
+        # and the dev trace, of what is left, is written; a stop caught only later leaves none)
+        self.assertFalse(any("Vorna" in t for t in sent))
+        self.assertIn("Mira", traced)
+        self.assertNotIn("Vorna", traced)
+
+    def test_a_known_name_s_group_the_pass_asked_about_is_not_offered(self) -> None:
+        texts = ["Then Rothgar came.", "And Rothgar left.", "Vorna came.", "And Vorna left."]
+        known = scan.Match("e1", "Hrothgar")
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            bot._name_closeness = AsyncMock(
+                return_value=(lambda s: known if "othgar" in s else None, lambda _s: False)
+            )
+            self.assertEqual(self.step(bot, texts, passed={"rothgar"}), ["Vorna"])
+            self.assertIn((nt.SCAN, "Rothgar", ng.TO_NAME_PASS), [
+                (r.source, r.name, r.reason) for r in nt.read(Path(d, "trace-c1.jsonl"))
+            ])  # fmt: skip
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            bot._name_closeness = AsyncMock(
+                return_value=(lambda s: known if "othgar" in s else None, lambda _s: False)
+            )
+            self.assertIn("Rothgar", self.step(bot, texts))  # (not asked: "Sounds like" as before)
+
+    def test_a_spelling_the_pass_wrote_over_is_never_offered(self) -> None:
+        # (the reviewer: the reading before the pass still holds it; the lines no longer do)
+        from dmbot.bot import DMBot, EarlyRead
+
+        texts = ["We met Strad at the gate.", "Then Vorna came.", "And Vorna left."]
+        found = (Found("Strad", "person", SPOKEN_OF, 2, ("1",)),
+                 Found("Vorna", "person", SPOKEN_OF, 2, ("2",)))  # fmt: skip
+        early = EarlyRead(found, (), 0, ())
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts[1:])
+            bot._run_reader = lambda *a, **k: DMBot._run_reader(bot, *a, **k)
+            got = self.step(bot, texts[1:], early=early, pass_fixed={"strad"})
+        self.assertEqual(got, ["Vorna"])
+
+    def test_a_known_name_s_group_past_the_pass_s_limit_keeps_its_card_and_says_so(self) -> None:
+        texts = ["Then Rothgar came.", "And Rothgar left."]
+        known = scan.Match("e1", "Hrothgar")
+        with tempfile.TemporaryDirectory() as d:
+            bot = stand_in(d, {}, texts=texts)
+            bot._name_closeness = AsyncMock(
+                return_value=(lambda s: known if "othgar" in s else None, lambda _s: False)
+            )
+            self.assertEqual(self.step(bot, texts, pass_over={"rothgar"}), ["Rothgar"])
+            ends = [(r.name, r.reason) for r in nt.read(Path(d, "trace-c1.jsonl"))]
+        self.assertIn(("Rothgar", ng.PASS_OVER), ends)

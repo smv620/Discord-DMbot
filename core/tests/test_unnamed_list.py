@@ -29,7 +29,9 @@ class TheGroup(MemoryTest):
 
     async def view(self, secrets: bool) -> CampaignLookup:
         data = await self.memory.lookup_data(GUILD_A, self.c)
-        return CampaignLookup.build(data).for_viewer(secrets)
+        # (someone who isn't a DM and plays no one holds the common knowledge, from the gate, #4802)
+        seen = None if secrets else await self.memory.entries_seen_by(GUILD_A, self.c, 987_654)
+        return CampaignLookup.build(data).for_viewer(secrets, seen)
 
     async def test_a_dm_sees_the_group_last_with_a_count_and_nobody_else_does(self) -> None:
         _ken, sis = await self.setup_people()

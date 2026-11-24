@@ -228,7 +228,8 @@ class Promises(ConfirmedMemoryTest):
             self.assertNotIn("healer", " ".join(i.text for i in got.items), seeds)
         whole = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
         self.assertIn(self.promise, whole.entities)
-        self.assertNotIn(self.promise, whole.for_viewer(False).entities)
+        # (held and still gone: a promise is the DM's by kind, #4802)
+        self.assertNotIn(self.promise, whole.for_viewer(False, frozenset(whole.entities)).entities)
 
     async def test_another_campaign_or_server_never_sees_it(self) -> None:
         other = (await self.campaigns.create(GUILD_A, "Elsewhere", 7)).id

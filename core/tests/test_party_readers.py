@@ -80,6 +80,7 @@ FILES: tuple[str, ...] = (
     "ui/names.py",
     "web/all_names.py",
     "web/graph_cleanup.py",
+    "web/name_found.py",  # the name card's guess leaves a player character out (#5218)
     "web/relationships.py",
     "wizard_finish.py",
 )

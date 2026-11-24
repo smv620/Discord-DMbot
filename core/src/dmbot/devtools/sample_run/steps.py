@@ -187,6 +187,13 @@ async def wait_settled(
     return True
 
 
+# The campaigns this invocation of the tool made whose run is still going (#5247): its own clearing
+# never deletes one, so a run's campaign can't be taken by a sibling's room-making, whatever the
+# order they start in. A run takes its campaign off when it ends (`__main__.run`), so `--repeat`
+# one after another still replaces the last run's campaign, as it always has.
+MADE_HERE: set[str] = set()
+
+
 async def clear_for_deploy(
     db: Database,
     campaigns: CampaignStore,
@@ -260,26 +267,43 @@ async def clear_for_deploy(
                 keep=tuple(c for c in kept.keep if c not in set(extra)),
                 slot_dropped=dropped,
             )
-    deleted = 0
+    deleted: list[str] = []
     timed_out = 0
+    ours = 0
     try:
         for campaign_id in kept.delete:
+            # Two guards (#5247: parallel runs lost their campaigns): a campaign whose run in this
+            # invocation is still going is never deleted by it, and one still busy is kept, never
+            # deleted mid-work
+            # (its run may be another invocation's, still going). A lost run costs a paid sample.
+            if campaign_id in MADE_HERE:
+                ours += 1
+                continue
             # Its background AI work is still being charged: wait for it, so the charge finds the
-            # campaign (#4542). A job that never settles is not waited on for ever.
+            # campaign (#4542). A job that never settles is not waited on for ever: it is kept.
             if not await wait_settled(
                 db, guild, campaign_id, sleep=sleep or asyncio.sleep, limit_s=settle_s
             ):
                 timed_out += 1
+                continue
             await campaigns.delete(guild, campaign_id, only_if_owner=dm)
-            deleted += 1
+            deleted.append(campaign_id)
     except CampaignError:  # (a hand-over just now: the store refuses under its lock)
-        say(f"stopped after deleting {deleted} of {len(kept.delete)} old sample campaign(s)")
+        say(f"stopped after deleting {len(deleted)} of {len(kept.delete)} old sample campaign(s)")
         raise
+    if len(deleted) != len(kept.delete):  # (what was kept by a guard is kept in the line too)
+        spared = tuple(c for c in kept.delete if c not in set(deleted))
+        kept = replace(kept, delete=tuple(deleted), keep=(*kept.keep, *spared))
     say(sample_name.counts_line(kept))
     if kept.slot_dropped:
         say(sample_name.slot_line(kept.slot_dropped))
     if timed_out:
-        say(f"{timed_out} old sample campaign(s) still had background work after the wait: deleted")
+        say(
+            f"{timed_out} old sample campaign(s) still had background work after the wait: kept, "
+            "not deleted (a run may still be using it)"
+        )
+    if ours:
+        say(f"{ours} campaign(s) of runs still going were kept")
     if kept.delete:
         say(f"{len(kept.delete)} old campaign channel(s) to delete by hand")
     return kept, allowed
@@ -315,6 +339,7 @@ async def make_campaign(
     `SampleError`. `deleted`: how many old ones were deleted just before, for the stop line."""
     try:
         made = await campaigns.create(guild, sample_name.name_for(deploy, run, version), dm)
+        MADE_HERE.add(made.id)  # (never deleted by this invocation: #5247)
     except CampaignError as exc:  # no free paid slot, or a name that differs only in capitals
         # Deleting comes first because it frees the paid slot: say how far it got (a count only).
         total = deleted if of is None else of

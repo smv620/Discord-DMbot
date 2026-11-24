@@ -2,7 +2,10 @@
 was heard, DMbot's guess, and the line that made it a name, from the door `dmbot_recap_name_found`
 (migration 0616), in the words and order Discord's card uses (`memory/name_words.py`).
 
-A name with no `name_found` row is today's card (no `found` key). The line's words come from the
+Every waiting name gets `guess` (#5218): DMbot's best guess at what it is, a kind key, or null when
+there is none (the scan's `concept` fallback means "no idea") and for a player character (who
+plays them is asked in Discord). A name with no `name_found` row has no `found` key. The line's
+words come from the
 door only for a speaker who agrees now; one who no longer does is left out with nothing in its
 place. Nothing here is kept or logged.
 """
@@ -11,8 +14,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from dmbot.memory.models import name_key
-from dmbot.memory.name_words import guess_kind, heard_line, heard_times, surest
+from dmbot.memory.models import PLAYER_CHARACTER, name_key
+from dmbot.memory.name_words import card_guess, heard_line, heard_times, surest
 from dmbot.memory.places import LINE_CHARS, cut, find_in, trimmed
 
 SOMEONE = "Someone"  # a speaker whose name was not kept (as the place windows)
@@ -34,6 +37,13 @@ def _line(raw: dict[str, Any] | None, spellings: list[str]) -> dict[str, Any] | 
     return {"speaker": str(raw.get("name") or SOMEONE), "at": at, "text": said}
 
 
+def guess_of(raw: dict[str, Any]) -> str | None:
+    """The kind menu's starting point: `guess_kind` (the rule Discord's card uses too), null when
+    it has none and for a player character."""
+    kind = card_guess(str(raw.get("source", "")), str(raw.get("type", "")), raw.get("role"))
+    return None if kind in ("", PLAYER_CHARACTER) else kind
+
+
 def attach(waiting: list[dict[str, Any]], found: dict[str, Any]) -> None:
     """Give each waiting name that has a found row its `found` key, and order the list as Discord
     does: introduced or typed first, then the most heard, then as made; names with no found row
@@ -42,7 +52,11 @@ def attach(waiting: list[dict[str, Any]], found: dict[str, Any]) -> None:
     for card in waiting:
         raw = found.get(str(card.get("id")))
         if not isinstance(raw, dict):
+            card["guess"] = None
             continue
+        card["guess"] = guess_of(raw)
+        if not raw.get("how"):
+            continue  # (a waiting name with no found row: the guess only)
         name = str(card.get("name", ""))
         own = name_key(name)
         also = [str(a["text"]) for a in raw.get("also", []) if a.get("key") != own]
@@ -55,10 +69,7 @@ def attach(waiting: list[dict[str, Any]], found: dict[str, Any]) -> None:
             "typed": min(typed, times),
             "also": also,
             "heard": heard_line(times, typed, also, written=written),
-            "guess": guess_kind(
-                str(raw.get("source", "")), str(raw.get("type", "")), raw.get("role")
-            )
-            or None,
+            "guess": card["guess"],
             "line": _line(raw.get("line"), [name, *also]),
         }
         ranked.append((surest(str(raw["how"]), times, int(raw.get("createdAt") or 0), name), card))

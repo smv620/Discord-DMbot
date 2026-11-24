@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from dmbot.memory.claims import ClaimStore
+from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.models import GOING
 from dmbot.memory.recall import DM_SCREEN, FACT, RecallService
 from dmbot.memory.store import MemoryStore
@@ -126,6 +127,12 @@ def _due_line(d: Due) -> str:
     return _clip(f"{DUE_PREFIX}{core}{note}")
 
 
+def _capital(text: str) -> str:
+    """A line that starts with a described entry ("the gemstone mine is in Bryn Shander", #5179)
+    starts with a capital, as a sentence does; the rest is never re-cased."""
+    return text[:1].upper() + text[1:]
+
+
 def compose(facts: Facts) -> Note | None:
     """The note, or None when there is nothing to say. Newest first: the last recap, what is
     open about the names heard last time, what was lost or ended, then what waits to be checked.
@@ -136,11 +143,11 @@ def compose(facts: Facts) -> Note | None:
         day = f" (story day {facts.recap_day})" if facts.recap_day else ""
         lines.append(_clip(f"Last recap: *{_plain(facts.recap_title)}*{day}"))
     for sentence in list(facts.open_facts)[:FACT_LINES]:
-        lines.append(_clip(f"• {_plain(sentence)}"))
+        lines.append(_clip(f"• {_capital(_plain(sentence))}"))
     for name, condition in list(facts.conditions)[:CONDITION_LINES]:
         words = CONDITION_WORDS.get(condition)
         if words:
-            lines.append(_clip(f"• {_plain(name)} {words}"))
+            lines.append(_clip(f"• {_capital(_plain(name))} {words}"))
     if facts.waiting > 0:
         said = (
             "1 thing someone said is"
@@ -244,7 +251,7 @@ class PreSession:
             last = await cur.fetchone()
             since = int(last["at"]) if last and last["at"] is not None else 0
             cur = await scope.conn.execute(
-                "SELECT e.name, s.condition FROM memory_states s"
+                "SELECT e.name, e.described, s.condition FROM memory_states s"
                 " JOIN memory_entities e ON e.guild_id = s.guild_id"
                 "   AND e.campaign_id = s.campaign_id AND e.id = s.entity_id"
                 " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.closed_at IS NULL"
@@ -252,7 +259,11 @@ class PreSession:
                 " ORDER BY s.created_at DESC, s.id LIMIT %s",
                 (*scope.ids, list(CONDITION_WORDS), since, CONDITION_LINES),
             )
-            conditions = [(str(r["name"]), str(r["condition"])) for r in await cur.fetchall()]
+            # (a thing or a place with no name reads as the story said it, #5179)
+            conditions = [
+                (in_sentence(str(r["name"]), r["described"]), str(r["condition"]))
+                for r in await cur.fetchall()
+            ]
             # A cheap look first: only a thread has one of these states, so a campaign with none
             # (most of them) skips the full threads read and costs this note a millisecond.
             cur = await scope.conn.execute(

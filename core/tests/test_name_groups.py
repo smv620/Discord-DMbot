@@ -196,6 +196,39 @@ class TheCapitals(unittest.TestCase):
         self.assertEqual(names(got)[0][0], "mcgregor")
 
 
+class LeftToThePass(unittest.TestCase):
+    """Slice 4 (#5133): a group close to a known name that the name pass asked about is the
+    pass's: it leaves the list, each spelling ending `TO_NAME_PASS`."""
+
+    def test_only_a_known_name_s_group_the_pass_asked_about_leaves(self) -> None:
+        known = Match("e1", "Hrothgard")
+        got = ng.settle(
+            [Spelling("Hrothgar", 2), Spelling("Hrothgarr", 2), Spelling("Vorna", 3)],
+            heard_wrong=lambda s: known if s.startswith("Hroth") else None,
+        )
+        self.assertEqual(ng.leave_to_pass(got, {"hrothgar", "hrothgarr"}), 1)
+        self.assertEqual([g.name for g in got.offered], ["Vorna"])
+        self.assertEqual(
+            sorted(n for n, why, _t in got.refused if why == ng.TO_NAME_PASS),
+            ["Hrothgar", "Hrothgarr"],
+        )
+
+    def test_a_group_with_a_spelling_the_pass_never_judged_stays(self) -> None:
+        # (the Expert, on #5133: "hroth gar" beside a fixed "Hrothgarr" must still be asked)
+        known = Match("e1", "Hrothgard")
+        got = ng.settle(
+            [Spelling("Hrothgarr", 2), Spelling("hroth gar", 2)], heard_wrong=lambda _s: known
+        )
+        self.assertEqual(ng.leave_to_pass(got, {"hrothgarr"}), 0)
+        self.assertEqual(len(got.offered), 1)
+
+    def test_a_group_the_pass_did_not_ask_about_stays_as_today(self) -> None:
+        known = Match("e1", "Hrothgard")
+        got = ng.settle([Spelling("Hrothgar", 2)], heard_wrong=lambda _s: known)
+        self.assertEqual(ng.leave_to_pass(got, {"vorna"}), 0)
+        self.assertEqual(len(got.offered), 1)
+
+
 class TheTypedCount(unittest.TestCase):
     def test_a_group_counts_its_typed_hearings_for_the_card(self) -> None:
         got = ng.settle([Spelling("Rothgar", 3), Spelling("Hrothgar", 1, typed=1)])

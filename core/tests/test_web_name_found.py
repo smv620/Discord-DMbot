@@ -5,14 +5,16 @@ who no longer agrees), in Discord's words and order. Invented names throughout."
 from __future__ import annotations
 
 import unittest
-from typing import Any
+from typing import Any, cast
 
 from dmbot.consent import TERMS_VERSION
 from dmbot.memory import name_words
 from dmbot.memory.name_found import NameFound
+from dmbot.recaps import name_answers as na
 from dmbot.transcript.models import Line, line_ref
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import name_checks as web_checks
+from dmbot.web.recaps import RecapError
 from tests.test_web_api import ALICE
 from tests.test_web_name_checks import AT, GUILD, WithChecks
 
@@ -167,3 +169,204 @@ class TheWords(unittest.TestCase):
         self.assertEqual(
             name_words.heard_line(2, 0, [], written=True), "Found 2 times in your text."
         )
+
+
+class FakeConsent:
+    """Who counts as recorded: only the people given (the bot's `Consent.recorded_in`)."""
+
+    def __init__(self, *people: int) -> None:
+        self.people = frozenset(people)
+
+    async def recorded_in(self, guild_id: int, campaign_id: str) -> frozenset[int]:
+        return self.people
+
+
+class TheYes(TheFoundCard):
+    """The yes on a name with a found row (#5144 slice B): the other spellings heard become rules,
+    this session's transcript follows, one Undo takes it all back, and the poll says so."""
+
+    async def start(self) -> tuple[str, str]:
+        # (a table with a player character: the gate holds a new entry for a party that exists, and
+        # an empty party sees only common knowledge, so the lines would be "later")
+        await self.memory.add_entity(
+            GUILD, self.one.id, type="character", name="Mira", source="dm",
+            role="player_character", status="confirmed",
+        )  # fmt: skip
+        harrow = await self.suggest("Hrothgar Hall")
+        await self.memory.add_alias(
+            GUILD, self.one.id, harrow, "Rothgar Hall", kind="misheard", source="scan"
+        )
+        sid = await TranscriptStore(self.db).open_session(GUILD, self.one.id, AT)
+        line = Line(4000, ALICE.id, "We rode to Rothgar Hall at dawn", "We rode to Rothgar Hall")
+        await TranscriptStore(self.db).add_lines(GUILD, sid, [line])
+        await self.keep(harrow, "introduced", line_ref(sid, line.started_ms, ALICE.id), times=3)
+        return harrow, sid
+
+    async def yes(self, harrow: str) -> tuple[str, na.Kept]:
+        await self.ask(harrow, action="confirm", kind="place")
+        answer = await self.answers.claim_next(GUILD)
+        assert answer is not None
+        kept = na.Kept()
+        tools = na.HeardTools(TranscriptStore(self.db), FakeConsent(ALICE.id))
+        why = await na.apply(self.memory, GUILD, {ALICE.id}, answer, kept, self.answers, tools)
+        await self.answers.finish(GUILD, answer, error=why, kept=kept if kept.batch else None)
+        return why, kept
+
+    async def test_a_yes_makes_rules_fixes_the_session_and_says_so(self) -> None:
+        harrow, sid = await self.start()
+        why, kept = await self.yes(harrow)
+        self.assertEqual(why, "")
+        assert kept.batch is not None
+        parsed = na.read_yes_note(kept.note)
+        assert parsed is not None
+        self.assertEqual(parsed[0:3], ("fixed", "place", "Hrothgar Hall"))
+        self.assertEqual(parsed[3], ["Rothgar Hall"])
+        read = await web_checks.read_answer(self.web, self.session, self.ref, harrow)
+        self.assertEqual(read["state"], "done")
+        self.assertEqual(read["batch"], kept.batch)
+        self.assertEqual(read["fixed"], "fixed")
+        self.assertEqual(read["rules"], ["Rothgar Hall"])
+        self.assertIn("now reads as Hrothgar Hall, in this session's transcript", read["note"])
+        lines = await TranscriptStore(self.db).lines(GUILD, sid)
+        self.assertIn("Hrothgar Hall", lines[0].text)
+
+    async def test_the_undo_puts_the_name_the_lines_and_what_made_it_a_name_back(self) -> None:
+        harrow, sid = await self.start()
+        _why, kept = await self.yes(harrow)
+        await self.ask(harrow, action="undo", batch=kept.batch)
+        answer = await self.answers.claim_next(GUILD)
+        assert answer is not None
+        tools = na.HeardTools(TranscriptStore(self.db), FakeConsent(ALICE.id))
+        why = await na.apply(self.memory, GUILD, {ALICE.id}, answer, None, self.answers, tools)
+        await self.answers.finish(GUILD, answer, error=why)
+        self.assertEqual(why, "")
+        entity = await self.memory.entity(GUILD, self.one.id, harrow)
+        assert entity is not None
+        self.assertEqual(entity.status, "proposed")
+        lines = await TranscriptStore(self.db).lines(GUILD, sid)
+        self.assertIn("Rothgar Hall", lines[0].text)
+        found = (await self.memory.name_found(GUILD, self.one.id, [harrow])).get(harrow)
+        assert found is not None
+        self.assertEqual((found.how, found.times), ("introduced", 3))
+        (card,) = (await self.listed())["names"]
+        self.assertEqual(card["found"]["how"], "introduced")
+
+    async def test_a_name_with_no_found_row_keeps_todays_yes(self) -> None:
+        plain = await self.suggest("Aaron")
+        await self.ask(plain, action="confirm", kind="place")
+        answer = await self.answers.claim_next(GUILD)
+        assert answer is not None
+        kept = na.Kept()
+        tools = na.HeardTools(TranscriptStore(self.db), FakeConsent(ALICE.id))
+        why = await na.apply(self.memory, GUILD, {ALICE.id}, answer, kept, self.answers, tools)
+        self.assertEqual((why, kept.batch), ("", None))
+
+
+class TheSoundsLike(TheFoundCard):
+    """ "Sounds like X" on the website's card, worked out at read time with Discord's own code and a
+    DM-only door (#5215)."""
+
+    async def card_of(self, name: str) -> dict[str, Any]:
+        names = (await self.listed())["names"]
+        return next(n for n in names if n["name"] == name)
+
+    async def test_a_one_letter_difference_from_a_known_name_is_offered(self) -> None:
+        known = await self.known("Explorer's League", "faction")
+        await self.suggest("Explorer League")
+        card = await self.card_of("Explorer League")
+        self.assertEqual(
+            card["soundsLike"], {"id": known, "name": "Explorer's League", "spelled": False}
+        )
+
+    async def test_a_name_nothing_sounds_like_has_none(self) -> None:
+        await self.known("Oakmere", "place")
+        await self.suggest("Brannoch")
+        self.assertIsNone((await self.card_of("Brannoch"))["soundsLike"])
+
+    async def test_a_secret_known_name_is_never_sent(self) -> None:
+        await self.known("Explorer's League", "faction", secret=True)
+        await self.suggest("Explorer League")
+        self.assertIsNone((await self.card_of("Explorer League"))["soundsLike"])
+
+    async def test_a_known_name_renamed_since_shows_its_new_name(self) -> None:
+        known = await self.known("Explorer's League", "faction")
+        await self.suggest("Explorer League")
+        await self.memory.rename_entity(GUILD, self.one.id, known, "Explorers League", source="dm")
+        card = await self.card_of("Explorer League")
+        self.assertEqual(card["soundsLike"]["id"], known)
+        self.assertEqual(card["soundsLike"]["name"], "Explorers League")
+
+    async def test_a_name_spelled_out_at_the_table_says_so(self) -> None:
+        await self.known("Explorer's League", "faction")
+        written = await self.memory.add_entity(
+            GUILD, self.one.id, type="concept", name="Explorer League", source="scan",
+            description="Spelled out at the table: Explorer League",
+        )  # fmt: skip
+        await self.answers.link(GUILD, self.one.id, AT, [written.value.id])
+        self.assertTrue((await self.card_of("Explorer League"))["soundsLike"]["spelled"])
+
+    async def test_a_player_gets_no_list_at_all_so_no_match(self) -> None:
+        await self.known("Explorer's League", "faction")
+        await self.suggest("Explorer League")
+        bob = await self.session_of_bob()
+        with self.assertRaises(RecapError):
+            await web_checks.read_checks(self.web, bob, self.ref)
+
+    async def session_of_bob(self) -> Any:
+        from dmbot.web import sessions
+        from tests.test_recap_web import BOB, NOW
+        from tests.test_web_api import THURSDAY
+
+        token = await sessions.sign_in(self.web, cast(Any, BOB), [THURSDAY], now=NOW, days=30)
+        found = await sessions.find(self.web, token, now=NOW)
+        assert found is not None
+        return found
+
+
+class TheGuessOnEveryName(TheFoundCard):
+    """DMbot's best guess rides on every waiting name, found row or not (#5218)."""
+
+    async def propose(self, name: str, **kw: object) -> str:
+        written = await self.memory.add_entity(
+            GUILD,
+            self.one.id,
+            name=name,
+            description="Read from the story",
+            **kw,  # type: ignore[arg-type]
+        )
+        await self.answers.link(GUILD, self.one.id, AT, [written.value.id])
+        return written.value.id
+
+    async def guesses(self) -> dict[str, object]:
+        names = (await self.listed())["names"]
+        assert all("guess" in n for n in names)
+        return {n["name"]: n["guess"] for n in names}
+
+    async def test_an_npc_from_the_story_reader_guesses_npc_with_no_found_row(self) -> None:
+        await self.propose("Cerric", type="character", role="npc", source="extractor")
+        await self.propose("Thornwick", type="place", source="extractor")
+        got = await self.guesses()
+        self.assertEqual((got["Cerric"], got["Thornwick"]), ("npc", "place"))
+        names = (await self.listed())["names"]
+        self.assertTrue(all("found" not in n for n in names))
+
+    async def test_the_scans_concept_fallback_and_a_player_character_have_no_guess(self) -> None:
+        await self.propose("Ferrin", type="concept", source="scan")
+        await self.propose("Mira", type="character", role="player_character", source="extractor")
+        await self.propose("Odd", type="character", role="npc", source="dm")  # (not a reader's)
+        got = await self.guesses()
+        self.assertEqual((got["Ferrin"], got["Mira"], got["Odd"]), (None, None, None))
+
+    async def test_a_name_with_a_found_row_carries_the_same_guess_inside_found_too(self) -> None:
+        place = await self.propose("Thornwick", type="place", source="scan")
+        await self.keep(place, "place", None, times=3)
+        (card,) = (await self.listed())["names"]
+        self.assertEqual((card["guess"], card["found"]["guess"]), ("place", "place"))
+
+
+class TheCardGuess(unittest.TestCase):
+    def test_the_story_reader_counts_for_the_card_but_not_for_auto_accept(self) -> None:
+        self.assertEqual(name_words.card_guess("extractor", "character", "npc"), "npc")
+        self.assertEqual(name_words.guess_kind("extractor", "character", "npc"), "")
+        self.assertEqual(name_words.card_guess("dm", "place", None), "")
+        self.assertEqual(name_words.card_guess("scan", "concept", None), "")

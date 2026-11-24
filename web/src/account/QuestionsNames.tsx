@@ -67,7 +67,7 @@ export default function QuestionsNames({
       ) : (
         list.recaps.map((r) => (
           <section class="stack" key={r.ref} aria-labelledby={`qn-${r.ref}`}>
-            <h3 id={`qn-${r.ref}`}>{words.sessionOf(day(r.at))}</h3>
+            <h3 id={`qn-${r.ref}`}>{r.other === true ? words.otherNames : words.sessionOf(day(r.at))}</h3>
             <LazyPanel
               load={() => import("./RecapNameChecks")}
               what="the names to check"

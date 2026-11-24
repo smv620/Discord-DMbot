@@ -57,6 +57,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
+from dmbot.memory.scan import is_rules_phrase, without_roll
 from dmbot.memory.scene import SceneTracker, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.outbox import (
@@ -2003,6 +2004,10 @@ class RecapFeatures:
             for name in job.to_confirm:
                 if name_key(name) in known or names_a_secret(name, secret, []):
                     continue  # the list has it (or the DM said it is not a name) since
+                if is_rules_phrase(name) or without_roll(name) != name:
+                    # ("Animal Handling check" is a roll, never a name; "Strahd check" is a
+                    # hearing of Strahd, never a new name: #5214)
+                    continue
                 try:
                     await self.memory.add_entity(
                         gid,
@@ -2644,6 +2649,10 @@ class RecapFeatures:
         if store is None or self.memory is None:
             return
         for guild in list(self.guilds):
+            try:  # names no recap linked get the "no recap" list on the website (#5186)
+                await store.link_orphans(guild.id)
+            except Exception as exc:
+                log.warning("Linking names without a recap failed: %s", type(exc).__name__)
             for _ in range(NAME_ANSWERS_PER_ROUND):
                 answer = await store.claim_next(guild.id)
                 if answer is None:
@@ -2656,13 +2665,22 @@ class RecapFeatures:
                             name_answers.NOT_ALLOWED
                             if campaign is None
                             else await name_answers.apply(
-                                self.memory, guild.id, campaign.dm_user_ids, answer, kept, store
+                                self.memory,
+                                guild.id,
+                                campaign.dm_user_ids,
+                                answer,
+                                kept,
+                                store,
+                                name_answers.HeardTools(
+                                    getattr(self, "transcripts", None),
+                                    getattr(self, "consent", None),
+                                ),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
                         log.warning("A name answer failed: %s", type(exc).__name__)
                         why = name_answers.FAILED
-                    stays = answer.action in name_answers.KEPT_ACTIONS and kept.batch is not None
+                    stays = answer.action in name_answers.UNDOABLE and kept.batch is not None
                     if not await store.finish(
                         guild.id, answer, error=why, kept=kept if stays else None
                     ):

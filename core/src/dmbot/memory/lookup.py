@@ -19,10 +19,12 @@ import asyncio
 import contextlib
 import dataclasses
 import logging
+import sys
 import time
 from collections import defaultdict
 from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Iterable
 from dataclasses import dataclass, field
+from pathlib import PurePath
 from typing import Protocol
 
 from dmbot.memory import notify
@@ -218,9 +220,11 @@ class CampaignLookup:
 
     @property
     def hidden(self) -> frozenset[str]:
-        """What the campaign's DMs alone may see: the clues only some people know (#1649), the
-        entries the DM marked "Players don't know yet" (#2321), and the story threads (#1662)
-        and deeds (#1732), which are the DM's plot notes."""
+        """The DM's "shown to the table now" switch, as the flags say (the clues only some people
+        know, the entries marked "Players don't know yet") and the DM-only kinds. For the DM's own
+        "who is it" ranking only (`who_step.candidates_from`), whose output only the DM gets: never
+        to decide what anyone else may read, which is the gate's (`for_viewer`'s `seen`, the name
+        pass's table view, #4802)."""
         return frozenset(
             e.id for e in self.entities.values() if e.unseen_by_players or e.type in DM_ONLY_TYPES
         )
@@ -232,19 +236,22 @@ class CampaignLookup:
         knowledge slice 5b, #4537), never the DM-only types. The campaign's DMs, and the Cleaner,
         get the whole thing. The names of people at the table are not story entries and stay.
 
-        `seen=None` is the old rule (the DM-only entries `hidden`, by the flags), kept only until
-        every caller passes `seen` (Supervisor's ruling P on #4537); each such read logs a
-        counts-only warning, so a caller that was missed shows in the logs."""
+        Anyone but a DM must give `seen`: the old rule by the flags is gone (#4802, Supervisor's
+        ruling P on #4537), so a read without it is a caller's mistake and raises at once, naming
+        the caller and counts only, never reading the flags in its place."""
         if secrets:
             return self
         if seen is None:
-            log.warning("lookup read with no viewer set (%d entries)", len(self.entities))
-            gone = self.hidden
-        else:
-            held = frozenset(seen)
-            gone = frozenset(
-                e.id for e in self.entities.values() if e.id not in held or e.type in DM_ONLY_TYPES
+            caller = sys._getframe(1).f_code  # (which caller forgot `seen`: its name, no data)
+            raise ValueError(
+                f"for_viewer: a read for someone who isn't a DM gave no `seen` "
+                f"({PurePath(caller.co_filename).name}:{caller.co_name}, "
+                f"{len(self.entities)} entries)"
             )
+        held = frozenset(seen)
+        gone = frozenset(
+            e.id for e in self.entities.values() if e.id not in held or e.type in DM_ONLY_TYPES
+        )
         if not gone and not self.secret_neighbours:
             secret_spellings = frozenset(e.text for e in self.names if e.secret)
             return dataclasses.replace(self, guarded=secret_spellings) if secret_spellings else self
