@@ -375,6 +375,7 @@ function NameRow({
                 <strong>{fw.lineLabel}</strong> {fw.line(found.line.speaker, found.line.text)}
               </p>
             )}
+            {/* DMbot's own guess is one tap; the kind list below stays for "something else" until slice B (#5144) reshapes the row. */}
             {guessLabel !== "" && (
               <div class="row">
                 <button type="button" class="button" disabled={busy} aria-label={fw.yesSpelledFor(name.name)} onClick={() => onSend({ action: "confirm", kind: found.guess ?? "" })}>

@@ -14,5 +14,4 @@ export const nameFoundWords = {
   yesSpelling: "✅ Yes, this spelling",
   /** Names longer than this get the short yes. */
   longName: 24,
-  somethingElse: "Something else",
 } as const;

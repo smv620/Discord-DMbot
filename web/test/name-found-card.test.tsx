@@ -79,10 +79,41 @@ describe("a name the session-names reader found", () => {
     expect(within(row("Garrick")).queryByText(fw.lineLabel)).toBeNull();
   });
 
+  it("with no guess shows no guess line and no yes button", async () => {
+    const api = mockApi("table");
+    const real = api.nameChecks!.bind(api);
+    api.nameChecks = async (...a) => {
+      const got = await real(...a);
+      return { ...got, names: got.names.map((n) => (n.found ? { ...n, found: { ...n.found, guess: null } } : n)) };
+    };
+    await open(api);
+    expect(within(row("Garrick")).queryByText(/DMbot's guess/)).toBeNull();
+    expect(within(row("Garrick")).queryByRole("button", { name: fw.yesSpelledFor("Garrick") })).toBeNull();
+  });
+
+  it("says the short yes for a long name", async () => {
+    const api = mockApi("table");
+    const real = api.nameChecks!.bind(api);
+    const long = "Garrick of the Seven Winding Rivers";
+    api.nameChecks = async (...a) => {
+      const got = await real(...a);
+      return { ...got, names: got.names.map((n) => (n.found ? { ...n, name: long } : n)) };
+    };
+    await open(api);
+    expect(within(row(long)).getByRole("button", { name: fw.yesSpelledFor(long) }).textContent).toBe(fw.yesSpelling);
+  });
+
   it("shows nothing of it while the switch is off", async () => {
     live.found = false;
     await open();
     expect(screen.queryByText(/a new name\? Heard/)).toBeNull();
     expect(screen.queryByRole("button", { name: fw.yesSpelledFor("Garrick") })).toBeNull();
+  });
+});
+
+describe("the shipped switch", () => {
+  it("is off until core's read is deployed", async () => {
+    const real = await vi.importActual<typeof import("../src/content/name-found-switch")>("../src/content/name-found-switch");
+    expect(real.NAME_FOUND_LIVE).toBe(false);
   });
 });
