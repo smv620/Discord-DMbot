@@ -24,6 +24,7 @@ from discord import app_commands
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory import heard_rules, name_reader, name_words, tags
+from dmbot.memory.card_match import card_match
 from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.list_names import split_list
 from dmbot.memory.lookup import CampaignLookup
@@ -46,7 +47,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.name_longer import longer_names, widens
-from dmbot.memory.scan import MAX_SUGGESTIONS, Match, near_match_in, sound_keys
+from dmbot.memory.scan import MAX_SUGGESTIONS, Match
 from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.sounds import sound_codes
 from dmbot.recaps import heard_fix
@@ -1432,15 +1433,9 @@ def its_label(name: str) -> str:
 
 
 async def _review_match(memory: MemoryStore, campaign: Campaign, entity: Entity) -> Match | None:
-    """The known name this suggestion sounds like, worked out now (names may have
-    changed, or been made secret, since the session): one small query for names that
-    share its sound codes, confirmed and never secret; none if it can't be read."""
-    try:
-        rows = await memory.sound_alikes(campaign.guild_id, campaign.id, sound_keys(entity.name))
-    except Exception:
-        log.exception("Couldn't look up names that sound like a suggestion")
-        return None
-    return near_match_in(entity.name, (r for r in rows if r[0] != entity.id))
+    """The known name this suggestion sounds like (`card_match`, shared with the website's card,
+    #5215)."""
+    return await card_match(memory, campaign.guild_id, campaign.id, entity.id, entity.name)
 
 
 async def start_review(
