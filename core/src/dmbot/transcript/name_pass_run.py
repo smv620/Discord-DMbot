@@ -75,6 +75,7 @@ async def run(
     asked: set[str] | None = None,
     left_out: set[str] | None = None,
     fixed_keys: set[str] | None = None,
+    table: Collection[str],
 ) -> np.Report:
     """`extra`: the name reader's spellings, joined to the scan's candidates (slice 4, #5133).
     `asked`, when given, gets the key of every spelling the pass settled: written as a list name,
@@ -82,9 +83,12 @@ async def run(
     Filled only once the pass has finished: a pass that fails part way leaves the name step's
     questions as they were. A "sure" answer that wrote nothing (a hidden name in the way) is not
     in it, so the card still asks. `left_out` gets the keys past its limit, which the card keeps;
-    `fixed_keys` the spellings written over, which the step no longer offers."""
+    `fixed_keys` the spellings written over, which the step no longer offers. `table`: the entries
+    the table holds (the gate's table view, read once per pass by the caller, #4802): the lines are
+    the shared transcript, so no name of an entry it doesn't hold is written into one, nor asked
+    about."""
     texts = await pass_lines(store, guild_id, session_id, agreed, game_only)
-    found = np.survey(texts, lookup, people, extra)
+    found = np.survey(texts, lookup, people, extra, table=table)
     if found.left_out:
         log.info("Name pass: %d spelling(s) past the limit, left to the DM", len(found.left_out))
     if not found.items:
@@ -104,7 +108,8 @@ async def run(
         stopped = agreed != before
     cut = bool(getattr(reply, "cut", False))
     verdict = np.decide(reply if isinstance(reply, str) else str(reply.text), found.items)
-    hidden = [n.text for n in lookup.names if n.secret or n.entity_id in lookup.hidden]
+    kept = np.kept_from_table(lookup, table)
+    hidden = [n.text for n in lookup.names if n.secret or n.entity_id in kept]
     # One list name may be meant by several heard spellings: they are one fix with one Undo.
     by_name: dict[str, tuple[str, Counter[str]]] = {}
     for decision in verdict.sure:

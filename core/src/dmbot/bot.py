@@ -12711,8 +12711,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )  # (the reply itself: its `cut` flag is logged, #2649)
 
         now = int(time.time())
+        # What the table may read (#4802, ruling Q2): the pass writes into the shared transcript,
+        # so the gate's table view decides which names it may write or ask about; read once.
+        # Not readable: no pass this time (nothing is written, counts only in the log)
+        try:
+            table = await self.memory.entries_held(gid, cid)
+        except Exception as exc:
+            log.warning("Name pass: the table's holdings couldn't be read (%s)", type(exc).__name__)
+            return 0
         report = await name_pass_run.run(
-            self.transcripts, lookup, ask, gid, cid, session_id,
+            self.transcripts, lookup, ask, gid, cid, session_id, table=table,
             people=people, known=await self.memory.known_keys(gid, cid), agreed=agreed, now=now,
             forget_before=now - int(self.memory.keep_days * 86400), game_only=game_only,
             consenting=recheck or (lambda: self.consent.consenting(gid)), extra=extra, asked=asked,
@@ -13674,12 +13682,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return (lambda _s: None), (lambda _s: False)
         try:
             lookup = await self.lookup.get(gid, cid)
+            # (what the table may read: the gate's table view, as the name pass reads it, #4802)
+            table = (
+                await self.memory.entries_held(gid, cid)
+                if self.memory is not None
+                else frozenset(lookup.entities)
+            )
         except Exception as exc:
             log.warning(
                 "Couldn't read the campaign's names for the name scan (%s)", type(exc).__name__
             )
             return None
-        close_to_secret = name_pass_logic.secret_test(lookup)
+        close_to_secret = name_pass_logic.secret_test(lookup, table)
+        kept = name_pass_logic.kept_from_table(lookup, table)
 
         def heard_wrong(spelling: str) -> name_scan.Match | None:
             seen: set[tuple[str, str]] = set()
@@ -13688,7 +13703,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 for known in lookup.by_sound.get(code, ()):
                     if (
                         known.confirmed and not known.secret and not known.person
-                        and known.entity_id not in lookup.hidden
+                        and known.entity_id not in kept
                         and known.entity_id in lookup.entities
                         and (known.entity_id, known.text) not in seen
                     ):  # fmt: skip

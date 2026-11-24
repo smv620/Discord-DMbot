@@ -68,13 +68,13 @@ FILES: dict[str, tuple[str, str, str]] = {
     ),
     "memory/knowers.py": (MIRRORS, "GraphEngineer", "follow_flags and the 'is it shown' checks"),
     "memory/lookup.py": (
-        READS,
+        SWITCH,
         "GraphEngineer",
-        "`hidden`, read by PlotBot's name pass until #4802's second PR reads the gate's table "
-        "view (ruling Q2); `for_viewer` no longer falls back to the flags (#4802 A+B). The "
-        "Cleaner's `NameEntry.secret` is a SWITCH (ruling Q), and the recap's `entry_hidden` "
-        "fallback stays, fail-stricter (ruling Q3: only when no party could be read; it only "
-        "ever hides more)",
+        '`hidden`, read only by the DM\'s own "who is it" ranking (`who_step`, output to the DM '
+        "alone); the name rows carry copies: the Cleaner's `NameEntry.secret` (ruling Q, it only "
+        "ever guards more) and the recap's `entry_hidden` fallback when no party could be read "
+        "(ruling Q3, fail-stricter). `for_viewer` takes the gate's `seen` and PlotBot's name pass "
+        "the gate's table view (#4802)",
     ),
     "memory/models.py": (DEFINES, "GraphEngineer", "the Entity fields and `unseen_by_players`"),
     "memory/party.py": (DEFINES, "GraphEngineer", "the party faction's row"),
@@ -149,6 +149,7 @@ class TheFlagReaders(unittest.TestCase):
             self.assertGreater(len(why), 10, path)
 
     def test_the_readers_still_to_convert_are_counted_for_the_record(self) -> None:
-        # (a number to watch go down, not a limit: the slice is done when it reaches zero)
+        # (the slice is done: nothing reads a flag to decide who may see something, #4802; a new
+        # line of that kind fails here, as a second rule beside the gate)
         reading = sorted(path for path, (kind, _, _) in FILES.items() if kind == READS)
-        self.assertEqual(len(reading), 1, reading)
+        self.assertEqual(reading, [])

@@ -123,7 +123,6 @@ class Hidden(ConfirmedMemoryTest):
         data = await self.memory.lookup_data(GUILD_A, self.c)
         lookup = CampaignLookup.build(data)
         self.assertIn(self.shadow, lookup.entities)
-        self.assertEqual(lookup.hidden, frozenset({self.shadow}))
         # (someone with no character holds the common knowledge, from the gate, #4802: Jack is
         # common knowledge, the Shadow is kept back)
         await self.memory.add_common_knowledge(GUILD_A, self.c, "entry", [self.jack], source="dm")
