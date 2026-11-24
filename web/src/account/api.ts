@@ -275,6 +275,9 @@ export interface CampaignSettings {
   mapChecks?: boolean;
   /** "Ask me before adding" (#3879; core #3887): on, DMbot asks before it adds what an upload found; off (the default), it adds what it is sure of. Missing from an API older than that. */
   askBeforeAdding?: boolean;
+  /** The campaign's chosen world (#5238; core #5231): its name, or `guessed` when DMbot only guessed it from the adventure and the DM has not
+   * kept it yet; null when none is set. Shown only; missing from an older API. */
+  world?: { id: string; name: string; guessed: boolean } | null;
   gameMasters: number;
 }
 

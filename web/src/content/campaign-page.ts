@@ -92,6 +92,14 @@ export const campaignPage = {
     handOver: "Hand over",
     pause: "Pause",
   },
+  // The campaign's chosen world, shown only (#5238, as Discord's settings card shows it); changing it is done in Discord for now.
+  world: {
+    label: "World",
+    chosen: (name: string): string => name,
+    none: "Not chosen yet",
+    guessed: (name: string): string => `DMbot guessed ${name}: keep it?`,
+    inDiscord: "Keep it or pick another in Discord.",
+  },
   visibility: {
     // Discord's own button names (dm_screen/messages.py VISIBILITY_BUTTONS).
     private: "Only the DM",
