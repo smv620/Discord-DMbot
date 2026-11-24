@@ -61,6 +61,12 @@ async def read_campaign(
         if mine is not None:
             name = mine["name"]
             role = "owner" if mine["owner_user_id"] == session.user_id else "co-dm"
+            # The campaign's world, as Discord's settings card reads it (#5238): null when none is
+            # set; `guessed` while DMbot has only guessed it (the card says "Choose a world" then).
+            cur = await conn.execute(
+                "SELECT dmbot_web_campaign_world(%s, %s) AS found", (guild_id, campaign_id)
+            )
+            world = (await cur.fetchone() or {}).get("found") or {}
             # The campaign's current choices, for the page's Settings group (#2461): the same ones
             # ⚙️ Manage DMbot shows. Only a DM reads the campaign's row, so only a DM gets them.
             settings: dict[str, Any] | None = {
@@ -84,6 +90,15 @@ async def read_campaign(
                 # before adding" (off by default, #3878)
                 "rulesCards": bool(mine["rules_cards"]),
                 "askBeforeAdding": bool(mine["ask_before_adding"]),
+                "world": (
+                    {
+                        "id": str(world["id"]),
+                        "name": str(world["name"]),
+                        "guessed": bool(world["guessed"]),
+                    }
+                    if world.get("id")
+                    else None
+                ),
             }
         else:
             settings = None
