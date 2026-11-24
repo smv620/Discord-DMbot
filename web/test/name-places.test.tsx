@@ -201,7 +201,7 @@ describe("the page itself", () => {
     expect(screen.queryByRole("button", { name: w.button })).toBeNull();
   });
 
-  it("is held with its What's new entry and one GO_LIVE row", async () => {
+  it("is on, with its What's new entry out of held and one GO_LIVE row", async () => {
     const real = await vi.importActual<
       typeof import("../src/content/recap-words")
     >("../src/content/recap-words");

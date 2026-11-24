@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 
 import { nameGroupWords as w } from "../src/content/name-group-words";
+import { NAME_SPLIT_LIVE } from "../src/content/name-split-switch";
 import { held } from "../src/content/whats-new";
 
 describe("name group words (#3406)", () => {
@@ -28,7 +29,7 @@ describe("name group words (#3406)", () => {
     );
   });
 
-  it("the What's new entry exists and is no longer held (the switch is on, #4841)", () => {
-    expect(held.map((h) => h.title)).not.toContain("Split names or make a group");
+  it("the What's new entry is held exactly while the switch is off", () => {
+    expect(held.map((h) => h.title).includes("Split names or make a group")).toBe(!NAME_SPLIT_LIVE);
   });
 });
