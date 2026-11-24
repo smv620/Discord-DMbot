@@ -8,6 +8,10 @@ export const NAME_MAX_LETTERS = 100; // core's NAME_MAX; the door still checks
 
 export const nameCheckWords = {
   heading: "Names to check",
+  // A waiting name that sounds like a known one (#5215): Discord's own words, so both places ask the same.
+  soundsLike: (name: string): string => `Sounds like ${name}. The same, or new?`,
+  itsThat: (name: string): string => `It's ${name}`,
+  itsThatFor: (name: string, waiting: string): string => `It's ${name}: ${waiting}`,
   lead: "DMbot isn't sure about these names. Tell it what each one is. Your recap stays as it is. You can also answer in Discord with 📝 Check new names.",
   yes: "Yes, it's right",
   kind: "What is it?",

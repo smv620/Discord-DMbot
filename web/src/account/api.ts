@@ -1059,6 +1059,9 @@ export interface NameCheck {
   isList?: boolean;
   /** Known groups the list may be: `members` already belong to the group, `others` do not (#3406). */
   groups?: NameGroupHint[];
+  /** The one known name this waiting name sounds like, or null when there is none clear (#5215, core's `card_match`: confirmed, never secret
+   * names only). The card then asks "Sounds like X. The same, or new?". Missing from an older API. */
+  soundsLike?: { id: string; name: string } | null;
   /** How the session-names reader found this name (#5144, core #5182): present only for a name it found; missing from an older API. */
   found?: NameFound;
 }
