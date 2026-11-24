@@ -235,6 +235,25 @@ class TranscriptStore:
             )
             return cur.rowcount > 0
 
+    async def claim_recap_note(self, guild_id: int, session_id: str, now: int) -> bool:
+        """Take the one turn to say the note about last time's recap for this session (#5232): True
+        for the first caller only, so a session that is read again says it once."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE transcript_sessions SET recap_lines_noted_at = %s"
+                " WHERE id = %s AND recap_lines_noted_at IS NULL",
+                (now, session_id),
+            )
+            return cur.rowcount > 0
+
+    async def release_recap_note(self, guild_id: int, session_id: str) -> None:
+        """The note could not be posted: give the turn back, so the next read tries again."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET recap_lines_noted_at = NULL WHERE id = %s",
+                (session_id,),
+            )
+
     async def save_split_and_queue(
         self, guild_id: int, session_id: str, split: Mapping[str, Any], numbers: Collection[int]
     ) -> int:

@@ -2,6 +2,8 @@
 // The heard line comes from core as plain text (`found.heard`), so this page never rebuilds it. The line that made it a name is a
 // quote of the table, shown only when core sends it (its speaker still agrees to be recorded).
 export const nameFoundWords = {
+  /** A waiting name that is also a rules word, asked because the session used it like a name (#5220, #5214 part 2a): Discord's line. */
+  rulesWord: "This is also a rules word. DMbot is asking because the session used it like a name.",
   /** DMbot's guess, under the title: the kind's own label ("a place" is said by the page from the list's kinds). */
   guess: (kindLabel: string): string => `DMbot's guess: ${kindLabel.toLowerCase()}.`,
   /** The line that made it a name: the speaker and the words, exactly as heard. */

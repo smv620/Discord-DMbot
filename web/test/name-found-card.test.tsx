@@ -79,6 +79,23 @@ describe("a name the session-names reader found", () => {
     expect(within(row("Garrick")).queryByText(fw.lineLabel)).toBeNull();
   });
 
+  it("a name that is also a rules word says so above its question (#5220)", async () => {
+    const api = mockApi("table");
+    const real = api.nameChecks!.bind(api);
+    api.nameChecks = async (...a) => {
+      const got = await real(...a);
+      return { ...got, names: got.names.map((n) => (n.found ? { ...n, rulesWord: true } : n)) };
+    };
+    await open(api);
+    expect(within(row("Garrick")).getByText(fw.rulesWord)).toBeTruthy();
+    expect(fw.rulesWord).toBe("This is also a rules word. DMbot is asking because the session used it like a name.");
+  });
+
+  it("says nothing of a rules word when core does not send it", async () => {
+    await open();
+    expect(within(row("Garrick")).queryByText(fw.rulesWord)).toBeNull();
+  });
+
   it("with no guess shows no guess line and no yes button", async () => {
     const api = mockApi("table");
     const real = api.nameChecks!.bind(api);

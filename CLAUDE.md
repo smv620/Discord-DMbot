@@ -25,6 +25,11 @@ cd core && python -m venv .venv && . .venv/bin/activate && pip install -e ".[dev
 ruff check . && ruff format --check . && mypy && pytest
 ```
 CI runs all of the above on every pull request. Never merge red CI.
+**Run the whole check before every push, not only the files you changed** (owner, 2026-11-24, after a
+day when most CI reruns were type errors in test files): core's `ruff check . && ruff format --check .
+&& mypy` over the whole package, tests included, and web's `npm run typecheck`. A core CI run takes
+about half an hour, and every push restarts it, so a mistake you could have caught locally costs the
+whole queue that half hour. Database tests may skip locally; CI stays their proof.
 
 ## Workflow
 - **Branches:**

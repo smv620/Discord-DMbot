@@ -405,6 +405,7 @@ function NameRow({
         </strong>
         {foundOn && found && (
           <>
+            {name.rulesWord === true && <p class="small">{fw.rulesWord}</p>}
             <p class="small">{found.heard}</p>
             {guessLabel !== "" && <p class="small">{fw.guess(guessLabel)}</p>}
             {found.line && (

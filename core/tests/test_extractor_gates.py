@@ -197,6 +197,8 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             record_extraction=AsyncMock(),
             is_import=AsyncMock(return_value=False),
             session_split=AsyncMock(return_value=None),  # (no split yet: every line is play)
+            claim_recap_note=AsyncMock(return_value=True),  # (#5232: said once for each session)
+            release_recap_note=AsyncMock(),
         )
         me = SimpleNamespace(
             settings=SimpleNamespace(
@@ -238,6 +240,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         me.members = None  # (no directory: the cache answers, as before)
         me._people_keys = partial(BOT._people_keys, me)
         me._story_trace_start = partial(BOT._story_trace_start, me)  # (#5123: off, returns None)
+        me._post_recap_note = partial(BOT._post_recap_note, me)  # (#5232)
         return me
 
     def table(self) -> Any:

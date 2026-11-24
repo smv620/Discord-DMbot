@@ -1793,7 +1793,7 @@ class SuggestionReview(_Menu):
         """The current suggestion's text, with its buttons set for it."""
         self.match = await _review_match(memory, campaign, entity)
         # A name read from the DM's background already has its kind; "Yes" confirms it as that.
-        self.known_kind = background_kind(entity)
+        self.known_kind = name_words.card_guess(entity.source, entity.type, entity.role)
         self.name = entity.name
         self.spelled = entity.name if entity.description.startswith(SPELLED_OUT) else ""
         self.fix_to = spelled_fix(entity)
