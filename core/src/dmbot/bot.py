@@ -12602,12 +12602,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         game_only: bool = False,
         import_scan: bool = False,
         card: after_session.AfterSessionCard | None = None,
+        recheck: Callable[[], Awaitable[Collection[int]]] | None = None,
     ) -> list[str]:
         """Suggest the names DMbot heard in `lines` but doesn't know, for the DM to check (the name
         scan of a live session's end and of an imported one, #2106). `users`: the people whose
         names are not story names. `session_id`: the stored transcript the lines came from, so
-        each suggestion keeps where it was said (#2329). Returns the names proposed; nothing is
-        confirmed."""
+        each suggestion keeps where it was said (#2329). `recheck`: who is recorded, asked again
+        after each await; an import gives its own (`recorded_in`, #3305), so the reader and the
+        scan judge an import as the import does (#5184); else `consenting`. Returns the names
+        proposed; nothing is confirmed."""
+
+        def recorded_now() -> Awaitable[Collection[int]]:
+            return recheck() if recheck is not None else self.consent.consenting(gid)
+
         assert self.memory is not None
         # A character's first name said alone ("Claude" for Claude Ambere) is their short name
         # before the scan looks (#3880), so it is never offered as a new name.
@@ -12704,12 +12711,40 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 read, trace, unread = await self._read_session_names(
                     gid, cid, read_in, people, spelled,
                     card=card, progress=moved if stage is not None else None,
+                    recorded=recorded_now,
                 )  # fmt: skip
                 # Who is recorded, asked again after the reader (#5178): the lines used below for
                 # typed counts and for where a name was said are only those of people still
                 # recorded. (`read_in` keeps its numbering: the reader's lines are already checked.)
-                agreed_now = await self.consent.consenting(gid)
-                heard_in = [x for x in heard_in if x.user_id in agreed_now]
+                agreed_now = set(await recorded_now())
+                gone = [x for x in heard_in if x.user_id not in agreed_now]
+                if gone:
+                    heard_in = [x for x in heard_in if x.user_id in agreed_now]
+                    # The reader's own names (#5184): a line of someone who stopped since its last
+                    # check is no hearing; a name left with none goes (`read_in` keeps its numbers)
+                    bad = {str(i) for i, x in enumerate(read_in, 1) if x.user_id not in agreed_now}
+                    read = [
+                        replace(f, lines=kept, times=len(kept))
+                        for f in read
+                        if (kept := tuple(n for n in f.lines if n not in bad))
+                    ]
+                    # The scan's own counts too (#5184): its lines were read before the reader, so
+                    # a stopped speaker's lines come out and the scan runs again on the rest. Only
+                    # the lines the scan read (never a sidebar line), matched by their words
+                    scanned_now = set(lines)
+                    drop = Counter(
+                        x.text
+                        for x in gone
+                        if x.text in scanned_now and not getattr(x, "sidebar", "")
+                    )
+                    kept_lines: list[str] = []
+                    for text in lines:
+                        if drop[text] > 0:
+                            drop[text] -= 1
+                        else:
+                            kept_lines.append(text)
+                    lines = kept_lines
+                    spelled, scan_rows = scanned_names(loose)
                 # A reader that failed after it started leaves "stopped", never a "reading" that
                 # looks as if it still runs; one that never started leaves the stage empty.
                 ended = "read" if unread is not None else "stopped" if started else ""
@@ -13108,6 +13143,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         *,
         card: after_session.AfterSessionCard | None = None,
         progress: Callable[[int, int], Awaitable[None]] | None = None,
+        recorded: Callable[[], Awaitable[Collection[int]]] | None = None,
     ) -> tuple[list[name_reader.Found], list[name_trace.Row], int | None]:
         """The name reader over the session's lines (docs/design/session_names.md, slice 2): every
         name it found, each with its hearings, reason, kind and lines, none yet ended for too few
@@ -13115,6 +13151,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         `scan`: the scan's spellings, for the trace's "joined" rows. Never raises: no AI, a plan
         without it, or a failure give no names and None for `unread`. Who is recorded is asked
         before and after each call. Counts only in the log."""
+
+        # (who is recorded: the caller's own, an import's `recorded_in`, else `consenting`, #5184)
+        def asked() -> Awaitable[Collection[int]]:
+            return recorded() if recorded is not None else self.consent.consenting(gid)
+
         ai = self.name_pass_ai
         if ai is None or not heard_in or self.memory is None:
             return [], [], None
@@ -13156,7 +13197,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     rows,
                     skip,
                     known=sorted(known - rejected),
-                    consenting=lambda: self.consent.consenting(gid),
+                    consenting=asked,
                     max_tokens=OUTPUT_FLOOR,  # (background calls never send less, #2596)
                     rules=(campaign.target_ruleset, campaign.fallback_ruleset),
                     progress=moved if card is not None or progress is not None else None,
@@ -13168,7 +13209,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # every async step). The reader asks after each batch's answer, so a line cited in an
             # earlier batch by someone who stopped later is dropped here too, cited or not; a name
             # left with no line ends as `speaker_stopped`, as the reader ends one
-            agreed = await self.consent.consenting(gid)
+            agreed = await asked()
             ok = {r.number for r in rows if r.user_id in agreed}
             heard: list[name_reader.Heard] = []
             stopped: list[name_reader.Outcome] = []
@@ -15081,7 +15122,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         }
         added = await self._propose_new_names(
             gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id,
-            agreed=set(agreed), game_only=True, import_scan=True,
+            agreed=set(agreed), game_only=True, import_scan=True, recheck=recorded,
         )  # fmt: skip
         if self.import_state is not None:
             await self.import_state.add_strings(
