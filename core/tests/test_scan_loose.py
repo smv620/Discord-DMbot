@@ -743,6 +743,113 @@ class TheBotStep(unittest.TestCase):
         vane = [(f.name, f.also) for f in bot.given if "Vane" in (f.name, *f.also)]
         self.assertEqual(vane, [("Vane", ())])
 
+    def step_said_by(
+        self, bot: Any, texts: list[str], said_by: list[int], session_id: str | None = "s1"
+    ) -> list[str]:
+        from dmbot.bot import DMBot
+
+        given: list[Any] = []
+
+        def add(*a: Any, **k: Any) -> Any:
+            given[:] = a[2]
+            return DMBot._add_scan_names(bot, *a, **k)
+
+        bot._add_scan_names = add
+        bot.given = given
+        bot._write_name_trace = lambda *a: DMBot._write_name_trace(bot, *a)
+        bot._names_still_recorded = lambda *a, **k: DMBot._names_still_recorded(bot, *a, **k)
+        return asyncio.run(
+            DMBot._propose_new_names(
+                bot, 5, "c1", texts, set(), session_id, agreed={1, 2}, said_by=said_by
+            )
+        )
+
+    def test_with_speakers_a_line_fixed_live_never_makes_a_stop_unsure(self) -> None:
+        # (#5199: each line comes with who said it, so a stored copy that reads differently, as
+        # after a fix made live, needs no match: the stopped speaker's lines come out by speaker)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left, as fixed live."]  # fmt: skip
+        bot = self.late([*texts[:3], "Then Mira left."], "Vorna")
+        self.stop_in(bot, "drop_language_suggestions")
+        made = self.step_said_by(bot, texts, [2, 2, 1, 1])
+        self.assertEqual(made, ["Mira"])
+        sent = bot._scan_kinds.await_args.args[3]
+        self.assertFalse(any("Vorna" in t for t in sent))
+
+    def test_with_speakers_and_no_stored_transcript_the_rest_are_still_suggested(self) -> None:
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = stand_in(tempfile.mkdtemp(), {}, on=False, texts=texts)
+        bot.consent.consenting.return_value = {1, 2}
+        bot.transcripts = None
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.step_said_by(bot, texts, [2, 2, 1, 1], session_id=None), ["Mira"])
+
+    def test_with_speakers_the_same_words_said_twice_lose_only_the_stopped_copy(self) -> None:
+        # (#5199: "Vorna" heard once from each, both stored; the one who stays leaves a single
+        # hearing, too few. Without speakers this was unsure and suggested nothing, #5190)
+        texts = ["We met Vorna today.", "We met Vorna today.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts, "nobody")
+        by = [2, 1, 1, 1]
+
+        async def lines(*_: Any) -> list[Any]:
+            return [SimpleNamespace(user_id=u, text=t, topic="game", typed=False)
+                    for u, t in zip(by, texts, strict=True)]  # fmt: skip
+
+        bot.transcripts = SimpleNamespace(lines=lines)
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.step_said_by(bot, texts, by), ["Mira"])
+
+    def test_with_speakers_a_stop_during_the_writes_writes_no_more(self) -> None:
+        # (#5199: between writes, the speakers' own question is asked, even for a line the
+        # stored transcript holds differently, as after a fix made live)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left, as fixed live."]  # fmt: skip
+        bot = self.late([*texts[:3], "Then Mira left."], "nobody")
+        written: list[str] = []
+        real = bot.memory.add_entity
+
+        async def add_entity(*a: Any, name: str, **k: Any) -> Any:
+            written.append(name)
+            bot.consent.consenting.return_value = {1}  # (speaker 2 stops during the first write)
+            return await real(*a, name=name, **k)
+
+        bot.memory.add_entity = add_entity
+        made = self.step_said_by(bot, texts, [2, 2, 1, 1])
+        self.assertEqual(len(written), 1)
+        self.assertEqual(made, written)
+
+    def test_with_speakers_a_stop_during_the_reader_takes_their_lines_out(self) -> None:
+        # (#5199: after the reader, by speaker; none of their lines was saved, so the stored
+        # transcript alone could not say they spoke)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left, as fixed live.",
+                 "We saw Mira today.", "Then Mira left."]  # fmt: skip
+        bot = self.late(texts[2:], "nobody", on=True)  # (none of speaker 2's lines was saved)
+        real = bot._read_session_names
+
+        async def read(*a: Any, **k: Any) -> Any:
+            bot.consent.consenting.return_value = {1}  # (speaker 2 stops while the reader reads)
+            return await real(*a, **k)
+
+        bot._read_session_names = read
+        self.assertEqual(self.step_said_by(bot, texts, [2, 2, 1, 1]), ["Mira"])
+        sent = bot._scan_kinds.await_args.args[3]
+        self.assertFalse(any("Vorna" in t for t in sent))
+        # (taken out right after the reader, so the dev trace is of what is left and is written;
+        # a stop caught only later leaves no trace)
+        names = [n for _s, n, _r in self.ends(bot.settings.name_trace_dir)]
+        self.assertIn("Mira", names)
+        self.assertNotIn("Vorna", names)
+
+    def test_speakers_that_do_not_match_the_lines_are_not_used(self) -> None:
+        # (#5199: a count that doesn't match falls back to matching words, as before)
+        texts = ["Then we met Vorna at the gate.", "And Vorna left.", "We saw Mira today.",
+                 "Then Mira left."]  # fmt: skip
+        bot = self.late(texts, "Vorna")
+        self.stop_in(bot, "drop_language_suggestions")
+        self.assertEqual(self.step_said_by(bot, texts, [1]), ["Mira"])
+
     def test_after_the_reader_a_stopped_speakers_lines_are_never_kept(self) -> None:
         # (#5178: who is recorded is asked again after the reader; nobody now, so no line of the
         # session is stored as where a name was said)

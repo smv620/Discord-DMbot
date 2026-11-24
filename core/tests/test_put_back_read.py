@@ -51,6 +51,7 @@ class Base(DatabaseTest):
             )
         self.agreed = {ALICE, BOB}
         self.scanned: list[list[str]] = []
+        self.said_by: list[list[int]] = []
         dm: Any = DMBot.__new__(DMBot)
         self.dm = dm
         dm.transcripts = self.store
@@ -77,8 +78,11 @@ class Base(DatabaseTest):
         dm.tables = {}
         dm._ending = {}
 
-        async def propose(gid: int, cid: str, texts: list[str], *_: Any, **__: Any) -> list[str]:
+        async def propose(gid: int, cid: str, texts: list[str], *_: Any, **kw: Any) -> list[str]:
             self.scanned.append(list(texts))
+            # (each line with who said it, in step, #5199)
+            self.said_by.append(list(kw["said_by"]))
+            assert len(kw["said_by"]) == len(texts)
             return []
 
         dm._propose_new_names = propose
@@ -95,6 +99,7 @@ class Reading(Base):
         self.assertEqual(len(await self.waiting()), 2)
         self.assertEqual(await self.dm._read_put_back_all(GUILD), 2)
         self.assertEqual(self.scanned, [["Kesh Varn waits", "Orla Fenn knows"]])
+        self.assertEqual(self.said_by, [[ALICE, BOB]])  # (each line with who said it, #5199)
         self.assertEqual(await self.waiting(), [])
         self.assertEqual(await self.dm._read_put_back_all(GUILD), 0)
         self.assertEqual(len(self.scanned), 1)  # nothing read twice
@@ -105,6 +110,7 @@ class Reading(Base):
         self.agreed = {ALICE}
         self.assertEqual(await self.dm._read_put_back_all(GUILD), 1)
         self.assertEqual(self.scanned, [["Kesh Varn waits"]])  # not Bob's
+        self.assertEqual(self.said_by, [[ALICE]])
         self.assertEqual(await self.waiting(), [])  # Bob's line is done too
 
     async def test_the_extractor_reads_only_the_put_back_lines_numbered_in_place(self) -> None:

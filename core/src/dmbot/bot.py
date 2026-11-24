@@ -1073,7 +1073,7 @@ class HeardAnswer:
 def _untold(lines: Sequence[str], heard_in: Sequence[Line]) -> bool:
     """Whether a line the scan read has no stored copy to say who said it (#5190): a failed
     save, or two speakers saying the same words with one copy stored. Counted, so one stored copy
-    never vouches for two."""
+    never vouches for two. (Lines that come with their speakers, #5199, never need it.)"""
     stored = Counter(x.text for x in heard_in if not getattr(x, "sidebar", ""))
     return bool(Counter(lines) - stored)
 
@@ -1084,27 +1084,34 @@ def _without_stopped(
     heard_in: Sequence[Line],
     read: Sequence[name_reader.Found],
     read_in: Sequence[Line],
-) -> tuple[list[str], list[Line], list[name_reader.Found]]:
+    said_by: Sequence[int] | None = None,
+) -> tuple[list[str], list[int] | None, list[Line], list[name_reader.Found]]:
     """A stopped speaker taken out of the name step (#5184, #5187): their lines from where a
-    name was said; from the scan's words, one copy for each of their lines the scan read (never a
-    sidebar line), matched by its words, since the scan's lines carry no speaker; and from the
-    reader's names, whose cited lines are numbered as `read_in` (a name left with none goes)."""
-    gone = [x for x in heard_in if x.user_id not in now]
-    said = set(lines)
-    drop = Counter(x.text for x in gone if x.text in said and not getattr(x, "sidebar", ""))
+    name was said; from the scan's words, each line they said, by who said it when the lines
+    come with their speakers (`said_by`, #5199), else one copy for each of their stored lines
+    the scan read (never a sidebar line), matched by its words; and from the reader's names, whose
+    cited lines are numbered as `read_in` (a name left with none goes)."""
     kept_lines: list[str] = []
-    for text in lines:
-        if drop[text] > 0:
-            drop[text] -= 1
-        else:
-            kept_lines.append(text)
+    kept_by: list[int] | None = None
+    if said_by is not None:
+        pairs = [(t, u) for t, u in zip(lines, said_by, strict=True) if u in now]
+        kept_lines, kept_by = [t for t, _u in pairs], [u for _t, u in pairs]
+    else:
+        gone = [x for x in heard_in if x.user_id not in now]
+        said = set(lines)
+        drop = Counter(x.text for x in gone if x.text in said and not getattr(x, "sidebar", ""))
+        for text in lines:
+            if drop[text] > 0:
+                drop[text] -= 1
+            else:
+                kept_lines.append(text)
     bad = {str(i) for i, x in enumerate(read_in, 1) if x.user_id not in now}
     kept_read = [
         replace(f, lines=kept, times=len(kept))
         for f in read
         if (kept := tuple(n for n in f.lines if n not in bad))
     ]
-    return kept_lines, [x for x in heard_in if x.user_id in now], kept_read
+    return kept_lines, kept_by, [x for x in heard_in if x.user_id in now], kept_read
 
 
 class DMBot(RecapFeatures, commands.AutoShardedBot):
@@ -11049,8 +11056,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             dms = {*campaign.dm_user_ids}
             users = {x.user_id for x in every} | agreed | dms
             added = await self._propose_new_names(
-                gid, cid, [x.text for x in chosen], users, sid, agreed=agreed
-            )
+                gid, cid, [x.text for x in chosen], users, sid, agreed=agreed,
+                said_by=[x.user_id for x in chosen],
+            )  # fmt: skip
             log.info("Put-back lines: %d line(s) scanned, %d new name(s)", len(chosen), len(added))
             # One try once a batch may have been sent: a retry would send the batches that worked
             # again (duplicate claims). Nothing sent yet: the lines wait for the next sweep.
@@ -12640,14 +12648,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         import_scan: bool = False,
         card: after_session.AfterSessionCard | None = None,
         recheck: Callable[[], Awaitable[Collection[int]]] | None = None,
+        said_by: Sequence[int] | None = None,
     ) -> list[str]:
         """Suggest the names DMbot heard in `lines` but doesn't know, for the DM to check (the name
         scan of a live session's end and of an imported one, #2106). `users`: the people whose
         names are not story names. `session_id`: the stored transcript the lines came from, so
         each suggestion keeps where it was said (#2329). `recheck`: who is recorded, asked again
         after each await; an import gives its own (`recorded_in`, #3305), so the reader and the
-        scan judge an import as the import does (#5184); else `consenting`. Returns the names
-        proposed; nothing is confirmed."""
+        scan judge an import as the import does (#5184); else `consenting`. `said_by`: each line's
+        speaker, in order (#5199), so a speaker who stops is taken out by who said it, never by
+        matching words; without it (or with a count that doesn't match) the words are matched, as
+        before. Returns the names proposed; nothing is confirmed."""
+        if said_by is not None and len(said_by) != len(lines):
+            log.warning(  # counts only
+                "Name scan: %d speaker(s) for %d line(s); matched by words instead",
+                len(said_by), len(lines),
+            )  # fmt: skip
+            said_by = None
 
         def recorded_now() -> Awaitable[Collection[int]]:
             return recheck() if recheck is not None else self.consent.consenting(gid)
@@ -12754,12 +12771,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # typed counts and for where a name was said are only those of people still
                 # recorded. (`read_in` keeps its numbering: the reader's lines are already checked.)
                 agreed_now = set(await recorded_now())
-                gone = [x for x in heard_in if x.user_id not in agreed_now]
+                gone = any(x.user_id not in agreed_now for x in heard_in) or any(
+                    u not in agreed_now for u in said_by or ()
+                )
                 if gone:
                     # (one rule for taking a stopped speaker out, shared with the late checks:
                     # `_without_stopped`, #5184, #5187)
-                    lines, heard_in, read = _without_stopped(
-                        agreed_now, lines, heard_in, read, read_in
+                    lines, said_by, heard_in, read = _without_stopped(
+                        agreed_now, lines, heard_in, read, read_in, said_by
                     )
                     spelled, scan_rows = scanned_names(loose)
                 # A reader that failed after it started leaves "stopped", never a "reading" that
@@ -12874,10 +12893,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             speaker's lines come out and the names left are those the rest still hold. None: they
             can't be told apart, so nothing is suggested; the name pass's words are put back for
             the next scan, never lost."""
-            nonlocal lines, heard_in, read
-            names, lines, heard_in, read, unsure = await self._names_still_recorded(
+            nonlocal lines, said_by, heard_in, read
+            names, lines, said_by, heard_in, read, unsure = await self._names_still_recorded(
                 recorded_now, agreed, names, lines, heard_in, read, read_in, skip, loose,
-                keep={name_key(n): t for n, t in asked},
+                keep={name_key(n): t for n, t in asked}, said_by=said_by,
             )  # fmt: skip
             if not unsure:
                 # (#5190: a name that lost hearings says so on its card: never more typed hearings
@@ -12911,9 +12930,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             nonlocal late_stop
             now = set(await recorded_now())
             ok = all(x.user_id in now for x in heard_in)
+            if said_by is not None:  # (each line's speaker is known: theirs is the question, #5199)
+                ok = ok and all(u in now for u in said_by)
             # (with no stored transcript, or a line it doesn't hold, the speaker can't be told:
             # everyone who agreed must still be recorded, #5190)
-            if not heard_in or _untold(lines, heard_in):
+            elif not heard_in or _untold(lines, heard_in):
                 ok = ok and (agreed is None or set(agreed) <= now)
             late_stop = late_stop or not ok
             return ok
@@ -13017,7 +13038,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         loose: bool,
         *,
         keep: Mapping[str, int] | None = None,
-    ) -> tuple[list[Suggestion], list[str], list[Line], list[name_reader.Found], bool]:
+        said_by: Sequence[int] | None = None,
+    ) -> tuple[
+        list[Suggestion], list[str], list[int] | None, list[Line], list[name_reader.Found], bool
+    ]:
         """The name step's late consent check (#5187; CLAUDE.md: re-checked after every async
         step). Who is recorded is asked again; a stopped speaker's lines come out
         (`_without_stopped`), and a suggestion stays only while the rest still hold it: the scan
@@ -13027,19 +13051,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         `keep`: the name pass's words by name key, with their own counts (not from these lines).
         The last value is True when someone stopped and their lines can't be told apart (no stored
         transcript, or a line the scan read that the stored one doesn't hold): the caller suggests
-        nothing rather than risk it."""
+        nothing rather than risk it. `said_by`: each line's speaker (#5199): then a stopped
+        speaker's lines come out by who said them, and none is ever unsure."""
         keep = keep or {}
+        by = list(said_by) if said_by is not None else None  # (a copy: the caller's stays)
         now = set(await recorded())
-        if not heard_in:
-            unsure = agreed is not None and bool(set(agreed) - now)
-            return list(names), list(lines), list(heard_in), list(read), unsure
-        if all(x.user_id in now for x in heard_in):
-            return list(names), list(lines), list(heard_in), list(read), False
-        # (#5190: a line the scan read that the stored transcript doesn't hold, such as one a failed
-        # save left out, has no speaker to check, so it could be the stopped speaker's: unsure)
-        if _untold(lines, heard_in):
-            return list(names), list(lines), list(heard_in), list(read), True
-        lines, heard_in, read = _without_stopped(now, lines, heard_in, read, read_in)
+        same = (list(names), list(lines), by, list(heard_in), list(read))
+        if by is not None:
+            if all(u in now for u in by) and all(x.user_id in now for x in heard_in):
+                return (*same, False)
+        else:
+            if not heard_in:
+                return (*same, agreed is not None and bool(set(agreed) - now))
+            if all(x.user_id in now for x in heard_in):
+                return (*same, False)
+            # (#5190: a line the scan read that the stored transcript doesn't hold, such as one a
+            # failed save left out, has no speaker to check, so it could be the stopped one's)
+            if _untold(lines, heard_in):
+                return (*same, True)
+        lines, by, heard_in, read = _without_stopped(now, lines, heard_in, read, read_in, by)
         scanned: dict[str, int] = {}
         for found in find_new_names(lines, skip, min_times=1, unlimited=True, loose=loose):
             scanned[name_key(found.name)] = scanned.get(name_key(found.name), 0) + found.times
@@ -13076,7 +13106,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             shown = s.name if heard[s.name] else max(left, key=lambda t: heard[t])
             also = tuple(t for t in left if t != shown)
             kept.append(replace(s, name=shown, times=times, also=also))
-        return kept, list(lines), list(heard_in), list(read), False
+        return kept, list(lines), by, list(heard_in), list(read), False
 
     async def _add_scan_names(
         self,
@@ -13597,10 +13627,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         gid, cid = table.guild_id, table.campaign_id
         with log_context(guild_id=gid, campaign_id=cid):
             agreed = await self.consent.consenting(gid)
-            lines = [text for uid, text in table.heard if uid in agreed]
+            # (each line with who said it, so a speaker who stops while the names are read is
+            # taken out by who said it, never by matching words, #5199)
+            heard = [(uid, text) for uid, text in table.heard if uid in agreed]
             speakers = {uid for uid, _ in table.heard}
             table.heard = []  # the session is over; free it
-            if not lines:
+            if not heard:
                 return
             users = speakers | agreed | {table.dm_user_id}
             users |= table.dm_user_ids
@@ -13614,11 +13646,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
                 if fixed and self.transcripts is not None:
                     try:
-                        lines = [
-                            x.text
+                        heard = [
+                            (x.user_id, x.text)
                             for x in await self.transcripts.lines(gid, table.transcript_session_id)
                             if x.user_id in agreed and not x.sidebar and not x.typed
-                        ] or lines
+                        ] or heard
                         repaired = True  # (every stored line is in it, the turned-back ones too)
                     except Exception:
                         log.exception("Name pass: couldn't read the repaired lines")
@@ -13626,8 +13658,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     # The lines the end-of-session pass turned back into game talk were labelled
                     # off-topic while the session ran, so the held words left them out (#2587).
                     try:
-                        lines += [
-                            x.text
+                        heard += [
+                            (x.user_id, x.text)
                             for x in await self.transcripts.leaned_lines(
                                 gid, table.transcript_session_id
                             )
@@ -13636,10 +13668,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     except Exception:
                         log.exception("Name pass: couldn't read the lines turned back")
             added = await self._propose_new_names(
-                gid, cid, lines, users, table.transcript_session_id, agreed=agreed,
-                card=DMBot._after_card(self, table),
+                gid, cid, [text for _uid, text in heard], users, table.transcript_session_id,
+                agreed=agreed, card=DMBot._after_card(self, table),
+                said_by=[uid for uid, _text in heard],
             )  # fmt: skip
-            log.info("After-session scan: %d line(s), %d new name(s)", len(lines), len(added))
+            log.info("After-session scan: %d line(s), %d new name(s)", len(heard), len(added))
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
             ):
@@ -15322,6 +15355,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         added = await self._propose_new_names(
             gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id,
             agreed=set(agreed), game_only=True, import_scan=True, recheck=recorded,
+            said_by=[uid for uid, _ in lines],
         )  # fmt: skip
         if self.import_state is not None:
             await self.import_state.add_strings(
