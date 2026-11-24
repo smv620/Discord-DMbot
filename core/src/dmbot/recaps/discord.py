@@ -2644,6 +2644,10 @@ class RecapFeatures:
         if store is None or self.memory is None:
             return
         for guild in list(self.guilds):
+            try:  # names no recap linked get the "no recap" list on the website (#5186)
+                await store.link_orphans(guild.id)
+            except Exception as exc:
+                log.warning("Linking names without a recap failed: %s", type(exc).__name__)
             for _ in range(NAME_ANSWERS_PER_ROUND):
                 answer = await store.claim_next(guild.id)
                 if answer is None:

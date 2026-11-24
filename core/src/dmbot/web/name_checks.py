@@ -20,7 +20,7 @@ from dmbot.memory.name_longer import MAX_OFFERED, longer_names
 from dmbot.memory.places import LINE_CHARS, cut, find_in, trimmed
 from dmbot.names import not_names
 from dmbot.recaps import name_answers
-from dmbot.recaps.notify import job_ref
+from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.web import name_found, name_groups, players_lines, recaps, relationships, scenes
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError
@@ -46,6 +46,20 @@ def _entity_id(value: object) -> str:
     return value
 
 
+async def _recap_or_other(conn: Any, ref: str, session: Session) -> tuple[int, str, int]:
+    """(server, campaign, session time) of a recap's names list, or of the campaign's "other new
+    names" (#5186): the names no recap linked, kept at session 0, which has no recap row to find.
+    The doors that follow check the DM and the link; anyone outside the server gets "not found"."""
+    parsed = parse_ref(ref)
+    if parsed is not None and parsed[2] == 0:
+        gid, cid, _zero = parsed
+        recaps._guild_of(session, gid)
+        await recaps._scoped(conn, gid)
+        return gid, cid, 0
+    gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
+    return gid, cid, at
+
+
 async def read_campaign_checks(db: Database, session: Session, ref: str) -> dict[str, Any]:
     """The recaps of one campaign with names waiting to be checked (#3438), oldest session first:
     `{recaps: [{ref, at, count}]}`, ids, session times and counts only (the count is an upper bound:
@@ -62,16 +76,17 @@ async def read_campaign_checks(db: Database, session: Session, ref: str) -> dict
         found = (await cur.fetchone() or {}).get("r")
     if found is None:
         raise RecapError("not_found")
-    return {
-        "recaps": [
-            {
-                "ref": job_ref(guild_id, campaign_id, int(r["at"])),
-                "at": int(r["at"]),
-                "count": int(r["count"]),
-            }
-            for r in found
-        ]
-    }
+    listed = [
+        {
+            "ref": job_ref(guild_id, campaign_id, int(r["at"])),
+            "at": int(r["at"]),
+            "count": int(r["count"]),
+            "other": int(r["at"]) == 0,  # the names no recap linked (#5186)
+        }
+        for r in found
+    ]
+    listed.sort(key=lambda r: (r["other"], r["at"]))  # (the recaps in order, "other" last)
+    return {"recaps": listed}
 
 
 async def read_checks(
@@ -80,7 +95,7 @@ async def read_checks(
     """The recap's names to check, the known names to pick from, and the kinds. Only a DM of the
     campaign; anyone else gets "not found"."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
+        gid, cid, at = await _recap_or_other(conn, ref, session)
         cur = await conn.execute("SELECT dmbot_recap_names_read(%s, %s, %s) AS r", (gid, cid, at))
         got = (await cur.fetchone() or {}).get("r")
         if got is not None:
@@ -245,7 +260,7 @@ async def answer(
             raise RecapError("bad_text")
         target = str(batch)
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
+        gid, cid, at = await _recap_or_other(conn, ref, session)
         cur = await conn.execute(
             "SELECT dmbot_name_answer_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
             (gid, cid, at, ent, action, kind, target, text),
@@ -284,7 +299,7 @@ async def read_answer(
     an answer that finished is deleted, and so is one that was undone."""
     ent = _entity_id(entity_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
+        gid, cid, at = await _recap_or_other(conn, ref, session)
         cur = await conn.execute(
             "SELECT dmbot_name_answer_read(%s, %s, %s, %s) AS r", (gid, cid, at, ent)
         )

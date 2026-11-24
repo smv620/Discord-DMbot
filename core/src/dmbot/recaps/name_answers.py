@@ -111,7 +111,16 @@ class AnswerStore:
                 " ON CONFLICT DO NOTHING",
                 (guild_id, campaign_id, session_at, guild_id, campaign_id, ids),
             )
-            return int(cur.rowcount)
+            made = int(cur.rowcount)
+            if session_at != 0:
+                # (a name the "no recap" list took before this recap linked it is on this recap's
+                # list now, and only there: #5186)
+                await conn.execute(
+                    "DELETE FROM recap_name_checks WHERE guild_id = %s AND campaign_id = %s"
+                    " AND session_at = 0 AND entity_id = ANY(%s)",
+                    (guild_id, campaign_id, ids),
+                )
+            return made
 
     async def link_like(
         self, guild_id: int, campaign_id: str, from_entity: str, entity_ids: Sequence[str]
@@ -130,6 +139,22 @@ class AnswerStore:
                 " AND e.guild_id = k.guild_id AND e.campaign_id = k.campaign_id"
                 " AND e.id = ANY(%s) ON CONFLICT DO NOTHING",
                 (guild_id, campaign_id, from_entity, ids),
+            )
+            return int(cur.rowcount)
+
+    async def link_orphans(self, guild_id: int) -> int:
+        """Keep every proposed name that no recap has linked at session 0, "no recap" (#5186), so
+        the website's list can open it as it opens a recap's: the same list, card and answers,
+        which all go by this link. Ids only; repeats change nothing. Returns how many were new."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "INSERT INTO recap_name_checks (guild_id, campaign_id, session_at, entity_id)"
+                " SELECT e.guild_id, e.campaign_id, 0, e.id FROM memory_entities e"
+                " WHERE e.guild_id = %s AND e.status = 'proposed' AND e.merged_into IS NULL"
+                " AND NOT EXISTS (SELECT 1 FROM recap_name_checks k WHERE k.guild_id = e.guild_id"
+                " AND k.campaign_id = e.campaign_id AND k.entity_id = e.id)"
+                " ON CONFLICT DO NOTHING",
+                (guild_id,),
             )
             return int(cur.rowcount)
 
