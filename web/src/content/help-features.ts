@@ -49,7 +49,7 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
-    whatsNew: "The website can show what is waiting for you, and answer \"Which Mara?\"",
+    whatsNew: "What is waiting for you, online",
     text: "Under the count line, Waiting for you lists what DMbot needs your answer on. Facts heard at the table: Yes, that's true, True, but keep it secret, or Not right. Connections found in a backstory are grouped by the upload they came from: Keep or Skip each one, or Keep all, which keeps the ready ones shown, up to 50 at a time. Skip is the same as No on Discord. A connection with a new name in it waits until you answer that name in Check new names. Same name, which one? has a button for each match and Neither. DMbot never decides these. Players never see this list.",
   },
   {
@@ -79,7 +79,7 @@ export const featureSteps: FeatureStep[] = [
   },
   {
     audience: "gameMaster",
-    whatsNew: "What people believe, on the Story Graph",
+    whatsNew: "What people believe, online",
     text: "On a campaign's Story Graph, What people believe lists theories, accusations and reveals DMbot heard. Press Keep as a belief to note what that person thinks, or Drop it to skip one. Undo is there right after you keep one. A belief is never treated as a fact. If a new name is in it, answer Check new names first. Only you, the DM, see this.",
   },
   {
