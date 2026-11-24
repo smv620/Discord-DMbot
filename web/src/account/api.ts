@@ -1059,8 +1059,17 @@ export interface NameCheck {
   isList?: boolean;
   /** Known groups the list may be: `members` already belong to the group, `others` do not (#3406). */
   groups?: NameGroupHint[];
+  /** The one known name this waiting name sounds like, or null when there is none clear (#5215, core's `card_match`: confirmed, never secret
+   * names only; `spelled` is true when someone spelled it out at the table). The card then asks "Sounds like X. The same, or new?". Missing from an older API. */
+  soundsLike?: { id: string; name: string; spelled?: boolean } | null;
+  /** DMbot's best guess at what this name is, a kind key, or null when it has none (#5218; core's `guess_kind` on every waiting name).
+   * The kind menu starts on it when it is one of the list's kinds. Missing from an older API. */
+  guess?: string | null;
   /** How the session-names reader found this name (#5144, core #5182): present only for a name it found; missing from an older API. */
   found?: NameFound;
+  /** True when this name is also a rules word and the session used it like a name (#5220, core's `name_reader.rules_word` with a reader's
+   * reason): the card adds a line above its question. Missing from an older API and for every other name. */
+  rulesWord?: boolean;
 }
 /** What made a waiting name a name (#5144). `heard` is Discord's heard line as plain text; `line` is the one line that made it
  * a name, or null when none is kept or its speaker no longer agrees. */

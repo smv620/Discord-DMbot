@@ -87,6 +87,7 @@ class TheCampaignPage(Base):
                 "mapChecks",
                 "rulesCards",
                 "askBeforeAdding",
+                "world",
             },
         )
         self.assertEqual(got["settings"]["gameMasters"], 1)
@@ -115,7 +116,8 @@ class TheCampaignPage(Base):
             {"visibility": "private", "level": "quiet", "keepDays": 90, "paused": True,
              "storyMode": "guide", "dndbeyondInvite": "", "mainRules": "2024",
              "fallbackRules": "2014", "gameMasters": 2, "shareImprove": False,
-             "mapChecks": True, "rulesCards": False, "askBeforeAdding": False},
+             "mapChecks": True, "rulesCards": False, "askBeforeAdding": False,
+             "world": None},
         )  # fmt: skip
 
     async def test_importing_is_said_for_the_campaigns_server(self) -> None:
@@ -132,6 +134,47 @@ class TheCampaignPage(Base):
 
     def ref_of(self, campaign: Any) -> str:
         return f"{THURSDAY.id}.{campaign.id}"
+
+    async def mark_world(self, name: str, *, source: str) -> str:
+        """A confirmed place marked as the campaign's setting, kept (`dm`) or only guessed
+        (`read`), as the bot stores it (#4173)."""
+        from dmbot.memory.store import MemoryStore
+
+        written = await MemoryStore(self.db).add_entity(
+            THURSDAY.id, self.one.id, type="place", name=name, source="dm", status="confirmed"
+        )
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET setting = TRUE, setting_from = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (source, THURSDAY.id, self.one.id, written.value.id),
+            )
+        return str(written.value.id)
+
+    async def test_the_world_is_null_when_none_is_set_and_named_when_kept(self) -> None:
+        got = await read_campaign(self.web, self.session, self.ref_of(self.one))
+        self.assertIsNone(got["settings"]["world"])
+        place = await self.mark_world("Faerûn", source="dm")
+        got = await read_campaign(self.web, self.session, self.ref_of(self.one))
+        self.assertEqual(
+            got["settings"]["world"], {"id": place, "name": "Faerûn", "guessed": False}
+        )
+
+    async def test_a_world_only_guessed_says_so(self) -> None:
+        place = await self.mark_world("Faerûn", source="read")
+        got = await read_campaign(self.web, self.session, self.ref_of(self.one))
+        self.assertEqual(got["settings"]["world"], {"id": place, "name": "Faerûn", "guessed": True})
+
+    async def test_a_player_gets_no_settings_and_so_no_world(self) -> None:
+        await self.mark_world("Faerûn", source="dm")
+        bob = await self.session_of(BOB)
+        got = await read_campaign(self.web, bob, self.ref_of(self.one))
+        self.assertNotIn("settings", got)
+
+    async def test_another_campaigns_world_is_never_shown(self) -> None:
+        await self.mark_world("Faerûn", source="dm")
+        got = await read_campaign(self.web, await self.session_of(BOB), self.ref_of(self.two))
+        self.assertIsNone(got["settings"]["world"])  # (Bob runs Two, which has no world)
 
     async def test_another_servers_campaign_is_not_found_by_the_database_itself(self) -> None:
         """The person is in both servers (so Python's own server check passes) and asks for a real
@@ -200,6 +243,7 @@ class TheCampaignRoute(Base):
                     "mapChecks": True,
                     "rulesCards": False,
                     "askBeforeAdding": False,
+                    "world": None,
                 },
             },
         )

@@ -143,22 +143,25 @@ describe("the Questions page", () => {
   it("a kind that links goes to the page that answers it, and one that can't says how in Discord", async () => {
     render(<Questions api={mockApi("table")} />);
     await screen.findByRole("heading", { name: "The Ashen Road" });
+    // (never a link to a page whose panel is off, #5225: names say Discord while their cards are off)
     const names = screen.getByText(`${kindWords("names").label} · 3`).closest("li") as HTMLElement;
-    expect(within(names).getByRole("link").getAttribute("href")).toBe("/account/recaps?campaign=100.cmp1");
+    expect(within(names).queryByRole("link")).toBeNull();
+    expect(within(names).getByText(w.discord)).toBeTruthy();
     const heard = screen.getByText(`${kindWords("heard").label} · 2`).closest("li") as HTMLElement;
     expect(within(heard).queryByRole("link")).toBeNull();
     expect(within(heard).getByText(w.discord)).toBeTruthy();
     expect(screen.getByText(w.discordWhere)).toBeTruthy(); // (said once, under the list)
   });
 
-  it("shows Family ties now that the Story Graph can answer them (#3463), with a link to it", async () => {
+  it("shows Family ties answered on the page now that the waiting list is on (#3463, #5225)", async () => {
+    lists.waiting = true;
     const api = mockApi("table");
     api.myQuestions = async () =>
       counts({ total: 7, kinds: [{ kind: "names", count: 5, oldest: now - 100 }, { kind: "family", count: 2, oldest: now - 50 }] });
     render(<Questions api={api} />);
     await screen.findByText(`${kindWords("names").label} · 5`);
     const ties = screen.getByText(`${kindWords("family").label} · 2`).closest("li") as HTMLElement;
-    expect(within(ties).getByRole("link")).toBeTruthy();
+    expect(within(ties).getByRole("button", { name: new RegExp(w.showHere) })).toBeTruthy();
     expect(screen.getByText(w.campaignLine(7))).toBeTruthy();
   });
 
@@ -330,14 +333,16 @@ describe("new names to check, answered on the page (#3438)", () => {
     names.on = false;
     render(<Questions api={mockApi("table")} />);
     const line = (await screen.findByText(`${kindWords("names").label} · 3`)).closest("li") as HTMLElement;
-    expect(within(line).getByRole("link").getAttribute("href")).toBe("/account/recaps?campaign=100.cmp1");
+    expect(within(line).queryByRole("link")).toBeNull();
+    expect(within(line).getByText(w.discord)).toBeTruthy();
     expect(within(line).queryByRole("button")).toBeNull();
     cleanup();
     names.on = true;
     const { campaignNameChecks: _gone, ...old } = mockApi("table");
     render(<Questions api={old} />);
     const again = (await screen.findByText(`${kindWords("names").label} · 3`)).closest("li") as HTMLElement;
-    expect(within(again).getByRole("link")).toBeTruthy();
+    expect(within(again).queryByRole("link")).toBeNull();
+    expect(within(again).getByText(w.discord)).toBeTruthy();
   });
 });
 
@@ -390,14 +395,40 @@ describe("connections, Which one? and readings, answered on the page (#3438)", (
     expect(within(line("heard", 1)).getByText(w.discord)).toBeTruthy();
   });
 
-  it("falls back to the link while the lists are switched off", async () => {
+  it("says Discord, never a link to an empty page, while the lists are switched off (#5225)", async () => {
     const api = mockApi("table");
     api.myQuestions = async () => many();
     render(<Questions api={api} />);
     await screen.findByText(`${kindWords("connections").label} · 4`);
-    expect(within(line("connections", 4)).getByRole("link").getAttribute("href")).toBe("/account/web/100.cmp1");
-    expect(within(line("readings", 3)).getByRole("link")).toBeTruthy();
+    expect(within(line("connections", 4)).queryByRole("link")).toBeNull();
+    expect(within(line("connections", 4)).getByText(w.discord)).toBeTruthy();
+    expect(within(line("readings", 3)).queryByRole("link")).toBeNull();
+    expect(within(line("readings", 3)).getByText(w.discord)).toBeTruthy();
+  });
+
+  it("says Discord, never a link to an empty page, while the API can't read the lists (#5225)", async () => {
+    lists.waiting = true;
+    lists.readings = true;
+    const { webWaiting: _w, webReadings: _r, ...old } = mockApi("table");
+    const api = { ...old, myQuestions: async () => many() };
+    render(<Questions api={api} />);
+    await screen.findByText(`${kindWords("connections").label} · 4`);
+    expect(within(line("connections", 4)).queryByRole("link")).toBeNull();
+    expect(within(line("connections", 4)).getByText(w.discord)).toBeTruthy();
+    expect(within(line("readings", 3)).queryByRole("link")).toBeNull();
+    expect(within(line("readings", 3)).getByText(w.discord)).toBeTruthy();
     expect(screen.queryByText(w.answeredWith(kindWords("connections").label))).toBeNull();
+  });
+
+  it("answers connections here while the lists are on, with Answer them here", async () => {
+    lists.waiting = true;
+    lists.readings = true;
+    const api = mockApi("table");
+    api.myQuestions = async () => many();
+    render(<Questions api={api} />);
+    await screen.findByText(`${kindWords("connections").label} · 4`);
+    expect(within(line("connections", 4)).getByRole("button", { name: new RegExp(w.showHere) })).toBeTruthy();
+    expect(within(line("connections", 4)).queryByRole("link")).toBeNull();
   });
 });
 
