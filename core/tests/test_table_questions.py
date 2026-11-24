@@ -55,6 +55,31 @@ class TheTablePrompt(unittest.TestCase):
         self.assertNotIn("AUDIENCE", ai.prompts[1])
         self.assertIn("AUDIENCE: THE TABLE", ai.systems[0])  # the rule that explains it
 
+    def test_a_described_entry_reads_as_the_story_said_it_and_never_at_the_table(self) -> None:
+        # (#5179: the DM's own question gets "the gemstone mine" in its names; a table question
+        # reads no campaign names at all (#1187), so neither spelling reaches it)
+        from tests.test_sidebar_context import MentionedNames
+
+        async def names(c: Campaign) -> CampaignLookup:
+            return MentionedNames.mine()
+
+        async def gate(c: Campaign, user: int) -> str | None:
+            return None
+
+        async def houses(c: Campaign) -> Sequence[HouseRule]:
+            return []
+
+        ai = FakeAI([reply("Yes.", "none"), reply("Yes.", "none")])
+        asks = Sidebar(ai, srd(), gate=gate, houses=houses, names=names)
+        question = "where is the gemstone mine"
+        run(asks.answer(campaign(), question, asker_id=1))
+        run(asks.answer(campaign(), question, asker_id=1, table=True))
+        dm, table = ai.prompts
+        self.assertIn("the gemstone mine (place)", dm)
+        self.assertNotIn("Gemstone mine", dm)
+        self.assertNotIn("(place)", table)
+        self.assertNotIn("Gemstone mine", table)
+
     def test_the_campaigns_names_are_not_even_read_for_a_table_question(self) -> None:
         question = "who is Belleros, the hooded stranger"
         ai = FakeAI([reply("Yes.", "none"), reply("Yes.", "none")])
