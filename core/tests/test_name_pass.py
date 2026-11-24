@@ -63,6 +63,15 @@ class Finding(unittest.TestCase):
         self.assertTrue(np.secret_test(lookup, everyone - {KETH})("Keirandal"))
         self.assertFalse(np.secret_test(lookup, everyone)("Keirandal"))
 
+    def test_a_suggested_name_is_not_kept_back_so_a_spelling_near_it_is_still_asked(self) -> None:
+        # (#4802 review: the gate holds only confirmed entries, so a suggested one is never "kept
+        # from the table"; it is on nobody's list yet, as before the table view)
+        lookup = make()
+        waiting = dataclasses.replace(lookup.entities[KETH], status="proposed")
+        lookup = dataclasses.replace(lookup, entities={**lookup.entities, KETH: waiting})
+        self.assertNotIn(KETH, np.kept_from_table(lookup, frozenset()))
+        self.assertFalse(np.secret_test(lookup, frozenset())("Keirandal"))
+
     def test_the_dm_only_kinds_stay_out_even_when_the_table_holds_them(self) -> None:
         # (as before #4802: a story thread or a deed is the DM's by kind)
         lookup = make()
@@ -87,13 +96,15 @@ class Finding(unittest.TestCase):
         from dmbot.transcript.name_pass import _near, secret_test
 
         for lookup in (make(), make(secret=False)):
-            close = secret_test(lookup, held(lookup))
-            for word in ("Silas Vain", "Silas Vane", "Drenwik", "Kethrandil", "Brannoch"):
-                self.assertEqual(
-                    close(word),
-                    _near(lookup, word, np.kept_from_table(lookup, held(lookup)))[1],
-                    (word, lookup.secret_lengths),
-                )
+            # (a table shaped like the flags, and one built by hand that doesn't hold Kethrandil)
+            for table in (held(lookup), frozenset(lookup.entities) - {KETH}):
+                close = secret_test(lookup, table)
+                for word in ("Silas Vain", "Silas Vane", "Drenwik", "Kethrandil", "Keirandal"):
+                    self.assertEqual(
+                        close(word),
+                        _near(lookup, word, np.kept_from_table(lookup, table))[1],
+                        (word, lookup.secret_lengths),
+                    )
         self.assertTrue(secret_test(make(), held(make()))("Silas Vain"))
         self.assertFalse(secret_test(make(secret=False), held(make(secret=False)))("Silas Vain"))
 
@@ -380,3 +391,30 @@ class WhatThePassTellsTheStep(unittest.TestCase):
 
         asked, _left, fixed = self.run_pass(ask)
         self.assertEqual((asked, fixed), ({"keirandal"}, set()))
+
+
+class TheNameStepsCloseness(unittest.IsolatedAsyncioTestCase):
+    """(#4802 review) the after-session name step's "close to a name the table may not read" and
+    "heard wrong for" read the same table view as the pass: never the flags."""
+
+    async def test_a_name_the_table_doesnt_hold_is_close_to_kept_and_never_heard_wrong(
+        self,
+    ) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.bot import DMBot
+
+        lookup = make()
+        everyone = frozenset(lookup.entities)
+        for table, kept in ((everyone, False), (everyone - {KETH}, True)):
+            bot = SimpleNamespace(
+                lookup=SimpleNamespace(get=AsyncMock(return_value=lookup)),
+                memory=SimpleNamespace(entries_held=AsyncMock(return_value=table)),
+            )
+            got = await DMBot._name_closeness(bot, 1, "c1")  # type: ignore[arg-type]
+            assert got is not None
+            heard_wrong, near_secret = got
+            with self.subTest(kept=kept):
+                self.assertEqual(near_secret("Keirandal"), kept)
+                self.assertEqual(heard_wrong("Kethrandel") is None, kept)

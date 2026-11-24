@@ -474,6 +474,7 @@ class ThePass(NamesTest):
         before = await self.texts()
         report = await run(frozenset())  # (the table holds nothing: not asked, not written)
         self.assertEqual((report.fixed, report.unsure, report.new), ((), (), ()))
+        self.assertEqual(report.guarded, 1)  # (kept back by the table view, not some other exit)
         self.assertEqual(await self.texts(), before)
         await run(frozenset(lookup.entities))
         self.assertEqual((await self.texts())[0], "Kethrandil drew his bow.")

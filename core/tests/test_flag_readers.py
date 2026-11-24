@@ -68,12 +68,13 @@ FILES: dict[str, tuple[str, str, str]] = {
     ),
     "memory/knowers.py": (MIRRORS, "GraphEngineer", "follow_flags and the 'is it shown' checks"),
     "memory/lookup.py": (
-        DEFINES,
+        SWITCH,
         "GraphEngineer",
-        "the name rows carry copies, read by nobody here to decide who sees what (#4802): "
-        "`NameEntry.secret` is the Cleaner's SWITCH (ruling Q), and `entry_hidden` the recap's "
-        "fallback when no party could be read, fail-stricter (ruling Q3: it only ever hides "
-        "more); `for_viewer` takes the gate's `seen` and the name pass the gate's table view",
+        '`hidden`, read only by the DM\'s own "who is it" ranking (`who_step`, output to the DM '
+        "alone); the name rows carry copies: the Cleaner's `NameEntry.secret` (ruling Q, it only "
+        "ever guards more) and the recap's `entry_hidden` fallback when no party could be read "
+        "(ruling Q3, fail-stricter). `for_viewer` takes the gate's `seen` and PlotBot's name pass "
+        "the gate's table view (#4802)",
     ),
     "memory/models.py": (DEFINES, "GraphEngineer", "the Entity fields and `unseen_by_players`"),
     "memory/party.py": (DEFINES, "GraphEngineer", "the party faction's row"),

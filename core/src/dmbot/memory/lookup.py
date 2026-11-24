@@ -218,6 +218,17 @@ class CampaignLookup:
             {k: frozenset(v) for k, v in hidden_links.items()},
         )
 
+    @property
+    def hidden(self) -> frozenset[str]:
+        """The DM's "shown to the table now" switch, as the flags say (the clues only some people
+        know, the entries marked "Players don't know yet") and the DM-only kinds. For the DM's own
+        "who is it" ranking only (`who_step.candidates_from`), whose output only the DM gets: never
+        to decide what anyone else may read, which is the gate's (`for_viewer`'s `seen`, the name
+        pass's table view, #4802)."""
+        return frozenset(
+            e.id for e in self.entities.values() if e.unseen_by_players or e.type in DM_ONLY_TYPES
+        )
+
     def for_viewer(self, secrets: bool, seen: Collection[str] | None = None) -> CampaignLookup:
         """What a person who may not see secrets gets to read, in every list, search, card and
         file: the names of the entries they hold (`seen`, from `MemoryStore.entries_seen_by`: what

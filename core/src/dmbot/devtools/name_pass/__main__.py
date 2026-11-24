@@ -181,7 +181,8 @@ async def main_async(args: argparse.Namespace) -> int:
             texts = await name_pass_run.pass_lines(
                 transcripts, args.guild, args.session, agreed, args.game_only
             )
-            found = np.survey(texts, lookup, people)
+            table = await memory.entries_held(args.guild, session.campaign_id)  # (as live)
+            found = np.survey(texts, lookup, people, table=table)
             print(
                 f"{len(found.items)} words to ask the AI about (one call), {found.new} new names, "
                 f"{found.guarded} kept as heard. Nothing was run. Add --yes to call the AI."

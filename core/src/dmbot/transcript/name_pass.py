@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import DM_ONLY_TYPES, name_key
+from dmbot.memory.models import CONFIRMED, DM_ONLY_TYPES, name_key
 from dmbot.memory.scan import Suggestion, alike, find_new_names, group_alike, sound_keys
 from dmbot.transcript.cleaner import text_names_a_secret
 
@@ -124,16 +124,18 @@ def kept_from_table(lookup: CampaignLookup, table: Collection[str]) -> frozenset
     the caller, `MemoryStore.entries_held`), and the DM-only kinds whatever the table holds, as
     before. The pass never writes one of their names into a line, nor asks about a spelling close
     to one."""
+    # (a suggested entry is on no one's list yet: never written anyway, `_near` needs a confirmed
+    # name; it is not kept back, so a spelling close to it is still asked about, as before)
     return frozenset(
-        e.id for e in lookup.entities.values() if e.id not in table or e.type in DM_ONLY_TYPES
+        e.id
+        for e in lookup.entities.values()
+        if e.type in DM_ONLY_TYPES or (e.status == CONFIRMED and e.id not in table)
     )
 
 
-def _near(
-    lookup: CampaignLookup, spelling: str, hidden: Collection[str]
-) -> tuple[list[Near], bool]:
+def _near(lookup: CampaignLookup, spelling: str, kept: Collection[str]) -> tuple[list[Near], bool]:
     """The list names `spelling` is close to, most alike first (at most `MAX_NEAR`), and whether it
-    is also close to a secret name or one the table doesn't hold (`hidden`, `kept_from_table`):
+    is also close to a secret name or one the table doesn't hold (`kept`, `kept_from_table`):
     then it is never asked about."""
     mine = set(sound_keys(spelling))
     best: dict[str, Near] = {}
@@ -146,7 +148,7 @@ def _near(
         close = (sounds and likeness >= NEAR_BY_SOUND) or likeness >= NEAR_BY_LETTERS
         if not close:
             continue
-        if entry.secret or entry.entity_id in hidden:
+        if entry.secret or entry.entity_id in kept:
             secret_close = True  # (an entry only the DM sees is never written into the transcript)
             continue
         if not entry.confirmed:
@@ -168,8 +170,8 @@ def secret_test(lookup: CampaignLookup, table: Collection[str]) -> Callable[[str
     (`kept_from_table`), by sound and letters, as this pass's own `_near` judges it, with those
     entries picked out once (the after-session name step asks it for many spellings and drops
     such a name whole, design section 5)."""
-    hidden = kept_from_table(lookup, table)
-    secret = [e for e in lookup.names if not e.person and (e.secret or e.entity_id in hidden)]
+    kept = kept_from_table(lookup, table)
+    secret = [e for e in lookup.names if not e.person and (e.secret or e.entity_id in kept)]
 
     def close(spelling: str) -> bool:
         if not secret:
@@ -218,7 +220,7 @@ def survey(
     reader found, capitals or none, joined to the capital-letter scan's (the union, by key), so a
     known name heard in lower case is asked about too; each goes through the same tests. `table`:
     the entries the table holds (`kept_from_table`, #4802)."""
-    hidden = kept_from_table(lookup, table)
+    kept = kept_from_table(lookup, table)
     skip = {entry.key for entry in lookup.names} | set(lookup.keep_keys)
     skip |= {key for key in lookup.people_by_key}
     skip |= {p.casefold() for p in people}
@@ -245,7 +247,7 @@ def survey(
         near: dict[str, Near] = {}
         secret = False
         for spelling in spellings:
-            ranked, close_to_secret = _near(lookup, spelling, hidden)
+            ranked, close_to_secret = _near(lookup, spelling, kept)
             secret = secret or close_to_secret
             for n in ranked:
                 if n.entity_id not in near or n.likeness > near[n.entity_id].likeness:
