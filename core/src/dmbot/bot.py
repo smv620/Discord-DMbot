@@ -435,7 +435,7 @@ from dmbot.memory.reveal_proposals_backup import RevealProposalsSection
 from dmbot.memory.revealed_aloud import said, table_lines, unrevealed_names
 from dmbot.memory.role_backup import RolesSection
 from dmbot.memory.role_store import RoleStore
-from dmbot.memory.scan import MAX_SUGGESTIONS, Suggestion, find_new_names, group_alike
+from dmbot.memory.scan import MAX_SUGGESTIONS, MIN_TIMES, Suggestion, find_new_names, group_alike
 from dmbot.memory.scene import Found, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.scenes import ENTITY, Scenes
@@ -1068,6 +1068,35 @@ class HeardAnswer:
     done: bool
     code: str
     reason: str = ""
+
+
+def _without_stopped(
+    now: Collection[int],
+    lines: Sequence[str],
+    heard_in: Sequence[Line],
+    read: Sequence[name_reader.Found],
+    read_in: Sequence[Line],
+) -> tuple[list[str], list[Line], list[name_reader.Found]]:
+    """A stopped speaker taken out of the name step (#5184, #5187): their lines from where a
+    name was said; from the scan's words, one copy for each of their lines the scan read (never a
+    sidebar line), matched by its words, since the scan's lines carry no speaker; and from the
+    reader's names, whose cited lines are numbered as `read_in` (a name left with none goes)."""
+    gone = [x for x in heard_in if x.user_id not in now]
+    said = set(lines)
+    drop = Counter(x.text for x in gone if x.text in said and not getattr(x, "sidebar", ""))
+    kept_lines: list[str] = []
+    for text in lines:
+        if drop[text] > 0:
+            drop[text] -= 1
+        else:
+            kept_lines.append(text)
+    bad = {str(i) for i, x in enumerate(read_in, 1) if x.user_id not in now}
+    kept_read = [
+        replace(f, lines=kept, times=len(kept))
+        for f in read
+        if (kept := tuple(n for n in f.lines if n not in bad))
+    ]
+    return kept_lines, [x for x in heard_in if x.user_id in now], kept_read
 
 
 class DMBot(RecapFeatures, commands.AutoShardedBot):
@@ -12719,31 +12748,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 agreed_now = set(await recorded_now())
                 gone = [x for x in heard_in if x.user_id not in agreed_now]
                 if gone:
-                    heard_in = [x for x in heard_in if x.user_id in agreed_now]
-                    # The reader's own names (#5184): a line of someone who stopped since its last
-                    # check is no hearing; a name left with none goes (`read_in` keeps its numbers)
-                    bad = {str(i) for i, x in enumerate(read_in, 1) if x.user_id not in agreed_now}
-                    read = [
-                        replace(f, lines=kept, times=len(kept))
-                        for f in read
-                        if (kept := tuple(n for n in f.lines if n not in bad))
-                    ]
-                    # The scan's own counts too (#5184): its lines were read before the reader, so
-                    # a stopped speaker's lines come out and the scan runs again on the rest. Only
-                    # the lines the scan read (never a sidebar line), matched by their words
-                    scanned_now = set(lines)
-                    drop = Counter(
-                        x.text
-                        for x in gone
-                        if x.text in scanned_now and not getattr(x, "sidebar", "")
+                    # (one rule for taking a stopped speaker out, shared with the late checks:
+                    # `_without_stopped`, #5184, #5187)
+                    lines, heard_in, read = _without_stopped(
+                        agreed_now, lines, heard_in, read, read_in
                     )
-                    kept_lines: list[str] = []
-                    for text in lines:
-                        if drop[text] > 0:
-                            drop[text] -= 1
-                        else:
-                            kept_lines.append(text)
-                    lines = kept_lines
                     spelled, scan_rows = scanned_names(loose)
                 # A reader that failed after it started leaves "stopped", never a "reading" that
                 # looks as if it still runs; one that never started leaves the stage empty.
@@ -12846,9 +12855,34 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     for f in split
                 ),
             ]
-        found = every[:MAX_SUGGESTIONS]
         # Words PlotBot's name pass was not sure of (#2628) are offered too, even heard once.
         asked = await self._take_name_asks(gid, cid, session_id) if session_id is not None else []
+        said_before = len(lines)
+
+        async def still_recorded(names: list[Suggestion]) -> list[Suggestion] | None:
+            """Who is recorded, asked again (#5187; CLAUDE.md: after every async step): a stopped
+            speaker's lines come out and the names left are those the rest still hold. None: they
+            can't be told apart, so nothing is suggested; the name pass's words are put back for
+            the next scan, never lost."""
+            nonlocal lines, heard_in, read
+            names, lines, heard_in, read, unsure = await self._names_still_recorded(
+                recorded_now, agreed, names, lines, heard_in, read, read_in, skip, loose,
+                keep={name_key(n): t for n, t in asked},
+            )  # fmt: skip
+            if not unsure:
+                return names
+            log.info("Name scan: a speaker stopped and can't be told apart; none suggested")
+            if asked and session_id is not None:
+                await self._keep_name_asks(gid, cid, session_id, asked)
+            return None
+
+        # before anything is held or stored: the step awaited since its last check (closeness,
+        # grouping, the name pass's words)
+        checked = await still_recorded(every)
+        if checked is None:
+            return []
+        every = checked
+        found = every[:MAX_SUGGESTIONS]
         have = {name_key(f.name) for f in found}
         for name, times in asked:
             if name_key(name) not in skip and name_key(name) not in have:
@@ -12860,9 +12894,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         offered = {name_key(f.name) for f in found}
         cut = sum(1 for f in every[MAX_SUGGESTIONS:] if name_key(f.name) not in offered)
         if import_scan and session_id is not None and self.import_job is not None:
-            await self.import_job.store.set_scan_cut(gid, session_id, cut)
             # (#5055 B: an import is read once, so what is past the 10 waits behind "📝 More names"
-            # instead of being lost; a live session keeps its short list and only counts)
+            # instead of being lost; a live session keeps its short list and only counts. Held
+            # first, with no await since the check, so no stopped speaker's name is held.)
             past = [
                 HeldName(f.name, f.times, f.also)
                 for f in every[MAX_SUGGESTIONS:]
@@ -12873,6 +12907,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await MoreNames(self.memory._db).hold(gid, cid, session_id, past)
                 except Exception as exc:
                     log.warning("More names: not kept (%s)", type(exc).__name__)
+            await self.import_job.store.set_scan_cut(gid, session_id, cut)
+        # ...again before the kinds AI is sent any line (the step awaited since)
+        checked = await still_recorded(found)
+        if checked is None:
+            return []
+        found = checked
         kinds = await self._scan_kinds(
             gid, cid, [f.name for f in found if f.name not in reader_kinds], lines
         )
@@ -12887,12 +12927,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             sum(1 for g in settled.offered if g.heard_wrong), settled.near_secret,
         )  # fmt: skip
         refused: set[str] = set()
+        # ...and once more before the names are written (the kinds AI and the session's start)
+        checked = await still_recorded(found)
+        if checked is None:
+            return []
+        found = checked
         added = await self._add_scan_names(
             gid, cid, found, kinds,
             session_id=session_id, heard_in=heard_in, session_at=session_at, refused=refused,
             found_how=found_how, read_in=read_in, read=read,
         )  # fmt: skip
-        if tracing:  # (#5055 B)
+        # (the dev trace was built before a late stop: then it is not written, #5187)
+        if tracing and len(lines) == said_before:  # (#5055 B)
             await self._write_name_trace(
                 gid,
                 cid,
@@ -12907,6 +12953,62 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 {name_key(n) for n, _times in asked},
             )
         return added
+
+    async def _names_still_recorded(
+        self,
+        recorded: Callable[[], Awaitable[Collection[int]]],
+        agreed: Collection[int] | None,
+        names: Sequence[Suggestion],
+        lines: Sequence[str],
+        heard_in: Sequence[Line],
+        read: Sequence[name_reader.Found],
+        read_in: Sequence[Line],
+        skip: Collection[str],
+        loose: bool,
+        *,
+        keep: Mapping[str, int] | None = None,
+    ) -> tuple[list[Suggestion], list[str], list[Line], list[name_reader.Found], bool]:
+        """The name step's late consent check (#5187; CLAUDE.md: re-checked after every async
+        step). Who is recorded is asked again; a stopped speaker's lines come out
+        (`_without_stopped`), and a suggestion stays only while the rest still hold it: the scan
+        is run again on the lines left (whole words, as the scan reads them, never a match inside
+        another word) and the reader's names keep only lines still recorded. A suggestion keeps the
+        count heard in what is left, and one that lost a hearing must still be heard twice.
+        `keep`: the name pass's words by name key, with their own counts (not from these lines).
+        The last value is True when someone in `agreed` stopped and, with no stored transcript,
+        their lines can't be told apart: the caller suggests nothing rather than risk it."""
+        keep = keep or {}
+        now = set(await recorded())
+        if not heard_in:
+            unsure = agreed is not None and bool(set(agreed) - now)
+            return list(names), list(lines), list(heard_in), list(read), unsure
+        if all(x.user_id in now for x in heard_in):
+            return list(names), list(lines), list(heard_in), list(read), False
+        lines, heard_in, read = _without_stopped(now, lines, heard_in, read, read_in)
+        scanned: dict[str, int] = {}
+        for found in find_new_names(lines, skip, min_times=1, unlimited=True, loose=loose):
+            scanned[name_key(found.name)] = scanned.get(name_key(found.name), 0) + found.times
+        by_reader: dict[str, int] = {}
+        for got in read:
+            by_reader[name_key(got.name)] = by_reader.get(name_key(got.name), 0) + got.times
+        kept: list[Suggestion] = []
+        for s in names:
+            key = name_key(s.name)
+            if key in keep:  # (the name pass's word: its own count, not the lines')
+                kept.append(replace(s, times=keep[key]))
+                continue
+            # (heard in what is left, the scan's and the reader's counted apart, as a group is)
+            keys = {name_key(t) for t in (s.name, *s.also)}
+            times = min(
+                s.times,
+                max(sum(scanned.get(k, 0) for k in keys), sum(by_reader.get(k, 0) for k in keys)),
+            )
+            # A name stays as it was when no hearing was lost; one that lost some must still pass
+            # the plain rule (heard twice) on what is left, since the hearing that let it through
+            # once (an introduction, a typed line) may be the stopped speaker's.
+            if times and (times == s.times or times >= MIN_TIMES):
+                kept.append(replace(s, times=times))
+        return kept, list(lines), list(heard_in), list(read), False
 
     async def _add_scan_names(
         self,
