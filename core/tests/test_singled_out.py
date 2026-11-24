@@ -131,7 +131,7 @@ class TheCardAndTheRecap(unittest.TestCase):
 
         self.assertEqual(
             ui.singled_line("gemstone mine", 4),
-            "📌 Not a name, but the story keeps coming back to it: “gemstone mine” "
+            "🔖 Not a name, but the story keeps coming back to it: “gemstone mine” "
             "(heard 4 times).",
         )
 
@@ -147,7 +147,7 @@ class TheCardAndTheRecap(unittest.TestCase):
         from dmbot.ui import name_card
 
         self.assertEqual(
-            name_card.DESCRIBED_LINE, "\n📌 Described in the story, no name of its own."
+            name_card.DESCRIBED_LINE, "\n🔖 Described in the story, no name of its own."
         )
 
     def test_the_recap_writer_is_given_it_as_the_story_says_it(self) -> None:
@@ -234,6 +234,32 @@ class TheReviewersCases(unittest.TestCase):
             _with_familiar("Garret Voss", familiar), "[familiar: Garret; full: Garret Voss]"
         )
 
+    def test_with_no_described_entry_the_writers_names_are_unchanged(self) -> None:
+        """The recap-writer rule (CLAUDE.md, Supervisor on #5183): with no entry described (dev1's
+        fixed set has none), the writer's input is what it was before #5173: `described_words`
+        adds nothing, and every name reads exactly as the old `_with_familiar` wrote it."""
+        from types import SimpleNamespace
+
+        from dmbot.memory.models import Entity
+        from dmbot.recaps import familiar as fam
+        from dmbot.recaps.draft import _with_familiar
+        from dmbot.recaps.inputs import described_words
+
+        def before(name: str, familiar: dict[str, str]) -> str:  # (the writer's list before 6a)
+            short = familiar.get(name)
+            return f"[familiar: {short}; full: {name}]" if short else name
+
+        everyone = ["Garret Voss", "Mira Thornfield", "Bryn Shander", "Old Marn", "Glyph"]
+        entities = {n: Entity(n, "character", n, "", "confirmed", None, "dm", 1) for n in everyone}
+        names = SimpleNamespace(entities=entities)
+        self.assertEqual(described_words(names, everyone), {})
+        said = ["Garret and Mira went to Bryn Shander.", "Mira asked Garret, then Old Marn."]
+        familiar = fam.familiar_names(everyone, said, allowed_names=everyone)
+        familiar.update(described_words(names, everyone))
+        self.assertTrue(familiar)  # (some names do have a familiar form here)
+        for name in everyone:
+            self.assertEqual(_with_familiar(name, familiar), before(name, familiar), name)
+
     def test_the_card_is_titled_and_quoted_in_the_storys_words(self) -> None:
         from dmbot.memory.models import Entity
         from dmbot.ui import names as ui
@@ -294,6 +320,35 @@ class TheExpertsCases(unittest.TestCase):
 
     def reasons(self, out: so.Decided) -> dict[str, str]:
         return {name: why for name, why, _t in out.refused}
+
+
+class TheKeptCard(unittest.IsolatedAsyncioTestCase):
+    """A kept description's card (Supervisor on #5183): ✏️ names it instead of fixing a spelling,
+    with the question's own form words; a name card keeps ✏️ Fix spelling."""
+
+    async def test_a_described_entry_is_given_a_name_not_a_spelling(self) -> None:
+        from dmbot.ui import name_card
+
+        labels = [
+            getattr(b, "label", "")
+            for b in name_card.NameCard("c", "e", described="gemstone mine").children
+        ]
+        self.assertIn("✏️ Give it a name…", labels)
+        self.assertNotIn("✏️ Fix spelling", labels)
+        named = [getattr(b, "label", "") for b in name_card.NameCard("c", "e").children]
+        self.assertIn("✏️ Fix spelling", named)
+
+    async def test_its_form_is_empty_and_asks_for_the_name(self) -> None:
+        from dmbot.ui.name_card import FixSpellingForm
+
+        form = FixSpellingForm("c", "e", "Gemstone mine", described="gemstone mine")
+        self.assertEqual(form.title, "Give it a name")
+        self.assertEqual(form.name.label, "Its name in your game")
+        self.assertTrue(form.name.required)
+        self.assertFalse(form.name.default)
+        plain = FixSpellingForm("c", "e", "Bryn Shander")
+        self.assertEqual(plain.title, "Fix spelling")
+        self.assertEqual(plain.name.default, "Bryn Shander")
 
 
 if __name__ == "__main__":

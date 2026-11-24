@@ -1180,12 +1180,12 @@ def heard_line(times: int, typed: int, also: Sequence[str], *, written: bool = F
 
 def singled_line(said: str, times: int) -> str:
     """The card's line for a thing or a place the story singles out with no name (#5173, as
-    ruled): "📌 Not a name, but the story keeps coming back to it: “gemstone mine” (heard 4
-    times)." The quote is the story's own words as heard (`Entity.described`); counts only
-    otherwise."""
+    ruled; 🔖, since 📌 means "pinned as 100% truth"): "🔖 Not a name, but the story keeps coming
+    back to it: “gemstone mine” (heard 4 times)." The quote is the story's own words as heard
+    (`Entity.described`); counts only otherwise."""
     words = " ".join(said.split())
     return (
-        f"📌 Not a name, but the story keeps coming back to it: \u201c{_md(words)}\u201d "
+        f"🔖 Not a name, but the story keeps coming back to it: \u201c{_md(words)}\u201d "
         f"(heard {_times(max(times, 1))})."
     )
 
