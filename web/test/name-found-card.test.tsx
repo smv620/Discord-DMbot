@@ -128,7 +128,7 @@ describe("the yes and its Undo (#5144 slice B)", () => {
       return {
         ...got,
         names: got.names.map((n) =>
-          n.name === "Brannoch" ? { ...n, found: { how: "introduced" as const, times: 3, typed: 0, also: ["Branoch"], heard: "Brannoch: a new name? Heard 3 times, sometimes as Branoch.", guess, line: null } } : n,
+          n.id === "a".repeat(32) ? { ...n, found: { how: "introduced" as const, times: 3, typed: 0, also: ["Branoch"], heard: "Brannoch: a new name? Heard 3 times, sometimes as Branoch.", guess, line: null } } : n,
         ),
       };
     };
@@ -153,4 +153,41 @@ describe("the yes and its Undo (#5144 slice B)", () => {
     expect(card.getByText(fw.spelledOther)).toBeTruthy();
     expect(card.getByLabelText(fw.spelledLabel, { selector: "input" })).toBeTruthy();
   });
+
+  /** Open the naming form of a name, type the words and press its button. */
+  function spell(name: string, typed: string) {
+    const card = within(row(name));
+    fireEvent.click(card.getByText(fw.spelledOther));
+    fireEvent.input(card.getByLabelText(fw.spelledLabel, { selector: "input" }), { target: { value: typed } });
+    fireEvent.click(card.getByRole("button", { name: nw.changeFor(name) }));
+  }
+
+  it("Spelled another way… is the yes: the rename is followed by the confirm with DMbot's guess", async () => {
+    const api = brannochFound();
+    const spy = vi.spyOn(api, "answerNameCheck");
+    render(<RecapNameChecks api={api} refId={draft.ref} />);
+    await screen.findByRole("heading", { name: nw.heading });
+    spell("Brannoch", "Brannoch's Forge");
+    await vi.waitFor(() => expect(spy).toHaveBeenCalledWith(draft.ref, "a".repeat(32), { action: "confirm", kind: "npc" }), { timeout: 10000 });
+    expect(spy).toHaveBeenNthCalledWith(1, draft.ref, "a".repeat(32), { action: "change_words", words: "Brannoch's Forge" });
+  }, 20000);
+
+  it("with no guess the card stays for the kind to be picked", async () => {
+    const api = brannochFound(null);
+    const spy = vi.spyOn(api, "answerNameCheck");
+    render(<RecapNameChecks api={api} refId={draft.ref} />);
+    await screen.findByRole("heading", { name: nw.heading });
+    spell("Brannoch", "Brannoch's Forge");
+    expect((await screen.findAllByText(nw.changed("Brannoch's Forge"), {}, { timeout: 10000 })).length).toBeGreaterThan(0);
+    expect(spy).toHaveBeenCalledTimes(1);
+  }, 20000);
+
+  it("a spelling that is already a name is refused in Discord's words", async () => {
+    render(<RecapNameChecks api={brannochFound()} refId={draft.ref} />);
+    await screen.findByRole("heading", { name: nw.heading });
+    spell("Brannoch", "Veshla");
+    expect(await screen.findByText(fw.refusal.alreadyKnown("Veshla"), {}, { timeout: 10000 })).toBeTruthy();
+    expect(fw.refusal.empty).toBe("Type the name, then press Submit.");
+    expect(fw.refusal.tooLong("x".repeat(100), 100)).toContain("is too long (the limit is 100 letters). Shorten it and try again.");
+  }, 20000);
 });

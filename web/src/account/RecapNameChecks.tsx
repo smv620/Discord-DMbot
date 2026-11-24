@@ -64,6 +64,9 @@ export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountAp
   const followOn = splitOn || (NAME_FOUND_LIVE && api.nameAnswerResult !== undefined);
   const followed = (name: NameCheck, answer: NameCheckAnswer): boolean =>
     SPLIT_ACTIONS.has(answer.action) || (followOn && NAME_FOUND_LIVE && answer.action === "confirm" && name.found !== undefined);
+  // "✏️ Spelled another way…" is the DM's yes (Discord's `apply_words keep=True`, #5144 slice B): the words typed on a card the reader
+  // found, by card, so that once the rename shows the page keeps it as DMbot's guess, and so a refusal can say the name typed.
+  const spelledAs = useRef(new Map<string, string>());
   const [follow, setFollow] = useState<{ id: string; undo: boolean; batch: number } | null>(null);
   const [last, setLast] = useState<{ id: string; note: string; batch: number } | null>(null);
   const [lastProblem, setLastProblem] = useState("");
@@ -120,6 +123,9 @@ export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountAp
         if ([...before.keys()].some((id) => !now.has(id))) {
           setSaid(words.done);
           keepFocus(() => heading.current);
+        } else if (renamedCard && NAME_FOUND_LIVE && renamedCard.found !== undefined && spelledAs.current.delete(renamedCard.id) && renamedCard.found.guess && got.kinds.some((k) => k.key === renamedCard.found?.guess)) {
+          // Spelled another way… is the yes: kept at once as DMbot's guess, with the rules, the fix and the one Undo that follow.
+          void send(renamedCard, { action: "confirm", kind: renamedCard.found.guess });
         } else if (renamedCard) {
           // The card goes on under its new words: say so, and put the focus where the next answer is made.
           setSaid(words.changed(renamedCard.name));
@@ -250,9 +256,24 @@ export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountAp
     );
   }
 
+  /** Discord's words for a refused Spelled another way… (the three refusals it has), or "" for any other. */
+  function spelledRefusal(n: NameCheck, code: string | undefined): string {
+    if (!NAME_FOUND_LIVE || n.found === undefined || !changing.current.has(n.id)) return "";
+    const typed = spelledAs.current.get(n.id) ?? "";
+    if (code === "empty") return fw.refusal.empty;
+    if (code === "too_long") return fw.refusal.tooLong(typed, NAME_MAX_LETTERS);
+    if (code === "already_known") return fw.refusal.alreadyKnown(typed);
+    return "";
+  }
+
   async function send(name: NameCheck, answer: NameCheckAnswer) {
-    if (answer.action === "change_words") changing.current.add(name.id);
-    else changing.current.delete(name.id);
+    if (answer.action === "change_words") {
+      changing.current.add(name.id);
+      if (NAME_FOUND_LIVE && name.found !== undefined) spelledAs.current.set(name.id, answer.words);
+    } else {
+      changing.current.delete(name.id);
+      spelledAs.current.delete(name.id);
+    }
     setProblems((was) => ({ ...was, [name.id]: "" }));
     setLast(null); // (Undo is offered until the next answer)
     setTaken(false);
@@ -295,7 +316,7 @@ export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountAp
             campaignRef={campaignRefOf(refId)}
             busy={busy.has(n.id) || n.answering}
             splitOn={splitOn}
-            problem={problems[n.id] || (n.error ? words.problem[n.error.replaceAll("_", "-")] ?? ((splitOn ? splitReason(n.error) : "") || (changing.current.has(n.id) ? words.changeFailed : words.failedHint)) : "")}
+            problem={problems[n.id] || spelledRefusal(n, n.error) || (n.error ? words.problem[n.error.replaceAll("_", "-")] ?? ((splitOn ? splitReason(n.error) : "") || (changing.current.has(n.id) ? words.changeFailed : words.failedHint)) : "")}
             onSend={(answer) => void send(n, answer)}
           />
         ))}

@@ -17,6 +17,12 @@ export const nameFoundWords = {
   /** ✏️ Spelled another way…: the change-the-words form for a name the reader found (Discord's words, #5144 slice B). */
   spelledOther: "✏️ Spelled another way…",
   spelledLabel: "The name, spelled right",
+  /** What Spelled another way… says when it is refused (Discord's `ui/names.py`; the button it points to is this page's own). */
+  refusal: {
+    empty: "Type the name, then press Submit.",
+    tooLong: (typed: string, limit: number): string => `${typed.length > 60 ? `${typed.slice(0, 59)}…` : typed} is too long (the limit is ${limit} letters). Shorten it and try again.`,
+    alreadyKnown: (typed: string): string => `${typed} is already a name in this campaign. Open It's the same as… to join them.`,
+  },
   /** A thing or place the story keeps coming back to but never names (#5175, slice 6): its three answers, for that question only. */
   singled: {
     keepIt: "✅ Keep it",
