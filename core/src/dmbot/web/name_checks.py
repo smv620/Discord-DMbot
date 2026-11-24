@@ -151,11 +151,16 @@ async def _with_sounds_like(conn: Any, gid: int, cid: str, card: dict[str, Any])
         cur = await conn.execute(
             "SELECT dmbot_web_sound_alikes(%s, %s, %s) AS r", (gid, cid, codes)
         )
-        rows = (await cur.fetchone() or {}).get("r") or []
+        rows = (await cur.fetchone() or {}).get("r")
     except Exception:
         return  # (a card without it is today's card)
+    if not isinstance(rows, list):
+        return
     own = str(card.get("id"))
-    found = near_match_in(name, ((r["id"], r["text"], r["name"]) for r in rows if r["id"] != own))
+    found = near_match_in(
+        name,
+        ((r["id"], r["text"], r["name"]) for r in rows if isinstance(r, dict) and r["id"] != own),
+    )
     if found is not None:
         card["soundsLike"] = {
             "id": found.entity_id,
