@@ -6,6 +6,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { costsText as words, dollars } from "../content/admin";
 import { type AdminApi, AdminApiError, type CostsView } from "./api";
+import Recorded from "./Recorded";
 
 interface Props {
   api: AdminApi;
@@ -171,6 +172,7 @@ export default function Costs({ api, onSignedOut }: Props) {
           </table>
         </div>
       )}
+      <Recorded api={api} month={month} onSignedOut={onSignedOut} />
     </section>
   );
 }
