@@ -682,8 +682,9 @@ always; DMbot never picks one.
   your DM.", and the DM is told privately.
 - **Built in slices (#2284, CloudDev, 2026-10-21):** the save-time check, the stored "wins" and
   backups first; the answer-time question after. At save, a rule accepted from the linked file that
-  disagrees is held back with a line saying so (the DM adds it by hand and picks), and the rest of the
-  file is added. A check that cannot run never blocks a save: the rule is saved and the DM is told it
+  disagrees is held back with a line saying so, and the rest of the file is added. Each held rule
+  has a button that opens the same "which one applies" question with its words filled in, so the DM
+  picks without retyping it (#3841, 2026-11-25); DMbot never picks. A check that cannot run never blocks a save: the rule is saved and the DM is told it
   was not checked. Editing or removing a rule forgets what was decided about it, in the same
   transaction.
 - **Between sources** the order is unchanged: the campaign's own house rules, then the set it
