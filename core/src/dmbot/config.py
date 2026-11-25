@@ -218,6 +218,8 @@ class Settings:
     # what it wants said goes through the outbox (#3843: the recap-ready line first). Off, the bot
     # does it all itself as before, so flipping it back is the rollback.
     worker_on: bool = False
+    # The name step of a session's end in the worker too (#4905 4c); needs DMBOT_WORKER. Off.
+    worker_names_on: bool = False
     # The relationship reader beside the old one (#3244), on the test server only.
     rel_read_on: bool = False
     # The start-up wizard's link, offered first by the New campaign buttons (#3955): off until dev1
@@ -544,6 +546,11 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
     worker_raw = (get("DMBOT_WORKER") or "0").lower()
     if worker_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_WORKER must be 1 (on) or 0 (off), got "' + worker_raw + '".')
+    worker_names_raw = (get("DMBOT_WORKER_NAMES") or "0").lower()
+    if worker_names_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_WORKER_NAMES must be 1 (on) or 0 (off), got "' + worker_names_raw + '".'
+        )
     wizard_raw = (get("DMBOT_WIZARD_LINK") or "0").lower()
     if wizard_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_WIZARD_LINK must be 1 (on) or 0 (off), got "' + wizard_raw + '".')
@@ -904,6 +911,8 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
         story_family_only=family_raw in ("1", "true", "on"),
         theatre_on=theatre_raw in ("1", "true", "on"),
         worker_on=worker_raw in ("1", "true", "on"),
+        worker_names_on=worker_names_raw in ("1", "true", "on")
+        and worker_raw in ("1", "true", "on"),
         rel_read_on=rel_read_raw in ("1", "true", "on"),
         wizard_link_on=wizard_raw in ("1", "true", "on"),
         role_match=role_match_raw in ("1", "true", "on"),

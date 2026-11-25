@@ -26,6 +26,7 @@ class _Jobs:
         self.renewed: list[tuple[str, str]] = []
         self.progress: dict[str, tuple[str, int, int]] = {}
         self.dead: set[str] = set()  # blocks whose running lease has run out
+        self.results: dict[str, list[str]] = {}  # what a block handed back (ids only)
 
     async def add(self, g: int, c: str, s: str, block: str, dm_ids: Any) -> bool:
         self.rows.setdefault(block, jobs.WAITING)
@@ -34,6 +35,13 @@ class _Jobs:
 
     async def state(self, g: int, c: str, s: str, block: str) -> str | None:
         return self.rows.get(block)
+
+    async def set_result(self, g: int, c: str, s: str, block: str, who: str, ids: Any) -> bool:
+        self.results[block] = sorted(ids)
+        return True
+
+    async def result(self, g: int, c: str, s: str, block: str) -> list[str]:
+        return list(self.results.get(block, []))
 
     async def status(self, g: int, c: str, s: str, block: str) -> jobs.Status | None:
         state = await self.state(g, c, s, block)
