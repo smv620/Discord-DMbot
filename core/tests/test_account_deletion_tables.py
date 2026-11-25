@@ -26,12 +26,14 @@ FORGET_OWN = import_module("dmbot.migrations.0494_forget_own_records")
 FORGET_RECAP = import_module("dmbot.migrations.0495_forget_recap_approval")
 FORGET_MEMBERSHIP = import_module("dmbot.migrations.0497_forget_membership")
 FORGET_LOOKUPS = import_module("dmbot.migrations.0447_member_lookups")
+FORGET_CONNECTIONS = import_module("dmbot.migrations.0633_forget_connection_reads")
 DELETED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.DELETED
     + FORGET_REQUESTS.DELETED
     + FORGET_LOOKUPS.DELETED
     + FORGET_OWN.DELETED
     + FORGET_MEMBERSHIP.DELETED
+    + FORGET_CONNECTIONS.DELETED
 )
 ZEROED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.ZEROED

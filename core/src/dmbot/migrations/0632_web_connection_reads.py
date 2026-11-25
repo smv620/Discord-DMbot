@@ -92,15 +92,17 @@ SQL = (
            OR dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
            OR NOT EXISTS (SELECT 1 FROM campaign_dms d
-                          WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = me)
-           OR (SELECT count(*) FROM memory_entities e
-               WHERE e.guild_id = g AND e.campaign_id = c AND e.id IN (one, two)
-                 AND e.status = 'confirmed' AND e.merged_into IS NULL AND NOT e.unnamed
-                 AND e.type <> 'person') <> 2 THEN
+                          WHERE d.guild_id = g AND d.campaign_id = c AND d.user_id = me) THEN
             RETURN NULL;
         END IF;
         IF one = two THEN
             RETURN jsonb_build_object('status', 'bad_choice');
+        END IF;
+        IF (SELECT count(*) FROM memory_entities e
+               WHERE e.guild_id = g AND e.campaign_id = c AND e.id IN (one, two)
+                 AND e.status = 'confirmed' AND e.merged_into IS NULL AND NOT e.unnamed
+                 AND e.type <> 'person') <> 2 THEN
+            RETURN NULL;
         END IF;
         IF char_length(want) NOT BETWEEN 1 AND 1000 THEN
             RETURN jsonb_build_object('status', 'bad_text');
