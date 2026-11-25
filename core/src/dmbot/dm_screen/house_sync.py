@@ -385,15 +385,31 @@ async def _finish(interaction: discord.Interaction, key: str, pending: Pending) 
     bot: Any = interaction.client
     bot.house_syncs.drop(key)
     result = house_file_sync.result_text(pending.applied)
+    # A rule held back for a clash gets a button that opens the question (#3841).
+    view: Any = None
+    try:  # the result is shown even if this read fails: the rules are already applied
+        campaign = await bot.campaigns.get(pending.guild_id, pending.campaign_id)
+    except Exception:
+        log.exception("Couldn't read the campaign to finish a house-rules offer")
+        campaign = None
+    if pending.applied.held and campaign is not None:
+        from dmbot.ui import house_held  # (that module leads back here through the menus)
+
+        source, name = _origin(pending)
+        view = house_held.HeldView(
+            bot, campaign, pending.applied.held, source=source, source_name=name
+        )
+        result += "\nPress a button to answer which rule applies for one that was held back."
     text = fit_message(f"📄 {pending.summary}\n{_md(result)}", limit=TEXT_MAX)
-    await _show(interaction, text, None)
+    await _show(interaction, text, view)
+    if view is not None:
+        view.origin = interaction
     if pending.applied.done:
         # Other offers for this campaign are out of date now.
         bot.house_syncs.drop_campaign(pending.guild_id, pending.campaign_id)
         # The file as it is now, privately (#969, part 1).
         from dmbot.ui import house_file as file_ui
 
-        campaign = await bot.campaigns.get(pending.guild_id, pending.campaign_id)
         if campaign is not None:
             await file_ui.send_after_change(
                 interaction,
@@ -471,6 +487,7 @@ async def press(
             )
             pending.applied.done += done.done
             pending.applied.skipped += done.skipped
+            pending.applied.held += done.held
             await _finish(interaction, key, pending)
         else:  # "accept" or "skip": the item under review
             if action == "accept":
@@ -488,6 +505,7 @@ async def press(
                 )
                 pending.applied.done += done.done
                 pending.applied.skipped += done.skipped
+                pending.applied.held += done.held
             pending.index += 1
             if pending.index >= len(pending.items):
                 await _finish(interaction, key, pending)

@@ -38,6 +38,22 @@ describe("the page of one name", () => {
     expect(screen.getByRole("button", { name: "new NPC" })).toBeTruthy();
   });
 
+  it("shows the ranked guesses with their details in core's order, and sends the one pressed", async () => {
+    const api = await open(".ranked");
+    const names = screen.getAllByRole("button").map((b) => b.textContent);
+    const first = names.indexOf("a.k.a. Veshla (a smith who mends swords)");
+    expect(names.slice(first, first + 4)).toEqual([
+      "a.k.a. Veshla (a smith who mends swords)",
+      "a.k.a. Veshla (a ship of the Silver League)",
+      "a.k.a. Brannock (an NPC)",
+      "new NPC",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "a.k.a. Brannock (an NPC)" }));
+    expect(await screen.findByText(w.done.same("Brannoch", "Brannock (an NPC)"), {}, slow)).toBeTruthy();
+    expect(calls(api, "answerNameCheck")[0]).toContain('"action":"same"');
+    expect(calls(api, "answerNameCheck")[0]).toContain("m".repeat(32));
+  });
+
   it("says so when DMbot has no scene and no guess yet", async () => {
     await open(".no-scene.no-answers");
     expect(screen.getByText(w.noScene)).toBeTruthy();

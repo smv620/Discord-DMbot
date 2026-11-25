@@ -878,7 +878,6 @@ def create_app(
             "no_slot": (402, "no_free_slot"),
             "owner": (403, "owner"),
             "bad_server": (422, "bad_server"),
-            "shares_rules": (409, "shares_rules"),
         }
         status, code = refusals.get(outcome, (409, "ended"))
         raise HTTPException(status_code=status, detail=code)
@@ -1347,7 +1346,12 @@ def create_app(
         session, _token = signed
         try:
             return await read_one_name_check(
-                db, session, ref, entity_id, outside_engine=settings.outside_engine
+                db,
+                session,
+                ref,
+                entity_id,
+                outside_engine=settings.outside_engine,
+                card_summary=settings.card_summary_on,
             )
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
