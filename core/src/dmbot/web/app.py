@@ -4679,13 +4679,39 @@ def create_app(
         except RecapError as err:
             raise import_refusal(err) from None
 
+    @app.get("/me/campaigns/{ref}/pc-icons/{entity_id}/picture")
+    async def me_pc_icon_picture(ref: str, entity_id: str, request: Request) -> Response:
+        """The picture a character's icon is (#3623): a short redirect to a signed address of the
+        private bucket, for a signed-in member of the campaign's server, while the picture is still
+        kept and not the DM's alone. Anyone else, or no picture, gets the one `not_found`. The
+        picture's public code is never involved."""
+        shared_gate(request, picture_limit)
+        headers = {
+            "Cache-Control": "private, max-age=120",
+            "X-Robots-Tag": "noindex, nofollow",
+            "Referrer-Policy": "no-referrer",
+        }
+        token = request.cookies.get(session_cookie)
+        viewer = await sessions.find(db, token, now=clock()) if token else None
+        sign = picture_signer()
+        try:
+            keys = (
+                await pc_icons.file_keys(db, viewer, ref, entity_id) if viewer is not None else None
+            )
+        except RecapError:
+            keys = None
+        if keys is None or sign is None:
+            raise HTTPException(status_code=404, detail="not_found", headers=headers)
+        return RedirectResponse(sign(keys[1] or keys[0]), status_code=302, headers=headers)
+
     @app.post("/me/campaigns/{ref}/pc-icons/{entity_id}")
     async def me_pc_icon(
         ref: str, entity_id: str, signed: Signed, request: Request
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Choose a player character's Story Graph icon (#3621): `{choice: "default" | "discord" |
-        "dndbeyond" | "hidden"}`. The campaign's DM or the character's own player only (decided in
-        SQL); one instant write, answered `{previous, now}` for the page's Undo."""
+        "dndbeyond" | "hidden"}`, or `{choice: "custom", picture: <a kept picture's id>}` (#3623).
+        The campaign's DM or the character's own player only (decided in SQL); one instant write,
+        answered `{previous, now}` (and `previousPicture`) for the page's Undo."""
         session, _token = signed
         try:
             body = await request.json()
