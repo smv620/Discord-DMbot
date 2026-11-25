@@ -289,7 +289,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                       )}
                     </>
                   ) : (
-                    <span class="small muted">{words.discord}</span>
+                    <span class="small muted">{w.where ? words.discordAt(w.where) : words.discord}</span>
                   )}
                 </li>
               );
