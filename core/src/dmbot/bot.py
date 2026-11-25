@@ -720,6 +720,7 @@ from dmbot.ui.names import (
     SPELLED_OUT,
     RecapNamesButton,
     ReviewButton,
+    add_all_groups,
     after_session_text,
     counts_after_session_text,
     held_back_count_text,
@@ -15001,6 +15002,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     # already: they are on the review list, just not in the "new names" post.
                     async with asyncio.timeout(STALE_SCAN_S // 3):
                         added = await self._scan_import(gid, ready)
+                    await DMBot._keep_import_found(self, gid, ready, added, store)  # (#5276)
                     await self._extract_import(gid, ready)  # (its own try; keeps the claim fresh)
                     # Everything the news counts is written before the scan is called finished: the
                     # bot tells the news in a loop of its own (the worker's scan is another
@@ -15884,6 +15886,31 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception:
             log.exception("Import: couldn't add what was sure")
             return False
+
+    async def _keep_import_found(
+        self, gid: int, ready: Ready, added: Sequence[str], store: ImportStore
+    ) -> None:
+        """Keep the ids of the names this session's scan proposed, by kind, for the website's "Add
+        all" (#5276): the same grouping Discord's button uses (`add_all_groups`), so both add the
+        same names. Ids only; never raises (a failure leaves the page's Add all with fewer names,
+        the cards still check every one)."""
+        if not added or getattr(self, "memory", None) is None:  # (a test's stand-in has none)
+            return
+        assert self.memory is not None
+        try:
+            campaign = await self.campaigns.get(gid, ready.campaign_id)
+            if campaign is None:
+                return
+            wanted = set(added)
+            waiting = [
+                e
+                for e in await self.memory.entities(gid, ready.campaign_id, statuses=(PROPOSED,))
+                if e.name in wanted
+            ]
+            by_kind, _left = await add_all_groups(self.memory, campaign, waiting)
+            await store.keep_found(gid, ready.session_id, by_kind)
+        except Exception as exc:  # the type only: nothing here holds a name
+            log.warning("Import: the names for Add all were not kept (%s)", type(exc).__name__)
 
     async def _scan_import(self, gid: int, ready: Ready) -> list[str]:
         """`_scan_import_lines`, its AI calls filed under this session's import for the DM's live

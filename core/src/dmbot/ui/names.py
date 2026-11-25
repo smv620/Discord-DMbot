@@ -1505,6 +1505,32 @@ async def _review(
     await _send(interaction, text, view)
 
 
+async def add_all_groups(
+    memory: MemoryStore, campaign: Campaign, waiting: Sequence[Entity]
+) -> tuple[dict[str, list[str]], int]:
+    """The waiting names an "Add all" may add, by kind (ids), and how many were left out because
+    they sound like a known name (#3683): the rule of Discord's button, shared with the website's
+    (#5276), so both add the same names. Only names with a kind guessed and nothing to look at
+    first: not a player's character, not from the DM's own text, not spelled out."""
+    by_kind: dict[str, list[str]] = {}
+    looks_alike = 0
+    for entity in waiting:
+        kind = background_kind(entity)
+        if (
+            not kind
+            or kind == PLAYER_CHARACTER  # its player is asked on its own card (#3553)
+            or entity.source != "scan"
+            or entity.description.startswith(SPELLED_OUT)
+            or spelled_fix(entity)
+        ):
+            continue
+        if await _review_match(memory, campaign, entity) is not None:
+            looks_alike += 1  # (#3683: it stays out of "Add all", the rest still go)
+            continue
+        by_kind.setdefault(kind, []).append(entity.id)
+    return by_kind, looks_alike
+
+
 async def _offer_add_all(
     interaction: discord.Interaction,
     memory: MemoryStore,
@@ -1520,22 +1546,7 @@ async def _offer_add_all(
     by one" opens the cards); False when there is nothing to add in bulk."""
     from dmbot.ui.name_background import BulkConfirm  # (it imports this module)
 
-    by_kind: dict[str, list[str]] = {}
-    looks_alike = 0  # guessed a kind, but sounds like a known name: counted, never added in bulk
-    for entity in waiting:
-        kind = background_kind(entity)
-        if (
-            not kind
-            or kind == PLAYER_CHARACTER  # its player is asked on its own card (#3553)
-            or entity.source != "scan"
-            or entity.description.startswith(SPELLED_OUT)
-            or spelled_fix(entity)
-        ):
-            continue
-        if await _review_match(memory, campaign, entity) is not None:
-            looks_alike += 1  # (#3683: it used to hide the whole button, so a DM with a few such
-            continue  # names had to click through every one; it just stays out of "Add all")
-        by_kind.setdefault(kind, []).append(entity.id)
+    by_kind, looks_alike = await add_all_groups(memory, campaign, waiting)
     count = sum(len(ids) for ids in by_kind.values())
     # Two or more names that qualify, of any kinds, make the button (one name is one press on its
     # card). It used to need two of the SAME kind, which a mixed list of places and people never

@@ -411,7 +411,8 @@ class ActionStore:
         self, guild_id: int, campaign_id: str, upload_id: str
     ) -> dict[str, list[str]] | None:
         """The names a finished lore upload proposed, kind by kind (ids only), or None when there is
-        no such finished upload in this campaign (#3207)."""
+        no such finished upload in this campaign (#3207); or, given an import's id, the names its
+        finished sessions' scans proposed, together (#5276)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT found FROM lore_uploads WHERE guild_id = %s AND campaign_id = %s"
@@ -419,7 +420,23 @@ class ActionStore:
                 (guild_id, campaign_id, upload_id),
             )
             row = await cur.fetchone()
-        if row is None or not isinstance(row["found"], dict):
+            if row is None:  # not an upload: an import's id (#5276), its sessions' names together
+                cur = await conn.execute(
+                    "SELECT found FROM session_imports WHERE guild_id = %s AND campaign_id = %s"
+                    " AND import_id = %s AND state = 'done' ORDER BY imported_at, session_id",
+                    (guild_id, campaign_id, upload_id),
+                )
+                rows = await cur.fetchall()
+                if not rows:
+                    return None
+                merged: dict[str, list[str]] = {}
+                for each in rows:
+                    for k, v in (each["found"] or {}).items():
+                        if isinstance(v, list):
+                            known = merged.setdefault(str(k), [])
+                            known += [str(i) for i in v if str(i) not in known]
+                return merged
+        if not isinstance(row["found"], dict):
             return None
         return {str(k): [str(i) for i in v] for k, v in row["found"].items() if isinstance(v, list)}
 
