@@ -279,6 +279,21 @@ class Database:
             yield conn
 
     @asynccontextmanager
+    async def spend_writer(self) -> AsyncIterator[Conn]:
+        """The only way to add to what the paid calls cost (`service_spend`, #3672): for
+        `dmbot.service_spend`'s flush. The totals hold no campaign or person, only counts."""
+        async with self._with(spend="write") as conn:
+            yield conn
+
+    @asynccontextmanager
+    async def spend_admin(self) -> AsyncIterator[Conn]:
+        """The only way to read what the paid calls cost (`service_spend`): for the admin page's
+        API (#3672). Like `support_admin`, which code calls it is the boundary
+        (tests/test_service_spend.py checks)."""
+        async with self._with(spend="admin") as conn:
+            yield conn
+
+    @asynccontextmanager
     async def support_admin(self) -> AsyncIterator[Conn]:
         """The only way to read support tickets and change their status
         (`support_tickets`): for the admin page's API (dmbot.web, #1340). Like `grant_writer`,

@@ -67,6 +67,7 @@ from dmbot import (
     plan_rules,
     retention,
     script_make,
+    service_spend,
     sheet_reread,
     table_chat,
     trait_answer,
@@ -1283,6 +1284,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # What a call costs in AI credits, for the calls made because a DM added material (#4005):
         # it needs the campaign's owner, found the first time a job charges.
         credits.configure(recaps.db if recaps is not None else None, self._owner_of_campaign)
+        # What each paid call costs, as business totals for the admin Costs page (#3672).
+        service_spend.configure(recaps.db if recaps is not None else None, self._owner_of_campaign)
         # (server, campaign) -> its read in progress: one a campaign, several a server (#4551)
         self._lore_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
         self._lore_swept: dict[int, float] = {}  # server -> when its queue was last swept
@@ -2290,6 +2293,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # A notice to the admins that is on its way gets a moment to finish (#972).
         with contextlib.suppress(Exception):
             await asyncio.wait_for(self.ai_watch.wait(), 3)
+        with contextlib.suppress(Exception):
+            await service_spend.flush()  # the cost totals waiting, bounded (#3672)
         document_reader.shutdown()  # files being read: end them, don't wait out their limit
         # Website lore uploads being read: each puts its claim back to waiting (the next start reads
         # it again) and is waited for here, so the write is not lost with the process (#3022).

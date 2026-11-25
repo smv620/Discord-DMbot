@@ -36,7 +36,7 @@ from typing import Any, Protocol
 
 import aiohttp
 
-from dmbot import ai_feed, credits
+from dmbot import ai_feed, credits, service_spend
 from dmbot.alerts import Problem, raise_alert
 
 log = logging.getLogger(__name__)
@@ -797,11 +797,14 @@ class AnthropicClient:
                 if isinstance(exc, asyncio.CancelledError)
                 else FAILED,
             )
+            if isinstance(exc, AIOutOfFunds):  # refused for limits or billing: counted (#3672)
+                service_spend.record_refused(feature, tier.value)
             raise
         ai_feed.done(entry, reply.text)
         # Charged for what the service reported, even when the answer was cut: it billed DMbot for
         # those tokens. Free outside a job that prepares material (#4005).
         await credits.record(reply, feature)
+        service_spend.record_ai(reply, feature)  # (business totals for the Costs page, #3672)
         return reply
 
     async def _complete(
