@@ -3027,3 +3027,9 @@ Check 4 (after the session, no "… check" or "… save" phrase among the names 
 Owner checks (browser, can wait): the names-to-check menu starts on DMbot's guess; "Explorer League" says "Sounds like Explorer's League"; "Questions for you" opens the connections to answer on the page; deploy 46's checks 3 to 6.
 
 Session: dev1
+
+Deploy 48 checks 3 and 4 (dev1, 2026-11-25, read-only queries on the server, counts only):
+- Check 3 (cleaned transcript: "strahd's" becomes "Strahd's", "hope's" unchanged): NOT TESTED. Neither phrase is in the sample inputs (session-player.txt, session.txt, lore.txt) or in any of the five sample transcripts (172 lines each, 0 with either phrase in the cleaned or the raw text). The sample cannot show this; it needs a session line with "strahd's" and "hope's" typed or spoken, either as the owner's test or in a later sample input.
+- Check 4 (after the session, no "… check" or "… save" name among the names to check): PASSED. 315 names-to-check rows across the five sample campaigns, none whose name ends in " check" or " save".
+
+Session: dev1
