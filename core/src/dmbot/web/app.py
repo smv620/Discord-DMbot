@@ -122,6 +122,7 @@ from dmbot.web import (
     tokens,
     trait_offers,
     upload_notice,
+    wait_counts,
     wizard,
     wizard_check,
     wizard_page,
@@ -1589,6 +1590,32 @@ def create_app(
             return await lore.read(db, session, ref, upload)
         except RecapError as err:
             status, detail = lore_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # The small, fast counts read of a running upload or import (#3534 part 3): the page asks it
+    # twice a second while a job runs and the tab is visible; it adds no words and does one keyed
+    # read. Its own, looser limit, counted by account.
+    counts_limit = RateLimit(60, count=240)
+
+    @app.get("/me/campaigns/{ref}/wait-counts")
+    async def me_wait_counts(
+        ref: str, signed: Signed, kind: str = "", id: str = ""
+    ) -> dict[str, Any]:
+        """A running upload's (`kind=lore`) or import's (`kind=import`) stage and counts, for a DM
+        of the campaign only: `404 not_found` for anyone else, a job that is not there or a bad
+        id. Counts and times only."""
+        session, _token = signed
+        verdict = counts_limit.take(f"user-{session.user_id}")
+        if verdict != "ok":
+            raise HTTPException(
+                status_code=429 if verdict == "wait" else 503,
+                detail="slow_down" if verdict == "wait" else "busy",
+                headers={"Retry-After": "5"},
+            )
+        try:
+            return await wait_counts.read(db, session, ref, kind, id)
+        except RecapError as err:
+            status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     house_file_refusals = {
