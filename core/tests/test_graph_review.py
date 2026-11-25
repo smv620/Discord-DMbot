@@ -8,6 +8,7 @@ import unittest
 from typing import Any
 
 from dmbot.memory import graph_review as gr
+from dmbot.memory import models
 
 
 def rel(rid: str, a: str, b: str, **kw: Any) -> dict[str, Any]:
@@ -166,6 +167,79 @@ class ThePromptAndTheReport(unittest.TestCase):
         text = gr.report("c" * 32, many, verdicts, now=1, review_commit=None)
         self.assertLessEqual(len(text), 60000)
         self.assertIn("more not shown", text)
+
+
+class TheVerdictsForThePoster(unittest.TestCase):
+    """`verdicts_json` (#3742): the report's missed fixes as structure, the same as the Markdown."""
+
+    def test_the_same_fixes_quotes_and_ids_as_the_report(self) -> None:
+        other = gr.Fix(2, gr.NAMED, "named someone the story never named: Pell", (FENN,))
+        verdicts = [gr.Verdict(1, True, "drank with Rook", {7}, (gr.LINE,)), gr.Verdict(2, False)]
+        text = gr.report("c" * 32, [FIX, other], verdicts, now=1, review_commit=None)
+        got = gr.verdicts_json("c" * 32, [FIX, other], verdicts, now=1, review_commit=None)
+        (item,) = got["items"]
+        self.assertEqual(got["more_not_shown"], 0)
+        self.assertEqual((item["fix"], item["kind"], item["relation_id"]), (1, gr.LINK, "r1"))
+        self.assertEqual([e["id"] for e in item["entries"]], ["fenn", "rook"])
+        self.assertEqual((item["quote"], item["sources"], item["speaker_ids"]),
+                         ("drank with Rook", ["line"], [7]))  # fmt: skip
+        for e in item["entries"]:
+            self.assertIn(f"`{e['id']}`", text)
+        self.assertIn(item["quote"], text)
+        json.dumps(got)  # (plain JSON for the column)
+
+    def test_past_the_size_limit_it_holds_what_the_report_shows_and_counts_the_rest(self) -> None:
+        many = [gr.Fix(n, gr.LINK, "x" * 250, (FENN, ROOK), f"r{n}") for n in range(1, 400)]
+        verdicts = [gr.Verdict(n, True, "drank with Rook " * 20) for n in range(1, 400)]
+        text = gr.report("c" * 32, many, verdicts, now=1, review_commit=None)
+        got = gr.verdicts_json("c" * 32, many, verdicts, now=1, review_commit=None)
+        shown = len(got["items"])
+        self.assertIn(f"{got['more_not_shown']} more not shown", text)
+        self.assertEqual(shown + got["more_not_shown"], 399)
+        self.assertIn(f"## Fix {shown}:", text)
+        self.assertNotIn(f"## Fix {shown + 1}:", text)
+
+    def test_a_lore_hit_carries_its_uploads_kind(self) -> None:
+        own = side("rook", lore=("Rook and Fenn served on the same ship.",),
+                   lore_kinds=("own_writing",))  # fmt: skip
+        fix = gr.Fix(1, gr.LINK, "w", (FENN, own))
+        raw = answer({"fix": 1, "in_story": True, "quote": "served on the same ship"})
+        (v,) = gr.parse(raw, [fix]) or []
+        self.assertEqual((v.sources, v.upload_kinds), ((gr.LORE,), ("own_writing",)))
+
+    def test_a_lore_quote_with_no_kind_given_is_unknown(self) -> None:
+        raw = answer({"fix": 1, "in_story": True, "quote": "served on the same ship"})
+        (v,) = gr.parse(raw, [FIX]) or []
+        self.assertEqual(v.upload_kinds, (gr.UNKNOWN_UPLOAD,))
+
+    def test_one_quote_from_two_uploads_of_different_kinds_is_unknown(self) -> None:
+        held: dict[str, str] = {}
+        gr.merge_kind(held, "a", "own_writing")
+        gr.merge_kind(held, "b", "own_writing")
+        gr.merge_kind(held, "a", "unknown")
+        gr.merge_kind(held, "a", "own_writing")  # (once unknown, it stays unknown)
+        self.assertEqual(held, {"a": "unknown", "b": "own_writing"})
+        self.assertEqual(list(held), ["a", "b"])  # (first seen first: quotes and kinds line up)
+
+    def test_the_unknown_kind_is_the_columns_default(self) -> None:
+        self.assertEqual(gr.UNKNOWN_UPLOAD, models.UPLOAD_UNKNOWN)
+
+    def test_report_and_verdicts_together_are_the_two_alone(self) -> None:
+        verdicts = [gr.Verdict(1, True, "drank with Rook", {7}, (gr.LINE,))]
+        text, got = gr.report_and_verdicts("c", [FIX], verdicts, now=1, review_commit="abc")
+        self.assertEqual(text, gr.report("c", [FIX], verdicts, now=1, review_commit="abc"))
+        self.assertEqual(got, gr.verdicts_json("c", [FIX], verdicts, now=1, review_commit="abc"))
+
+    def test_a_quote_found_in_two_places_lists_both(self) -> None:
+        both = side("rook", (8, "Rook and Fenn served on the same ship."),
+                    lore=("Rook and Fenn served on the same ship.",))  # fmt: skip
+        fix = gr.Fix(1, gr.LINK, "w", (FENN, both))
+        raw = answer({"fix": 1, "in_story": True, "quote": "served on the same ship"})
+        (v,) = gr.parse(raw, [fix]) or []
+        self.assertEqual(v.sources, (gr.LINE, gr.LORE))
+        self.assertEqual((v.speaker_ids, v.upload_kinds), ({8}, (gr.UNKNOWN_UPLOAD,)))
+        item = gr.verdicts_json("c", [fix], [v], now=1, review_commit=None)["items"][0]
+        self.assertEqual((item["sources"], item["upload_kinds"]), (["line", "lore"], ["unknown"]))
 
 
 class TheStatusLine(unittest.TestCase):

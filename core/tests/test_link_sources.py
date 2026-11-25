@@ -79,7 +79,9 @@ class OnThePage(Web):
 
     async def test_the_dm_sees_each_kind(self) -> None:
         uploaded, session = self.links["mira-keep"], await self.session_link()
-        await self.memory.record_link_source(self.g, self.one.id, uploaded, LABEL)
+        await self.memory.record_link_source(
+            self.g, self.one.id, uploaded, LABEL, kind="own_writing"
+        )
         got = await self.sources(center=self.mira, hops=1)
         self.assertEqual(got[uploaded], {"type": "upload", "label": LABEL})
         self.assertEqual(got[session], {"type": "session", "n": 1})
@@ -87,7 +89,9 @@ class OnThePage(Web):
 
     async def test_a_player_gets_the_session_only(self) -> None:
         uploaded, session = self.links["mira-keep"], await self.session_link()
-        await self.memory.record_link_source(self.g, self.one.id, uploaded, LABEL)
+        await self.memory.record_link_source(
+            self.g, self.one.id, uploaded, LABEL, kind="own_writing"
+        )
         got = await self.sources(self.player, center=self.mira, hops=1)
         self.assertEqual(got[session], {"type": "session", "n": 1})
         self.assertEqual(got[uploaded], {"type": "unknown"})
@@ -96,7 +100,9 @@ class OnThePage(Web):
 
     async def test_players_view_for_a_dm_is_the_players(self) -> None:
         uploaded = self.links["mira-keep"]
-        await self.memory.record_link_source(self.g, self.one.id, uploaded, LABEL)
+        await self.memory.record_link_source(
+            self.g, self.one.id, uploaded, LABEL, kind="own_writing"
+        )
         got = await self.sources(center=self.mira, hops=1, view="players")
         self.assertEqual(got[uploaded], {"type": "unknown"})
 
@@ -108,7 +114,9 @@ class OnThePage(Web):
             self.g, other.id, made.value.id, "knows", zed2.value.id, source="dm",
             confidence=1.0, status="confirmed",
         )  # fmt: skip
-        await self.memory.record_link_source(self.g, other.id, rel.value[0].id, "Other upload")
+        await self.memory.record_link_source(
+            self.g, other.id, rel.value[0].id, "Other upload", kind="own_writing"
+        )
         got = await self.sources(center=self.mira, hops=2)
         self.assertNotIn("Other upload", str(got))
 
@@ -128,7 +136,7 @@ class OnTheDoor(Web):
 
     async def test_a_player_calling_the_door_is_never_given_the_label(self) -> None:
         link = self.links["mira-keep"]
-        await self.memory.record_link_source(self.g, self.one.id, link, LABEL)
+        await self.memory.record_link_source(self.g, self.one.id, link, LABEL, kind="own_writing")
         mine = await self.door(self.session, [link])
         theirs = await self.door(self.player, [link])
         self.assertEqual(mine[link]["label"], LABEL)
@@ -138,7 +146,9 @@ class OnTheDoor(Web):
     async def test_the_quote_goes_to_the_dm_alone(self) -> None:
         link = self.links["mira-keep"]
         said = "Tavin and Voss argued all night"
-        await self.memory.record_link_source(self.g, self.one.id, link, LABEL, said)
+        await self.memory.record_link_source(
+            self.g, self.one.id, link, LABEL, said, kind="own_writing"
+        )
         mine = await self.door(self.session, [link])
         theirs = await self.door(self.player, [link])
         self.assertEqual(mine[link]["quote"], said)
@@ -147,22 +157,28 @@ class OnTheDoor(Web):
 
     async def test_a_long_quote_is_cut_and_spaces_are_collapsed(self) -> None:
         link = self.links["mira-keep"]
-        await self.memory.record_link_source(self.g, self.one.id, link, LABEL, "x" * 400)
+        await self.memory.record_link_source(
+            self.g, self.one.id, link, LABEL, "x" * 400, kind="own_writing"
+        )
         self.assertEqual(len((await self.door(self.session, [link]))[link]["quote"]), 240)
         plain = self.links["rook-keep"]
-        await self.memory.record_link_source(self.g, self.one.id, plain, LABEL, "a   b \n c")
+        await self.memory.record_link_source(
+            self.g, self.one.id, plain, LABEL, "a   b \n c", kind="own_writing"
+        )
         self.assertEqual((await self.door(self.session, [plain]))[plain]["quote"], "a b c")
         self.assertEqual((await self.door(self.session, [plain]))[plain]["quote"], "a b c")
 
     async def test_control_and_zero_width_characters_are_dropped_first_quote_stays(self) -> None:
         link = self.links["mira-rook"]
         await self.memory.record_link_source(
-            self.g, self.one.id, link, LABEL, "x\u200by\x00z \u00e9"
+            self.g, self.one.id, link, LABEL, "x\u200by\x00z \u00e9", kind="own_writing"
         )
-        await self.memory.record_link_source(self.g, self.one.id, link, LABEL, "a later quote")
+        await self.memory.record_link_source(
+            self.g, self.one.id, link, LABEL, "a later quote", kind="own_writing"
+        )
         self.assertEqual((await self.door(self.session, [link]))[link]["quote"], "xyz \u00e9")
         none = self.links["mira-keep"]
-        await self.memory.record_link_source(self.g, self.one.id, none, LABEL)
+        await self.memory.record_link_source(self.g, self.one.id, none, LABEL, kind="own_writing")
         self.assertEqual((await self.door(self.session, [none]))[none]["quote"], "")  # (none given)
 
     async def test_only_the_asked_for_connections_are_read(self) -> None:
@@ -193,3 +209,48 @@ class OnTheAttach(unittest.TestCase):
         link_sources.attach(page, rows, False)
         self.assertNotIn("quote", page["edges"][0]["links"][0])
         self.assertNotIn("argued", str(page))
+
+
+class TheUploadKind(Web):
+    """Which kind of upload a kept connection came from (#3742): the poster posts a lore quote
+    only from the DM's own writing; an old row, or one never said, is unknown."""
+
+    async def kind_of(self, relation: str) -> str:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT upload_kind FROM memory_link_sources WHERE campaign_id = %s"
+                " AND relation_id = %s",
+                (self.one.id, relation),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return str(row["upload_kind"])
+
+    async def test_the_kind_given_is_kept(self) -> None:
+        link = self.links["mira-rook"]
+        await self.memory.record_link_source(self.g, self.one.id, link, LABEL, kind="own_writing")
+        self.assertEqual(await self.kind_of(link), "own_writing")
+
+    async def test_a_kind_off_the_list_is_refused_and_nothing_is_written(self) -> None:
+        link = self.links["mira-rook"]
+        with self.assertRaises(ValueError):
+            await self.memory.record_link_source(self.g, self.one.id, link, LABEL, kind="shared")
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_link_sources WHERE campaign_id = %s",
+                (self.one.id,),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 0)
+
+    async def test_a_row_written_without_a_kind_is_unknown(self) -> None:
+        # (a row from before 0635: the column's default, the safe side)
+        link = self.links["mira-rook"]
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO memory_link_sources (guild_id, campaign_id, relation_id, label,"
+                " created_at) VALUES (%s, %s, %s, %s, 1)",
+                (self.g, self.one.id, link, LABEL),
+            )
+        self.assertEqual(await self.kind_of(link), "unknown")
