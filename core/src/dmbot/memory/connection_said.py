@@ -18,7 +18,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections import Counter
+import time
+from collections import Counter, deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -41,6 +42,7 @@ CHANGED = "That connection changed since you started, so nothing was changed. Tr
 GONE = "One of the names is gone, so nothing was changed."
 PART_LEFT = "Part of it could not be taken back: check the connections."
 
+READS_PER_HOUR = 10  # a campaign may have this many reads an hour: the AI is paid for by the DM
 # Who knows it, as the DM's words say: the same three words `link_edits` uses (WHO_KNOWS)
 ALL, ONLY_DM, SOME = link_edits.EVERYONE, link_edits.ONLY_THE_DM, link_edits.SOME_CHARACTERS
 
@@ -360,3 +362,33 @@ async def apply(
 async def undo(memory: MemoryStore, guild_id: int, campaign_id: str, applied: Applied) -> bool:
     """↩️ Undo: take back everything a confirmed read did. True when all of it went back."""
     return await undo_batches(memory, guild_id, campaign_id, applied.batches)
+
+
+class ReadLimit:
+    """Ten reads an hour for one campaign (#2940, Supervisor's ruling). Kept in memory: a restart
+    gives a campaign its reads back, which only ever favours the DM. Nothing but a campaign's key
+    and the times of its reads is held, never a word."""
+
+    def __init__(
+        self, clock: Callable[[], float] = time.time, per_hour: int = READS_PER_HOUR
+    ) -> None:
+        self._clock = clock
+        self._per_hour = per_hour
+        self._reads: dict[tuple[int, str], deque[float]] = {}
+
+    def take(self, guild_id: int, campaign_id: str) -> int:
+        """0 when a read is allowed now (and is counted); else the minutes to wait."""
+        now = self._clock()
+        reads = self._reads.setdefault((guild_id, campaign_id), deque())
+        while reads and now - reads[0] >= 3600:
+            reads.popleft()
+        if len(reads) >= self._per_hour:
+            return max(1, int((reads[0] + 3600 - now) // 60) + 1)
+        reads.append(now)
+        return 0
+
+    def give_back(self, guild_id: int, campaign_id: str) -> None:
+        """A read that never reached the AI (nothing was asked) is not counted."""
+        reads = self._reads.get((guild_id, campaign_id))
+        if reads:
+            reads.pop()
