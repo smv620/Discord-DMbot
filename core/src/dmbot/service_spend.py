@@ -209,7 +209,8 @@ def record_refused(feature: str | None, model: str) -> None:
         _notifier.notify_once(
             f"refused-{month_start(_clock())}",
             f"⚠️ A DMbot AI call was refused for limits or billing for the first time this month "
-            f"(the job: {word}). Check the AI account at "
+            f"(the job: {word}). Raise the limit at "
+            "https://console.anthropic.com/settings/limits, or add credit at "
             "https://console.anthropic.com/settings/billing.",
         )
 

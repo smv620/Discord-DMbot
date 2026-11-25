@@ -134,3 +134,8 @@ class TheMonth(Spend):
         ((key, text),) = notifier.told
         self.assertEqual(key, f"refused-{service_spend.month_start(NOW)}")
         self.assertIn("sidebar", text)
+        self.assertIn(
+            "Raise the limit at https://console.anthropic.com/settings/limits, "
+            "or add credit at https://console.anthropic.com/settings/billing.",
+            text,
+        )
