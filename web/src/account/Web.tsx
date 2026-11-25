@@ -859,7 +859,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               onIcon={seeing ? undefined : chooseIcon}
               iconUndo={iconBack ? { id: iconBack.id, now: iconBack.now, undo: async () => {
                 const back = iconBack;
-                const refused = await chooseIcon(back.id, back.previous, back.previous === "custom" && back.previousPicture != null ? back.previousPicture : undefined);
+                // (a picture that is gone cannot be put back: the usual order is the nearest thing)
+                const refused = back.previous === "custom" && back.previousPicture == null ? await chooseIcon(back.id, "default") : await chooseIcon(back.id, back.previous, back.previous === "custom" ? back.previousPicture ?? undefined : undefined);
                 if (!refused) setIconBack(null);
                 return refused;
               } } : null}

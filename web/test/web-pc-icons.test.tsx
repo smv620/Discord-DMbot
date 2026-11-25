@@ -171,12 +171,37 @@ describe("Set a picture (#3622, core #5280)", () => {
     fireEvent.click((await screen.findAllByText(/Mira Voss/, { selector: "text" }))[0] as HTMLElement);
     const row = (await screen.findByRole("group", { name: w.heading }, { timeout: 8000 })) as HTMLElement;
     fireEvent.click(within(row).getByRole("button", { name: w.setPicture }));
-    const use = await within(row).findAllByRole("button", { name: w.usePicture });
+    const use = await within(row).findAllByRole("button", { name: new RegExp(w.usePicture) });
     fireEvent.click(use[0] as HTMLElement);
     await waitFor(() => expect(api.calls.some((c) => /:n1:custom:\d+$/.test(c))).toBe(true));
     const again = (await screen.findByRole("group", { name: w.heading })) as HTMLElement;
     fireEvent.click(await within(again).findByRole("button", { name: w.undoLabel }));
     await waitFor(() => expect(api.calls.some((c) => c.endsWith(":n1:default"))).toBe(true));
+  });
+
+  it("Undo of a change from one picture to another puts the first picture back, and keeps reading pages until one can be picked", async () => {
+    const api = mockApi("table");
+    await api.setPcIcon!("100.cmp1.icons", "n1", "custom", 11);
+    render(<Web api={api} path={path} />);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
+    fireEvent.click((await screen.findAllByText(/Mira Voss/, { selector: "text" }))[0] as HTMLElement);
+    const row = (await screen.findByRole("group", { name: w.heading }, { timeout: 8000 })) as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: w.setPicture }));
+    fireEvent.click((await within(row).findAllByRole("button", { name: new RegExp(w.usePicture) }))[0] as HTMLElement);
+    await waitFor(() => expect(api.calls.filter((c) => /:n1:custom:\d+$/.test(c)).length).toBe(2));
+    const again = (await screen.findByRole("group", { name: w.heading })) as HTMLElement;
+    fireEvent.click(await within(again).findByRole("button", { name: w.undoLabel }));
+    await waitFor(() => expect(api.calls.filter((c) => /:n1:custom:\d+$/.test(c)).pop()).toMatch(/:custom:11$/));
+  });
+
+  it("reads on past a page with nothing a player may pick", async () => {
+    const api = mockApi("table");
+    const pages = [{ pictures: [pic(1)], more: true }, { pictures: [pic(2, { mine: true })], more: false }];
+    let n = 0;
+    api.pictures = async () => ({ ...pages[n++]!, isDm: false, usage: null, sessions: [], posters: [] });
+    render(<PcIconRow node={pc({ iconHas: { discord: true, dndbeyond: true, pictures: true } })} api={api} refId="1.a" onChoose={async () => null} undo={false} onUndo={async () => null} />);
+    fireEvent.click(screen.getByRole("button", { name: w.setPicture }));
+    expect((await screen.findAllByRole("button", { name: new RegExp(w.usePicture) })).length).toBe(1);
   });
 
   it("offers no picker when the campaign has no pictures to pick", () => {

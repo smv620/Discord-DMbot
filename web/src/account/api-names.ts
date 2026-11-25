@@ -388,7 +388,7 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       if (q.seeAs) {
         // The web as one character (or the party) knows it (#2999): the same shape, plus whose it is.
         params.set("viewer", q.seeAs);
-        return (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/see-as?${params.toString()}`)) as WebGraph;
+        return withPictureIcons((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/see-as?${params.toString()}`)) as WebGraph, root);
       }
       if (q.view) params.set("view", q.view);
       return withPictureIcons(

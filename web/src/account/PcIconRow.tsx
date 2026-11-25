@@ -11,9 +11,10 @@ import SavingWait from "./SavingWait";
 
 /** The numeric id of a kept picture: the second part of its gallery cursor "made-at:id" (core #5280 takes this id, never the code). */
 export const pictureId = (p: PictureItem): number => Number(p.cursor.split(":")[1]);
+const hasId = (p: PictureItem): boolean => Number.isInteger(pictureId(p)); // (a malformed cursor is never offered)
 
 /** Pictures the person may pick: never one read out of a DM's file, and a player only their own (core re-checks both). */
-export const pickable = (list: PictureItem[], isDm: boolean): PictureItem[] => list.filter((p) => !p.dmOnly && (isDm || p.mine));
+export const pickable = (list: PictureItem[], isDm: boolean): PictureItem[] => list.filter((p) => hasId(p) && !p.dmOnly && (isDm || p.mine));
 
 export default function PcIconRow({
   node,
@@ -57,9 +58,14 @@ export default function PcIconRow({
     }
   }
   useEffect(() => {
-    if (picking && shown === null) void look();
+    if (picking) void look(); // (read again at each opening, so a picture removed since is not offered)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [picking]);
+  useEffect(() => {
+    // A player may get a page with none of their own: keep reading until one shows or the pages end.
+    if (picking && shown && more && !looking && !lookProblem && pickable(shown, isDm).length === 0) void look(shown[shown.length - 1]?.cursor);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown, more, looking, picking]);
   const statusBox = useRef<HTMLParagraphElement>(null); // a pressed button may leave the row: focus goes to what was said
   const choice = node.iconChoice ?? "default";
   const has = node.iconHas ?? { discord: false, dndbeyond: false };
@@ -124,9 +130,16 @@ export default function PcIconRow({
         <div class="stack" role="group" aria-labelledby={`pc-pictures-${node.id}`}>
           <h5 id={`pc-pictures-${node.id}`}>{w.pickerHeading}</h5>
           {looking && <p class="small muted" role="status">{w.loading}</p>}
-          {lookProblem && <p class="warn small" role="alert">{w.problems.network}</p>}
+          {lookProblem && (
+            <>
+              <p class="warn small" role="alert">{w.lookFailed}</p>
+              <button type="button" class="button secondary" onClick={() => void look()}>
+                {w.tryAgain}
+              </button>
+            </>
+          )}
           {shown !== null && !looking && pickable(shown, isDm).length === 0 && !more && <p class="small">{w.noPictures}</p>}
-          <ul class="stack small">
+          <ul class="stack small" style={{ maxHeight: "22rem", overflowY: "auto" }}>
             {pickable(shown ?? [], isDm).map((p) => (
               <li key={p.code} class="row">
                 <img src={p.previewUrl} alt={w.pictureAlt(p.description)} width={64} height={64} loading="lazy" />
@@ -134,6 +147,7 @@ export default function PcIconRow({
                   type="button"
                   class="button secondary"
                   aria-disabled={busy}
+                  aria-label={p.description ? w.usePictureNamed(p.description) : undefined}
                   onClick={() => void go(async () => { const refused = await onChoose("custom", pictureId(p)); if (!refused) setPicking(false); return refused; }, w.done)}
                 >
                   {w.usePicture}
