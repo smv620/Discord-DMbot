@@ -29,6 +29,7 @@ from dmbot.memory.models import (
     DM,
     PLAYER_CHARACTER,
     REJECTED,
+    UPLOAD_OWN_WRITING,
     MemoryRuleError,
     Relation,
     knows_rank,
@@ -544,9 +545,11 @@ async def keep_all(
             # connection.
             if c.upload and made.created_at >= now:
                 try:
+                    # (queued only by the 📜 read or the website's lore upload: own writing, #3742)
                     await memory.record_link_source(
-                        guild_id, campaign_id, made.id, c.upload, c.quote, inferred=c.inferred
-                    )
+                        guild_id, campaign_id, made.id, c.upload, c.quote, inferred=c.inferred,
+                        kind=UPLOAD_OWN_WRITING,
+                    )  # fmt: skip
                 except Exception as exc:
                     log.warning(
                         "A kept connection's source could not be stored (%s)", type(exc).__name__

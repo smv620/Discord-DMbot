@@ -220,6 +220,8 @@ services:
       DMBOT_CARD_SUMMARY: ${DMBOT_CARD_SUMMARY:-0}
       # (the Shared story adventure on the website, #3694: off, its routes answer 404)
       DMBOT_WEB_ADVENTURE: ${DMBOT_WEB_ADVENTURE:-0}
+      # (a connection said in words on the website, #2940: off, its routes answer 404)
+      DMBOT_WEB_CONNECTION_SAID: ${DMBOT_WEB_CONNECTION_SAID:-0}
       DMBOT_WEB_PAUSE: ${DMBOT_WEB_PAUSE:-0}
       DMBOT_WEB_STORY_MODE: ${DMBOT_WEB_STORY_MODE:-0}
       DMBOT_WEB_HOUSE_FILE: ${DMBOT_WEB_HOUSE_FILE:-0}

@@ -50,6 +50,7 @@ from dmbot.web import (
     campaign_delete,
     campaign_settings,
     campaign_visits,
+    connection_reads,
     continuity,
     deeds,
     discord_accounts,
@@ -4982,6 +4983,73 @@ def create_app(
             return await adventure.held(db, session, ref)
         except RecapError:
             raise HTTPException(status_code=404, detail="not_found") from None
+
+    # A connection said in the DM's own words (#2940 slice C): queued for the bot, which reads it,
+    # shows proposals, and writes only what the DM confirms. 404 while DMBOT_WEB_CONNECTION_SAID is
+    # off. The DM's words are never logged.
+    connection_read_refusals = {
+        "bad_text": (400, "bad_text"),
+        "bad_choice": (422, "bad_choice"),
+        "busy": (409, "busy"),  # a read of this campaign is running
+        "hour_full": (429, "hour_full"),  # ten reads this hour
+        "not_ready": (409, "not_ready"),
+        "not_found": (404, "not_found"),
+    }
+
+    def connection_said_gate() -> None:
+        if not settings.connection_said_on:
+            raise HTTPException(status_code=404, detail="not_found")
+
+    @app.post("/me/campaigns/{ref}/connections/read", status_code=202)
+    async def me_connection_read(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """Read the DM's words about two entries: `{a, b, text, edit?}`. `{answer}`; poll
+        `.../connections/read/{answer}`."""
+        session, _token = signed
+        connection_said_gate()
+        body = await small_json(request)
+        try:
+            return {"answer": await connection_reads.request(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = connection_read_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/connections/read/{answer}")
+    async def me_connection_read_status(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
+        """Where the DM's own read stands, in the shared progress shape, with the proposals once
+        it is ready."""
+        session, _token = signed
+        connection_said_gate()
+        try:
+            return await connection_reads.status(db, session, ref, answer)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.post("/me/campaigns/{ref}/connections/read/{answer}/use", status_code=202)
+    async def me_connection_use(
+        ref: str, answer: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """Use this: `{picks, who, characters}`. Poll the same address as the read."""
+        session, _token = signed
+        connection_said_gate()
+        body = await small_json(request)
+        try:
+            await connection_reads.use(db, session, ref, answer, body)
+        except RecapError as err:
+            status, detail = connection_read_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"answer": answer}
+
+    @app.post("/me/campaigns/{ref}/connections/read/{answer}/undo", status_code=202)
+    async def me_connection_undo(ref: str, answer: str, signed: Signed) -> dict[str, str]:
+        """Undo what Use this wrote, whole. Poll the same address."""
+        session, _token = signed
+        connection_said_gate()
+        try:
+            await connection_reads.undo(db, session, ref, answer)
+        except RecapError as err:
+            status, detail = connection_read_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        return {"answer": answer}
 
     @app.get("/me/campaigns/{ref}/transcripts/{number}/download")
     async def me_transcript_download(

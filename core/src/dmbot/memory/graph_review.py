@@ -25,6 +25,7 @@ from typing import Any
 from psycopg.types.json import Jsonb
 
 from dmbot.db import Conn
+from dmbot.memory.models import UPLOAD_UNKNOWN
 
 WAIT_S = 15 * 60  # the owner's "nothing touched for 15 minutes"
 RETAKE_AFTER_S = 10 * 60  # a check whose bot died is taken again after this
@@ -179,6 +180,9 @@ class Side:
     lines: tuple[Said, ...] = ()
     lore: tuple[str, ...] = ()
     made_by: str | None = None
+    # The upload kind of each lore quote, in the same order (`memory_link_sources.upload_kind`,
+    # #3742); a quote with none given is `UNKNOWN_UPLOAD`, so the poster keeps it generic.
+    lore_kinds: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -199,6 +203,9 @@ class Verdict:
     quote: str = ""
     speaker_ids: set[int] = field(default_factory=set)
     sources: tuple[str, ...] = ()  # LINE, LORE, DESCRIPTION: where the quote was found
+    # The upload kinds of the lore quotes it was found in (#3742), so the poster posts a lore quote
+    # only when every one of them is the DM's own writing.
+    upload_kinds: tuple[str, ...] = ()
 
 
 def system() -> str:
@@ -241,15 +248,27 @@ def _norm(text: str) -> str:
 LINE, LORE, DESCRIPTION = "line", "lore", "description"  # where a verdict's quote came from
 
 
-def _quotable(fix: Fix) -> list[tuple[str, int | None, str]]:
-    """The texts a quote may come from, each with its speaker (None for lore and descriptions) and
-    its source, so #3742 can keep anything from shared material out of what it posts."""
-    out: list[tuple[str, int | None, str]] = []
+UNKNOWN_UPLOAD = UPLOAD_UNKNOWN  # a lore quote whose upload is not known (the column's default)
+
+
+def merge_kind(held: dict[str, str], quote: str, kind: str) -> None:
+    """Add one lore quote and its upload's kind to `held` (quote -> kind, first seen first). The
+    same quote kept from two uploads of different kinds is `UNKNOWN_UPLOAD`, so the poster stays
+    on the safe side (#3742)."""
+    held[quote] = kind if held.get(quote, kind) == kind else UNKNOWN_UPLOAD
+
+
+def _quotable(fix: Fix) -> list[tuple[str, int | None, str, str | None]]:
+    """The texts a quote may come from, each with its speaker (None for lore and descriptions),
+    its source, and for lore its upload's kind (None otherwise), so #3742 can keep anything from
+    shared material out of what it posts."""
+    out: list[tuple[str, int | None, str, str | None]] = []
     for side in fix.sides:
-        out += [(s.text, s.user_id, LINE) for s in side.lines]
-        out += [(t, None, LORE) for t in side.lore]
+        out += [(s.text, s.user_id, LINE, None) for s in side.lines]
+        kinds = (*side.lore_kinds, *([UNKNOWN_UPLOAD] * len(side.lore)))
+        out += [(t, None, LORE, kind) for t, kind in zip(side.lore, kinds, strict=False)]
         if side.description:
-            out.append((side.description, None, DESCRIPTION))
+            out.append((side.description, None, DESCRIPTION, None))
     return out
 
 
@@ -278,11 +297,16 @@ def parse(raw: str, fixes: Sequence[Fix]) -> list[Verdict] | None:
         wanted = f" {_norm(quote or '')} "
         if item.get("in_story") is True and wanted.strip():
             # (padded, so a quote matches whole words only: "ran" is not found in "Fran")
-            hits = [(who, src) for text, who, src in _quotable(fix) if wanted in f" {_norm(text)} "]
+            hits = [
+                (who, src, kind)
+                for text, who, src, kind in _quotable(fix)
+                if wanted in f" {_norm(text)} "
+            ]
             if hits:
                 verdict = Verdict(fix.number, True, " ".join(str(quote).split()))
-                verdict.speaker_ids = {who for who, _ in hits if who is not None}
-                verdict.sources = tuple(sorted({src for _, src in hits}))
+                verdict.speaker_ids = {who for who, _, _ in hits if who is not None}
+                verdict.sources = tuple(sorted({src for _, src, _ in hits}))
+                verdict.upload_kinds = tuple(sorted({k for _, _, k in hits if k is not None}))
         out.append(verdict)
     return out
 
@@ -290,6 +314,49 @@ def parse(raw: str, fixes: Sequence[Fix]) -> list[Verdict] | None:
 # ---- the report ---------------------------------------------------------------------------------
 
 OLD_BUILD = "made before versions were recorded"
+
+
+def _shown(
+    campaign_id: str,
+    fixes: Sequence[Fix],
+    verdicts: Sequence[Verdict],
+    *,
+    now: int,
+    review_commit: str | None,
+) -> tuple[list[str], list[tuple[Verdict, Fix, list[str]]], int]:
+    """The report's head lines, the missed fixes it shows (each with its section's lines), and how
+    many more it leaves out at its size limit. `report` and `verdicts_json` are both built from
+    this, so the Markdown and the structure always hold the same fixes (#3742)."""
+    when = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d %H:%M UTC")
+    by_number = {f.number: f for f in fixes}
+    missed = [v for v in verdicts if v.in_story and v.number in by_number]
+    head = [
+        "# DMbot graph improvements",
+        "",
+        f"- Campaign: `{campaign_id}`",
+        f"- Made: {when}, when the DM fixed the story graph",
+        f"- Checked by build: {review_commit or 'unknown'}",
+        f"- Fixes checked: {len(verdicts)}; DMbot missed: {len(missed)}",
+        "",
+    ]
+    size = sum(len(x) + 1 for x in head)
+    shown: list[tuple[Verdict, Fix, list[str]]] = []
+    for v in missed:
+        fix = by_number[v.number]
+        section = [f"## Fix {v.number}: {fix.words[: 3 * LABEL_MAX]}", ""]
+        if fix.relation_id:
+            section.append(f"- Connection: `{fix.relation_id}`")
+        for side in fix.sides:
+            section.append(
+                f"- Entry `{side.id}` ({side.kind}): {side.label[:LABEL_MAX]}, made by build "
+                f"{side.made_by or OLD_BUILD}"
+            )
+        section += [f'- In the story ({", ".join(v.sources) or "unknown"}): "{v.quote}"', ""]
+        size += sum(len(x) + 1 for x in section)
+        if size > REPORT_MAX:
+            break  # (the column's own limit: the rest are counted, so the report still fits)
+        shown.append((v, fix, section))
+    return head, shown, len(missed) - len(shown)
 
 
 def report(
@@ -303,34 +370,64 @@ def report(
     """The Markdown report of what DMbot missed: the campaign's internal id (never its name), each
     missed fix with its entries (ids and labels), the verdict and its quote, the build that made
     each entry, and the build running the check. Only the fixes the story showed are in it."""
-    when = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d %H:%M UTC")
-    by_number = {f.number: f for f in fixes}
-    missed = [v for v in verdicts if v.in_story and v.number in by_number]
-    lines = [
-        "# DMbot graph improvements",
-        "",
-        f"- Campaign: `{campaign_id}`",
-        f"- Made: {when}, when the DM fixed the story graph",
-        f"- Checked by build: {review_commit or 'unknown'}",
-        f"- Fixes checked: {len(verdicts)}; DMbot missed: {len(missed)}",
-        "",
-    ]
-    left = len(missed)
-    for v in missed:
-        fix = by_number[v.number]
-        section = [f"## Fix {v.number}: {fix.words[: 3 * LABEL_MAX]}", ""]
-        if fix.relation_id:
-            section.append(f"- Connection: `{fix.relation_id}`")
-        for side in fix.sides:
-            section.append(
-                f"- Entry `{side.id}` ({side.kind}): {side.label[:LABEL_MAX]}, made by build "
-                f"{side.made_by or OLD_BUILD}"
-            )
-        section += [f'- In the story ({", ".join(v.sources) or "unknown"}): "{v.quote}"', ""]
-        if sum(len(x) + 1 for x in lines + section) > REPORT_MAX:
-            # (the column's own limit: the rest are counted, so the report still fits and is kept)
-            lines.append(f"{left} more not shown: the report reached its size limit.")
-            break
-        lines += section
-        left -= 1
+    head, shown, more = _shown(campaign_id, fixes, verdicts, now=now, review_commit=review_commit)
+    lines = [*head, *(x for _, _, section in shown for x in section)]
+    if more:
+        lines.append(f"{more} more not shown: the report reached its size limit.")
     return "\n".join(lines).rstrip() + "\n"
+
+
+def verdicts_json(
+    campaign_id: str,
+    fixes: Sequence[Fix],
+    verdicts: Sequence[Verdict],
+    *,
+    now: int,
+    review_commit: str | None,
+) -> dict[str, Any]:
+    """The report's missed fixes as structure (`graph_reviews.verdicts`, #3742), for the poster to
+    render at post time, when it can still check consent and where each quote came from (finished
+    Markdown can't be checked). The same fixes as `report`, from the same objects, and the same
+    count left out. A quote can be found in several places, so `sources`, `speaker_ids` and
+    `upload_kinds` are lists: the poster posts it only if every one passes."""
+    _, shown, more = _shown(campaign_id, fixes, verdicts, now=now, review_commit=review_commit)
+    items: list[dict[str, Any]] = []
+    for v, fix, _ in shown:
+        items.append(
+            {
+                "fix": v.number,
+                "kind": fix.kind,
+                "words": fix.words[: 3 * LABEL_MAX],
+                "relation_id": fix.relation_id,
+                "entries": [
+                    {
+                        "id": side.id,
+                        "kind": side.kind,
+                        "label": side.label[:LABEL_MAX],
+                        "made_by": side.made_by,
+                    }
+                    for side in fix.sides
+                ],
+                "quote": v.quote,
+                "sources": list(v.sources),
+                "speaker_ids": sorted(v.speaker_ids),
+                "upload_kinds": list(v.upload_kinds),
+            }
+        )
+    return {"items": items, "more_not_shown": more}
+
+
+def report_and_verdicts(
+    campaign_id: str,
+    fixes: Sequence[Fix],
+    verdicts: Sequence[Verdict],
+    *,
+    now: int,
+    review_commit: str | None,
+) -> tuple[str, dict[str, Any]]:
+    """`report` and `verdicts_json` from one `_shown`, for the run's one INSERT (#3742): the two
+    can never hold different fixes."""
+    return (
+        report(campaign_id, fixes, verdicts, now=now, review_commit=review_commit),
+        verdicts_json(campaign_id, fixes, verdicts, now=now, review_commit=review_commit),
+    )
