@@ -28,7 +28,10 @@ def label_of(row: dict[str, Any]) -> str:
     if row["pick"] == "new":
         return who_top.label(new_kind=str(row.get("newKind") or ""))
     return who_top.label(
-        name=str(row["targetName"]), kind=str(row["targetKind"]), tie=row.get("targetTie")
+        name=str(row["targetName"]),
+        kind=str(row["targetKind"]),
+        tie=row.get("targetTie"),
+        detail=str(row.get("targetDetail") or ""),
     )
 
 

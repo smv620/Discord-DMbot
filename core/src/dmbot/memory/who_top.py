@@ -11,11 +11,12 @@ campaign's entries and stored answers.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
-from dmbot.memory import descriptions
+from dmbot.memory import descriptions, tags
 from dmbot.memory import who_ranking as ranking
 from dmbot.memory.kinds import KIND_LABELS
 from dmbot.memory.lookup import CampaignLookup
@@ -24,6 +25,7 @@ from dmbot.memory.who_answers import ENTITY, NEW, StoredAnswer, WhoAnswers
 from dmbot.memory.who_step import candidates_from
 
 if TYPE_CHECKING:
+    from dmbot.memory.card_summaries import CardSummaries
     from dmbot.memory.store import MemoryStore
 
 CONFIDENCE_WORDS = {
@@ -31,6 +33,8 @@ CONFIDENCE_WORDS = {
     "likely": "DMbot thinks so",
     "maybe": "DMbot is not sure",
 }
+log = logging.getLogger(__name__)
+
 TOP = 5  # the answers a card offers (`who_ranking.LIMIT`)
 # The kinds a new entry can be, as the card's own kind names (`ui.names.KINDS`) say them.
 CARD_KIND = {"character": "npc", "place": "place", "faction": "faction", "item": "item",
@@ -54,17 +58,43 @@ def kind_word(kind: str) -> str:
     return f"a {word}" if word and word[0] not in "aeiou" else f"an {word}"
 
 
+DETAIL_MAX = 60  # a choice's detail, cut at a word, so the label fits a menu
+
+
 def label(
-    *, new_kind: str | None = None, name: str = "", kind: str = "", tie: str | None = None
+    *,
+    new_kind: str | None = None,
+    name: str = "",
+    kind: str = "",
+    tie: str | None = None,
+    detail: str = "",
 ) -> str:
     """The words on one answer: a new entry of a kind, or another name for an entry that is already
     in the story. An entry whose name only describes it ("the woman") carries the one entry it is
-    tied to ("the woman, with Mira"), so two of them can be told apart (#3431)."""
+    tied to ("the woman, with Mira"), so two of them can be told apart (#3431). `detail` is the
+    entry's most significant detail ("the innkeeper of Bryn Shander"), which says more than its kind
+    and so replaces it (`detail_of`)."""
     if new_kind is not None:
         return f"new {KIND_LABELS.get(new_kind, new_kind)}" if new_kind else "new entry"
     if tie and descriptions.is_description(name):
         return f"a.k.a. {name}, with {tie}"
+    if detail:
+        return f"a.k.a. {name}, {detail}"
     return f"a.k.a. {name}, {kind_word(kind)}"
+
+
+def detail_of(name: str, summary: str | None, tie_phrase: str) -> str:
+    """An entry's most significant detail: the card's one sentence where there is one (without its
+    own first words if they are the name), else its strongest connection, else "" (the label then
+    says the kind)."""
+    sentence = " ".join((summary or "").split()).rstrip(".")
+    if sentence.casefold().startswith(name.casefold()):
+        sentence = sentence[len(name) :].lstrip(" ,:;-")
+    if sentence:
+        if len(sentence) > DETAIL_MAX:
+            sentence = sentence[: DETAIL_MAX - 1].rsplit(" ", 1)[0].rstrip(",;: ") + "…"
+        return sentence
+    return tie_phrase
 
 
 def _from_entity(e: Entity, tie: str | None = None) -> str:
@@ -80,6 +110,7 @@ async def top_for(
     opted_in: Collection[int],
     include_hidden: bool,
     avoid: Collection[str] = (),
+    summaries: CardSummaries | None = None,
 ) -> list[Top]:
     """The card's answers for `entity`, best first. `avoid`: entries that were just said to be
     wrong ("That's wrong" on DMbot's own join), left out. Empty when nothing links the name to an
@@ -109,7 +140,41 @@ async def top_for(
             seen.add(r.candidate.id)
             e = lookup.entities[r.candidate.id]
             out.append(Top(_from_entity(e), target_id=e.id))
-    return out
+    return await _with_details(memory, guild_id, campaign_id, lookup, out, summaries)
+
+
+async def _with_details(
+    memory: MemoryStore,
+    guild_id: int,
+    campaign_id: str,
+    lookup: CampaignLookup,
+    out: list[Top],
+    summaries: CardSummaries | None,
+) -> list[Top]:
+    """Each entry choice's most significant detail (#3603): the card's sentence when
+    `DMBOT_CARD_SUMMARY` has one (`summaries` is None when it is off), else its strongest
+    connection, else the kind. A read that fails leaves the kind: a choice never fails for it."""
+    ids = [t.target_id for t in out if t.target_id]
+    if not ids:
+        return out
+    try:
+        ties = await memory.tag_ties(guild_id, campaign_id, ids)
+        said = await summaries.get_many(guild_id, campaign_id, ids) if summaries else {}
+    except Exception as exc:  # only the type: nothing here holds a name
+        log.warning("Top answers: details could not be read (%s)", type(exc).__name__)
+        return out
+    done: list[Top] = []
+    for t in out:
+        e = lookup.entities.get(t.target_id) if t.target_id else None
+        if e is None:
+            done.append(t)
+            continue
+        found = said.get(e.id)
+        detail = detail_of(
+            e.name, found.who if found else None, tags.detail_for(ties.get(e.id, ()))
+        )
+        done.append(replace(t, label=label(name=e.name, kind=e.type, detail=detail)))
+    return done
 
 
 def _stored(
