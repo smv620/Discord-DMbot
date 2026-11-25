@@ -1325,6 +1325,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "deed-",
             "continuity-",
             "names-more",
+            "lookalike-",
         )
     ):
         raise RecapError("not_found")
@@ -1371,9 +1372,10 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         if got["action"] == "maps-add":  # (a sent map: the new map's id, for the page's list)
             out["mapId"] = str(got.get("resultId") or "") if done else None
         return out
-    if str(got["action"]).startswith(("route-", "road-")):
-        # a route's length or a road's condition (#4392, #4451): how it ended and the change it
-        # made, for the page's Undo (none when it changed nothing); no edge to draw
+    if str(got["action"]).startswith(("route-", "road-", "lookalike-")):
+        # a route's length, a road's condition or a look-alike merge (#4392, #4451, #5259): how it
+        # ended and the change it made, for the page's Undo (none when it changed nothing); no
+        # edge to draw
         made = got.get("resultBatches") or []
         return {
             "state": got["state"],
