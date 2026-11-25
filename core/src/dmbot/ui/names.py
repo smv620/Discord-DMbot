@@ -104,28 +104,7 @@ KINDS: dict[str, str] = {
     "promise": "A promise",
     "concept": "An idea or other thing",
 }
-KIND_SHORT: dict[str, str] = {
-    "npc": "NPC",
-    PC: "PC",
-    "character": "character",
-    "place": "place",
-    "faction": "group",
-    "creature": "NPC",
-    "item": "item",
-    "deity": "NPC",
-    "spell": "spell",
-    "event": "event",
-    "clue": "clue",
-    "people": "people",
-    "thread": "thread",
-    "quest": "quest",
-    "mystery": "mystery",
-    "hook": "hook",
-    "goal": "goal",
-    "promise": "promise",
-    "concept": "other",
-    "person": "player or DM",
-}
+KIND_SHORT = name_words.KIND_SHORT
 # A non-DM with no character in this campaign sees only what everyone knows (Supervisor's ruling O
 # on #4537, slice 5b): one plain line says why the list is nearly empty. #4804/#4805 reuse it.
 NO_CHARACTER = (
