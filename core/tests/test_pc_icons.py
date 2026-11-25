@@ -172,7 +172,7 @@ class WhoMaySet(Icons):
         for who in (self.session, self.player):
             row = (await self.rows(who))[str(self.hero)]
             self.assertTrue(row["canSet"])
-            self.assertEqual(row["has"], {"discord": True, "dndbeyond": False})
+            self.assertEqual(row["has"], {"discord": True, "dndbeyond": False, "pictures": False})
 
     async def test_someone_outside_the_server_is_refused(self) -> None:
         stranger = await self.signed(CAROL)  # signed in, in no server
