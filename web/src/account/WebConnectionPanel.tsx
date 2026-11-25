@@ -23,6 +23,8 @@ import LazyPanel from "./LazyPanel";
 import SavingWait from "./SavingWait";
 import { dimmedName, markSecret } from "./know";
 import { WhoKnows } from "./WebLinePanel";
+import { CONNECTION_SAID_LIVE } from "../content/connection-said-switch";
+import { saidWords } from "../content/connection-said-words";
 
 type Link = WebEdge["links"][number];
 /** What the DM has picked on one connection and not yet saved. */
@@ -108,6 +110,9 @@ export default function ConnectionPanel({
   const [openId, setOpenId] = useState<string | null>(firstOpen);
   const [staged, setStaged] = useState<Record<string, Staged>>({});
   const [adding, setAdding] = useState(false);
+  // Say it in words (#5293): `edit` is the connection being corrected, undefined for a new one.
+  const [saying, setSaying] = useState<{ edit?: string } | null>(null);
+  const sayable = CONNECTION_SAID_LIVE && canEdit && Boolean(api.saidSend);
   const [ask, setAsk] = useState<null | (() => void)>(null);
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState<{ done: number; of: number } | null>(null); // which change is with the bot
@@ -281,6 +286,23 @@ export default function ConnectionPanel({
           {adding && <LazyPanel key={`add-${edge.a}|${edge.b}`} load={() => import("./AddLink")} what="the form to add a connection" props={{ edge, kindOf, nameOf, act }} />}
         </div>
       )}
+      {sayable && (
+        <div class="stack">
+          {!saying && (
+            <button type="button" class="button secondary" onClick={() => setSaying({})}>
+              {saidWords.connect}
+            </button>
+          )}
+          {saying && (
+            <LazyPanel
+              key={`say-${edge.a}|${edge.b}|${saying.edit ?? ""}`}
+              load={() => import("./ConnectionSaid")}
+              what="the form to say it in words"
+              props={{ api, refId, a: edge.a, b: edge.b, edit: saying.edit, onClose: () => setSaying(null), onChanged: () => reload?.() }}
+            />
+          )}
+        </div>
+      )}
       {canEdit && undoable.length > 0 && !dirty && (
         <p class="row">
           <button type="button" class="button secondary" disabled={undoing || saving} aria-busy={undoing} onClick={() => void undo()}>
@@ -312,6 +334,7 @@ export default function ConnectionPanel({
               revealing={revealing}
               api={api}
               refId={refId}
+              onCorrect={sayable ? () => setSaying({ edit: l.id }) : undefined}
             />
           ))}
         </ol>
@@ -361,6 +384,7 @@ function Line({
   revealing,
   api,
   refId,
+  onCorrect,
 }: {
   /** Reads the page's graph again after a change to a road or route (#5035). */
   reload?: (() => void) | undefined;
@@ -380,6 +404,8 @@ function Line({
   revealing: Set<string>;
   api: AccountApi;
   refId: string;
+  /** Opens "say it in words" to correct this connection (#5293); absent while that is off. */
+  onCorrect?: (() => void) | undefined;
 }) {
   const [asking, setAsking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -410,6 +436,13 @@ function Line({
       </button>
       {isOpen && (
         <div class="stack" id={`web-link-${link.id}`}>
+          {onCorrect && (
+            <p>
+              <button type="button" class="button secondary" onClick={onCorrect}>
+                {saidWords.correct}
+              </button>
+            </p>
+          )}
           {/* A route's stated length (#4392): behind ROUTE_LENGTH_LIVE. The DM's view sets it; a player sees it once it is there. */}
           {ROUTE_LENGTH_LIVE && (link.route || link.length) && (
             <RouteLength

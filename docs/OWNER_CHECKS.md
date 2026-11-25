@@ -248,5 +248,6 @@ Unlocks: #1831
 - **Add all after an import (#5276):** dev1 finishes one import on the test site, presses Add all, sees the same names Discord's Add all adds, and takes them back with Undo. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
 - **Names that differ by an s (#5215):** dev1 sees "Explorer League" joined to "Explorer's League" in Check guesses after a sample session with DMBOT_STORY_WHO_APPLY on, and an Undo that stays undone. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
 - **Live counts while DMbot reads (#3534):** dev1 measures what one counts read costs on the test server, then uploads the sample lore with the page open and sees the words and calls climb about twice a second, switches to another tab and sees the asking stop, and sees a player get nothing. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
+- **Say a connection in words (#5293):** dev1 opens a connection's panel on the test site, writes a sentence about two names, sees DMbot read it as plain sentences, uses them and takes them back with Undo, corrects one existing connection, and sees a player get no buttons. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
 
 The reasons are in `docs/GO_LIVE.md`.
