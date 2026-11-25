@@ -11,9 +11,19 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.memory._changes import ALREADY_UNDONE, NOT_FOUND
-from dmbot.memory.models import MemoryRuleError, WaitingJoin
+from dmbot.memory.models import PROPOSED, MemoryRuleError, WaitingJoin
 from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _send, _tell
-from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
+from dmbot.ui.names import (
+    GONE as NAME_GONE,
+)
+from dmbot.ui.names import (
+    SuggestionReview,
+    _campaign_for,
+    _md,
+    _memory,
+    changed,
+    sees_secrets,
+)
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +103,7 @@ class JoinedReview(_Menu):
         self.shown = waiting[0]
         for handler, label, style in (
             (self._yes, "✅ Yes, that's right", discord.ButtonStyle.success),
+            (self._wrong, "❌ That's wrong", discord.ButtonStyle.danger),
             (self._undo, "↩️ Undo", discord.ButtonStyle.secondary),
             (self._later, "⏳ Later", discord.ButtonStyle.secondary),
         ):
@@ -171,6 +182,38 @@ class JoinedReview(_Menu):
             campaign.guild_id,
             f"↩️ Undone. **{_md(j.spelling)}** is no longer **{_md(j.keep_name)}**. "
             "It goes back to your list of names to check.",
+        )
+
+    async def _wrong(self, interaction: discord.Interaction) -> None:
+        """❌ That's wrong (#3603): the guess is taken back, as Undo does, and the name's own card
+        opens at once with DMbot's best answers for it, leaving out the entry it wrongly took the
+        name to be. The card is the one "Check new names" shows."""
+        j = self.shown
+        memory = _memory(interaction)
+        campaign = await self._may_answer(interaction)
+        if j is None or memory is None or campaign is None:
+            return
+        await _answer_first(interaction, in_place=True)
+        try:
+            await memory.undo(campaign.guild_id, self.campaign_id, j.batch)
+        except MemoryRuleError as exc:
+            if str(exc) in (NOT_FOUND, ALREADY_UNDONE):  # answered on another screen
+                await self._next(interaction, campaign.guild_id, GONE)
+            else:
+                await _tell(interaction, CHANGED)
+            return
+        changed(interaction, campaign)
+        self.stop()
+        card = SuggestionReview(self.campaign_id, [j.gone_id], avoid={j.gone_id: j.keep_id})
+        entity = await memory.entity(campaign.guild_id, self.campaign_id, j.gone_id)
+        if entity is None or entity.status != PROPOSED:
+            await _replace(interaction, f"↩️ Undone. {NAME_GONE}", None)
+            return
+        text = await card.prepare(interaction, campaign, memory, entity)
+        await _replace(
+            interaction,
+            f"↩️ Undone. **{_md(j.spelling)}** is no longer **{_md(j.keep_name)}**.\n\n{text}",
+            card,
         )
 
     async def _all(self, interaction: discord.Interaction) -> None:

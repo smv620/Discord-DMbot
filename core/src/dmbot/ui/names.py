@@ -23,7 +23,7 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
-from dmbot.memory import heard_rules, name_reader, name_words, tags
+from dmbot.memory import heard_rules, name_reader, name_words, tags, who_top
 from dmbot.memory.card_match import card_match
 from dmbot.memory.entity_words import in_sentence
 from dmbot.memory.list_names import split_list
@@ -53,6 +53,7 @@ from dmbot.memory.sounds import sound_codes
 from dmbot.recaps import heard_fix
 from dmbot.ui import all_names, logic, name_origin, name_places, player_id, split_words
 from dmbot.ui.check_everything import add_stop, next_part, progress
+from dmbot.ui.dm_links import clarify_link
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
     VIEW_TIMEOUT_S,
@@ -1413,6 +1414,14 @@ class _Kept:
     found: Found | None
     failed: bool = False
     undone: bool = False  # Undo ran; only this session's lines were left to put back
+    joined: bool = False  # a "same as" from DMbot's top answers (#3603): Undo, no "Not a …"
+
+
+MORE_OPTIONS = "more"  # the last choice of DMbot's best answers (#3603)
+MORE_OPTIONS_TEXT = (
+    "Search every name, see the scene and where it was said, or mark it as not worth tracking."
+)
+MORE_OPTIONS_TEXT_NO_SITE = MORE_OPTIONS_TEXT + " (This DMbot has no website address set.)"
 
 
 def its_label(name: str) -> str:
@@ -1718,11 +1727,20 @@ class SuggestionReview(_Menu):
     """One suggested name at a time: Yes (then what it is), Same as…, Not a name, Later."""
 
     def __init__(
-        self, campaign_id: str, entity_ids: list[str], *, walk: Walk | None = None
+        self,
+        campaign_id: str,
+        entity_ids: list[str],
+        *,
+        walk: Walk | None = None,
+        avoid: dict[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.queue = entity_ids
+        # DMbot's top answers for the current name (#3603), and the entries the DM just said were
+        # wrong for a name (its id → the entry), so they are not offered again
+        self.top: list[who_top.Top] = []
+        self.avoid = avoid or {}
         self.walk = walk  # inside "Check everything" (#4192): a progress line and Stop for now
         self.total = len(entity_ids)
         self.later = 0  # left for another time this round
@@ -1784,6 +1802,7 @@ class SuggestionReview(_Menu):
         ]
         self.spellings = [entity.name, *self.also]
         self.found = await _found(memory, campaign, entity)
+        self.top = []  # (set below, once the card's kind of question is known)
         self.singled = self.found is not None and self.found.how == name_reader.SINGLED_OUT
         self.refs = []
         self.places = await self._places(interaction, campaign, memory, entity)
@@ -1792,6 +1811,7 @@ class SuggestionReview(_Menu):
         self.group = await self._group_hint(campaign, memory, entity) if self.is_list else None
         context = self._context(interaction, campaign, entity)
         self.lore_kept = bool(context)
+        self.top = await self._top_answers(interaction, campaign, memory, entity)
         self._buttons()
         text = suggestion_text(
             entity,
@@ -1823,6 +1843,34 @@ class SuggestionReview(_Menu):
             )
         done = self.total - len(self.queue) + 1
         return progress(self.walk, min(done, self.total), self.total) + text
+
+    async def _top_answers(
+        self,
+        interaction: discord.Interaction,
+        campaign: Campaign,
+        memory: MemoryStore,
+        entity: Entity,
+    ) -> list[who_top.Top]:
+        """DMbot's best answers for this name (#3603), for a DM only: not for a list of names (it
+        has its own answers), a thing singled out with no name, or a player's character. Never
+        raises: no answers is today's card."""
+        if self.is_list or self.singled or entity.role == PLAYER_CHARACTER:
+            return []
+        if not sees_secrets(campaign, interaction.user.id):
+            return []
+        try:
+            return await who_top.top_for(
+                memory,
+                campaign.guild_id,
+                campaign.id,
+                entity,
+                opted_in=await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
+                include_hidden=True,
+                avoid=[self.avoid[entity.id]] if entity.id in self.avoid else (),
+            )
+        except Exception:
+            log.exception("Couldn't work out DMbot's answers for a waiting name")
+            return []
 
     @staticmethod
     def _context(interaction: discord.Interaction, campaign: Campaign, entity: Entity) -> str:
@@ -1899,8 +1947,33 @@ class SuggestionReview(_Menu):
             )
         await interaction.followup.send(text, ephemeral=True)
 
+    @property
+    def shift(self) -> int:
+        """Rows the top answers' menu takes above the card's own buttons (#3603)."""
+        return 1 if self.top else 0
+
+    def _top_menu(self) -> None:
+        """DMbot's best answers as the first row: another name for an entry, or a new entry of a
+        kind, most likely first; the last choice leads to the website's page for this name."""
+        if not self.top:
+            return
+        options = [
+            discord.SelectOption(
+                label=logic.shorten(t.label, logic.OPTION_LABEL_MAX),
+                value=str(n),
+                description=who_top.CONFIDENCE_WORDS.get(t.confidence) or None,
+            )
+            for n, t in enumerate(self.top)
+        ]
+        options.append(discord.SelectOption(label="More options…", value=MORE_OPTIONS, emoji="🔎"))
+        self.best = _Select(
+            self._top_picked, placeholder="DMbot's best guesses…", options=options, row=0
+        )
+        self.add_item(self.best)
+
     def _buttons(self) -> None:
         self.clear_items()
+        self._top_menu()
         if self.new_card:
             self._new_buttons()
         else:
@@ -1911,7 +1984,7 @@ class SuggestionReview(_Menu):
         """Yes to this spelling, another spelling, or not a name (#5133 slice 3c, as ruled): with
         DMbot's guess, one press keeps it as that; without one, the kind menu is the yes."""
         name = self.name or "it"
-        row = 0
+        row = self.shift
         # A thing or a place singled out with no name (#5173, as ruled): nothing is being
         # spelled, so the three answers say so; "Give it a name…" makes it a real name
         singled = self.singled
@@ -1921,7 +1994,7 @@ class SuggestionReview(_Menu):
                     self._yes,
                     label=KEEP_IT if singled else yes_spelled(name),
                     style=discord.ButtonStyle.success,
-                    row=0,
+                    row=self.shift,
                 )
             )
         else:
@@ -1931,10 +2004,10 @@ class SuggestionReview(_Menu):
                 options=[
                     discord.SelectOption(label=label, value=kind) for kind, label in KINDS.items()
                 ],
-                row=0,
+                row=self.shift,
             )
             self.add_item(self.kind)
-            row = 1
+            row = self.shift + 1
         self.add_item(
             _Button(
                 self._spelled_another,
@@ -1989,14 +2062,15 @@ class SuggestionReview(_Menu):
                     row=row,
                 )
             )
-        self.add_item(
-            _Button(
-                self._not_kind,
-                label=not_kind_label(self.kept.kind),
-                style=discord.ButtonStyle.secondary,
-                row=row,
+        if not self.kept.joined:
+            self.add_item(
+                _Button(
+                    self._not_kind,
+                    label=not_kind_label(self.kept.kind),
+                    style=discord.ButtonStyle.secondary,
+                    row=row,
+                )
             )
-        )
         self.add_item(
             _Button(self._undo_kept, label="↩️ Undo", style=discord.ButtonStyle.secondary, row=row)
         )
@@ -2043,7 +2117,7 @@ class SuggestionReview(_Menu):
                 options=[
                     discord.SelectOption(label=label, value=kind) for kind, label in KINDS.items()
                 ],
-                row=0,
+                row=self.shift,
             )
             self.add_item(self.kind)
             self.add_item(
@@ -2051,17 +2125,27 @@ class SuggestionReview(_Menu):
                     self._same,
                     label="🔗 Same as a known name…",
                     style=discord.ButtonStyle.primary,
-                    row=1,
+                    row=self.shift + 1,
                 )
             )
         for handler, label, style in buttons:
-            self.add_item(_Button(handler, label=label, style=style, row=0))
+            self.add_item(_Button(handler, label=label, style=style, row=self.shift))
         # The two "not now" answers on their own row, so a phone never cuts the labels.
         self.add_item(
-            _Button(self._no, label="🚫 Not a name", style=discord.ButtonStyle.secondary, row=1)
+            _Button(
+                self._no,
+                label="🚫 Not a name",
+                style=discord.ButtonStyle.secondary,
+                row=self.shift + 1,
+            )
         )
         self.add_item(
-            _Button(self._later, label="⏳ Later", style=discord.ButtonStyle.secondary, row=1)
+            _Button(
+                self._later,
+                label="⏳ Later",
+                style=discord.ButtonStyle.secondary,
+                row=self.shift + 1,
+            )
         )
         # The name may be longer or spelled differently than the scan found it (#2570).
         self.add_item(
@@ -2069,7 +2153,7 @@ class SuggestionReview(_Menu):
                 self._change_words,
                 label="✏️ Change the words",
                 style=discord.ButtonStyle.secondary,
-                row=1,
+                row=self.shift + 1,
             )
         )
 
@@ -2102,14 +2186,14 @@ class SuggestionReview(_Menu):
                     row=4,
                 )
             )
-        self._kept_buttons(row=3)
+        self._kept_buttons(row=3 + self.shift)
         if self.split_undo is not None:  # until the next answer: the split can still be taken back
             self.add_item(
                 _Button(
                     self._undo_split,
                     label="↩ Undo the split" if self.undo_kind == "split" else "↩ Undo the group",
                     style=discord.ButtonStyle.secondary,
-                    row=3,
+                    row=3 + self.shift,
                 )
             )
         if self.refs or self.lore_kept:  # only with something behind it (#4227)
@@ -2118,12 +2202,14 @@ class SuggestionReview(_Menu):
                     self._where,
                     label="📜 Where was it said?",
                     style=discord.ButtonStyle.secondary,
-                    row=2,
+                    row=2 + self.shift,
                 )
             )
         if self.places.link:  # the session's page on the website
             self.add_item(
-                discord.ui.Button(label="📜 Open in transcript", url=self.places.link, row=2)
+                discord.ui.Button(
+                    label="📜 Open in transcript", url=self.places.link, row=2 + self.shift
+                )
             )
         add_stop(self, self.walk)
 
@@ -2518,6 +2604,54 @@ class SuggestionReview(_Menu):
             self,
         )
 
+    async def _top_picked(self, interaction: discord.Interaction) -> None:
+        """One of DMbot's best answers (#3603): another name for an entry, or a new entry of a
+        kind, each one change with an Undo; or "More options…". DM only, checked on every press."""
+        value = self.best.values[0]
+        if value == MORE_OPTIONS:
+            await self._more_options(interaction)
+            return
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
+        current = await self._current(interaction)
+        if current is None:
+            return
+        campaign, memory, entity = current
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
+            return
+        top = self.top[int(value)] if value.isdigit() and int(value) < len(self.top) else None
+        if top is None:
+            await _tell(interaction, GONE)
+            return
+        if top.target_id is not None:
+            await self._same_as(interaction, top.target_id, undo=True)
+            return
+        await self._confirm_as(
+            interaction, campaign, memory, entity, who_top.CARD_KIND[top.new_kind or ""]
+        )
+
+    async def _more_options(self, interaction: discord.Interaction) -> None:
+        """The last choice (#3603): a private message with a link to the website's page for this
+        name, where every name can be searched, the scene and where it was said are shown, and a
+        name can be marked as not worth tracking. DM only."""
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
+            return
+        site = getattr(getattr(interaction.client, "settings", None), "site_url", "") or ""
+        url = clarify_link(site if isinstance(site, str) else "", campaign.guild_id, campaign.id,
+                           self.entity_id)  # fmt: skip
+        await _answer_first(interaction)
+        if not url:
+            await interaction.followup.send(MORE_OPTIONS_TEXT_NO_SITE, ephemeral=True)
+            return
+        view = discord.ui.View()
+        view.add_item(discord.ui.Button(label="🔎 Open on the website", url=url))
+        await interaction.followup.send(MORE_OPTIONS_TEXT, view=view, ephemeral=True)
+
     async def _same_picked(self, interaction: discord.Interaction) -> None:
         await self._same_as(interaction, self.same.values[0])
 
@@ -2559,7 +2693,12 @@ class SuggestionReview(_Menu):
         await self._same_as(interaction, self.match.entity_id, main=True)
 
     async def _same_as(
-        self, interaction: discord.Interaction, keep_id: str, *, main: bool = False
+        self,
+        interaction: discord.Interaction,
+        keep_id: str,
+        *,
+        main: bool = False,
+        undo: bool = False,
     ) -> None:
         """The DM said the suggestion is the same as a known entry: its names (and any
         heard with it) become that entry's other names. Merging keeps its guards
@@ -2601,7 +2740,12 @@ class SuggestionReview(_Menu):
         if main:  # the spelled-out one becomes the main name; the old spelling stays (#2168)
             note = await self._respelled(memory, campaign, keep, entity.name, note)
         changed(interaction, campaign)
-        await self._saved(interaction, campaign, memory, note)
+        kept = None
+        if undo and written.batch is not None:  # (DMbot's top answers keep an Undo, #3603)
+            kept = _Kept(
+                written.batch, entity.id, entity.name, "", (), None, self.found, joined=True
+            )
+        await self._saved(interaction, campaign, memory, note, kept)
 
     async def _respelled(
         self, memory: MemoryStore, campaign: Campaign, keep: Entity, spelling: str, note: str
