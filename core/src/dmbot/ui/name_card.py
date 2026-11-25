@@ -1573,7 +1573,9 @@ class NameCard(_Menu):
             else:
                 log.info("No room on a thread's card for its steps button")
         if words:  # the DM's: connect this name to another by saying how in words (#2940)
-            for row in (3, 2, 1, 0):  # placed wherever there is room, as the steps button is
+            # Placed wherever there is room, row 3 last: it holds a kind's own buttons (one of a
+            # kind, a thread's steps), which their tests and the DM look for there.
+            for row in (2, 1, 0, 3):
                 try:
                     self.add_item(
                         _Button(
