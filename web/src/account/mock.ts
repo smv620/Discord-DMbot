@@ -1013,6 +1013,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let houseFileNow: HouseFileRequest | null = null;
   let houseFileLooks = 0;
   let loreLooks = 0;
+  let quickLooks = 0; // (the half-second counts reads of a running job, #3534 part 3)
   let aiFeedLooks = 0;
   // DMbot's own matches (#3602): two waiting in the table scenario, answered one at a time.
   let metNow: MetItem[] = [
@@ -3194,6 +3195,20 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         loreNow = { ...loreNow, state: "done", stage: "done", namesFound: 4, linksFound: 3, updatedAt: at, waiting: { place: 5, character: 7, group: 2 } };
       loreNow = { ...loreNow, serverNow: at };
       return loreNow;
+    },
+    // The half-second counts read (#3534 part 3): numbers only; the words climb with each look of a running upload.
+    async waitCounts(ref, kind, id) {
+      calls.push(`waitCounts:${ref}:${kind}:${id}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const at = Math.floor(Date.now() / 1000);
+      quickLooks += 1;
+      if (kind === "lore") {
+        if (!loreNow || id !== loreNow.id) throw new ApiError("not-found");
+        return { kind: "lore", state: loreNow.state, stage: loreNow.stage, done: loreNow.done, total: loreNow.total, wordsDone: quickLooks * 120, callsMade: Math.floor(quickLooks / 4), namesFound: loreNow.namesFound, linksFound: loreNow.linksFound, createdAt: loreNow.createdAt, updatedAt: Math.max(loreNow.updatedAt, at), serverNow: at };
+      }
+      return { kind: "import", serverNow: at, sessions: [{ file: "one.txt", state: "working", scanFinished: false, stepDone: quickLooks, stepTotal: 40, wordsDone: quickLooks * 90, callsMade: Math.floor(quickLooks / 4), startedAt: at - 20, updatedAt: at }] };
     },
     async confirmKinds(ref, upload, kinds, source) {
       calls.push(`confirmKinds:${ref}:${upload}:${kinds === "all" ? "all" : kinds.join(",")}${source === "import" ? ":import" : ""}`);

@@ -30,6 +30,7 @@ import {
   type JobProgress,
 } from "./api";
 import CampaignNav from "./CampaignNav";
+import { useWaitCounts } from "./useWaitCounts";
 import WorkProgress, { RunningCounts } from "./WorkProgress";
 import ClockOffer from "./ClockOffer";
 import { memberLabel } from "./memberLabel";
@@ -93,6 +94,8 @@ function namesOpen(s: Session): boolean {
   const st = s.names;
   return st != null && (st.state === "running" || st.state === "stalled") && st.stage === "reading_names";
 }
+
+const sumOf = (n: number[]): number => n.reduce((a, b) => a + b, 0);
 
 /** The whole import's progress as the shared wait shows it. The server says `failed` as soon as one session
  * has, but the others go on: while any can still move it is shown as running (or stalled, when the server
@@ -371,6 +374,9 @@ export default function Import({
     // `fail` only sets state, so it is left out of the dependencies on purpose; pollTries restarts it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, ref, importId, pollTries]);
+
+  // Twice a second while the import runs and this tab is seen (#3534 part 3, behind WAIT_COUNTS_LIVE): the words and calls come sooner.
+  const fast = useWaitCounts(api, ref ?? null, "import", importId ?? null, progress !== null && progress.sessions.some((s) => !isFinal(s)));
 
   // Nothing is shown unless the API has the routes (an older API has none) and importing is open:
   // for the whole site (IMPORT_LIVE), or for this campaign's server alone (`importsOn`, #2260).
@@ -788,10 +794,10 @@ export default function Import({
             done={progress.import.done}
             total={progress.import.total}
             unit={progress.import.unit ? words.unit[progress.import.unit] : undefined}
-            counts={progress.import.counts}
+            counts={fast ? { ...progress.import.counts, words: Math.max(progress.import.counts?.words ?? 0, sumOf(fast.sessions.map((s) => s.wordsDone))), calls: Math.max(progress.import.counts?.calls ?? 0, sumOf(fast.sessions.map((s) => s.callsMade))) } : progress.import.counts}
             startedAt={progress.import.startedAt}
-            updatedAt={progress.import.updatedAt}
-            serverNow={progress.import.serverNow}
+            updatedAt={fast ? Math.max(progress.import.updatedAt ?? 0, ...fast.sessions.map((s) => s.updatedAt)) : progress.import.updatedAt}
+            serverNow={fast ? fast.serverNow : progress.import.serverNow}
             state={shownState(progress.import, progress.sessions)}
             waiting={progress.import.stage === "waiting_for_names"}
             frozen={problem !== null} // (gone, an error, or the page stopped looking: no clock keeps running beside it)
