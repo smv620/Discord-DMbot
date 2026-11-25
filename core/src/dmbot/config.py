@@ -141,6 +141,9 @@ class Settings:
     # mentioned (#5050), made by a background job (DMBOT_CARD_SUMMARY, off until dev1 has read ten
     # cards on the sample campaign and they are right).
     card_summary_on: bool = False
+    # A monthly budget for DMbot's AI, in dollars (#5270): warnings at 80% and 100%, nothing stops.
+    # 0 is off.
+    ai_monthly_budget_usd: float = 0.0
     # #4229 1d: the session reader also asks which languages a character was heard speaking, each
     # a question for the DM (DMBOT_SESSION_LANGUAGES, off until dev1's language_cases counts)
     session_languages_on: bool = False
@@ -601,6 +604,13 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
     card_raw = (get("DMBOT_CARD_SUMMARY") or "0").lower()
     if card_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_CARD_SUMMARY must be 1 (on) or 0 (off), got "' + card_raw + '".')
+    budget_raw = (get("DMBOT_AI_MONTHLY_BUDGET_USD") or "0").strip()
+    try:
+        ai_budget = float(budget_raw)
+    except ValueError:
+        ai_budget = -1.0
+    if not 0 <= ai_budget < 1_000_000:  # (also refuses nan and inf)
+        raise ConfigError("DMBOT_AI_MONTHLY_BUDGET_USD must be a number of dollars (0 for off).")
     met_raw = (get("DMBOT_MET_UNNAMED") or "0").lower()
     if met_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_MET_UNNAMED must be 1 (on) or 0 (off), got "' + met_raw + '".')
@@ -871,6 +881,7 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
         card_summary_on=card_raw in ("1", "true", "on"),
+        ai_monthly_budget_usd=ai_budget,
         session_languages_on=languages_raw in ("1", "true", "on"),
         session_names_on=names_raw in ("1", "true", "on"),
         name_trace_dir=(get("DMBOT_NAME_TRACE_DIR") or "").strip(),

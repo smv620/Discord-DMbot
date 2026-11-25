@@ -365,6 +365,7 @@ FEATURES: tuple[Feature, ...] = (
 # Settings that are not switches (a name, a number, a place), each with the reason. A setting
 # that is neither here nor in FEATURES fails the test, so a new switch cannot be forgotten.
 NOT_A_SWITCH: dict[str, str] = {
+    "ai_monthly_budget_usd": "a number of dollars, not a switch: it only warns the admins (#5270)",
     "name_trace_dir": "a dev tool's folder on the test server, for the sample campaign only",
     "name_trace_guild": "the test server the dev tool's trace is written for",
     "discord_token": "a secret, always needed",

@@ -21,7 +21,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from dmbot import entitlements, logs
 
@@ -40,6 +40,13 @@ PLAY, SAMPLE = "play", "sample"
 SERVICES = ("anthropic", "gemini", "deepgram", "elevenlabs", "voyage")  # = the table's check
 # Fixed words for the features that are not an AI `Feature` (the table keeps a word, never text).
 TRANSCRIBE, RECAP_AUDIO, SEARCH = "transcribe", "recap_audio", "search"
+
+
+class Notifier(Protocol):
+    """Tells the admins once (`ai_watch.AIWatch.notify_once`)."""
+
+    def notify_once(self, key: str, text: str) -> None: ...
+
 
 OwnerOf = Callable[[int, str], Awaitable[int | None]]
 CampaignOf = Callable[[int], str | None]  # the campaign a server is playing now, if any
@@ -71,6 +78,8 @@ _pending: dict[_Pending, Totals] = {}
 _db: Database | None = None
 _owner_of: OwnerOf | None = None
 _campaign_of: CampaignOf | None = None
+_notifier: Notifier | None = None
+_budget_micro = 0  # the month's AI budget in millionths of a dollar; 0 is off (#5270)
 _clock: Callable[[], float] = time.time
 _source = PLAY
 _plans: dict[tuple[int, str], tuple[str, float]] = {}
@@ -94,6 +103,17 @@ def configure(
     global _db, _owner_of, _clock, _source, _campaign_of
     _db, _owner_of, _clock, _source = db, owner_of, clock, source if source == SAMPLE else PLAY
     _campaign_of = campaign_of
+
+
+def watch(notifier: Notifier | None, budget_usd: float = 0.0) -> None:
+    """Who is told about the month's AI cost (#5270): at 80% and 100% of `budget_usd` (0 is off;
+    nothing is ever stopped), and on the month's first refused call. Called once at startup."""
+    global _notifier, _budget_micro
+    _notifier, _budget_micro = notifier, round(max(0.0, budget_usd) * 1_000_000)
+
+
+def _dollars(micro: int) -> str:
+    return f"${micro / 1_000_000:,.2f}"
 
 
 def month_start(now: float) -> int:
@@ -182,6 +202,16 @@ def record_refused(feature: str | None, model: str) -> None:
     """One AI call refused for limits or billing: no cost, but counted, so a night like the one
     the usage limit ran out shows which feature was refused."""
     record("anthropic", model or "unknown", feature or "-", refused=1)
+    if _notifier is not None:
+        # The first refusal of the month tells the admins at once, with the feature's fixed word
+        # (never text) and, from the next flush, what the month's AI has cost (#5270).
+        word = "".join(c for c in (feature or "-") if c.isalnum() or c in "_-")[:40]
+        _notifier.notify_once(
+            f"refused-{month_start(_clock())}",
+            f"⚠️ A DMbot AI call was refused for limits or billing for the first time this month "
+            f"(the job: {word}). Check the AI account at "
+            "https://console.anthropic.com/settings/billing.",
+        )
 
 
 def _warn(what: str, exc: BaseException) -> None:
@@ -247,7 +277,9 @@ async def flush() -> int:
         for key in taken:
             _pending.pop(key, None)
         try:
-            return await asyncio.wait_for(_write(db, taken), WRITE_TIMEOUT_S)
+            written = await asyncio.wait_for(_write(db, taken), WRITE_TIMEOUT_S)
+            await _check_budget(db)
+            return written
         except BaseException as exc:
             for key, totals in taken.items():  # (kept: counts added since stay too)
                 _pending[key] = _pending.get(key, Totals()) + totals
@@ -255,6 +287,40 @@ async def flush() -> int:
                 raise
             _warn("a flush failed and is kept for the next", exc)
             return 0
+
+
+async def month_ai_micro(db: Database, month: int) -> int:
+    """What the month's real AI play has cost so far, in millionths of a dollar (a sample run's
+    spend is its own and not counted)."""
+    async with db.spend_writer() as conn:
+        cur = await conn.execute(
+            "SELECT COALESCE(sum(micro_usd), 0) AS n FROM service_spend WHERE month_start = %s"
+            " AND service IN ('anthropic', 'gemini') AND source = 'play'",
+            (month,),
+        )
+        row = await cur.fetchone()
+    return int(row["n"]) if row else 0
+
+
+async def _check_budget(db: Database) -> None:
+    """After a flush: tell the admins when the month's AI cost reaches 80% and 100% of the budget,
+    each once a month. A failed read is a label problem only: the flush stands."""
+    if _budget_micro <= 0 or _notifier is None:
+        return
+    try:
+        month = month_start(_clock())
+        spent = await month_ai_micro(db, month)
+        for percent in (100, 80):
+            if spent * 100 >= _budget_micro * percent:
+                _notifier.notify_once(
+                    f"budget-{percent}-{month}",
+                    f"⚠️ DMbot's AI has cost {_dollars(spent)} so far this month: {percent}% of "
+                    f"the {_dollars(_budget_micro)} budget you set (DMBOT_AI_MONTHLY_BUDGET_USD). "
+                    "Nothing is stopped; this is a warning.",
+                )
+                break
+    except Exception as exc:
+        _warn("the budget could not be checked", exc)
 
 
 async def _write(db: Database, taken: dict[_Pending, Totals]) -> int:
@@ -296,7 +362,8 @@ async def read_month(db: Database, month: int) -> list[dict[str, object]]:
 
 def reset_for_tests() -> None:
     """Forget everything kept in memory (tests only)."""
-    global _flusher
+    global _flusher, _notifier, _budget_micro
+    _notifier, _budget_micro = None, 0
     _pending.clear()
     _plans.clear()
     if _flusher is not None:
