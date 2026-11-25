@@ -57,6 +57,7 @@ from dmbot.memory import (
     traits_read,
     who_ask,
     who_resolve,
+    who_step,
     world_reveal,
 )
 from dmbot.memory import reputation_words as feeling_words
@@ -3650,8 +3651,17 @@ async def queue_links(
     if unsettled:
         if who_ai is not None:
             names = [*dict.fromkeys([*_pronoun_ends(ends, whole_only), *(f.name for f in found)])]
+            # The AI is offered the best five by the "Who is this?" ranking (#2790 slice 2): one
+            # ranker. Entries the players don't know yet are candidates too (nearly every entry a
+            # lore read meets); only the read's own `names`, which hold no secret name, may be
+            # offered, and what is kept goes through the same secrecy as before.
+            pool = who_resolve.pool_for(
+                who_step.candidates_from(lookup, include_hidden=True),
+                [(f.name, f.kind) for f in found],
+                lookup.confirmed_neighbours,
+            )
             settled = await who_resolve.settle(
-                unsettled, who_ai, names, until=until, progress=on_who, players=players
+                unsettled, who_ai, names, until=until, progress=on_who, players=players, pool=pool
             )
         else:
             # (the check was switched off: left out and counted, as before it existed, except an
