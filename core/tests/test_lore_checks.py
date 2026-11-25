@@ -333,11 +333,16 @@ class ALongWindowStillNeedsBothEnds(unittest.TestCase):
         got, lost = read_links(rows, text)
         self.assertEqual((got, dict(lost)), ([], {"not_in_text": 1}))  # (Mira is not in the text)
 
-    def test_a_heading_before_the_quote_is_not_borrowed(self) -> None:
+    def test_a_heading_before_the_quote_is_not_borrowed_as_a_sentence(self) -> None:
+        # A one-word heading is no sentence to borrow (the window's rule stands), but it is the
+        # section's title, whose "his" means that character (#2790 slice 3, the owner's case 1):
+        # the line is kept with the title in the quote and counted as such, never as a borrowing.
         text = "Brannoc\n\nHis sister, Mira, ran the farm."
         rows = [link("Brannoc", "Mira", "His sister, Mira, ran the farm.", "family")]
         got, lost = read_links(rows, text)
-        self.assertEqual((got, dict(lost)), ([], {"not_in_text": 1}))
+        self.assertEqual([c.quote for c in got], ["Brannoc … His sister, Mira, ran the farm."])
+        self.assertEqual(lost["quote_prev_paragraph"], 0)
+        self.assertEqual(lost["quote_heading"], 1)
 
 
 class TheCountsOfTheWindow(unittest.TestCase):
