@@ -29,7 +29,7 @@ from dmbot.web.admin import HttpGoogle
 from dmbot.web.app import create_app
 from dmbot.web.discord import HttpDiscord
 from dmbot.web.feedback import GitHubDiscussions, Turnstile
-from dmbot.web.moving import EmailedMoveCodes, forget_old_asks
+from dmbot.web.moving import forget_old_asks
 from dmbot.web.payments import FakeProvider, PaymentProvider
 from dmbot.web.settings import WebSettings, load_web_settings
 from dmbot.web.stripe import StripeProvider
@@ -182,7 +182,6 @@ async def serve(settings: WebSettings) -> None:
         else None
     )
     # A move code is mailed like a sign-in link, so it needs the same mailer (#1246).
-    move_codes = EmailedMoveCodes(db, mailer) if mailer is not None else None
     # DMbot's support helper (#1431): needs the AI key to answer; without it tickets still get their
     # thank-you and the team's replies work, and nothing is answered by the AI.
     ai_client: AnthropicClient | None = None
@@ -238,7 +237,6 @@ async def serve(settings: WebSettings) -> None:
         human_check=human_check,
         google=google,
         mailer=mailer,
-        move_codes=move_codes,
         helper=helper,
         smart_names=smart_names,
         site_ask=site_ask,

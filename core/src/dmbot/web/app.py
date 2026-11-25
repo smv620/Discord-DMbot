@@ -159,7 +159,6 @@ from dmbot.web.kind_offers import read_kind_offers
 from dmbot.web.limits import LIMITS, RateLimit, free_ticket_refusal
 from dmbot.web.listen import MAX_CLIP_BYTES, queue_listen, read_listen, wait_for_answer
 from dmbot.web.me import build_me
-from dmbot.web.moving import MoveCodes, can_move
 from dmbot.web.name_checks import answer as answer_name_check
 from dmbot.web.name_checks import queue_more_names, read_campaign_checks, read_checks
 from dmbot.web.name_checks import read_answer as read_name_answer
@@ -264,7 +263,6 @@ def create_app(
     export_limit: RateLimit | None = None,
     email_limit: RateLimit | None = None,
     mailer: mail.Mailer | None = None,
-    move_codes: MoveCodes | None = None,
     route_limits: dict[str, RateLimit] | None = None,
     google: GoogleSignIn | None = None,
     helper: SupportHelper | None = None,
@@ -689,37 +687,18 @@ def create_app(
             "experiencePoints": int(minutes["minutes"]) if minutes else 0,
         }
 
-    @app.post("/me/move-code", status_code=202)
-    async def move_code(request: Request, signed: Signed) -> dict[str, str]:
-        """Email a move code to the account's payment email (#1231; the code itself is #1230's).
-        Paid, active plans only, and never shown on screen: it only goes to the email."""
-        session, _token = signed
-        if move_codes is None:
-            raise HTTPException(status_code=503, detail="move_off")
-        plan, _grant, _access = await entitlements.plan_grant_access(db, session.user_id, clock())
-        if not can_move(plan, clock()):
-            raise HTTPException(status_code=403, detail="not_paid")
-        # The database counts asks per account and per connection. The connection is a keyed
-        # hash (HMAC with the server's secret): a plain hash of an IPv4 address reverses in
-        # seconds, so the address could be read back from the table.
-        source = hmac.new(
-            settings.secret_key,
-            f"move-code:{limit_key(client_address(request))}".encode(),
-            hashlib.sha256,
-        ).hexdigest()
-        outcome = await move_codes.send_code(session.user_id, source)
-        if outcome == "sent":
-            log.info("A move code was sent for user %s", session.user_id)
-            return {"message": "We've emailed a move code to your payment email."}
-        # Plain words the page shows; none of them holds the code or the address.
-        refusals = {
-            "not_paid": (403, "not_paid"),
-            "too_soon": (409, "too_soon"),
-            "slow_down": (429, "slow_down"),
-            "no_email": (409, "no_email"),
-        }
-        status, detail = refusals.get(outcome, (502, "email_failed"))
-        raise HTTPException(status_code=status, detail=detail)
+    @app.post("/me/move-code", status_code=410)
+    async def move_code(signed: Signed) -> JSONResponse:
+        """Retired (#2533 item 5): a move code is no longer made or emailed. Moving to a new
+        Discord account is adding it on the Account page and then removing the old one."""
+        return JSONResponse(
+            {
+                "error": "moved_to_account_page",
+                "message": "Moving to a new Discord account is now done on your Account page: "
+                "add the new Discord account, then remove the old one. " + account_page,
+            },
+            status_code=410,
+        )
 
     @app.get("/me")
     async def me(signed: Signed) -> dict[str, Any]:
