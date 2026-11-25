@@ -184,7 +184,7 @@ class TheBotsWrite(unittest.IsolatedAsyncioTestCase):
         mine = SimpleNamespace(id="a" * 32, name="Rivermouth")
         older = SimpleNamespace(id="b" * 32, name="Someone Older")
         me = self.me([mine, older])
-        store = SimpleNamespace(keep_found=mock.AsyncMock())
+        store: Any = SimpleNamespace(keep_found=mock.AsyncMock())
         grouped = mock.AsyncMock(return_value=({"place": ["a" * 32]}, 0))
         with mock.patch.object(botmod, "add_all_groups", grouped):
             await DMBot._keep_import_found(me, 1, self.ready(), ["Rivermouth"], store)
@@ -192,7 +192,7 @@ class TheBotsWrite(unittest.IsolatedAsyncioTestCase):
         store.keep_found.assert_awaited_once_with(1, "s" * 8, {"place": ["a" * 32]})
 
     async def test_nothing_proposed_keeps_nothing_and_a_failure_never_stops_the_scan(self) -> None:
-        store = SimpleNamespace(keep_found=mock.AsyncMock(side_effect=RuntimeError("down")))
+        store: Any = SimpleNamespace(keep_found=mock.AsyncMock(side_effect=RuntimeError("down")))
         await DMBot._keep_import_found(self.me([]), 1, self.ready(), [], store)
         store.keep_found.assert_not_awaited()
         me = self.me([SimpleNamespace(id="a" * 32, name="Rivermouth")])
