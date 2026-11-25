@@ -15,6 +15,8 @@ import type {
   HouseFileState,
   AiFeedRead,
   LoreUpload,
+  WaitCountsImport,
+  WaitCountsLore,
   LorePdf,
   CampaignPage,
   CampaignSettingAnswer,
@@ -392,6 +394,8 @@ export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Parti
     lorePdfDrop: async (ref) => {
       await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf`);
     },
+    waitCounts: async (ref, kind, id) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/wait-counts?kind=${kind}&id=${encodeURIComponent(id)}`)) as WaitCountsLore | WaitCountsImport,
     loreRead: async (ref, id) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/lore${id ? `/${encodeURIComponent(id)}` : ""}`)) as { upload: LoreUpload | null }).upload,
   };

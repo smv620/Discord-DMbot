@@ -12,6 +12,7 @@ import { lorePage as words, LORE_TEXT_MAX } from "../content/lore-words";
 import { stageWords } from "../content/work-progress";
 import { type AccountApi, ApiError, type LoreInput, type LoreUpload, type NameRow } from "./api";
 import LazyPanel from "./LazyPanel";
+import { useWaitCounts } from "./useWaitCounts";
 import WorkProgress from "./WorkProgress";
 import AddAll from "./AddAll";
 import { LorePdfButtons, LorePdfPicker, useLorePdf } from "./LorePdf";
@@ -88,6 +89,8 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
   }, [api, ref]);
 
   const open = upload !== null && (upload.state === "waiting" || upload.state === "working");
+  // Twice a second while it runs and this tab is seen (#3534 part 3, behind WAIT_COUNTS_LIVE): only the numbers come sooner.
+  const fast = useWaitCounts(api, ref ?? null, "lore", upload?.id ?? null, open);
   useEffect(() => {
     if (!ref || !open || !upload || !api.loreRead) return;
     let live = true;
@@ -216,6 +219,10 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
     // The server's own word on stalled wins when it sends the shared shape (a queued upload never reads as stalled, #3535).
     const p = upload.progress;
     const state = failed ? "failed" : done ? "done" : p ? (p.state === "stalled" ? "stalled" : "running") : quiet > STALLED_S ? "stalled" : "running";
+    // A quick reading older than the last full look is ignored (what is shown only ever moves forward).
+    const quick = fast && fast.updatedAt >= upload.updatedAt ? fast : null;
+    // The quick reading's own count is shown only where it is the same count the full look gives (the same total), never a different unit.
+    const sameCount = quick !== null && quick.total > 0 && (p ? p.total === quick.total : upload.total === quick.total);
     const counted = p ? typeof p.done === "number" && typeof p.total === "number" && p.total > 0 : upload.total > 0;
     return (
       <div class="stack">
@@ -223,13 +230,13 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
         {opened && open && <p>{words.openNote}</p>}
         <WorkProgress
           stage={stageWords(words.stages, p?.stage ?? upload.stage)}
-          done={counted ? (p ? p.done : upload.done) : null}
+          done={counted ? (sameCount ? (quick as NonNullable<typeof quick>).done : p ? p.done : upload.done) : null}
           total={counted ? (p ? p.total : upload.total) : null}
           unit={p?.unit ? (words.units[p.unit] ?? words.unit) : words.unit}
-          counts={p?.counts}
+          counts={quick ? { ...p?.counts, words: quick.wordsDone, calls: quick.callsMade } : p?.counts}
           startedAt={upload.createdAt}
-          updatedAt={upload.updatedAt}
-          serverNow={upload.serverNow}
+          updatedAt={quick ? Math.max(upload.updatedAt, quick.updatedAt) : upload.updatedAt}
+          serverNow={quick ? quick.serverNow : upload.serverNow}
           state={state}
           frozen={stopped}
           reason={failed ? (words.failedReasons[upload.error] ?? words.failedFallback) : null}

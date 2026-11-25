@@ -249,3 +249,4 @@ Unlocks: #1831
 - **Names that differ by an s (#5215):** dev1 sees "Explorer League" joined to "Explorer's League" in Check guesses after a sample session with DMBOT_STORY_WHO_APPLY on, and an Undo that stays undone. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
 
 The reasons are in `docs/GO_LIVE.md`.
+- **Live counts while DMbot reads (#3534):** dev1 measures what one counts read costs on the test server, then uploads the sample lore with the page open and sees the words and calls climb about twice a second, switches to another tab and sees the asking stop, and sees a player get nothing. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
