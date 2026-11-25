@@ -81,6 +81,7 @@ EVERY_ACTION = (
     "deed-record", "deed-not", "deed-undo",  # deeds the party did (#3591)
     "continuity-ask", "continuity-answer",  # the continuity heads-ups (#3695 half 1)
     "names-more",  # 📝 More names from the Questions page (#5081)
+    "lookalike-merge", "lookalike-apart", "lookalike-undo",  # Names that look alike (#5259)
 )  # fmt: skip
 
 
