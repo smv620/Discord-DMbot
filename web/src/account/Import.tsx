@@ -35,6 +35,7 @@ import ClockOffer from "./ClockOffer";
 import { memberLabel } from "./memberLabel";
 import LazyPanel from "./LazyPanel";
 import { stageWords } from "../content/work-progress";
+import AddAll from "./AddAll";
 
 /** The campaign's address, read from `/account/import/<server>.<campaign>`. */
 export function campaignFromPath(path: string): string | null {
@@ -224,6 +225,10 @@ export default function Import({
   // Set when the start reply says recaps weren't possible although ticks were sent (#2229).
   const [startedWithoutRecaps, setStartedWithoutRecaps] = useState<string | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
+  // Add all stays on the page once there were names to add, so its result and Undo outlive the counts going to zero; a player or an
+  // import that found none never sees it. (Setting a ref while rendering is safe here: it only ever goes from false to true.)
+  const addAllSeen = useRef(false);
+  if (progress?.waiting && Object.values(progress.waiting).some((n) => n > 0)) addAllSeen.current = true;
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // A problem with the chosen files themselves: it blocks Preview until other files are chosen.
@@ -801,6 +806,19 @@ export default function Import({
               progress.sessions.length,
             )}
           </p>
+        )}
+        {done && importId && addAllSeen.current && !progress.sessions.some(namesOpen) && (
+          <AddAll
+            api={api}
+            campaign={ref}
+            upload={{ id: importId, waiting: progress.waiting ?? {} }}
+            source="import"
+            onChanged={() => {
+              // The waiting counts changed: read the import again, so the buttons show what is left.
+              // Only the counts: a whole new progress could overwrite a newer one the poll has just read.
+              void api.importProgress?.(ref, importId).then((got) => setProgress((was) => (was ? { ...was, waiting: got.waiting ?? {} } : was))).catch(() => undefined);
+            }}
+          />
         )}
         {AI_FEED_LIVE && importId && api.aiFeed && (
           <LazyPanel

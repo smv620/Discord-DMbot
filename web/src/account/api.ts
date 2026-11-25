@@ -1600,6 +1600,8 @@ export interface ImportClock {
 export interface ImportProgress {
   /** The whole import's progress (#2564); missing from an API older than that. */
   import?: JobProgress;
+  /** The names the import found that still wait for the DM's OK, by kind: counts only, empty for a player (#5276; core #5277). Missing from an older API. */
+  waiting?: Record<string, number>;
   sessions: {
     file: string;
     date: string;
@@ -3773,7 +3775,7 @@ export interface AccountApi {
   /** The names a DM may look at the web as, player characters first; `q` narrows them (#2999). */
   webViewers?(ref: string, q: string): Promise<WebViewers>;
   /** "Add all" under a finished upload (#3222): queue the kinds ("all" or the kind keys); the answer is polled. */
-  confirmKinds?(ref: string, upload: string, kinds: "all" | string[]): Promise<{ answer: string }>;
+  confirmKinds?(ref: string, upload: string, kinds: "all" | string[], source?: "upload" | "import"): Promise<{ answer: string }>;
   /** Undo an "Add all" answer (#3222): queued, then polled like the others. */
   confirmUndo?(ref: string, answer: string): Promise<{ answer: string }>;
   /** One look at an "Add all" or Undo answer (#3222). */

@@ -404,10 +404,11 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/find?view=${q.view ?? ""}&q=${encodeURIComponent(q.q)}`)) as { names: { id: string; name: string; kind: string }[] }).names,
     webNodeSummary: async (ref, id, peek) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/nodes/${encodeURIComponent(id)}/summary${peek ? "?peek=1" : ""}`)) as NodeSummary,
-    confirmKinds: async (ref, upload, kinds) => {
+    // Add all under an upload, or (`source` "import", #5276) under an import: the same press, the id under its own key.
+    confirmKinds: async (ref, upload, kinds, source = "upload") => {
       const queued = (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names-confirm`, {
         action: "confirm-kinds",
-        upload,
+        ...(source === "import" ? { import: upload } : { upload }),
         kinds,
       })) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
