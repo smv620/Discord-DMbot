@@ -5483,9 +5483,18 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         scene: ref.includes(".no-scene") ? null : "Brannoch the smith mends Mira's sword in Eastmarch while the party waits out the storm.",
         places: [{ session: 12, available: true, lines: [{ speaker: "Mira", at: 1840, text: "…we rode to Brannoch's forge before dark…" }] }],
         morePlaces: 2,
+        // `.ranked`: what core's ranked fill sends (#5264, core #5295): DMbot's stored answers first, then the ranked entries, five
+        // at most, each label carrying its most significant detail, and the card's own "new <kind>" last. Two share a name.
         answers: ref.includes(".no-answers")
           ? []
-          : [
+          : ref.includes(".ranked")
+            ? [
+                { label: "a.k.a. Veshla (a smith who mends swords)", answer: { action: "same" as const, known: "k".repeat(32) } },
+                { label: "a.k.a. Veshla (a ship of the Silver League)", answer: { action: "same" as const, known: "l".repeat(32) } },
+                { label: "a.k.a. Brannock (an NPC)", answer: { action: "same" as const, known: "m".repeat(32) } },
+                { label: "new NPC", answer: { action: "confirm" as const, kind: "npc" } },
+              ]
+            : [
               { label: "a.k.a. Veshla", answer: { action: "same" as const, known: "k".repeat(32) } },
               { label: "new NPC", answer: { action: "confirm" as const, kind: "npc" } },
             ],
