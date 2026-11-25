@@ -105,10 +105,10 @@ describe("the Questions page links the kinds answered on another page (#4841 A)"
     expect(within(line).getByText(w.discord)).toBeTruthy();
   });
 
-  it("names that look alike still link to the Names page whichever switches are set", async () => {
+  it("names that look alike say where in Discord, with no link to a page that cannot answer them (#5259)", async () => {
     const line = await lineFor("lookalikes");
-    const link = within(line).getByRole("link", { name: kindWords("lookalikes").link ?? "" });
-    expect(link.getAttribute("href")).toBe(`/account/names/${encodeURIComponent(REF)}`);
+    expect(within(line).queryByRole("link")).toBeNull();
+    expect(within(line).getByText("Answer in Discord: ⚙️ Manage DMbot → 📇 Names → 🔗 Look-alikes.")).toBeTruthy();
   });
 
   it("Did they mean…? is answered on the page while its switch is on, else says how in Discord (#4857)", async () => {
