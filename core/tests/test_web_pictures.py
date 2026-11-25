@@ -414,6 +414,18 @@ class TheGallery(Kept):
         self.assertEqual(sorted(seen), sorted(made))
         self.assertFalse(rest["more"])
 
+    async def test_each_picture_carries_its_own_id_the_cursors_second_part(self) -> None:
+        for _ in range(3):
+            await self.keep(at=START + 600)
+        got = (await self.gallery())["pictures"]
+        ids = [p["id"] for p in got]
+        self.assertTrue(all(type(i) is int and i > 0 for i in ids))
+        self.assertEqual(len(set(ids)), 3)
+        self.assertEqual(ids, [int(p["cursor"].partition(":")[2]) for p in got])
+        async with self.db.guild(THURSDAY.id) as conn:  # (the id of the row a character may use)
+            cur = await conn.execute("SELECT id FROM campaign_pictures ORDER BY id")
+            self.assertEqual(sorted(ids), [int(r["id"]) for r in await cur.fetchall()])
+
     async def test_a_cursor_that_is_not_one_starts_from_the_top(self) -> None:
         self.assertEqual(pictures._cursor("99999999999999999999"), (0, 0))
         self.assertEqual(pictures._cursor("1:99999999999999999999"), (0, 0))

@@ -177,7 +177,7 @@ async def read_pictures(
     api_url: str,
 ) -> dict[str, Any]:
     """The gallery page: `{pictures, more, isDm, usage, sessions, posters}`, newest first. A
-    picture is `{code, at, sessionNumber, poster, description, previewUrl, permanent, isPublic,
+    picture is `{id, code, at, sessionNumber, poster, description, previewUrl, permanent, isPublic,
     mine}`. `usage` is for the campaign's DMs only. Any member of the server may ask; anyone else
     gets `not_allowed`. A member outside the campaign's people (#3891) gets only the pictures they
     posted, and no posters or sessions. The session filter is the transcripts page's number."""
@@ -225,6 +225,9 @@ async def read_pictures(
         "pictures": [
             {
                 "code": p["code"],
+                # the picture's own id, which a character's icon is set with (#3623); it is the
+                # second part of the cursor ("made-at:id"), given so the page need not parse it
+                "id": int(str(p["cursor"]).partition(":")[2]),
                 "at": int(p["at"]),
                 "cursor": str(p["cursor"]),
                 "sessionNumber": numbers.get(int(p["sessionAt"])) if p["sessionAt"] else None,
