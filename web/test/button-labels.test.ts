@@ -30,7 +30,9 @@ const pythonFiles = (dir: string): string[] =>
   );
 
 const labels = new Set(pythonFiles(botDir).flatMap((f) => labelsInPython(readFileSync(f, "utf8"))));
-const allowed = [...hiddenBotLabels.map((h) => h.label), ...pendingBotLabels.map((p) => p.label), ...siteButtons, ...discordControls];
+// Buttons that were retired (#2533 item 5) and are named only by What's new entries that stay as history.
+const retiredButtons = ["Get a move code", "Import my account"];
+const allowed = [...hiddenBotLabels.map((h) => h.label), ...pendingBotLabels.map((p) => p.label), ...siteButtons, ...discordControls, ...retiredButtons];
 
 describe("button labels on the site", () => {
   it("reads the bot's labels from core", () => {

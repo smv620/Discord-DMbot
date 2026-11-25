@@ -145,12 +145,12 @@ describe("Help", () => {
     }
   });
 
-  it("says what each email is, and that a move code is only for you (#1283)", () => {
+  it("says what each email is, and that nothing is emailed for a move (#2533)", () => {
     const section = help.querySelector("#emails-heading")?.parentElement?.textContent ?? "";
-    expect(section).toContain("A move code is only for you: never give it to anyone.");
+    expect(section).toContain("add it to your DMbot account on the website, then remove the old one");
+    expect(section).not.toContain("move code");
     expect(section).toContain("Ignore the email. Nothing changes.");
     expect(section).toContain("stops working after 15 minutes");
-    expect(section).toContain("lasts 30 minutes");
     expect(section).not.toMatch(/@|\d+ [A-Z][a-z]+ (Street|St|Road|Ave)/); // no address on the site
   });
 
