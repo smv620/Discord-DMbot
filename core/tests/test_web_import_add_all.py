@@ -26,7 +26,7 @@ OTHER = "b" * 32
 class Importing(Web):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
-        self.store = ImportStore(self.db)
+        self.imports = ImportStore(self.db)
         self.actions = wa.ActionStore(self.db)
         self.ids: dict[str, list[str]] = {"place": [], "npc": []}
         for kind, names in {"place": ["Rivermouth", "The Grey Pier"], "npc": ["Old Hob"]}.items():
@@ -81,8 +81,8 @@ class Importing(Web):
 
 class KeepingWhatTheScanFound(Importing):
     async def test_the_ids_are_kept_by_kind_and_a_second_scan_replaces_them(self) -> None:
-        await self.store.keep_found(self.g, self.first, self.ids)
-        await self.store.keep_found(self.g, self.first, {"place": self.ids["place"][:1]})
+        await self.imports.keep_found(self.g, self.first, self.ids)
+        await self.imports.keep_found(self.g, self.first, {"place": self.ids["place"][:1]})
         async with self.db.guild(self.g) as conn:
             cur = await conn.execute(
                 "SELECT found FROM session_imports WHERE session_id = %s", (self.first,)
@@ -96,12 +96,12 @@ class TheCounts(Importing):
     async def test_the_progress_read_says_how_many_of_each_kind_wait_across_the_sessions(
         self,
     ) -> None:
-        await self.store.keep_found(self.g, self.first, {"place": self.ids["place"]})
-        await self.store.keep_found(self.g, self.second, {"npc": self.ids["npc"]})
+        await self.imports.keep_found(self.g, self.first, {"place": self.ids["place"]})
+        await self.imports.keep_found(self.g, self.second, {"npc": self.ids["npc"]})
         self.assertEqual(await self.waiting(), {"place": 2, "npc": 1})
 
     async def test_a_name_answered_since_is_not_counted_and_ideas_never_are(self) -> None:
-        await self.store.keep_found(
+        await self.imports.keep_found(
             self.g, self.first, {"place": self.ids["place"], "concept": self.ids["npc"]}
         )
         await self.memory.confirm_kinds(
@@ -110,19 +110,19 @@ class TheCounts(Importing):
         self.assertEqual(await self.waiting(), {"place": 1})
 
     async def test_another_imports_names_are_not_counted(self) -> None:
-        await self.store.keep_found(self.g, self.first, {"place": self.ids["place"]})
+        await self.imports.keep_found(self.g, self.first, {"place": self.ids["place"]})
         self.assertEqual(await self.waiting(OTHER), {})
 
     async def test_a_player_never_gets_the_counts(self) -> None:
-        await self.store.keep_found(self.g, self.first, {"place": self.ids["place"]})
+        await self.imports.keep_found(self.g, self.first, {"place": self.ids["place"]})
         with self.assertRaises(RecapError):
             await self.waiting(who=self.player)
 
 
 class AddingThem(Importing):
     async def test_add_all_for_an_import_adds_its_names_with_one_undo_per_kind(self) -> None:
-        await self.store.keep_found(self.g, self.first, {"place": self.ids["place"]})
-        await self.store.keep_found(self.g, self.second, {"npc": self.ids["npc"]})
+        await self.imports.keep_found(self.g, self.first, {"place": self.ids["place"]})
+        await self.imports.keep_found(self.g, self.second, {"npc": self.ids["npc"]})
         await self.queue({"action": "confirm-kinds", "import": IMPORT, "kinds": "all"})
         (outcome,) = await self.bot()
         self.assertFalse(outcome.error)
@@ -141,8 +141,8 @@ class AddingThem(Importing):
         self.assertEqual(await self.waiting(), {"place": 2, "npc": 1})
 
     async def test_one_kind_only_leaves_the_others_waiting(self) -> None:
-        await self.store.keep_found(self.g, self.first, {"place": self.ids["place"]})
-        await self.store.keep_found(self.g, self.second, {"npc": self.ids["npc"]})
+        await self.imports.keep_found(self.g, self.first, {"place": self.ids["place"]})
+        await self.imports.keep_found(self.g, self.second, {"npc": self.ids["npc"]})
         await self.queue({"action": "confirm-kinds", "import": IMPORT, "kinds": ["place"]})
         await self.bot()
         self.assertEqual(await self.waiting(), {"npc": 1})
