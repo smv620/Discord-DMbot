@@ -55,6 +55,21 @@ class TheQueue(MemoryTest):
             await self.queue.finish(GUILD_A, self.c, SESSION, "reads", "worker", ok=True)
         )
 
+    async def test_the_names_block_hands_back_ids_only_from_its_holder(self) -> None:
+        await self.hand(jobs.NAMES)
+        self.assertEqual(await self.queue.result(GUILD_A, self.c, SESSION, jobs.NAMES), [])
+        await self.queue.claim(GUILD_A, self.c, SESSION, "names", "worker")
+        ids = ["b" * 32, "a" * 32, "b" * 32]
+        self.assertFalse(await self.queue.set_result(GUILD_A, self.c, SESSION, "names", "bot", ids))
+        self.assertTrue(
+            await self.queue.set_result(GUILD_A, self.c, SESSION, "names", "worker", ids)
+        )
+        self.assertEqual(
+            await self.queue.result(GUILD_A, self.c, SESSION, jobs.NAMES), ["a" * 32, "b" * 32]
+        )
+        self.assertEqual(await self.queue.result(GUILD_B, self.c, SESSION, jobs.NAMES), [])
+        self.assertEqual(await self.queue.result(GUILD_A, self.c, "other", jobs.NAMES), [])
+
     async def test_a_running_block_says_what_it_is_on_and_only_its_holder_can(self) -> None:
         await self.hand()
         self.assertEqual(

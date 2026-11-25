@@ -589,6 +589,7 @@ from dmbot.transcript.cleaner import (
 )
 from dmbot.transcript.close_calls import CloseCalls
 from dmbot.transcript.export import clock
+from dmbot.transcript.held_lines import HEARD_MAX, held_lines
 from dmbot.transcript.import_clock import ImportClockOffers
 from dmbot.transcript.import_consent import (
     ImportConsentsSection,
@@ -800,7 +801,6 @@ REPLY_SCANS_PER_MINUTE = 10  # reads of a chat to find a deleted picture's reply
 REPLY_SCAN_LIMIT = 50  # messages after the picture that are read for it
 IMAGE_REPLIES_KEPT = 200  # pictures whose reply is remembered, so a delete can take it back
 DELETED_KEPT_S = 600.0  # how long a deleted message's id is remembered (#2450)
-HEARD_MAX = 20_000  # lines kept for the after-session name scan
 SAID_AS_MIN_FIXES = 3  # the cleaner fixed a name from the same spelling this often (#2171)
 SAID_AS_HEARD_MAX = 80  # the longest other spelling kept for it
 HEARD_FORMS_MAX = 1000  # (name, spelling, person) counts kept in a session
@@ -881,6 +881,8 @@ SUMMARY_PARTIAL = (
 WORKER_TAKE_S = 300  # no worker took a handed-over block in this long: the bot runs it itself
 WORKER_POLL_S = 5.0  # how often the bot looks at a block it waits for
 WORKER_WAIT_MAX_S = 3 * 3600  # the bot stops waiting for the worker's block after this
+# How the bot's hand-over of a block ended (`_hand_to_worker`)
+HANDED_ENDED, HANDED_LOCAL, HANDED_GAVE_UP = "ended", "local", "gave_up"
 AFTER_ROUND_S = 10  # how often the worker looks for blocks (#4905)
 AFTER_LEASE_EVERY_S = 60  # how often a running block's lease is renewed
 CARD_ROUND_S = 300  # how often the card round looks for work (#5050)
@@ -3642,13 +3644,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         table: Table,
         block: str,
         steps: list[tuple[str, Callable[[], Awaitable[Any]]]],
-    ) -> None:
+    ) -> str:
         """Write the block's row and wait until the worker has done it, so the steps after it find
         its results. If no worker takes it within `WORKER_TAKE_S` (it is down), or the worker that
         took it died and its lease ran out, the bot takes the row itself and runs the steps as
         before (keeping the lease fresh while it does), so a session's reads are never lost and
         never run twice at once. A block the worker failed, or whose row is gone (the campaign was
-        deleted or moved), ends the wait: the steps after it go on. Counts only in the log."""
+        deleted or moved), ends the wait: the steps after it go on. Counts only in the log. Returns
+        how it ended: `HANDED_ENDED` (the worker finished or failed it, or the row is gone),
+        `HANDED_LOCAL` (the bot ran the steps itself), or `HANDED_GAVE_UP` (the bot stopped
+        waiting while a worker may still hold it)."""
         assert self.after_jobs is not None
         gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
         queue = self.after_jobs
@@ -3661,7 +3666,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     log.exception("After the session: %s failed", name)
 
         if cid is None or sid is None:
-            return await locally()
+            await locally()
+            return HANDED_LOCAL
         dm_ids = {table.dm_user_id, *table.dm_user_ids}
         try:
             handed = await queue.add(gid, cid, sid, block, dm_ids)
@@ -3669,13 +3675,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.warning("After the session: could not hand %s on (%s)", block, type(exc).__name__)
             handed = False
         if not handed:
-            return await locally()
+            await locally()
+            return HANDED_LOCAL
         # (the DM sees that something is reading, even though the bot only waits: #5126's card)
-        words = (
-            after_session.STORY_IN_WORKER
-            if block == after_jobs.READS
-            else after_session.LATE_IN_WORKER
-        )
+        words = {
+            after_jobs.READS: after_session.STORY_IN_WORKER,
+            after_jobs.NAMES: after_session.NAMES_IN_WORKER,
+        }.get(block, after_session.LATE_IN_WORKER)
         card = DMBot._after_card(self, table)
         await card.stage(words)
         who = f"bot-{uuid.uuid4().hex[:8]}"
@@ -3689,7 +3695,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if state in (None, after_jobs.DONE, after_jobs.FAILED):
                     if state == after_jobs.FAILED:
                         log.warning("After the session: the worker's %s block failed", block)
-                    return  # (None: the row is gone with its campaign)
+                    return HANDED_ENDED  # (None: the row is gone with its campaign)
                 if found is not None and found.stage:  # (what the worker is on: the DM's card)
                     staged = {
                         after_jobs.STORY: after_session.STORY,
@@ -3703,7 +3709,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     async with self._after_lease(gid, cid, sid, block, who):
                         await locally()
                     await queue.finish(gid, cid, sid, block, who, ok=True)
-                    return
+                    return HANDED_LOCAL
                 errors = 0
             except asyncio.CancelledError:
                 raise
@@ -3711,10 +3717,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 errors += 1
                 log.warning("After the session: waiting for %s (%s)", block, type(exc).__name__)
                 if errors >= 5:
-                    return
+                    return HANDED_GAVE_UP
             if time.monotonic() - began >= WORKER_WAIT_MAX_S:
                 log.warning("After the session: gave up waiting for the worker's %s block", block)
-                return
+                return HANDED_GAVE_UP
             await asyncio.sleep(WORKER_POLL_S)
 
     @contextlib.asynccontextmanager
@@ -3757,6 +3763,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         dm_ids: Collection[int],
         block: str,
         report: Callable[[str, int, int], Awaitable[object]] | None = None,
+        found: list[str] | None = None,
     ) -> bool:
         """Run one handed-over block from ids alone (the worker's side, #4905): each step is today's
         id-based reader, in today's order, each in its own `try` so one failing never stops the
@@ -3806,6 +3813,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ),
                 ("after-session report", lambda: self._make_report_for(gid, cid, sid)),
             ]
+        elif block == after_jobs.NAMES:
+            plan = [
+                (
+                    "name pass",
+                    lambda: self._worker_name_pass(
+                        gid, cid, sid, dm_ids, found if found is not None else []
+                    ),
+                ),
+            ]
         else:
             plan = [
                 ("importance", lambda: self._read_importance(gid, cid, sid)),
@@ -3840,12 +3856,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         try:
             with log_context(guild_id=gid, campaign_id=cid):
                 async with self._after_lease(gid, cid, sid, block, who):
+                    ids: list[str] = []
                     ok = await self._run_after_block(
                         gid, cid, sid, job.dm_ids, block,
                         lambda stage, part, parts: queue.step(
                             gid, cid, sid, block, who, stage, part, parts
                         ),
+                        ids,
                     )  # fmt: skip
+                    if block == after_jobs.NAMES:  # (ids only: what the pass proposed)
+                        await queue.set_result(gid, cid, sid, block, who, ids)
         except asyncio.CancelledError:
             await queue.release(gid, cid, sid, block, who)  # (nothing if the lease is not ours)
             raise
@@ -14035,10 +14055,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         the recap waiting for a pass that will never run."""
         session_id = table.transcript_session_id
         gid = table.guild_id
+        mark = True  # (the pass is marked done at the end, unless a worker still holds it)
         try:
-            await self._suggest_names(table)
+            if (
+                DMBot._worker_does_names(self)
+                and session_id is not None
+                and table.campaign_id is not None
+                and table.heard
+                and self.memory is not None
+            ):
+                mark = await DMBot._hand_names_to_worker(self, table)  # (#4905 4c)
+            else:
+                await self._suggest_names(table)
         finally:
-            if session_id is not None and self.transcripts is not None:
+            if mark and session_id is not None and self.transcripts is not None:
                 try:
                     await self.transcripts.mark_names_repaired(gid, session_id, int(time.time()))
                 except Exception:
@@ -14059,61 +14089,162 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 return
             users = speakers | agreed | {table.dm_user_id}
             users |= table.dm_user_ids
-            repaired = False
-            early: EarlyRead | None = None
-            passed: set[str] = set()
-            over: set[str] = set()
-            written: set[str] = set()
             if table.transcript_session_id is not None:
                 await self.save_transcript(table)  # so every line is stored to point at
-                # The name reader first (slice 4, #5133; DMBOT_SESSION_NAMES): what it found close
-                # to a known name, capitals or none, joins the name pass's candidates
-                early = await self._read_before_pass(
-                    gid, cid, table.transcript_session_id, [text for _uid, text in heard], users,
-                    agreed=agreed, card=DMBot._after_card(self, table),
-                )  # fmt: skip
-                # PlotBot's name pass (#2628), before the scan and the recap, so the names they
-                # use are the list's: a repaired spelling is read again from the stored lines.
-                fixed = await self.repair_names(
-                    gid, cid, table.transcript_session_id, users, agreed,
-                    extra=early.spellings() if early is not None else (), asked=passed,
-                    left_out=over, fixed_keys=written,
-                )  # fmt: skip
-                if fixed and self.transcripts is not None:
-                    try:
-                        heard = [
-                            (x.user_id, x.text)
-                            for x in await self.transcripts.lines(gid, table.transcript_session_id)
-                            if x.user_id in agreed and not x.sidebar and not x.typed
-                        ] or heard
-                        repaired = True  # (every stored line is in it, the turned-back ones too)
-                    except Exception:
-                        log.exception("Name pass: couldn't read the repaired lines")
-                if not repaired and self.transcripts is not None:
-                    # The lines the end-of-session pass turned back into game talk were labelled
-                    # off-topic while the session ran, so the held words left them out (#2587).
-                    try:
-                        heard += [
-                            (x.user_id, x.text)
-                            for x in await self.transcripts.leaned_lines(
-                                gid, table.transcript_session_id
-                            )
-                            if x.user_id in agreed and x.text.strip()
-                        ]
-                    except Exception:
-                        log.exception("Name pass: couldn't read the lines turned back")
-            added = await self._propose_new_names(
-                gid, cid, [text for _uid, text in heard], users, table.transcript_session_id,
-                agreed=agreed, card=DMBot._after_card(self, table),
-                said_by=[uid for uid, _text in heard], early=early, passed=passed,
-                pass_over=over, pass_fixed=written,
+            added = await DMBot._name_pass(
+                self, gid, cid, table.transcript_session_id, heard, users, agreed,
+                card=DMBot._after_card(self, table),
             )  # fmt: skip
-            log.info("After-session scan: %d line(s), %d new name(s)", len(heard), len(added))
+            table.new_names = list(added)  # told by the summary, or by the "new names" step
+
+    async def _name_pass(
+        self,
+        gid: int,
+        cid: str,
+        session_id: str | None,
+        heard: list[tuple[int, str]],
+        users: Collection[int],
+        agreed: Collection[int],
+        *,
+        card: after_session.AfterSessionCard | None,
+    ) -> list[str]:
+        """The session's name step from plain values, the same in the bot and in the worker
+        (#4905 4c): the name reader, PlotBot's name pass and the name scan. `heard`: each line with
+        who said it, from people who agree. Returns the names proposed; nothing is confirmed. The
+        body is the step as it was, moved whole from `_suggest_names`."""
+        repaired = False
+        early: EarlyRead | None = None
+        passed: set[str] = set()
+        over: set[str] = set()
+        written: set[str] = set()
+        if session_id is not None:
+            # The name reader first (slice 4, #5133; DMBOT_SESSION_NAMES): what it found close
+            # to a known name, capitals or none, joins the name pass's candidates
+            early = await self._read_before_pass(
+                gid, cid, session_id, [text for _uid, text in heard], users,
+                agreed=agreed, card=card,
+            )  # fmt: skip
+            # PlotBot's name pass (#2628), before the scan and the recap, so the names they
+            # use are the list's: a repaired spelling is read again from the stored lines.
+            fixed = await self.repair_names(
+                gid, cid, session_id, users, agreed,
+                extra=early.spellings() if early is not None else (), asked=passed,
+                left_out=over, fixed_keys=written,
+            )  # fmt: skip
+            if fixed and self.transcripts is not None:
+                try:
+                    heard = [
+                        (x.user_id, x.text)
+                        for x in await self.transcripts.lines(gid, session_id)
+                        if x.user_id in agreed and not x.sidebar and not x.typed
+                    ] or heard
+                    repaired = True  # (every stored line is in it, the turned-back ones too)
+                except Exception:
+                    log.exception("Name pass: couldn't read the repaired lines")
+            if not repaired and self.transcripts is not None:
+                # The lines the end-of-session pass turned back into game talk were labelled
+                # off-topic while the session ran, so the held words left them out (#2587).
+                try:
+                    heard += [
+                        (x.user_id, x.text)
+                        for x in await self.transcripts.leaned_lines(gid, session_id)
+                        if x.user_id in agreed and x.text.strip()
+                    ]
+                except Exception:
+                    log.exception("Name pass: couldn't read the lines turned back")
+        added = await self._propose_new_names(
+            gid, cid, [text for _uid, text in heard], users, session_id,
+            agreed=agreed, card=card,
+            said_by=[uid for uid, _text in heard], early=early, passed=passed,
+            pass_over=over, pass_fixed=written,
+        )  # fmt: skip
+        log.info("After-session scan: %d line(s), %d new name(s)", len(heard), len(added))
+        if self.lookup is not None and not any(t.campaign_id == cid for t in self.tables.values()):
+            self.lookup.drop([cid])  # the session's copy isn't needed any more
+        return added
+
+    def _worker_does_names(self) -> bool:
+        """Whether the name step of a session's end goes to the worker (`DMBOT_WORKER_NAMES`, on
+        top of `DMBOT_WORKER`, #4905 4c)."""
+        return bool(DMBot._worker_does_after_session(self) and self.settings.worker_names_on)
+
+    async def _hand_names_to_worker(self, table: Table) -> bool:
+        """The name step's hand-over: the lines are stored first (the worker reads them, not
+        `table.heard`), then the block waits like the others, falling back to the bot's own step
+        when no worker takes it. What the worker found comes back as ids and the bot's "new names"
+        step lists them. Returns whether the pass is over and may be marked done (#2628): False
+        when the bot stopped waiting while a worker may still be repairing names, since the recap
+        waits for that mark and must not start on half-repaired lines (the worker marks it when it
+        ends)."""
+        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
+        assert cid is not None and sid is not None
+        with log_context(guild_id=gid, campaign_id=cid):
+            await self.save_transcript(table)  # so the worker finds every line stored
+            steps: list[tuple[str, Callable[[], Awaitable[Any]]]] = [
+                ("name scan", lambda: self._suggest_names(table))
+            ]
+            how = await DMBot._hand_to_worker(self, table, after_jobs.NAMES, steps)
+            if how == HANDED_LOCAL:  # (the bot's own step ran: it kept its names)
+                table.heard = []
+                return True
+            table.heard = []
+            if how == HANDED_GAVE_UP:
+                log.warning("After the session: the names are left to the worker's own mark")
+                return False
+            try:
+                table.new_names = await DMBot._found_names(self, gid, cid, sid)
+            except Exception as exc:
+                log.warning("After the session: the worker's names (%s)", type(exc).__name__)
+                table.new_names = []
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
             ):
-                self.lookup.drop([cid])  # the session's copy isn't needed any more
-            table.new_names = list(added)  # told by the summary, or by the "new names" step
+                self.lookup.drop([cid])  # (the bot's copy lacks the names the worker proposed)
+            return True
+
+    async def _found_names(self, gid: int, cid: str, sid: str) -> list[str]:
+        """The names the worker's pass proposed, from the ids it handed back: only those still
+        waiting to be checked."""
+        assert self.after_jobs is not None and self.memory is not None
+        names: list[str] = []
+        for entity_id in await self.after_jobs.result(gid, cid, sid, after_jobs.NAMES):
+            entity = await self.memory.entity(gid, cid, entity_id)
+            if entity is not None and entity.status == PROPOSED:
+                names.append(entity.name)
+        return names
+
+    async def _worker_name_pass(
+        self, gid: int, cid: str, sid: str, dm_ids: Collection[int], found: list[str]
+    ) -> None:
+        """The worker's side of the name step (#4905 4c), from ids and the stored lines: who is
+        recorded is read now, when the block starts (and again after every await inside, as in the
+        bot), the lines the live path would have held are rebuilt from the stored transcript
+        (`held_lines`), and the same `_name_pass` runs. The ids it proposed go into `found`."""
+        assert self.memory is not None and self.transcripts is not None
+        try:
+            agreed = set(await self.consent.consenting(gid))  # (asked afresh as the block starts)
+            stored = await self.transcripts.lines(gid, sid)
+            heard = held_lines(stored, agreed)
+            if not heard:
+                return
+            # (everyone who spoke or typed: a few more than the bot's `table.heard` names, such as
+            # a speaker of a picture's description; they are only ever kept out of the names)
+            speakers = {x.user_id for x in stored if not x.sidebar}
+            users = speakers | agreed | set(dm_ids)
+            added = await DMBot._name_pass(self, gid, cid, sid, heard, users, agreed, card=None)
+            wanted = set(added)
+            # (by name: a name waiting twice under one spelling cannot happen, since the scan
+            # skips every name already known; the ids go back so no word does)
+            found += [
+                e.id
+                for e in await self.memory.entities(gid, cid, statuses=(PROPOSED,))
+                if e.name in wanted
+            ]
+        finally:
+            try:
+                await self.transcripts.mark_names_repaired(gid, sid, int(time.time()))
+            except Exception:
+                log.exception("The name pass couldn't be marked done")
 
     async def post_new_names(self, table: Table) -> None:
         """After a session (#2410): the new names nobody has been told about yet (the secrets

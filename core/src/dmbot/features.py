@@ -44,6 +44,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # for whoever runs DMbot: on only while dev1 tests the worker (#2128)
     ),
     Feature(
+        "worker names",
+        "The name step of a session's end, away from Discord",
+        "",
+        lambda s: s.worker_names_on,
+        ("worker_names_on",),
+        for_dms=False,  # (only while dev1 scores the sample against the in-bot step, #4905 4c)
+    ),
+    Feature(
         "party join question",
         "Catching up a new party member",
         "When a character joins the party, DMbot asks you what they know about what came before.",

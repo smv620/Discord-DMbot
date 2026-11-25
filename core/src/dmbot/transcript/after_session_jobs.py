@@ -19,7 +19,8 @@ from dmbot.db import Database
 
 READS = "reads"  # the story read, where the story is, scenes, who is this, grades, the report
 LATE = "late"  # importance and the story threads
-BLOCKS = (READS, LATE)
+NAMES = "names"  # the name pass: the name reader, PlotBot's pass and the name scan (#4905 4c)
+BLOCKS = (READS, LATE, NAMES)
 STALE_S = 15 * 60  # a lease not renewed for this long is dead: one AI call takes minutes at most
 WAITING, RUNNING, DONE, FAILED = "waiting", "running", "done", "failed"
 # What a running block is on (a code the bot turns into words for the DM's card).
@@ -165,6 +166,39 @@ class AfterSessionJobs:
                 ),
             )
             return bool(cur.rowcount)
+
+    async def set_result(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_id: str,
+        block: str,
+        who: str,
+        ids: Collection[str],
+    ) -> bool:
+        """The holder says what the block found, as ids only (the names the pass proposed), before
+        it finishes. False when the lease is no longer this holder's."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE after_session_jobs SET result_ids = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_id = %s AND block = %s"
+                " AND state = 'running' AND claimed_by = %s",
+                (sorted(set(ids))[:500], guild_id, campaign_id, session_id, block, who[:40]),
+            )
+            return bool(cur.rowcount)
+
+    async def result(
+        self, guild_id: int, campaign_id: str, session_id: str, block: str
+    ) -> list[str]:
+        """The ids a block handed back; empty when none, or when it was never handed over."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT result_ids FROM after_session_jobs WHERE guild_id = %s"
+                " AND campaign_id = %s AND session_id = %s AND block = %s",
+                (guild_id, campaign_id, session_id, block),
+            )
+            row = await cur.fetchone()
+        return [] if row is None else [str(i) for i in row["result_ids"]]
 
     async def state(
         self, guild_id: int, campaign_id: str, session_id: str, block: str
