@@ -38,7 +38,7 @@ class TheCounts(Reading):
             GUILD, campaign or self.one.id, sid, IMPORT, self.session.user_id, at,
             )  # fmt: skip
 
-    async def refused(self, who: Any, ref: str, kind: object, ident: object) -> str:
+    async def counts_refused(self, who: Any, ref: str, kind: object, ident: object) -> str:
         with self.assertRaises(RecapError) as err:
             await wait_counts.read(self.web, who, ref, kind, ident)
         return err.exception.code
@@ -81,8 +81,10 @@ class TheCounts(Reading):
         up = await self.upload()
         await self.import_row("s3", 1_700_000_000, self.two.id)
         two_ref = f"{GUILD}.{self.two.id}"
-        self.assertEqual(await self.refused(self.session, two_ref, "lore", up), "not_found")
-        self.assertEqual(await self.refused(self.session, two_ref, "import", IMPORT), "not_found")
+        self.assertEqual(await self.counts_refused(self.session, two_ref, "lore", up), "not_found")
+        self.assertEqual(
+            await self.counts_refused(self.session, two_ref, "import", IMPORT), "not_found"
+        )
 
     async def test_a_player_and_bad_kinds_or_ids_are_turned_away(self) -> None:
         up = await self.upload()
@@ -91,7 +93,7 @@ class TheCounts(Reading):
             self.web, await sessions.sign_in(self.web, who, [THURSDAY], now=NOW, days=30), now=NOW
         )
         assert bob is not None
-        self.assertEqual(await self.refused(bob, self.cref, "lore", up), "not_found")
+        self.assertEqual(await self.counts_refused(bob, self.cref, "lore", up), "not_found")
         for kind, ident in (
             ("names", up),
             (None, up),
@@ -103,5 +105,5 @@ class TheCounts(Reading):
         ):
             with self.subTest(kind=kind, ident=ident):
                 self.assertEqual(
-                    await self.refused(self.session, self.cref, kind, ident), "not_found"
+                    await self.counts_refused(self.session, self.cref, kind, ident), "not_found"
                 )
