@@ -298,3 +298,48 @@ class OnTheDoor(WithChecks):
             await self.code(web.read_answers(self.web, await self.bob(), self.ref, [name])),
             "not_found",
         )
+
+    async def test_a_stored_new_answer_uses_a_slot_and_the_rest_are_ranked(self) -> None:
+        name = await self.suggest("Vale")
+        await self.keep(name, StoredAnswer(NEW, "maybe", new_kind="character"))
+        for n in range(6):
+            await self.known(f"Vale Keep {n}", "place")
+        got = await self.ranked(name)
+        self.assertEqual(len(got), 5)
+        self.assertEqual(got[0]["answer"], {"action": "confirm", "kind": "character"})
+
+    async def test_two_names_at_once_each_get_their_five(self) -> None:
+        names = [await self.suggest(f"Vale{n}") for n in range(2)]
+        for n in range(25):
+            await self.known(f"Vale Keep {n}", "place")
+        got = await web.read_answers(self.web, self.session, self.ref, names)
+        self.assertTrue(all(len(v) == 5 for v in got.values()))
+
+    async def test_three_stored_answers_are_filled_to_five_by_the_ranking(self) -> None:
+        name = await self.suggest("Vale")
+        known = [await self.known(f"Ilse {n}", "character") for n in range(3)]
+        await self.keep(name, *(StoredAnswer(ENTITY, "likely", target_id=k) for k in known))
+        for n in range(4):
+            await self.known(f"Vale Keep {n}", "place")
+        got = await self.ranked(name)
+        self.assertEqual([a["answer"]["known"] for a in got[:3]], known)  # stored, as kept
+        self.assertEqual(len(got), 5)
+
+    async def test_the_new_doors_answer_a_dm_only_and_never_another_campaigns_entries(self) -> None:
+        name = await self.suggest("Vale")
+        await self.known("Vale Keep", "place")
+        theirs = await self.memory.add_entity(
+            GUILD, self.two.id, type="place", name="Vale Hold", source="dm", status=CONFIRMED
+        )
+        bob = await self.bob()
+        async with self.web.user(bob.user_id, session=bob.id_hash) as conn:
+            cur = await conn.execute(
+                "SELECT dmbot_web_who_candidates(%s, %s, %s) AS a,"
+                " dmbot_web_who_details(%s, %s, %s) AS b",
+                (GUILD, self.one.id, [name], GUILD, self.one.id, [theirs.value.id]),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual((row["a"], row["b"]), (None, None))  # a player: nothing
+        got = await self.ranked(name)
+        self.assertNotIn("Vale Hold", " ".join(a["label"] for a in got))  # (another campaign's)

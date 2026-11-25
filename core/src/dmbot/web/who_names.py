@@ -128,10 +128,13 @@ async def read_answers(
             stored.setdefault(str(r["id"]), []).append(r)
         asking: list[dict[str, Any]] = []
         candidates: list[ranking.Candidate] = []
-        if wanted:
+        ranked_in: dict[str, Any] = {}
+        # Only the names with room for a guess are asked about: when every one already has five
+        # stored answers, the candidates (up to 5,000 entries) are not read at all.
+        roomy = [n for n in wanted[:RANKED_NAMES] if len(stored.get(n, [])) < who_top.TOP]
+        if roomy:
             cur = await conn.execute(
-                "SELECT dmbot_web_who_candidates(%s, %s, %s) AS r",
-                (gid, cid, wanted[:RANKED_NAMES]),
+                "SELECT dmbot_web_who_candidates(%s, %s, %s) AS r", (gid, cid, roomy)
             )
             ranked_in = (await cur.fetchone() or {}).get("r") or {}
             asking = list(ranked_in.get("asking", []))
@@ -143,10 +146,7 @@ async def read_answers(
                 )
                 for c in ranked_in.get("candidates", [])
             ]
-        names = {
-            str(c["id"]): str(c["name"])
-            for c in (ranked_in.get("candidates", []) if wanted else [])
-        }
+        names = {str(c["id"]): str(c["name"]) for c in ranked_in.get("candidates", [])}
         chosen: dict[str, list[dict[str, Any]]] = {}
         for ask in asking:
             mine = stored.get(str(ask["id"]), [])[: who_top.TOP]

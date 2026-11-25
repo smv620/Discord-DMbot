@@ -60,3 +60,14 @@ class TheWebSide(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCardSummarySwitch(unittest.TestCase):
+    def test_the_website_reads_the_bots_card_summary_switch(self) -> None:
+        from tests import test_web_api as wa
+
+        env = wa.Settings.ENV
+        self.assertFalse(load_web_settings(env).card_summary_on)
+        self.assertTrue(load_web_settings({**env, "DMBOT_CARD_SUMMARY": "1"}).card_summary_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_CARD_SUMMARY"):
+            load_web_settings({**env, "DMBOT_CARD_SUMMARY": "sometimes"})
