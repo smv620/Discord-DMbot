@@ -50,3 +50,10 @@ class ImportBoundaries(unittest.TestCase):
             broken = lint(root)
         self.assertNotEqual(broken.returncode, 0)
         self.assertIn("toy.feature.a -> toy.bot", broken.stdout)
+
+
+class NoExceptionsLeft(unittest.TestCase):
+    def test_the_real_config_has_no_ignored_import_left(self) -> None:
+        # #2827 removed the last one; an exception back needs its own issue and reason
+        text = (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+        self.assertNotIn("ignore_imports", text)
