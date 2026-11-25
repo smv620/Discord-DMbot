@@ -1298,7 +1298,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // Player character icons (#3621, #3622): in a campaign reference ending ".icons" the first three names are player
   // characters: the first has a Discord avatar and a dndbeyond.com portrait, the second only a portrait, the third none.
   const pcChoice = new Map<string, IconChoice>();
-  const pcHas = (id: string): { discord: boolean; dndbeyond: boolean } => ({ discord: id === "n1", dndbeyond: id === "n1" || id === "n2" });
+  const pcHas = (id: string): { discord: boolean; dndbeyond: boolean; pictures: boolean } => ({ discord: id === "n1", dndbeyond: id === "n1" || id === "n2", pictures: true });
+  const pcPicture = new Map<string, number>(); // the picture a `custom` choice points at, by campaign and character
   const pretendIcons = (ref: string, n: WebNode, dm: boolean): WebNode => {
     if (!["n1", "n2", "n3"].includes(n.id)) return n;
     const choice = pcChoice.get(`${ref}:${n.id}`) ?? "default";
@@ -1307,6 +1308,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     const shown: WebNode["icon"] =
       choice === "hidden"
         ? { kind: "hidden", url: null }
+        : choice === "custom" && pcPicture.has(`${ref}:${n.id}`)
+          ? { kind: "picture", url: picture("P") }
         : (choice === "discord" || (choice === "default" && has.discord)) && has.discord
           ? { kind: "discord", url: picture("D") }
           : (choice === "dndbeyond" || choice === "default") && has.dndbeyond
@@ -2865,17 +2868,21 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!found) throw new ApiError("not-found");
       found.revealed = true;
     },
-    async setPcIcon(ref, entityId, choice) {
-      calls.push(`setPcIcon:${ref}:${entityId}:${choice}`);
+    async setPcIcon(ref, entityId, choice, picture) {
+      calls.push(`setPcIcon:${ref}:${entityId}:${choice}${picture !== undefined ? `:${picture}` : ""}`);
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
       if (!["n1", "n2", "n3"].includes(entityId)) throw new ApiError("not-found");
       const has = pcHas(entityId);
       if ((choice === "discord" && !has.discord) || (choice === "dndbeyond" && !has.dndbeyond)) throw new ApiError("unavailable");
+      if (choice === "custom" && !Number.isInteger(picture)) throw new ApiError("unavailable");
       const previous = pcChoice.get(`${ref}:${entityId}`) ?? "default";
+      const previousPicture = pcPicture.get(`${ref}:${entityId}`) ?? null;
       pcChoice.set(`${ref}:${entityId}`, choice);
-      return { previous, now: choice };
+      if (choice === "custom") pcPicture.set(`${ref}:${entityId}`, picture!);
+      else pcPicture.delete(`${ref}:${entityId}`);
+      return { previous, now: choice, previousPicture };
     },
     async changeWebLink(ref, change: WebLinkChange) {
       calls.push(`changeWebLink:${ref}:${JSON.stringify(change)}`);

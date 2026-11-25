@@ -1897,13 +1897,13 @@ export interface WebNode {
   quests?: { id: string; name: string; links: number }[];
   /** A player character's icon (#3621, #3622): the picture to draw in its circle. `null` or missing: draw 👤. `hidden`: no
    * picture at all. Only on player character names, from an API that has the icons. */
-  icon?: { kind: "discord" | "dndbeyond" | "hidden"; url: string | null } | null;
+  icon?: { kind: "discord" | "dndbeyond" | "picture" | "hidden"; url: string | null } | null;
   /** What was chosen for it; "default" is the usual order (the Discord picture, else the dndbeyond.com one, else 👤). */
   iconChoice?: IconChoice;
   /** True for the DM and for the player who plays this character: only then are the Icon buttons offered. */
   canSetIcon?: boolean;
   /** Which pictures exist to pick, sent only with `canSetIcon`. */
-  iconHas?: { discord: boolean; dndbeyond: boolean };
+  iconHas?: { discord: boolean; dndbeyond: boolean; pictures?: boolean };
   /** True only on a person the story never named, in the DM's Full View (#3732; core #3733). `name` is then the label
    * ("unnamed - Ken's sister"), built from the anchor's current name. */
   unnamed?: boolean;
@@ -1912,7 +1912,8 @@ export interface WebNode {
   /** The name they hang from ("Ken"), or null when it isn't a name. */
   unnamedAnchor?: string | null;
 }
-export type IconChoice = "default" | "discord" | "dndbeyond" | "hidden";
+/** `custom` is a picture the campaign keeps (#3622, core #5280), sent with its numeric `picture` id. */
+export type IconChoice = "default" | "discord" | "dndbeyond" | "custom" | "hidden";
 
 /** The Story Graph's clean-up (#3740; core `web/graph_cleanup.py`, GET `.../web/cleanup`, PR #3764): the characters and groups no
  * chain of connections links to a player character or the party, largest group first. Waiting, ended and secret connections
@@ -3807,7 +3808,8 @@ export interface AccountApi {
 /** Add, reword, mark secret or remove a connection. Resolves with the edge as it now stands, or
    * `{ removed: true }` when the last connection between two names went. */
   /** Choose a player character's icon (#3622): instant, and the answer holds what it was, to post back for Undo. */
-  setPcIcon?(ref: string, entityId: string, choice: IconChoice): Promise<{ previous: IconChoice; now: IconChoice }>;
+  /** `picture` goes with `custom`. The answer carries `previousPicture` when the icon it replaced was a picture, so Undo can write it back. */
+  setPcIcon?(ref: string, entityId: string, choice: IconChoice, picture?: number): Promise<{ previous: IconChoice; now: IconChoice; previousPicture?: number | null }>;
   changeWebLink?(ref: string, change: WebLinkChange): Promise<WebLinkResult>;
   /** DMbot's guesses about places and languages, for a DM to check (#4285; core 0481). DM only. */
   worldNotes?(ref: string): Promise<WorldNotes>;

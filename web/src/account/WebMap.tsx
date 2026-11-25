@@ -221,7 +221,7 @@ export default function WebMap({
   /** A connection in a name's panel was pressed: open its pair with that connection open. */
   onJump?: ((a: string, b: string, linkId: string) => void) | undefined;
   /** Choose a player character's icon (#3622): a plain-words problem, or null when it was saved. */
-  onIcon?: ((id: string, choice: IconChoice) => Promise<string | null>) | undefined;
+  onIcon?: ((id: string, choice: IconChoice, picture?: number) => Promise<string | null>) | undefined;
   /** The id of the character whose last icon change can be taken back, and the Undo itself. */
   iconUndo?: { id: string; now: IconChoice; undo: () => Promise<string | null> } | null;
   /** How the viewer likes the map drawn (#3620): spacing, sizes and line width. Today's look when missing. */
@@ -864,7 +864,7 @@ export default function WebMap({
               key={detail.id}
               load={() => import("./PcIconRow")}
               what="the icon choices"
-              props={{ node: detail, onChoose: (choice: IconChoice) => onIcon(detail.id, choice), undo: iconUndo?.id === detail.id && iconUndo.now === (detail.iconChoice ?? "default"), onUndo: iconUndo?.undo ?? (async () => null) }}
+              props={{ node: detail, api, refId, onChoose: (choice: IconChoice, picture?: number) => onIcon(detail.id, choice, picture), undo: iconUndo?.id === detail.id && iconUndo.now === (detail.iconChoice ?? "default"), onUndo: iconUndo?.undo ?? (async () => null) }}
             />
           )}
           {api && <NodeSummary key={detail.id} api={api} refId={refId} id={detail.id} />}

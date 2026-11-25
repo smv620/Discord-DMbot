@@ -71,6 +71,17 @@ export function countOf(counts: unknown, key: string): number | undefined {
   return undefined;
 }
 
+/** A character's picture icon is a path on the API's own host (#3622, core #5280: the route serves the small preview itself, so no
+ * other image host is needed): made absolute here, so the page draws it from the API like the gallery's previews. */
+export function withPictureIcons(graph: WebGraph, root: string): WebGraph {
+  return {
+    ...graph,
+    nodes: graph.nodes.map((n) =>
+      n.icon?.kind === "picture" && n.icon.url?.startsWith("/") ? { ...n, icon: { ...n.icon, url: `${root}${n.icon.url}` } } : n,
+    ),
+  };
+}
+
 export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Partial<AccountApi> {
   // The party record's door answers with {answer}; the answer is waited for like the other queued changes (#4778 a2).
   const partyAnswer = async (ref: string, queued: unknown): Promise<WebAnswer> => {
@@ -380,10 +391,10 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
         return (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/see-as?${params.toString()}`)) as WebGraph;
       }
       if (q.view) params.set("view", q.view);
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/web?${params.toString()}`,
-      )) as WebGraph;
+      return withPictureIcons(
+        (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web?${params.toString()}`)) as WebGraph,
+        root,
+      );
     },
     webVersion: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/version`)) as { version: number },
@@ -575,8 +586,12 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     },
     // The connection edits are queued too (202 {answer}); this waits for the edge as it now stands.
     // The icon choice is instant: the door answers with what it was and what it is now (#3621).
-    setPcIcon: async (ref, entityId, choice) =>
-      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/pc-icons/${encodeURIComponent(entityId)}`, { choice })) as { previous: IconChoice; now: IconChoice },
+    setPcIcon: async (ref, entityId, choice, picture) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/pc-icons/${encodeURIComponent(entityId)}`, { choice, ...(picture !== undefined ? { picture } : {}) })) as {
+        previous: IconChoice;
+        now: IconChoice;
+        previousPicture?: number | null;
+      },
     worldNotes: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/world-notes`)) as WorldNotes,
     // The quest sheet of a kept story thread (#4547): read only, DM only (the door answers anyone else with nothing).
     // Queued for the bot like the other website presses (202 {answer}); this waits for it and gives back the batch for Undo (#4562).
