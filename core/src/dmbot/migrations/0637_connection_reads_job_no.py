@@ -49,7 +49,8 @@ SQL = r"""
                 'id', r.replacing_id,
                 'hidden', COALESCE((SELECT x.secret OR x.unrevealed FROM memory_relations x
                                     WHERE x.guild_id = g AND x.campaign_id = c
-                                      AND x.id = r.replacing_id), FALSE)) END,
+                                      AND x.id = r.replacing_id
+                                      AND x.status = 'confirmed'), FALSE)) END,
             'proposals', r.proposals, 'whoKnows', r.who_kind,
             'characters', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', e.name) ORDER BY e.name)
