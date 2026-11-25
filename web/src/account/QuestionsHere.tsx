@@ -11,7 +11,7 @@ import { type AccountApi } from "./api";
 import LazyPanel from "./LazyPanel";
 import QuestionsNames from "./QuestionsNames";
 
-export type HereGroup = "names" | "waiting" | "readings" | "traits" | "secrets" | "joins" | "leaves" | "reveals" | "heard" | "deeds";
+export type HereGroup = "names" | "waiting" | "readings" | "traits" | "secrets" | "joins" | "leaves" | "reveals" | "heard" | "deeds" | "lookalikes";
 
 /** The panel a kind opens, or null when it is not answered on this page. Kinds in one group share one panel. */
 export function groupOf(kind: string): HereGroup | null {
@@ -25,6 +25,7 @@ export function groupOf(kind: string): HereGroup | null {
   if (kind === "deeds") return "deeds";
   if (kind === "reveals") return "reveals";
   if (kind === "heard") return "heard";
+  if (kind === "lookalikes") return "lookalikes";
   return null;
 }
 
@@ -69,6 +70,8 @@ export default function QuestionsHere({
     return <LazyPanel load={() => import("./LeaveQuestions")} what="the still in the party questions" props={{ api, campaignRef, id, onLeft: report }} />;
   if (group === "heard")
     return <LazyPanel load={() => import("./HeardQuestions")} what="the Did they mean questions" props={{ api, campaignRef, id, onLeft: report }} />;
+  if (group === "lookalikes")
+    return <LazyPanel load={() => import("./LookAlikes")} what="the look-alike names" props={{ api, campaignRef, id, onLeft: report, heading: false }} />;
   if (group === "secrets")
     return (
       <LazyPanel load={() => import("./SecretQuestions")} what="the known or secret questions" props={{ api, campaignRef, id, onLeft: report }} />
