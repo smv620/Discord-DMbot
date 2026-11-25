@@ -129,6 +129,7 @@ from dmbot.web import (
 )
 from dmbot.web import homebrew as homebrew_pages
 from dmbot.web import house_rules as house_rule_pages
+from dmbot.web import look_alikes as look_alike_pages
 from dmbot.web import maps as map_pages
 from dmbot.web import recap_audio as audio_links
 from dmbot.web import rule_lookup as rule_lookup_pages
@@ -1235,6 +1236,16 @@ def create_app(
         session, _token = signed
         try:
             return await read_campaign_checks(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # Names that look alike (#5259): the groups, for the DM, as Discord's 🔗 Look-alikes lists them.
+    @app.get("/me/campaigns/{ref}/look-alikes")
+    async def me_campaign_look_alikes(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await look_alike_pages.read_groups(db, session, ref)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
