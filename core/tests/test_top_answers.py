@@ -299,3 +299,59 @@ class ThatsWrong(unittest.IsolatedAsyncioTestCase):
     def test_the_wrong_button_is_on_the_card(self) -> None:
         view = joined_review.JoinedReview("c1")
         self.assertTrue(hasattr(view, "_wrong"))
+
+
+class Details(unittest.TestCase):
+    def test_the_cards_sentence_is_the_detail_without_the_name_it_starts_with(self) -> None:
+        self.assertEqual(
+            who_top.detail_of("Mira", "Mira keeps the inn at Bryn Shander.", "in Bryn Shander"),
+            "keeps the inn at Bryn Shander",
+        )
+
+    def test_with_no_sentence_the_strongest_connection_then_nothing(self) -> None:
+        self.assertEqual(who_top.detail_of("Mira", None, "in Bryn Shander"), "in Bryn Shander")
+        self.assertEqual(who_top.detail_of("Mira", "", ""), "")
+
+    def test_a_long_sentence_is_cut_at_a_word(self) -> None:
+        got = who_top.detail_of("Mira", "word " * 40, "")
+        self.assertLessEqual(len(got), who_top.DETAIL_MAX)
+        self.assertTrue(got.endswith("…"))
+
+    def test_the_label_says_the_detail_instead_of_the_kind(self) -> None:
+        self.assertEqual(
+            who_top.label(name="Mira", kind="character", detail="the innkeeper"),
+            "a.k.a. Mira, the innkeeper",
+        )
+        self.assertEqual(who_top.label(name="Mira", kind="character"), "a.k.a. Mira, a character")
+
+
+class DetailsFromTheCampaign(Ranking):
+    async def test_a_choice_carries_its_strongest_connection_else_its_kind(self) -> None:
+        name = await self.suggest("Tam")
+        tam = await self.known("Old Tam", "character")
+        town = await self.known("Bryn Shander", "place")
+        await self.memory.add_relation(
+            GUILD, self.one.id, tam, "located_in", town, source="dm", confidence=1.0,
+            status="confirmed",
+        )  # fmt: skip
+        await self.keep(name, StoredAnswer(ENTITY, "likely", target_id=tam))
+        (got,) = await self.top(name)
+        self.assertEqual(got.label, "a.k.a. Old Tam, in Bryn Shander")
+        lone = await self.suggest("Tamsin")
+        other = await self.known("Tamsin Vale", "character")
+        (plain,) = await self.top(lone)
+        self.assertEqual((plain.target_id, plain.label), (other, "a.k.a. Tamsin Vale, a character"))
+
+    async def test_the_cards_sentence_wins_when_there_is_one(self) -> None:
+        name = await self.suggest("Tam")
+        tam = await self.known("Old Tam", "character")
+        stub = SimpleNamespace(
+            get_many=AsyncMock(return_value={tam: SimpleNamespace(who="Old Tam fishes the ferry.")})
+        )
+        entity = await self.memory.entity(GUILD, self.one.id, name)
+        assert entity is not None
+        got = await who_top.top_for(
+            self.memory, GUILD, self.one.id, entity, opted_in=set(), include_hidden=True,
+            summaries=cast(Any, stub),
+        )  # fmt: skip
+        self.assertEqual(got[0].label, "a.k.a. Old Tam, fishes the ferry")

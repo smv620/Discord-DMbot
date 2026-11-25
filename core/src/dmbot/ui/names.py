@@ -1844,6 +1844,14 @@ class SuggestionReview(_Menu):
         done = self.total - len(self.queue) + 1
         return progress(self.walk, min(done, self.total), self.total) + text
 
+    @staticmethod
+    def _summaries(interaction: discord.Interaction) -> Any:
+        """The card's one-sentence store, only while `DMBOT_CARD_SUMMARY` is on."""
+        client = interaction.client
+        if not getattr(getattr(client, "settings", None), "card_summary_on", False):
+            return None
+        return getattr(client, "card_summaries", None)
+
     async def _top_answers(
         self,
         interaction: discord.Interaction,
@@ -1867,6 +1875,7 @@ class SuggestionReview(_Menu):
                 opted_in=await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
                 include_hidden=True,
                 avoid=[self.avoid[entity.id]] if entity.id in self.avoid else (),
+                summaries=self._summaries(interaction),
             )
         except Exception:
             log.exception("Couldn't work out DMbot's answers for a waiting name")
