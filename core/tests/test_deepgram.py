@@ -10,6 +10,7 @@ import aiohttp
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
+from dmbot import service_spend
 from dmbot.alerts import DEEPGRAM_DOWN_AFTER_S, Problem
 from dmbot.audio.segmenter import Utterance
 from dmbot.transcription import deepgram as dg
@@ -161,7 +162,7 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
     async def test_an_answered_clip_is_recorded_by_seconds_and_a_failed_one_is_not(
         self,
     ) -> None:
-        with patch.object(dg.service_spend, "record") as record:
+        with patch.object(service_spend, "record") as record:
             self.reply = (500, {"err_msg": "down"})
             with self.assertRaises(DeepgramError):
                 await self.t.transcribe(clip(7), [])

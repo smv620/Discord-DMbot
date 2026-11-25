@@ -8,7 +8,9 @@ prices: any discount, credit or volume plan is not counted.
 
 from __future__ import annotations
 
-from dmbot.prices import DEEPGRAM_PRERECORDED, DEEPGRAM_STREAMING, Price  # noqa: F401
+from dmbot.prices import DEEPGRAM_PRERECORDED as DEEPGRAM_PRERECORDED
+from dmbot.prices import DEEPGRAM_STREAMING as DEEPGRAM_STREAMING
+from dmbot.prices import Price as Price
 
 _ANTHROPIC = "https://platform.claude.com/docs/en/about-claude/pricing"
 # Anthropic, base (uncached) tokens: model id -> (input, output) per million tokens. Core

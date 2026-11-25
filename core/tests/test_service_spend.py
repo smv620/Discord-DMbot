@@ -250,7 +250,7 @@ class TheProviders(unittest.IsolatedAsyncioTestCase):
         self.record.assert_not_called()
 
     async def test_elevenlabs_records_its_own_credits_for_each_answered_call_unpriced(self) -> None:
-        from tests.test_recap_audio_step import ElevenLabs
+        from dmbot.recaps.audio.eleven import ElevenLabs
         from tests.test_recap_audio_step import Fake as Voices
 
         fake = Voices()
@@ -264,8 +264,7 @@ class TheProviders(unittest.IsolatedAsyncioTestCase):
         self.assertGreater(eleven.credits, 0)
 
     async def test_a_refused_elevenlabs_call_records_nothing(self) -> None:
-        from dmbot.recaps.audio.eleven import ProviderError
-        from tests.test_recap_audio_step import ElevenLabs
+        from dmbot.recaps.audio.eleven import ElevenLabs, ProviderError
         from tests.test_recap_audio_step import Fake as Voices
 
         fake = Voices()
