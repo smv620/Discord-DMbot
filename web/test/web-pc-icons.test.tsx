@@ -6,11 +6,14 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, type WebGraph, type WebNode } from "../src/account/api";
+import { ApiError, type PictureItem, type WebGraph, type WebNode } from "../src/account/api";
+import { withPictureIcons } from "../src/account/api-names";
+import PcIconRow, { pickable, pictureId } from "../src/account/PcIconRow";
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
 import WebMap from "../src/account/WebMap";
 import { pcIconWords as w } from "../src/content/pc-icon-words";
+import { pcPictureWords as pw } from "../src/content/pc-picture-words";
 
 const live = vi.hoisted(() => ({ on: true }));
 vi.mock("../src/content/pc-icons-switch", () => ({
@@ -140,6 +143,90 @@ describe("the real door", () => {
     await expect(api.setPcIcon!("100.cmp1", "e1", "discord")).rejects.toMatchObject({ kind: "unavailable" });
     expect(calls[0]!.url).toBe("/api/me/campaigns/100.cmp1/pc-icons/e1");
     expect(JSON.parse(calls[0]!.body)).toEqual({ choice: "discord" });
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("Set a picture (#3622, core #5280)", () => {
+  const path = "/account/web/100.cmp1.icons";
+  const pic = (n: number, over: Partial<PictureItem> = {}): PictureItem => ({ code: `c${n}`, cursor: `1700000${n}:${n}`, at: 1700000 + n, sessionNumber: null, poster: "Mira", description: `Picture ${n}`, previewUrl: `https://api.example.com/p${n}.webp`, permanent: false, isPublic: false, mine: false, ...over });
+
+  it("takes the numeric id from the gallery cursor, and never offers a DM's file picture or, to a player, another's", () => {
+    expect(pictureId(pic(7))).toBe(7);
+    const list = [pic(1), pic(2, { dmOnly: true }), pic(3, { mine: true })];
+    expect(pickable(list, true).map(pictureId)).toEqual([1, 3]);
+    expect(pickable(list, false).map(pictureId)).toEqual([3]);
+  });
+
+  it("makes a picture icon's path absolute, and leaves every other icon alone", () => {
+    const graph = { center: "a", nodes: [{ id: "a", name: "A", kind: "player_character", icon: { kind: "picture", url: "/me/campaigns/1/pc-icons/a/picture" } }, { id: "b", name: "B", kind: "player_character", icon: { kind: "discord", url: "https://cdn.example.com/x.png" } }], edges: [], truncated: false, maxHops: 2, canEdit: true, view: "players" } as WebGraph;
+    const out = withPictureIcons(graph, "https://api.example.com");
+    expect(out.nodes[0]!.icon!.url).toBe("https://api.example.com/me/campaigns/1/pc-icons/a/picture");
+    expect(out.nodes[1]!.icon!.url).toBe("https://cdn.example.com/x.png");
+  });
+
+  it("lists the campaign's pictures, sends the one picked with its id, and Undo sends the old choice back", async () => {
+    const api = mockApi("table");
+    render(<Web api={api} path={path} />);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
+    fireEvent.click((await screen.findAllByText(/Mira Voss/, { selector: "text" }))[0] as HTMLElement);
+    const row = (await screen.findByRole("group", { name: w.heading }, { timeout: 8000 })) as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: pw.setPicture }));
+    const use = await within(row).findAllByRole("button", { name: new RegExp(pw.usePicture) });
+    fireEvent.click(use[0] as HTMLElement);
+    await waitFor(() => expect(api.calls.some((c) => /:n1:custom:\d+$/.test(c))).toBe(true));
+    const again = (await screen.findByRole("group", { name: w.heading })) as HTMLElement;
+    fireEvent.click(await within(again).findByRole("button", { name: w.undoLabel }));
+    await waitFor(() => expect(api.calls.some((c) => c.endsWith(":n1:default"))).toBe(true));
+  });
+
+  it("Undo of a change from one picture to another puts the first picture back, and keeps reading pages until one can be picked", async () => {
+    const api = mockApi("table");
+    await api.setPcIcon!("100.cmp1.icons", "n1", "custom", 11);
+    render(<Web api={api} path={path} />);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
+    fireEvent.click((await screen.findAllByText(/Mira Voss/, { selector: "text" }))[0] as HTMLElement);
+    const row = (await screen.findByRole("group", { name: w.heading }, { timeout: 8000 })) as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: pw.setPicture }));
+    fireEvent.click((await within(row).findAllByRole("button", { name: new RegExp(pw.usePicture) }))[0] as HTMLElement);
+    await waitFor(() => expect(api.calls.filter((c) => /:n1:custom:\d+$/.test(c)).length).toBe(2));
+    const again = (await screen.findByRole("group", { name: w.heading })) as HTMLElement;
+    fireEvent.click(await within(again).findByRole("button", { name: w.undoLabel }));
+    await waitFor(() => expect(api.calls.filter((c) => /:n1:custom:\d+$/.test(c)).pop()).toMatch(/:custom:11$/));
+  });
+
+  it("reads on past a page with nothing a player may pick", async () => {
+    const api = mockApi("table");
+    const pages = [{ pictures: [pic(1)], more: true }, { pictures: [pic(2, { mine: true })], more: false }];
+    let n = 0;
+    api.pictures = async () => ({ ...pages[n++]!, isDm: false, usage: null, sessions: [], posters: [] });
+    render(<PcIconRow node={pc({ iconHas: { discord: true, dndbeyond: true, pictures: true } })} api={api} refId="1.a" onChoose={async () => null} undo={false} onUndo={async () => null} />);
+    fireEvent.click(screen.getByRole("button", { name: pw.setPicture }));
+    expect((await screen.findAllByRole("button", { name: new RegExp(pw.usePicture) })).length).toBe(1);
+  });
+
+  it("offers no picker when the campaign has no pictures to pick", () => {
+    render(<PcIconRow node={pc({ iconHas: { discord: true, dndbeyond: true, pictures: false } })} api={mockApi("table")} refId="1.a" onChoose={async () => null} undo={false} onUndo={async () => null} />);
+    expect(screen.queryByRole("button", { name: pw.setPicture })).toBeNull();
+  });
+
+  it("says so when none of the pictures may be picked", async () => {
+    const api = mockApi("table");
+    api.pictures = async () => ({ pictures: [pic(1, { dmOnly: true })], more: false, isDm: true, usage: null, sessions: [], posters: [] });
+    render(<PcIconRow node={pc({ iconHas: { discord: true, dndbeyond: true, pictures: true } })} api={api} refId="1.a" onChoose={async () => null} undo={false} onUndo={async () => null} />);
+    fireEvent.click(screen.getByRole("button", { name: pw.setPicture }));
+    expect(await screen.findByText(pw.noPictures)).toBeTruthy();
+  });
+
+  it("posts the picture's id with the choice", async () => {
+    const { httpApi } = await import("../src/account/api");
+    const bodies: string[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      bodies.push(String(init.body ?? ""));
+      return new Response(JSON.stringify({ previous: "default", now: "custom", previousPicture: null }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    await httpApi("/api").setPcIcon!("100.cmp1", "e1", "custom", 42);
+    expect(JSON.parse(bodies[0]!)).toEqual({ choice: "custom", picture: 42 });
     vi.unstubAllGlobals();
   });
 });
