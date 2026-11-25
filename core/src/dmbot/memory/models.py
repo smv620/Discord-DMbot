@@ -148,6 +148,12 @@ class MemoryRuleError(ValueError):
     """A write the memory rules refuse. The message is plain enough to show a DM."""
 
 
+class FoldJoinFailed(RuntimeError):
+    """`add_entity(fold=True)`'s join failed, so its one write made nothing (#5215 slice 3): the
+    caller makes the name again without the join, as an ordinary waiting name. Any other failure
+    is the write's own and is raised as it is."""
+
+
 class TooLateToUndo(MemoryRuleError):
     """Undo of a change the change log no longer holds: older than the days Undo works
     for (#164), so it was pruned after a session."""

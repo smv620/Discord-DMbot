@@ -195,6 +195,7 @@ from dmbot.memory.models import (
     Correction,
     Entity,
     Flag,
+    FoldJoinFailed,
     GroupHint,
     GroupJoined,
     Heard,
@@ -4929,6 +4930,7 @@ class MemoryStore:
         hidden_from_players: bool = False,
         session_started_at: int | None = None,
         described: str | None = None,
+        fold: bool = False,
     ) -> Written[Entity]:
         """A new person, place or thing, with its name as the first alias. `described`: for a thing
         or a place the session singled out with no name of its own, the words as the story said
@@ -4937,7 +4939,16 @@ class MemoryStore:
         deity and creature are read as a character with that role). `played_by`: the
         Discord user playing a player character. `hidden_from_players`: the DM's "Players don't
         know this one yet" (#2321), theirs to say. `session_started_at`: the session a name scan
-        found it in, recorded for the split-party check (#4043)."""
+        found it in, recorded for the split-party check (#4043).
+
+        `fold` (a reader's waiting name, #5215 slice 3): a name of two or more words that is exactly
+        one known entry but for a final "s" ("Explorer League" for "Explorer's League") is made and
+        then joined to it in the same transaction, the join its own batch with the `who` source:
+        the DM sees it in Check guesses, ✅ keeps it, and ↩️ Undo ("Not the same") gives it back as
+        its own waiting name, never joined again (`_ai_join_refusal`). Anything else, or a join a
+        limit refuses, stays an ordinary waiting name. The entry returned is the one made (its
+        `merged_into` set when it was joined), with the make's batch: the join's own Undo is the
+        DM's, in Check guesses."""
         if hidden_from_players and source != DM:
             raise MemoryRuleError(ONLY_DM_SAYS)
         check_named(type, name)
@@ -4960,7 +4971,72 @@ class MemoryStore:
                 played_by=played_by, role=role, hidden_from_players=hidden_from_players,
                 session_started_at=session_started_at, described=described,
             )  # fmt: skip
-            return Written(_entity(row), w.batch)
+            made = Written(_entity(row), w.batch)
+            # (a reader's plain waiting name only, never the DM's own: a DM write is reviewed by
+            # `_write` under its own source, which the join's changing of the source would skip)
+            plain = status == PROPOSED and described is None and played_by is None and source != DM
+            try:
+                joined_now = fold and plain and await self._fold_join_in(w, row)
+            except MemoryRuleError:
+                raise
+            except Exception as exc:  # (the join's own failure: the caller retries without it)
+                raise FoldJoinFailed(exc.__class__.__name__) from exc  # (`type` is a kind here)
+            if joined_now:
+                joined = await w.get(ENTITIES, str(row["id"]))
+                assert joined is not None
+                return Written(_entity(joined), made.batch)
+            return made
+
+    async def _fold_join_in(self, w: Changes, gone: dict[str, Any]) -> bool:
+        """`add_entity`'s fold (#5215 slice 3): join the waiting entry just made to the one known
+        entry it is but for a final "s", inside the same write, as a new batch with the `who` source
+        (`join_by_ai`'s door and limits, any kind). True when joined. A secret name that also fits,
+        two that fit, or any refusal leaves it an ordinary waiting name."""
+        from dmbot.memory.s_join import JOIN_WORDS, join_target  # (late: s_join imports scan)
+        from dmbot.memory.scan import card_sound_keys
+
+        name = str(gone["name"])
+        if len(name.split()) < JOIN_WORDS:
+            return False
+        # (the same names as `sound_alikes` reads, secret ones included only to be counted)
+        rows = await w.select(
+            ALIASES,
+            " AND status = 'confirmed' AND sound_codes && %s::text[] AND entity_id <> %s",
+            [list(card_sound_keys(name)), str(gone["id"])],
+        )
+        if not rows:
+            return False
+        live = {
+            str(e["id"]): str(e["name"])
+            for e in await w.select(
+                ENTITIES,
+                " AND id = ANY(%s) AND status = 'confirmed'",
+                [sorted({str(a["entity_id"]) for a in rows})],
+            )
+        }
+        shown: list[tuple[str, str, str]] = []
+        hidden: list[tuple[str, str, str]] = []  # (secret names: only counted, never shown)
+        for a in rows:
+            if str(a["entity_id"]) in live:
+                fit = (str(a["entity_id"]), str(a["text"]), live[str(a["entity_id"])])
+                (hidden if a["secret"] else shown).append(fit)
+        target = join_target(name, shown, hidden)
+        if target is None:
+            return False
+        keep = await _entity_row(w, target)
+        if await _ai_join_refusal(w, keep, gone, any_kind=True):
+            return False
+        if w.asked or w.join_asked:
+            return False  # (a question this write asked would move into the join's batch)
+        w.new_batch()  # (its own Undo: the waiting entry it was made as stays)
+        # (each change row carries the source in force when it is written: the make's rows stay
+        # `scan`, the join's are `who`, as Check guesses and the undo-sticks rule read them;
+        # `_write`'s own work after the yield never reads the source)
+        w.source = WHO_SOURCE
+        await self._merge_in(
+            w, target, str(gone["id"]), source=WHO_SOURCE, dm_said_same=True, keep_own_flags=True
+        )
+        return True
 
     async def link_new_event(
         self,
@@ -12079,16 +12155,29 @@ async def _ai_join_refusal(
         fits = [(keep["id"], str(a["text"]), str(keep["name"])) for a in names]
         if join_target(str(gone["name"]), fits) != keep["id"]:
             return AI_JOIN_REFUSED
-    # The DM took this very join back once (↩️ Undo): DMbot never makes it again by itself
+    # The DM took a join onto this entry back (↩️ Undo, "Not the same"): DMbot never makes it again
+    # by itself, for that name or any spelling of it that differs by a final "s" (the same fold
+    # key, #5215 slice 3: "Explorers League" after "Explorer League" was undone). The DM can still
+    # say "same" on its card.
+    from dmbot.memory.s_join import fold_key  # (late: s_join imports scan)
+
     undone = await w.conn.execute(
-        "SELECT 1 FROM memory_changes c WHERE c.guild_id = %s AND c.campaign_id = %s"
+        "SELECT c.row_id, COALESCE(e.name, c.after->>'name', '') AS name FROM memory_changes c"
+        " LEFT JOIN memory_entities e ON e.guild_id = c.guild_id AND e.campaign_id = c.campaign_id"
+        " AND e.id = c.row_id"
+        " WHERE c.guild_id = %s AND c.campaign_id = %s"
         " AND c.source = %s AND c.table_name = 'memory_entities' AND c.op = 'update'"
-        " AND c.row_id = %s AND c.after->>'merged_into' = %s AND EXISTS (SELECT 1 FROM"
+        " AND c.after->>'merged_into' = %s AND EXISTS (SELECT 1 FROM"
         " memory_changes u WHERE u.guild_id = c.guild_id AND u.campaign_id = c.campaign_id"
-        " AND u.undoes = c.batch) LIMIT 1",
-        (*w.ids, WHO_SOURCE, gone["id"], keep["id"]),
+        " AND u.undoes = c.batch)",
+        (*w.ids, WHO_SOURCE, keep["id"]),
     )
-    if await undone.fetchone() is not None:
+    turned_down = await undone.fetchall()
+    group = fold_key(str(gone["name"]))
+    if any(
+        str(r["row_id"]) == str(gone["id"]) or fold_key(str(r["name"])) == group
+        for r in turned_down
+    ):
         return AI_JOIN_REFUSED
     if await name_scene(w, gone) is not None:
         return AI_JOIN_REFUSED  # said only in a split scene: who knows it is the DM's (#4043)

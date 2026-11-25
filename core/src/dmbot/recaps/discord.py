@@ -53,6 +53,7 @@ from dmbot.memory.models import (
     HINTED,
     OPEN,
     PROPOSED,
+    FoldJoinFailed,
     MemoryRuleError,
     name_key,
 )
@@ -2009,7 +2010,7 @@ class RecapFeatures:
                     # hearing of Strahd, never a new name: #5214)
                     continue
                 try:
-                    await self.memory.add_entity(
+                    made = await self.memory.add_entity(
                         gid,
                         cid,
                         type="concept",
@@ -2017,11 +2018,23 @@ class RecapFeatures:
                         source="scan",
                         description="Used in a recap",
                         session_started_at=job.session_at,  # (the split-party check, #4043)
+                        fold=True,  # (a known name but for a final "s": joined, #5215 slice 3)
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a name from the recap: %s", exc)
                     continue
-                added += 1
+                except FoldJoinFailed as exc:  # (the join failed, and the name with it: one write)
+                    log.warning("Recap names: the final-s join failed (%s)", exc)
+                    try:  # (kept as an ordinary waiting name instead, never lost)
+                        made = await self.memory.add_entity(
+                            gid, cid, type="concept", name=name, source="scan",
+                            description="Used in a recap", session_started_at=job.session_at,
+                        )  # fmt: skip
+                    except MemoryRuleError as again:
+                        log.info("Skipped a name from the recap: %s", again)
+                        continue
+                if made.value.merged_into is None:  # (a joined one is in Check guesses instead)
+                    added += 1
             await self._link_recap_names(gid, cid, job)
             if added and not await self._queued(
                 gid, cid, RECAP_NAMES, {"session_at": job.session_at, "added": added}

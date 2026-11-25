@@ -241,7 +241,7 @@ def stand_in(
 
     async def add_entity(*_: Any, name: str, **__: Any) -> Any:
         added.append(name)
-        return SimpleNamespace(value=SimpleNamespace(id=f"e-{name}"))
+        return SimpleNamespace(value=SimpleNamespace(id=f"e-{name}", merged_into=None))
 
     async def read(
         _g: int, _c: str, _lines: Any, _people: Any, _scan: list[Suggestion], **_kw: Any
@@ -373,7 +373,7 @@ class TheBotStep(unittest.TestCase):
             async def add_entity(*_: Any, name: str, **kw: Any) -> Any:
                 bot.added.append(name)
                 kwargs.append({"name": name, **kw})
-                return SimpleNamespace(value=SimpleNamespace(id=f"e-{name}"))
+                return SimpleNamespace(value=SimpleNamespace(id=f"e-{name}", merged_into=None))
 
             async def entities(*_: Any) -> list[Any]:
                 return []
