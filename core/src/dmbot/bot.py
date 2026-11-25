@@ -37,6 +37,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -400,6 +401,12 @@ from dmbot.memory.exposures import (
     describe,
     find_exposures,
     secret_connections,
+)
+from dmbot.memory.graph_review_post import GitHub
+from dmbot.memory.graph_review_post_run import (
+    GraphReportStore,
+    ReportPoster,
+    aiohttp_transport,
 )
 from dmbot.memory.graph_review_run import GraphReviews
 from dmbot.memory.heard_backup import HeardSection
@@ -1139,6 +1146,11 @@ def _without_stopped(
         if (kept := tuple(n for n in f.lines if n not in bad))
     ]
     return kept_lines, kept_by, [x for x in heard_in if x.user_id in now], kept_read
+
+
+async def _no_one(_people: Collection[int]) -> set[int]:
+    """Nobody has agreed to improve DMbot: with no opt-out store there is no one to quote."""
+    return set()
 
 
 class DMBot(RecapFeatures, commands.AutoShardedBot):
@@ -1897,6 +1909,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             and improvement is not None
             else None
         )
+        # Posting the stored reports to the owner's private repository (#3742): built only when the
+        # repository and its token are set, so with neither nothing is posted and nothing waits.
+        self.graph_report_store = (
+            GraphReportStore(memory._db)
+            if memory is not None and self.graph_reviews is not None
+            else None
+        )
         self._test_key: bytes | None = None
         self._test_delete_locks: dict[tuple[int, int], asyncio.Lock] = {}
         self._test_pending = 0  # utterances waiting to be saved
@@ -2233,6 +2252,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             *(
                 [self._watched(self._graph_review_loop(), "graph-review")]
                 if self.graph_reviews is not None
+                else []
+            ),
+            *(
+                [self._watched(self._graph_post_loop(), "graph-report-posts")]
+                if self.graph_report_store is not None
+                and self.settings.improvements_repo
+                and self.settings.improvements_token
                 else []
             ),
             *(
@@ -17582,6 +17608,41 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                             await self.graph_reviews.round(guild.id)
                     except Exception as exc:  # the type only: a database error can quote a row
                         log.warning("Graph checks failed for a server: %s", type(exc).__name__)
+            await asyncio.sleep(60)
+
+    async def _graph_post_loop(self) -> None:
+        """Every minute: the graph improvement reports not yet posted go to the owner's private
+        repository, one a round (#3742). The rules (who may be quoted, whether the campaign still
+        shares) are checked now, at posting time. Counts and error types only in the log; the token
+        is held by the transport and nothing else."""
+        await asyncio.sleep(120)
+        while True:
+            store = self.graph_report_store
+            if store is not None:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        github = GitHub(
+                            self.settings.improvements_repo,
+                            aiohttp_transport(self.settings.improvements_token, session),
+                        )
+                        poster = ReportPoster(
+                            store,
+                            github,
+                            consenting=self.consent.consenting,
+                            improvement_allowed=self.improvement.allowed
+                            if self.improvement is not None
+                            else _no_one,
+                        )
+                        for guild in list(self.guilds):
+                            try:
+                                with log_context(guild_id=guild.id):
+                                    await poster.round(guild.id)
+                            except Exception as exc:
+                                log.warning(
+                                    "Graph report posts failed for a server: %s", type(exc).__name__
+                                )
+                except Exception as exc:
+                    log.warning("Graph report posting failed: %s", type(exc).__name__)
             await asyncio.sleep(60)
 
     async def _person_key_loop(self) -> None:

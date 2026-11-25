@@ -44,7 +44,7 @@ def stored(
         "checked": 3,
         "missed": len(verdicts),
         "speaker_ids": speakers,
-        "verdicts": list(verdicts),
+        "verdicts": {"items": list(verdicts), "more_not_shown": 0},
     }
     args.update(over)
     return gp.Stored(**args)
@@ -84,9 +84,8 @@ class TheRules(unittest.TestCase):
 
     def test_lore_is_quoted_only_from_the_dms_own_writing(self) -> None:
         for kinds, quoted in (
-            (["lore"], True),
-            (["backstory"], True),
-            (["lore", "unknown"], False),  # one unknown source is enough to say nothing
+            (["own_writing"], True),
+            (["own_writing", "unknown"], False),  # one unknown source is enough to say nothing
             (["unknown"], False),
             ([], False),
         ):
@@ -145,7 +144,7 @@ class TheRules(unittest.TestCase):
         self.assertIn("More not shown", post.body)
 
     def test_stored_more_not_shown_is_said(self) -> None:
-        post = render(stored(verdict(), more_not_shown=4))
+        post = render(stored(verdict(), verdicts={"items": [verdict()], "more_not_shown": 4}))
         assert isinstance(post, gp.Post)
         self.assertIn("4 more not shown", post.body)
 

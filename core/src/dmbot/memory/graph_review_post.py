@@ -7,7 +7,7 @@ rules below hold *now*: they are checked at posting time, not when the report wa
 - a report with a quote from anyone who has since stopped being recorded, or opted out of improving
   DMbot: the **whole report is held** back (a half-report would mislead), and stays on the server;
 - a quote of a lore passage unless every upload it came from is known to be the DM's own writing
-  (`lore` or `backstory`); otherwise the words say "a passage from the campaign's lore" and give the
+  (`own_writing`); otherwise the words say "a passage from the campaign's lore" and give the
   entry's id. A shared adventure or rulebook is never quoted;
 - a Discord id, a mention, an email address or anything shaped like a key: they are cut out of every
   word that goes (`scrub`), and counted. Only the campaign's internal id names the campaign.
@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -38,7 +38,9 @@ BODY_MAX = 60_000  # GitHub's limit is 65,536 characters
 LABEL_MAX = 100
 OLD_BUILD = "an older build"
 GENERIC_LORE = "a passage from the campaign's lore"
-OWN_UPLOADS = frozenset({"lore", "backstory"})  # the DM's own writing: the only lore that is quoted
+# The DM's own writing: the only lore that is quoted (`models.UPLOAD_OWN_WRITING`). An upload of
+# any other or unknown kind is read as "unknown": the safe side.
+OWN_UPLOADS = frozenset({"own_writing"})
 MARKER = "dmbot-report"
 
 # ---- what is cut out of every word that goes ---------------------------------------------------
@@ -100,8 +102,9 @@ class Stored:
     checked: int
     missed: int
     speaker_ids: tuple[int, ...]
-    verdicts: Sequence[Mapping[str, Any]] | None
-    more_not_shown: int = 0
+    # The stored structure: `{"items": [...], "more_not_shown": N}` (`graph_review.verdicts_json`),
+    # or None for a report from before verdicts were kept (never posted).
+    verdicts: Mapping[str, Any] | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,7 +181,7 @@ def render(report: Stored, *, allowed_speakers: Collection[int], sharing: bool) 
         f"- Fixes checked: {report.checked}; DMbot missed: {report.missed}",
         "",
     ]
-    for item in report.verdicts:
+    for item in report.verdicts.get("items", []):
         number = int(item.get("fix", 0))
         section = [f"## Fix {number}: {clean(str(item.get('words', '')), cut, 3 * LABEL_MAX)}", ""]
         if item.get("relation_id"):
@@ -204,10 +207,9 @@ def render(report: Stored, *, allowed_speakers: Collection[int], sharing: bool) 
             lines.append("More not shown: the report reached its size limit.")
             break
         lines += section
-    if report.more_not_shown:
-        lines.append(
-            f"{int(report.more_not_shown)} more not shown: the report reached its size limit."
-        )
+    more = int(report.verdicts.get("more_not_shown", 0) or 0)
+    if more:
+        lines.append(f"{more} more not shown: the report reached its size limit.")
     body = "\n".join(lines).rstrip() + "\n"
     if len(body) > BODY_MAX:
         return Held(TOO_BIG)
