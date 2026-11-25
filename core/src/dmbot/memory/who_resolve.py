@@ -18,11 +18,12 @@ import asyncio
 import logging
 import time
 from collections import Counter
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 
 from dmbot.memory import background as bg
 from dmbot.memory import who_ask
+from dmbot.memory import who_ranking as ranking
 from dmbot.memory.models import name_key
 from dmbot.memory.who_is_it import NOT_LISTED, Verdict
 
@@ -89,6 +90,99 @@ def checked_line(decided: str) -> str:
     return ""
 
 
+# A pronoun that can only mean a person: the ranking then leaves out places, things and groups.
+# (From the reader's own table of pronoun forms, so the two lists cannot drift apart.)
+PERSON_PRONOUNS = frozenset(w for w, one in bg._PERSON.items() if one in ("he", "she"))
+
+
+def offer_for(
+    u: bg.Unsettled, names: Sequence[str], pool: Sequence[ranking.Candidate] | None
+) -> list[str]:
+    """The names the AI is offered for one open pronoun (#2790 slice 2, Supervisor's ruling): at
+    most `who_ranking.LIMIT`, scored by the same ranking as "Who is this?" (#3602), so there is one
+    ranker. The pronoun's context stands in for a waiting name's: who the passage names is the
+    scene, the connection's named end is who it belongs to (so "his sister" favours that person's
+    family, and the named end itself is never offered), and a "he" or "she" is a character. The
+    pronoun itself is no name to compare ("He Who Watches" is not likelier for a "he").
+
+    A pronoun points back into the text, so the cut keeps the passage's people first: the end the
+    reader named comes first when the passage holds it, then the passage's people by score and,
+    among equals, nearest the pronoun, and only then people the passage doesn't name (family of
+    the named end). Each name once, shown as the passage writes it when it does. Without a pool
+    (the campaign could not be read) it offers the names the passage holds, as before."""
+    tail = u.passage[-who_ask.MAX_PASSAGE_CHARS :]
+    if pool is None:
+        return bg.names_in(tail, names)
+    allowed = {name_key(n) for n in names}
+    scene: set[str] = set()
+    owner: set[str] = set()
+    fixed = name_key(_fixed(u))
+    offerable: list[ranking.Candidate] = []
+    for c in pool:
+        # (the named end by any of its names, so "Ken" finds the entry "Ken Arlow")
+        if fixed in {name_key(n) for n in c.names}:
+            owner.add(c.id)
+        # (only the names the read may settle a pronoun to: the same names as before this slice)
+        kept = tuple(n for n in c.names if name_key(n) in allowed)
+        if not kept:
+            continue
+        offerable.append(replace(c, names=kept))
+        if bg.names_in(tail, kept):
+            scene.add(c.id)
+    phrase = u.phrase.strip().casefold()
+    ask = ranking.Ask(
+        "",
+        "character" if phrase in PERSON_PRONOUNS else "",
+        frozenset(scene),
+        frozenset(),
+        frozenset(owner),
+    )
+    missing = name_key(_missing(u))
+    folded = tail.casefold()
+    rows: list[tuple[tuple[int, int, float, int], str]] = []
+    # (hidden from the players is no bar here: `names` already decides who may be offered)
+    for r in ranking.rank(ask, offerable, len(offerable), include_hidden=True):
+        written = bg.names_in(tail, r.candidate.names)
+        shown = written[0] if written else r.candidate.names[0]
+        here = r.candidate.id in scene
+        near = folded.rfind(shown.casefold()) if here else -1
+        is_missing = name_key(shown) == missing or missing in map(name_key, r.candidate.names)
+        rows.append(((0 if is_missing and here else 1, 0 if here else 1, -r.score, -near), shown))
+    out: list[str] = []
+    for _, shown in sorted(rows, key=lambda row: row[0]):
+        if name_key(shown) not in map(name_key, out):
+            out.append(shown)
+    return out[: ranking.LIMIT]
+
+
+def pool_for(
+    candidates: Sequence[ranking.Candidate],
+    found: Sequence[tuple[str, str]],
+    neighbours: Mapping[str, frozenset[str]] | None = None,
+) -> list[ranking.Candidate]:
+    """The campaign's entries (`who_step.candidates_from`) plus the names this read found that are
+    no entry yet (name, kind), each its own candidate, so a name the upload introduced can still be
+    the answer. A found name an entry already has is that entry.
+
+    `neighbours` (the lookup's `confirmed_neighbours`, which hold no secret connection) replace each
+    entry's ties: `candidates_from` leaves out ties to entries the players don't know yet, which
+    in a lore read is nearly every entry, and the ties here only rank what the DM is asked; they are
+    never shown as a reason. Who may be offered at all is `offer_for`'s `names`, which hold no
+    secret name."""
+    pool = [
+        replace(c, ties=neighbours.get(c.id, frozenset())) if neighbours is not None else c
+        for c in candidates
+    ]
+    have = {name_key(n) for c in pool for n in c.names}
+    for name, kind in found:
+        key = name_key(name)
+        if key in have:
+            continue
+        have.add(key)
+        pool.append(ranking.Candidate(f"read:{key}", kind or "character", (name,)))
+    return pool
+
+
 def window_of(passage: str) -> str:
     """The last `QUOTE_WORDS` words of the passage, as written: the new quote, which ends where
     the AI's quote ended and so holds the pronoun and the end that was named."""
@@ -153,6 +247,8 @@ def _use(
     asked: who_ask.Asked | None,
     out: Settled,
     players: Collection[str] = (),
+    offered: Sequence[str] = (),
+    ranking_used: bool = False,
 ) -> None:
     """Turn one answer (or the lack of one) into what the read keeps."""
     quote = window_of(u.passage)
@@ -180,7 +276,9 @@ def _use(
         return
     # A doubt (the rule asked, or the AI's own reading and the check disagree, or the named end is
     # too far back to show in the quote): the DM decides between the names.
-    order = [top, _missing(u), *ranked]
+    # (with the ranking, the card follows its order, the one the AI was offered (#2790 slice 2);
+    # without it, the AI's own order as before)
+    order = [top, _missing(u), *(offered if ranking_used else ranked)]
     pick = _pick(u, quote, order, decided_words("asked", decision.top), players)
     if pick is None:  # (no name at all to offer: the relationship is kept with an unnamed person)
         out.counts["unsure"] += 1
@@ -200,6 +298,7 @@ async def settle(
     time_limit_s: float = WHO_TIME_LIMIT_S,
     progress: Callable[[int, int], None] | None = None,
     players: Collection[str] = (),
+    pool: Sequence[ranking.Candidate] | None = None,
 ) -> Settled:
     """Every open pronoun settled or kept, shortest passage first (the passage ends where the
     quote does, so that is the order of the text within a slice). `names` are the campaign's names
@@ -209,7 +308,10 @@ async def settle(
     Time: `until` is a `time.monotonic()` moment the caller must be done by (a read has Discord's
     15 minutes in all, so the lookups cannot have a clock of their own); `time_limit_s` is a
     shorter budget for the lookups themselves. A lookup in flight is cut at the earlier of the
-    two. Whatever is not looked up is kept with an unnamed person, counted, never dropped."""
+    two. Whatever is not looked up is kept with an unnamed person, counted, never dropped.
+
+    `pool` (#2790 slice 2): the campaign's entries and this read's names, ranked per pronoun by
+    `offer_for` so the AI is offered the best five; None offers the names the passage holds."""
     out = Settled()
     ordered = sorted(unsettled, key=lambda u: len(u.passage))
     total = min(len(ordered), cap)
@@ -231,7 +333,7 @@ async def settle(
                 _unnamed(u, window_of(u.passage), decided_words("not checked, out of time"))
             )
             continue
-        offered = bg.names_in(u.passage[-who_ask.MAX_PASSAGE_CHARS :], names)
+        offered = offer_for(u, names, pool)
         try:
             asked = await asyncio.wait_for(
                 who_ask.ask(client, u.passage, u.phrase, offered), timeout=left
@@ -242,7 +344,7 @@ async def settle(
                 _unnamed(u, window_of(u.passage), decided_words("not checked, out of time"))
             )
         else:
-            _use(u, asked, out, players)
+            _use(u, asked, out, players, offered, pool is not None)
         if progress is not None:
             progress(min(index + 1, total), total)
     if progress is not None:
