@@ -25,6 +25,7 @@ import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
 import { CONTINUITY_LIVE } from "../content/continuity-switch";
 import { PLOT_THREADS_LIVE } from "../content/plot-threads-switch";
 import { THREADS_LIVE } from "../content/threads-switch";
+import { LOOKALIKES_LIVE } from "../content/lookalikes-switch";
 import { PLACE_ROUTES_LIVE } from "../content/place-routes-switch";
 import { PLACE_WORLD_LIVE } from "../content/place-world-switch";
 import { LANGUAGES_LIVE } from "../content/languages-switch";
@@ -437,6 +438,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         )}
       </section>
 
+      {LOOKALIKES_LIVE && data.canEdit && api.lookAlikes !== undefined && (
+        <LazyPanel load={() => import("./LookAlikes")} what="the look-alike names" props={{ api, campaignRef: ref, id: "names-lookalikes" }} />
+      )}
       {WORLD_NOTES_LIVE && data.canEdit && api.worldNotes !== undefined && (
         <LazyPanel load={() => import("./WorldNotes")} what="DMbot's guesses about your world" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
       )}

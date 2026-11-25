@@ -1648,6 +1648,24 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
   const staleSeen = new Set<string>(); // recaps whose scene 3 already answered `stale` (#2577)
   const namesUndone = new Set<string>(); // name fixes undone (#2645), by recap and id
   const moreNamesPressed = new Set<string>(); // campaigns whose 📝 More names was pressed (#5081)
+  // 🔗 Look-alikes (#5259): two groups; a merge or None are the same takes one away, and Undo of batch 21 puts the merged one back.
+  const lookAlikeGroups = new Map<string, { id: string; name: string; kind: string; heard: number }[][]>();
+  const mergedLookAlikes = new Map<number, { ref: string; group: { id: string; name: string; kind: string; heard: number }[] }>();
+  const lookAlikesOf = (ref: string) =>
+    lookAlikeGroups.get(ref) ??
+    lookAlikeGroups
+      .set(ref, [
+        [
+          { id: "l1".repeat(16), name: "Bel-Eros", kind: "NPC", heard: 7 },
+          { id: "l2".repeat(16), name: "Beleros", kind: "NPC", heard: 2 },
+          { id: "l3".repeat(16), name: "Baleros", kind: "place", heard: 1 },
+        ],
+        [
+          { id: "m1".repeat(16), name: "Harrow's Keep", kind: "place", heard: 4 },
+          { id: "m2".repeat(16), name: "Harrows Keep", kind: "place", heard: 1 },
+        ],
+      ])
+      .get(ref)!;
   // The after-session report (#2661) the pretend API keeps by campaign and session.
   const reports = new Map<string, { made: boolean; failed?: boolean; tries: number; answers: Map<string, ReportAnswer>; looks?: number }>();
   const reportItems = (): { contradictions: ReportContradiction[]; differences: SessionReport["differences"] } => {
@@ -4063,6 +4081,44 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The join question (#4778 part b): two messages, one name and two names. A "party" answer carries its change number (61) and
     // what the party gave (3); the group with no things to give carries none. A second answer to a group is "gone".
+    async lookAlikes(ref) {
+      calls.push(`lookAlikes:${ref}`);
+      await reachable();
+      signedIn();
+      if (ref.includes("player")) throw new ApiError("not-found");
+      const groups = lookAlikesOf(ref);
+      return { groups: structuredClone(groups), count: groups.length };
+    },
+    async mergeLookAlikes(ref, body, onLook) {
+      calls.push(`mergeLookAlikes:${ref}:${JSON.stringify(body)}`);
+      await reachable();
+      signedIn();
+      if (ref.includes("player")) throw new ApiError("not-found");
+      const now = Math.floor(Date.now() / 1000);
+      onLook?.({ stage: "working", startedAt: now - 2, updatedAt: now - 1, serverNow: now, state: "running" });
+      const groups = lookAlikesOf(ref);
+      const at = groups.findIndex((g) => g.some((n) => n.id === body.keep));
+      if (at < 0) throw new ApiError("gone");
+      lookAlikeGroups.set(ref, groups.filter((_, i) => i !== at));
+      mergedLookAlikes.set(21, { ref, group: groups[at]! });
+      return { batch: 21, secret: null };
+    },
+    async lookAlikesApart(ref, ids) {
+      calls.push(`lookAlikesApart:${ref}:${ids.join(",")}`);
+      await reachable();
+      signedIn();
+      const groups = lookAlikesOf(ref);
+      lookAlikeGroups.set(ref, groups.filter((g) => !g.some((n) => ids.includes(n.id))));
+    },
+    async undoLookAlikes(ref, batch) {
+      calls.push(`undoLookAlikes:${ref}:${batch}`);
+      await reachable();
+      signedIn();
+      const merged = mergedLookAlikes.get(batch);
+      if (!merged) throw new ApiError("undo-late");
+      mergedLookAlikes.delete(batch);
+      lookAlikeGroups.set(ref, [...lookAlikesOf(ref), merged.group]);
+    },
     async heardQuestions(ref): Promise<HeardQuestions> {
       calls.push(`heardQuestions:${ref}`);
       await reachable();
