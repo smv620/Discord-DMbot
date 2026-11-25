@@ -279,7 +279,7 @@ class ThatsWrong(unittest.IsolatedAsyncioTestCase):
         ):
             p.start()
             self.addCleanup(p.stop)
-        await view._wrong(SimpleNamespace(user=SimpleNamespace(id=7)))
+        await view._wrong(cast(Any, SimpleNamespace(user=SimpleNamespace(id=7))))
         return memory, replaced, cards
 
     async def test_it_undoes_the_join_and_opens_the_names_card_without_that_entry(self) -> None:
