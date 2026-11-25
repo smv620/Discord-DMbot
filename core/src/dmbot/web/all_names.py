@@ -279,7 +279,7 @@ ACTIONS = (
     "name-join",
     "name-undo",
     "alias-who",  # who knows an other name (#2999): {alias, who, characters}
-    "confirm-kinds",  # "Add all" for what an upload found (#3207): {upload, kinds | "all"}
+    "confirm-kinds",  # "Add all" for an upload or import (#3207): {upload|import, kinds|all}
     "confirm-undo",  # takes back one press of it: {answer}
     "spelling-yes",  # "Is this the same place?" (#3533): confirm the proposed other name: {alias}
     "spelling-no",  # ... or turn it down for good: {alias}
@@ -391,7 +391,8 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             raise RecapError("not_found")
         text = who_text(body)
     elif action == "confirm-kinds":  # the upload is the target; the kinds, or all, are the text
-        target = str(body.get("upload") or "")
+        # (a lore upload's id, or an import's id as `import`, #5276: the door tells which it is)
+        target = str(body.get("upload") or body.get("import") or "")
         if not ID_PATTERN.match(target):
             raise RecapError("not_found")
         kinds = body.get("kinds")

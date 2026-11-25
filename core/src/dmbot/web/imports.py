@@ -1063,6 +1063,12 @@ async def progress(
             r["file"]: r
             for r in await import_clock.read_rows(conn, c.guild_id, c.campaign_id, import_id)
         }
+        # How many names of each kind still wait for "Add all" (#5276): counts only, a DM's alone
+        cur = await conn.execute(
+            "SELECT dmbot_web_import_waiting(%s, %s, %s) AS r",
+            (c.guild_id, c.campaign_id, import_id),
+        )
+        waiting = (await cur.fetchone() or {}).get("r")
     if not found:
         raise RecapError("not_found")
     now = int(time.time())
@@ -1072,6 +1078,9 @@ async def progress(
         # A session's `state` stays the stored one (waiting, working, done, failed); the shape's
         # `state` is running, stalled, failed or done.
         "import": progress_shape.whole(parts, now=now),
+        # The names still waiting, by kind, for "Add all" on this import (the lore upload's own
+        # `waiting`): the page sends `{action: "confirm-kinds", import: <this id>, kinds}`.
+        "waiting": dict(waiting) if isinstance(waiting, dict) else {},
         "sessions": [
             {
                 "file": s["file"],

@@ -17,8 +17,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+
+from psycopg.types.json import Jsonb
 
 from dmbot import ai_feed, credits
 from dmbot.db import Database
@@ -364,6 +366,20 @@ class ImportStore:
                 "UPDATE session_imports SET scan_to = %s, scan_finished = TRUE"
                 " WHERE session_id = %s",
                 (ended, session_id),
+            )
+
+    async def keep_found(
+        self, guild_id: int, session_id: str, found: Mapping[str, Sequence[str]]
+    ) -> None:
+        """The ids of the names this session's name scan proposed, kind by kind, for the website's
+        "Add all" (#5276), as a lore upload keeps its own. Set, not added: a scan given back and
+        run again keeps the last one. Capped like the upload's; ids only."""
+        from dmbot.memory.lore_queue import _capped  # (the one cap, shared with the upload's)
+
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET found = %s WHERE session_id = %s",
+                (Jsonb(_capped(found)), session_id),
             )
 
     async def set_scan_cut(self, guild_id: int, session_id: str, n: int) -> None:
