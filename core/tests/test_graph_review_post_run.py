@@ -87,7 +87,6 @@ class Posting(DatabaseTest):
         self.assertEqual(await self.poster().round(GUILD), 0)  # nothing more to post
         self.assertEqual(self.created(), 1)
         body = self.fake.discussions[0]["body"]
-        self.assertIn("a" * 32 not in body, [True])  # (the report's own id is only in the marker)
         self.assertIn(f"<!-- dmbot-report:{'a' * 32} -->", body)
 
     async def test_one_report_a_round_oldest_first(self) -> None:
