@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dmbot.memory.who_is_it import ACCEPT_AT, NOT_LISTED, Candidate, Verdict, decide
+from dmbot.memory.who_is_it import ACCEPT_AT, NOT_LISTED, Candidate, Decision, Verdict, decide
 
 ASK = "ask"  # the answer of an ambiguous passage: the text does not settle it
 
@@ -51,6 +51,9 @@ class Report:
     # (an overconfident accept) or the person was made unnamed. An accept here also counts as wrong
     # in its accepted line above.
     ambiguous: Tally = field(default_factory=Tally)
+    # The AI call failed or could not be read (#2790 slice 1, the real run): the read would keep
+    # the person unnamed and "not checked", so these are counted apart, never as a wrong answer.
+    ai_failed: int = 0
 
     def counts(self) -> dict[str, tuple[int, int]]:
         """(total, right) for each outcome: the only thing a GitHub post needs."""
@@ -68,23 +71,75 @@ def load(path: Path) -> list[Passage]:
     return [Passage(**{**row, "known": tuple(row["known"])}) for row in rows]
 
 
+def tally(report: Report, passage: Passage, decision: Decision | None) -> None:
+    """Add one passage's outcome to `report`. `decision` None: the AI call failed (`ai_failed`)."""
+    report.total += 1
+    if decision is None:
+        report.ai_failed += 1
+        return
+    left_open = passage.answer == ASK
+    if left_open:
+        report.ambiguous.add(decision.verdict is Verdict.ASK)
+    match decision.verdict:
+        case Verdict.ACCEPT:
+            band = report.accepted_high if decision.top >= ACCEPT_AT else report.accepted_band
+            band.add(decision.name == passage.answer)
+        case Verdict.ASK:
+            if not left_open:
+                report.asked.add(decision.name == passage.answer)
+        case Verdict.UNNAMED:
+            if not left_open:
+                report.unnamed.add(passage.answer == NOT_LISTED)
+
+
 def score(passages: list[Passage], predict: Callable[[Passage], list[Candidate]]) -> Report:
     report = Report()
     for passage in passages:
-        report.total += 1
-        candidates = predict(passage)
-        decision = decide(candidates)
-        left_open = passage.answer == ASK
-        if left_open:
-            report.ambiguous.add(decision.verdict is Verdict.ASK)
-        match decision.verdict:
-            case Verdict.ACCEPT:
-                band = report.accepted_high if decision.top >= ACCEPT_AT else report.accepted_band
-                band.add(decision.name == passage.answer)
-            case Verdict.ASK:
-                if not left_open:
-                    report.asked.add(decision.name == passage.answer)
-            case Verdict.UNNAMED:
-                if not left_open:
-                    report.unnamed.add(passage.answer == NOT_LISTED)
+        tally(report, passage, decide(predict(passage)))
     return report
+
+
+# The bar for turning the who-is-it check on (Supervisor's ruling on #2790, 2026-11-25): an answer
+# accepted at 80% or more must be right this often, and one accepted in the signal-to-noise band
+# ("likely") this often, or the band is asked instead and only "sure" answers are kept.
+SURE_BAR = 0.90
+LIKELY_BAR = 0.80
+
+
+@dataclass(frozen=True, slots=True)
+class Bar:
+    """One band against its bar: `share` None when the run accepted nothing in it."""
+
+    name: str
+    right: int
+    total: int
+    bar: float
+
+    @property
+    def share(self) -> float | None:
+        return self.right / self.total if self.total else None
+
+    @property
+    def met(self) -> bool | None:
+        share = self.share
+        return None if share is None else share >= self.bar
+
+    def line(self) -> str:
+        """ "sure: 18 of 19 right (95%), bar 90%: met" (counts only, safe to post on GitHub)."""
+        share = self.share
+        if share is None:
+            return f"{self.name}: none accepted, bar {self.bar:.0%}: nothing to judge"
+        verdict = "met" if self.met else "NOT met"
+        return (
+            f"{self.name}: {self.right} of {self.total} right ({share:.0%}), "
+            f"bar {self.bar:.0%}: {verdict}"
+        )
+
+
+def bars(report: Report) -> tuple[Bar, Bar]:
+    """The two figures Supervisor asked for: "sure" (accepted at 80% or more) and "likely"
+    (accepted in the signal-to-noise band)."""
+    return (
+        Bar("sure", report.accepted_high.right, report.accepted_high.total, SURE_BAR),
+        Bar("likely", report.accepted_band.right, report.accepted_band.total, LIKELY_BAR),
+    )
