@@ -355,7 +355,8 @@ class Chain(ConfirmedMemoryTest):
             )
         self.assertIn("led to", " ".join(i.text for i in dm.items).lower())
         whole = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
-        self.assertNotIn(self.heir, whole.for_viewer(False).entities)
+        # (held and still gone: a thread is the DM's by kind, #4802)
+        self.assertNotIn(self.heir, whole.for_viewer(False, frozenset(whole.entities)).entities)
 
     async def test_the_links_come_back_from_a_backup(self) -> None:
         from dmbot.campaigns.store import decode_backup, encode_backup

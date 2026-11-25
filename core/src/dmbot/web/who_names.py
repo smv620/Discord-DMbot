@@ -12,38 +12,27 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory import descriptions
-from dmbot.memory.kinds import KIND_LABELS
+from dmbot.memory import who_top
 from dmbot.recaps import name_answers
 from dmbot.web import name_checks
 from dmbot.web.recaps import RecapError, _scoped
 from dmbot.web.sessions import Session
 
-CONFIDENCE_WORDS = {
-    "sure": "DMbot is sure",
-    "likely": "DMbot thinks so",
-    "maybe": "DMbot is not sure",
-}
-
-
-def kind_word(kind: object) -> str:
-    """A kind in plain words ("a character", "a place")."""
-    word = KIND_LABELS.get(str(kind), str(kind))
-    return f"a {word}" if word and word[0] not in "aeiou" else f"an {word}"
+CONFIDENCE_WORDS = who_top.CONFIDENCE_WORDS
+kind_word = who_top.kind_word
 
 
 def label_of(row: dict[str, Any]) -> str:
     """The words on one answer: another name for an entry that is already in the story, or a new
-    entry of a kind. An entry whose name only describes it ("the woman") carries a tag, the one
-    entry it is tied to ("the woman, with Mira"), so two of them can be told apart (#3431)."""
+    entry of a kind (worked out in `who_top.label`, so Discord's card says the same)."""
     if row["pick"] == "new":
-        kind = str(row.get("newKind") or "")
-        return f"new {KIND_LABELS.get(kind, kind)}" if kind else "new entry"
-    name = str(row["targetName"])
-    tie = row.get("targetTie")
-    if tie and descriptions.is_description(name):
-        return f"a.k.a. {name}, with {tie}"
-    return f"a.k.a. {name}, {kind_word(row['targetKind'])}"
+        return who_top.label(new_kind=str(row.get("newKind") or ""))
+    return who_top.label(
+        name=str(row["targetName"]),
+        kind=str(row["targetKind"]),
+        tie=row.get("targetTie"),
+        detail=str(row.get("targetDetail") or ""),
+    )
 
 
 def answer_of(row: dict[str, Any]) -> dict[str, str]:

@@ -16,7 +16,7 @@ export function highestLiveMigration(log: string): number {
   if (start < 0) return 0;
   const end = log.indexOf("\nNEXT TEST:", start);
   const section = log.slice(start, end < 0 ? undefined : end);
-  const numbers = [...section.matchAll(/\b(0\d{3})\b/g)].map((m) => Number(m[1]));
+  const numbers = [...section.matchAll(/(?<!\d)(0\d{3})(?!\d)/g)].map((m) => Number(m[1]));
   return numbers.length ? Math.max(...numbers) : 0;
 }
 
@@ -39,6 +39,14 @@ export function staleHeldReasons(items: { title: string; reason: string }[], liv
 describe("held What's new reasons", () => {
   it("reads the server's last migration from the status log", () => {
     expect(highestLiveMigration(readFileSync(statusLog, "utf8"))).toBeGreaterThanOrEqual(130);
+  });
+
+  it("reads a migration written with its name or after a comma", () => {
+    const log = "LIVE NOW: migrations 0619_web_name_guess, 0620_recap_lines_noted, and 0440,\nNEXT TEST: x 0999";
+    expect(highestLiveMigration(log)).toBe(620);
+    expect(highestLiveMigration("LIVE NOW: 0619_web_name_guess")).toBe(619);
+    expect(highestLiveMigration("LIVE NOW: up to 0440, then more")).toBe(440);
+    expect(highestLiveMigration("LIVE NOW: nothing numbered, or 12345 and 10619")).toBe(0);
   });
 
   it("none waits for a deploy of a migration that is already live", () => {

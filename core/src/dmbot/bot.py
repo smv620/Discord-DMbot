@@ -67,6 +67,7 @@ from dmbot import (
     plan_rules,
     retention,
     script_make,
+    service_spend,
     sheet_reread,
     table_chat,
     trait_answer,
@@ -1284,6 +1285,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # What a call costs in AI credits, for the calls made because a DM added material (#4005):
         # it needs the campaign's owner, found the first time a job charges.
         credits.configure(recaps.db if recaps is not None else None, self._owner_of_campaign)
+        # What each paid call costs, as business totals for the admin Costs page (#3672).
+        service_spend.configure(
+            recaps.db if recaps is not None else None,
+            self._owner_of_campaign,
+            # the campaign a live call's server is playing now (a clip knows only its server)
+            campaign_of=lambda gid: t.campaign_id if (t := self.tables.get(gid)) else None,
+        )
         # (server, campaign) -> its read in progress: one a campaign, several a server (#4551)
         self._lore_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
         self._lore_swept: dict[int, float] = {}  # server -> when its queue was last swept
@@ -1497,6 +1505,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if user_id is not None and user_id not in admins.values():  # the same person twice
                 admins[role] = user_id
         self.ai_watch = AIWatch(admins=admins, state_dir=settings.data_dir, send=self._tell_admin)
+        # The month's AI budget warnings and the first refusal's notice (#5270)
+        service_spend.watch(self.ai_watch, settings.ai_monthly_budget_usd)
         # Owner alerts (#1907): email first; a private message is the way when mail is what broke.
         if (alerter := alerts.current()) is not None:
             alerter.set_tell_owner(self._tell_app_owner)
@@ -2291,6 +2301,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # A notice to the admins that is on its way gets a moment to finish (#972).
         with contextlib.suppress(Exception):
             await asyncio.wait_for(self.ai_watch.wait(), 3)
+        with contextlib.suppress(Exception):
+            await service_spend.flush()  # the cost totals waiting, bounded (#3672)
         document_reader.shutdown()  # files being read: end them, don't wait out their limit
         # Website lore uploads being read: each puts its claim back to waiting (the next start reads
         # it again) and is waited for here, so the write is not lost with the process (#3022).
@@ -12712,8 +12724,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )  # (the reply itself: its `cut` flag is logged, #2649)
 
         now = int(time.time())
+        # What the table may read (#4802, ruling Q2): the pass writes into the shared transcript,
+        # so the gate's table view decides which names it may write or ask about; read once.
+        # Not readable: no pass this time (nothing is written, counts only in the log)
+        try:
+            table = await self.memory.entries_held(gid, cid)
+        except Exception as exc:
+            log.warning("Name pass: the table's holdings couldn't be read (%s)", type(exc).__name__)
+            return 0
         report = await name_pass_run.run(
-            self.transcripts, lookup, ask, gid, cid, session_id,
+            self.transcripts, lookup, ask, gid, cid, session_id, table=table,
             people=people, known=await self.memory.known_keys(gid, cid), agreed=agreed, now=now,
             forget_before=now - int(self.memory.keep_days * 86400), game_only=game_only,
             consenting=recheck or (lambda: self.consent.consenting(gid)), extra=extra, asked=asked,
@@ -13709,12 +13729,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return (lambda _s: None), (lambda _s: False)
         try:
             lookup = await self.lookup.get(gid, cid)
+            # (what the table may read: the gate's table view, as the name pass reads it, #4802)
+            table = (
+                await self.memory.entries_held(gid, cid)
+                if self.memory is not None
+                else frozenset(lookup.entities)
+            )
         except Exception as exc:
             log.warning(
                 "Couldn't read the campaign's names for the name scan (%s)", type(exc).__name__
             )
             return None
-        close_to_secret = name_pass_logic.secret_test(lookup)
+        close_to_secret = name_pass_logic.secret_test(lookup, table)
+        kept = name_pass_logic.kept_from_table(lookup, table)
 
         def heard_wrong(spelling: str) -> name_scan.Match | None:
             seen: set[tuple[str, str]] = set()
@@ -13723,7 +13750,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 for known in lookup.by_sound.get(code, ()):
                     if (
                         known.confirmed and not known.secret and not known.person
-                        and known.entity_id not in lookup.hidden
+                        and known.entity_id not in kept
                         and known.entity_id in lookup.entities
                         and (known.entity_id, known.text) not in seen
                     ):  # fmt: skip

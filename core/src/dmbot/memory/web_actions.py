@@ -188,6 +188,10 @@ THREAD_NEW_ACTIONS = ("thread-new", "thread-due", "thread-party")  # (#3696 slic
 THREAD_LINK_ACTIONS = ("thread-link", "thread-led-to")  # an event, what led to what (slice 2d)
 REVEALS_ACTIONS = ("reveals-ask", "reveals-keep", "reveals-not")  # what they learned (#3863)
 CONTINUITY_ACTIONS = ("continuity-ask", "continuity-answer")  # the heads-ups (#3695 half 1)
+# "Names that look alike" on the website (#5259): merge a group (filed under the kept name), say a
+# group is not the same, or take a merge back; the same calls as Discord's group screen.
+LOOKALIKE_APART = "lookalike-apart"
+LOOKALIKE_UNDO = "lookalike-undo"
 MORE_NAMES_ACTION = "names-more"  # 📝 More names: the scan's waiting names (#5081, #5055 B)
 LEAVE_ACTIONS = ("leave-yes", "leave-no")  # "Still in the party?" (#4895, party knowledge slice 6a)
 DEED_ACTIONS = ("deed-record", "deed-not", "deed-undo")  # deeds the party did (#3591)
@@ -518,6 +522,20 @@ class ActionStore:
             cur = await conn.execute(
                 "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
                 " AND user_id = %s AND action IN ('world-keep', 'world-not', 'world-bias')"
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
+    async def lookalike_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done look-alike merge made from the website
+        (#5259), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = 'lookalike-merge'"
                 " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
                 (guild_id, campaign_id, user_id, batch),
             )
@@ -888,6 +906,10 @@ async def apply(
         return await _reveals(memory, waiting, guild_id, cid, action, reveals_ask, reveals_drop)
     if action.action in CONTINUITY_ACTIONS:
         return await _continuity(guild_id, cid, action, continuity_ask, continuity_answer)
+    if action.action in (LOOKALIKE_APART, LOOKALIKE_UNDO):
+        if actions is None and action.action == LOOKALIKE_UNDO:
+            return _failed(FAILED)
+        return await _look_alikes(memory, actions, guild_id, cid, action)
     if action.action == MORE_NAMES_ACTION:
         return await _more_names(more_names, actions, guild_id, cid, action)
     if action.action in LEAVE_ACTIONS:
@@ -2122,6 +2144,74 @@ async def _road_condition(memory: MemoryStore, guild_id: int, cid: str, a: Actio
     return Outcome(batches=(batch,) if batch is not None else ())
 
 
+async def _look_alike_merge(
+    memory: MemoryStore, guild_id: int, cid: str, keep_id: str, a: Action
+) -> Outcome:
+    """🔗 Merge on a group of look-alike names, as Discord's confirmation does it: the ticked names
+    go into the kept one in one change (one Undo takes all of it back), then each name the DM left
+    unticked is remembered as not the same as the kept one. The text is the merged ids, then
+    optionally ` | ` and the unticked ids. A retried job whose merge went in already makes no second
+    change and so offers no Undo."""
+    merged_part, _, left_part = a.text.partition(" | ")
+    ids = list(dict.fromkeys(merged_part.split()))
+    left = [i for i in dict.fromkeys(left_part.split()) if i != keep_id and i not in ids]
+    if not ids or keep_id in ids or len(ids) > MERGE_MANY_MAX:
+        return _failed(BAD_TARGET)
+    waiting: list[str] = []
+    for other_id in ids:
+        other = await memory.entity(guild_id, cid, other_id)
+        if other is not None and other.merged_into == keep_id:
+            continue  # a retried job: this one went in the first time
+        if other is None or other.status != CONFIRMED or other.type == PERSON:
+            return _failed(NOT_FOUND)
+        waiting.append(other_id)
+    batches: tuple[int, ...] = ()
+    if waiting:
+        try:
+            written = await memory.merge_many(guild_id, cid, keep_id, waiting, source=DM)
+        except MemoryRuleError:
+            return _failed(BAD_TARGET)
+        batches = (written.batch,) if written.batch is not None else ()
+    for other_id in left:
+        try:
+            await memory.not_the_same(guild_id, cid, [keep_id, other_id], user_id=a.user_id)
+        except MemoryRuleError:
+            continue  # (a name that has gone since: nothing to remember)
+    return Outcome(result_id=keep_id, batches=batches)
+
+
+async def _look_alikes(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """Not the same (`lookalike-apart`: every pair of the ids is remembered, so the group is not
+    offered again) and ↩ Undo of a merge (`lookalike-undo`: the text is a change number, read
+    again in this DM's own done merges before `undo` sees it, so a made-up number never undoes
+    anything)."""
+    if a.action == LOOKALIKE_APART:
+        ids = list(dict.fromkeys(a.text.split()))
+        if len(ids) < 2:
+            return _failed(BAD_TARGET)
+        try:
+            await memory.not_the_same(guild_id, cid, ids, user_id=a.user_id)
+        except MemoryRuleError:
+            return _failed(NOT_FOUND)
+        return Outcome()
+    if actions is None or not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+        return _failed(GONE)
+    batch = int(a.text)
+    if not await actions.lookalike_batch_made(guild_id, cid, a.user_id, batch):
+        return _failed(GONE)
+    try:
+        await memory.undo(guild_id, cid, batch)
+    except TooLateToUndo:
+        return _failed(TOO_LATE)
+    except MemoryRuleError as exc:
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (taken back already: a retried Undo)
+        return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
+    return Outcome()
+
+
 async def _route_undo(
     memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action
 ) -> Outcome:
@@ -2970,6 +3060,8 @@ async def _do(
             except MemoryRuleError:
                 return _failed(BAD_TARGET)
         return Outcome(result_id=entity_id)
+    if a.action == "lookalike-merge":  # the kept name is the row's entry
+        return await _look_alike_merge(memory, guild_id, cid, entity_id, a)
     if a.action == "remove":
         if not a.flag:
             return _failed(BAD_TARGET)  # (the door asks for the confirmation; so does this)

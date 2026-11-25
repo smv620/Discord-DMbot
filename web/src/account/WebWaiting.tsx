@@ -546,18 +546,6 @@ export default function WebWaiting({
           <p class="small">{w.claimsNote}</p>
         </div>
       )}
-      {/* Outside the claims list, so a press's summary and its "Undo all" stay after the answered claims have left it. */}
-      <WaitingBulk
-        api={api}
-        campaignRef={campaignRef}
-        claims={list.claims.filter((c) => !c.choices?.length)}
-        locked={sending !== null}
-        onRunning={setBulkOn}
-        onChanged={async () => {
-          await read();
-          onChanged?.();
-        }}
-      />
       {list.claims.some((c) => !c.choices?.length) && (
         <div class="stack">
           {list.claims.filter((c) => !c.choices?.length).map((c) => (
@@ -619,6 +607,18 @@ export default function WebWaiting({
           ))}
         </div>
       )}
+      {/* Outside the claims list, so a press's summary and its "Undo all" stay after the answered claims have left it. */}
+      <WaitingBulk
+        api={api}
+        campaignRef={campaignRef}
+        claims={list.claims.filter((c) => !c.choices?.length)}
+        locked={sending !== null}
+        onRunning={setBulkOn}
+        onChanged={async () => {
+          await read();
+          onChanged?.();
+        }}
+      />
 
       {list.backstory.length > 0 && (
         <div class="stack">

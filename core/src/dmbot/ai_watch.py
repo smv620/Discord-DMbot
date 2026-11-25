@@ -112,7 +112,19 @@ class AIWatch:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
-    async def _tell_admins(self) -> None:
+    def notify_once(self, key: str, text: str) -> None:
+        """Tell each admin `text` once for `key` (a month's budget warning, #5270): the key says
+        which notice and which month, so it is sent again only the next month. Never blocks the
+        caller; the messages go out in the background, and a failed send is tried again later."""
+        if not self._admins or self._send is None:
+            return
+        task = asyncio.create_task(self._tell_admins(key=key, text=text, every_s=math.inf))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _tell_admins(
+        self, *, key: str = "", text: str = "", every_s: float = NOTICE_EVERY_S
+    ) -> None:
         send = self._send
         if send is None:
             return
@@ -121,17 +133,18 @@ class AIWatch:
                 self._sent = self._read()
             now = self._clock()
             for role, user_id in self._admins.items():
-                if now - self._sent.get(role, float("-inf")) < NOTICE_EVERY_S:
+                mark = f"{key}:{role}" if key else role
+                if now - self._sent.get(mark, float("-inf")) < every_s:
                     continue
-                if now - self._tried.get(role, float("-inf")) < RETRY_AFTER_S:
+                if now - self._tried.get(mark, float("-inf")) < RETRY_AFTER_S:
                     continue  # tried lately and failed
-                self._tried[role] = now
+                self._tried[mark] = now
                 try:
-                    await send(user_id, ADMIN_NOTICE.format(role=role))
+                    await send(user_id, text or ADMIN_NOTICE.format(role=role))
                 except Exception as exc:  # one failing doesn't stop the other
                     log.warning("Couldn't tell the %s admin: %s", role, type(exc).__name__)
                     continue
-                self._sent[role] = now
+                self._sent[mark] = now
                 self._write(self._sent)
 
     def _read(self) -> dict[str, float]:

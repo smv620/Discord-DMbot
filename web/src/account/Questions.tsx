@@ -27,6 +27,7 @@ import { THREADS_LIVE } from "../content/threads-switch";
 import { MAPS_LIVE } from "../content/maps-switch";
 import { RULE_UPDATES_LIVE } from "../content/rule-updates-switch";
 import { MORE_NAMES_LIVE } from "../content/more-names-switch";
+import { LOOKALIKES_LIVE } from "../content/lookalikes-switch";
 import MoreNames from "./MoreNames";
 import QuestionsHere, { groupOf, type HereGroup } from "./QuestionsHere";
 
@@ -87,6 +88,8 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
   if (kind === "deeds") return DEED_QUESTIONS_LIVE && api.deedQuestions !== undefined ? "here" : "discord";
   // What the characters learned (#3863 step 2): answered here once its switch is on, else in Discord.
   if (kind === "reveals") return REVEALS_LIVE && api.revealQuestions !== undefined ? "here" : "discord";
+  // Names that look alike (#5259): answered here once its switch is on, else Discord's own panel (never a link to a page that cannot answer).
+  if (kind === "lookalikes") return LOOKALIKES_LIVE && api.lookAlikes !== undefined ? "here" : "discord";
   // The "Did they mean…?" question (#4841 B1): answered here once its switch is on, else in Discord.
   if (kind === "heard") return HEARD_LIVE && api.heardQuestions !== undefined ? "here" : "discord";
   // The three kinds answered on another page (#4841 A): a link to it while that page's switch is on, else in Discord.
@@ -286,7 +289,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                       )}
                     </>
                   ) : (
-                    <span class="small muted">{words.discord}</span>
+                    <span class="small muted">{w.where ? words.discordAt(w.where) : words.discord}</span>
                   )}
                 </li>
               );

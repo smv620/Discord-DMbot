@@ -87,6 +87,7 @@ from dmbot.ui.names import (
     _md,
     _memory,
     changed,
+    seen_for,
     sees_secrets,
 )
 
@@ -122,9 +123,10 @@ async def _names(interaction: discord.Interaction, campaign: Campaign) -> Campai
         await _tell(interaction, NOT_AVAILABLE)
         return None
     try:  # (without the clues only some people know, unless this person is a DM, #1649)
-        return (await cache.get(campaign.guild_id, campaign.id)).for_viewer(
-            sees_secrets(campaign, interaction.user.id)
-        )
+        dm = sees_secrets(campaign, interaction.user.id)
+        whole = await cache.get(campaign.guild_id, campaign.id)
+        # (anyone else: the names of what their own characters know, from the gate, #4802)
+        return whole.for_viewer(dm, await seen_for(interaction, campaign, dm))
     except Exception:
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")

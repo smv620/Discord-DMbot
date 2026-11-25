@@ -1,4 +1,4 @@
-// The words of "All true" and "All secret" above the list of what was said at the table (#3645), the same as Discord's
+// The words of "All true" and "All secret" under the list of what was said at the table (#3645), the same as Discord's
 // buttons (✅ All true, 🤫 All secret, ↩️ Undo all N), with the count each press will answer. Plain words. DMbot never
 // decides: the game master presses, and each button answers only what is shown and still waiting.
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
@@ -7,7 +7,7 @@ export const bulkWords = {
   allTrue: (n: number): { icon: string; text: string } => ({ icon: "✅", text: `All true (${n})` }),
   allSecret: (n: number): { icon: string; text: string } => ({ icon: "🤫", text: `All secret (${n})` }),
   undo: (n: number): { icon: string; text: string } => ({ icon: "↩️", text: `Undo all ${n}` }),
-  hint: "Each button answers everything shown below that is still waiting. You can undo the last press.",
+  hint: "Each button answers everything shown above that is still waiting. You can undo the last press.",
   hintSecret: "A fact that has changed, like \"Roan is dead\", can't be secret, so All secret leaves it for you.",
   stage: "Saving your answers.",
   unit: "answers",

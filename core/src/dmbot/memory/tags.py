@@ -78,6 +78,14 @@ def _context(ties: Sequence[TagTie], note: str, dm: bool) -> str | None:
     return clause or None
 
 
+def detail_for(ties: Sequence[TagTie]) -> str:
+    """The entry's strongest confirmed tie in a short phrase ("in Bryn Shander", "member of the Ash
+    Wolves"), for the DM's choices (#3603), or "" when it has none. The same pick as a tag's, with
+    no note of the entry's own."""
+    context = _context(ties, "", True)
+    return _cut(context) if context else ""
+
+
 def tag_for(
     entity: Entity,
     ties: Sequence[TagTie] = (),

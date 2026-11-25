@@ -24,6 +24,7 @@ from typing import Any, ParamSpec, TypeVar
 
 import aiohttp
 
+from dmbot import service_spend
 from dmbot.recaps.audio.names import Rule
 
 log = logging.getLogger(__name__)
@@ -229,6 +230,19 @@ class ElevenLabs:
         self._music_model = music_model
         self.credits = 0
 
+    def _note(self, credits: int, model: str) -> None:
+        """What one answered call used, in the company's own credits (what the plan is sold in), for
+        the cost totals (#3672). Unpriced: the dollar value depends on the owner's plan, and a
+        guess is never recorded."""
+        self.credits += credits
+        service_spend.record(
+            "elevenlabs",
+            model,
+            service_spend.RECAP_AUDIO,
+            units_in=credits,
+            unpriced=True,
+        )
+
     @property
     def voice_id(self) -> str:
         return self._voice
@@ -274,7 +288,7 @@ class ElevenLabs:
         )
         if status != 200:
             raise _fail(status)
-        self.credits += CREDITS_PER_CHAR * len(text)
+        self._note(CREDITS_PER_CHAR * len(text), self._speech_model)
         if len(raw) > MAX_AUDIO_BYTES:
             raise ProviderError("reply")
         try:
@@ -302,7 +316,7 @@ class ElevenLabs:
             raise _fail(status)
         if not raw or len(raw) > MAX_AUDIO_BYTES:
             raise ProviderError("reply")
-        self.credits += round(CREDITS_PER_MUSIC_MINUTE * seconds / 60)
+        self._note(round(CREDITS_PER_MUSIC_MINUTE * seconds / 60), self._music_model)
         return raw
 
     @step("ambience")
@@ -317,7 +331,7 @@ class ElevenLabs:
             raise _fail(status)
         if not raw or len(raw) > MAX_AUDIO_BYTES:
             raise ProviderError("reply")
-        self.credits += CREDITS_PER_SOUND
+        self._note(CREDITS_PER_SOUND, SOUND_MODEL)
         return raw
 
     async def forget_dictionary(self, dictionary_id: str) -> None:

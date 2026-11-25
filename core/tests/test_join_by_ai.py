@@ -63,7 +63,11 @@ class WhatItMayDo(Base):
         gone = await self.waiting_name("The Ferry Lady")
         await self.join(tam, gone)
         lookup = CampaignLookup.build(await self.memory.lookup_data(self.g, self.one.id))
-        mine = [e for e in lookup.for_viewer(False).names if e.text == "The Ferry Lady"]
+        mine = [
+            e
+            for e in lookup.for_viewer(False, frozenset(lookup.entities)).names
+            if e.text == "The Ferry Lady"
+        ]
         self.assertTrue(mine)
         self.assertFalse(any(e.confirmed for e in mine))  # never a silent fix, never a recap name
 
@@ -242,7 +246,11 @@ class TheDmsCheck(Base):
         _, _, done = await self.joined()
         await self.memory.confirm_join(self.g, self.one.id, done.batch)
         lookup = CampaignLookup.build(await self.memory.lookup_data(self.g, self.one.id))
-        mine = [e for e in lookup.for_viewer(False).names if e.text == "The Ferry Lady"]
+        mine = [
+            e
+            for e in lookup.for_viewer(False, frozenset(lookup.entities)).names
+            if e.text == "The Ferry Lady"
+        ]
         self.assertTrue(mine and all(e.confirmed for e in mine))
 
     async def test_an_undone_join_is_no_longer_listed_and_cannot_be_confirmed(self) -> None:

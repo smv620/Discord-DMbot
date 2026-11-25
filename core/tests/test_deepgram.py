@@ -10,6 +10,7 @@ import aiohttp
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
+from dmbot import service_spend
 from dmbot.alerts import DEEPGRAM_DOWN_AFTER_S, Problem
 from dmbot.audio.segmenter import Utterance
 from dmbot.transcription import deepgram as dg
@@ -157,6 +158,22 @@ class DeepgramTranscriberTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(DeepgramError):
                 await self.t.transcribe(clip(), [])
             alert.assert_called_once()  # the 200 started the count over
+
+    async def test_an_answered_clip_is_recorded_by_seconds_and_a_failed_one_is_not(
+        self,
+    ) -> None:
+        with patch.object(service_spend, "record") as record:
+            self.reply = (500, {"err_msg": "down"})
+            with self.assertRaises(DeepgramError):
+                await self.t.transcribe(clip(7), [])
+            record.assert_not_called()
+            self.reply = (200, reply("Welcome."))
+            await self.t.transcribe(clip(7), [])
+        ((args, kwargs),) = [(c.args, c.kwargs) for c in record.call_args_list]
+        self.assertEqual(args, ("deepgram", "nova-3", "transcribe"))
+        self.assertEqual(kwargs["guild_id"], 7)
+        self.assertEqual(kwargs["units_in"], 1)  # (3200 bytes of 16 kHz audio: 0.1 s, rounded up)
+        self.assertEqual(kwargs["micro_usd"], 8)  # 0.1 s at $0.0043 a minute, rounded up
 
     async def test_sends_wav_key_and_keyterms(self) -> None:
         text = await self.t.transcribe(clip(), ["Bryn Shander", "Auril"])

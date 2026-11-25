@@ -18,8 +18,10 @@ from typing import Any
 
 import aiohttp
 
+from dmbot import service_spend
 from dmbot.alerts import DEEPGRAM_DOWN_AFTER_S, Outage, Problem, raise_alert
 from dmbot.audio.segmenter import Utterance
+from dmbot.prices import deepgram_micro_usd
 from dmbot.transcription.base import Transcript, TranscriptionProblem, clean_text, to_wav
 from dmbot.transcription.config import TranscriptionSettings
 
@@ -243,6 +245,15 @@ class DeepgramTranscriber:
                     len(tries[n + 1]),
                 )
                 continue
+            # Deepgram answered, so it billed the clip: its seconds, by the list price (#3672)
+            service_spend.record(
+                "deepgram",
+                self._settings.deepgram_model,
+                service_spend.TRANSCRIBE,
+                units_in=math.ceil(utterance.duration_s),
+                micro_usd=deepgram_micro_usd(utterance.duration_s),
+                guild_id=utterance.guild_id,
+            )
             if len(sent) < len(terms):
                 # Remember a length that worked, so later clips in this session don't pay
                 # for a refusal first. It only goes down, and never so low that hints

@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, CharacterLanguages, ContinuityHits, DeedQuestions, HeardQuestions, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, NodeTrait, PlotThreads, RevealProposal, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes, LeaveGroup } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, ContinuityHits, DeedQuestions, HeardQuestions, LookAlikes, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, NodeTrait, PlotThreads, RevealProposal, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes, LeaveGroup } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 /** The revealed list of an upload notice (#4661): plain lines of at most 200 characters, at most ten; anything else is dropped. */
@@ -616,6 +616,27 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/secret-questions`)) as { questions: SecretQuestion[] }).questions,
     // The join questions waiting for the DM (#4778 part b): DM only; the door answers anyone else with nothing.
     // The "Did they mean…?" questions (#4857): read as they are; the three answers are queued for the bot and this waits for each one.
+    // 🔗 Look-alikes (#5259): the read, then three queued answers waited for like the other queued presses.
+    lookAlikes: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/look-alikes`)) as LookAlikes,
+    mergeLookAlikes: async (ref, body, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/look-alikes/merge`, body)) as { answer?: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`, (look) => onLook?.(sharedOf(look.progress)));
+      return { batch: got.batch ?? null, secret: got.secret ?? null };
+    },
+    lookAlikesApart: async (ref, ids) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/look-alikes/apart`, { ids })) as { answer?: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    undoLookAlikes: async (ref, batch) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/look-alikes/undo`, { batch })) as { answer?: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
     heardQuestions: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/heard-questions`)) as HeardQuestions,
     heardPick: async (ref, question, index) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;

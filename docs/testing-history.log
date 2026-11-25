@@ -3004,3 +3004,32 @@ Check 2 (sample run 44, counts on #3545): DONE. Exit 0, about $3.94. Lore names 
 Check 3 (the website, signed in as the test DM): PARTLY. /account/questions opens on dev.getdmbot.com and its counts show, but the names count (1) and its list (nothing) disagree. Cause verified in the live database (count = every proposed name; list = names linked to a recap's name check). Bug #5186 filed; owner to choose the fix. The Discord side of the same count is not yet compared.
 
 Session: dev1
+
+DEPLOY 4f82f2c8 (deploy 46; Supervisor's handover on #3720, target 4f82f2c8c9e64d069025c58226425e41f5f255b0 with deploy 45 folded in, CI green on that commit; the owner's OK in the dev1 session, "Ok. Go on 46"). Live was c979adfa (44). Migrations 0614 to 0618 (608 in total). Dry run on a fresh pg_dumpall copy: MIGRATIONS OK 608, twice. Live backup before the switch: dmbot-pre-4f82f2c8-20261124T150228Z.sql (in /home/ubuntu/db-backups, not in git). Image dmbot-core:oneoff-4f82f2c8 built with BUILD EXIT 0. Bot first, then web-api (healthy).
+
+Check 1 (migrations applied, 0 errors for 10 minutes): PASSED. 608 rows in schema_migrations, latest 0618_web_other_new_names; 0 ERROR lines in the bot and web-api logs over the window.
+
+Check 2 (sample run 46, counts on #3545): NOT DONE. Runs 1, 2, 4 and 5 stopped with "the lore upload is gone" while they were running; run 3 stopped on the story-read daily limit. No counts. The owner deleted some lore uploads by accident during the runs; the owner then said no rerun was needed, since the earlier statistics and reports were enough. Supervisor's ruling (16:08 UTC, 2026-11-24): deploy 46 counts as checked without this sample. The cause of the mid-run deletion was not established then; see the bug filed on the deploy 48 sample (sample_run deletes earlier sample campaigns; parallel runs under one deploy label can delete each other's).
+
+Checks 3 to 6 (the website: recap names to check, Change the words, Where it was said, split and group; Other new names; the cleaned transcript's capitals; the waiting list's travels-with line): owner checks, not done yet. The owner's screenshots this morning showed Other new names listed and answerable.
+
+Session: dev1
+
+DEPLOY 83f05b75 (deploy 48; Supervisor's handover on #3720 at 16:14 UTC and the target at 19:35 UTC, development 83f05b757 with CI green on that commit (all eight core test parts, lint, web, docker, scripts, ears); the owner's OK in the dev1 session, "dev1: deploy 48 ... OK from the owner to deploy it"; the owner's instruction in chat to deploy once CI was green). Live was 4f82f2c8 (46). Migrations 0619_web_name_guess and 0620_recap_lines_noted (610 in total). Dry run on a fresh pg_dumpall copy: 608 to 610, second run applied nothing. The first dry run used the old image tag by mistake and was rerun on oneoff-83f05b75. Live backup before the switch: dmbot-pre-83f05b75-20261124T200415Z.sql (in /home/ubuntu/db-backups, not in git). Image dmbot-core:oneoff-83f05b75 built with BUILD EXIT 0. Bot first at 20:04 UTC (connected to 2 servers; GIT_COMMIT 83f05b757), then web-api (healthy; live migrations 610, last 0620_recap_lines_noted). The website: dev.getdmbot.com returns 200; Cloudflare builds it from the commit (that check passed).
+
+Check 1 (migrations applied, bot and web-api healthy, 0 errors for 10 minutes): PASSED. 0 ERROR lines and 0 tracebacks in core and web-api from 20:04 to 20:15 UTC.
+
+Check 2 (sample run 48, counts on #3545): DONE, exit 0, five of five runs, about $4.06. The first two attempts (20:15 and 23:24 UTC) failed at the lore read: the AI provider refused every call because the usage limit was reached. After the owner raised the limit on the key's workspace, the run started at 23:53 UTC and made its calls normally. Lore names 66, connections 103 (medians of five runs); both (lore, sure) entries found 69, ties found 21; both (both, sure) entries found 71, ties found 45. The commit label on the run said 4f82f2c, not 83f05b757; the image and checkout are 83f05b757 (a one-off run reads GIT_COMMIT=83f05b757). Source of the label not found; counts are for deploy 48's image, with the label caveat on #3545.
+
+Check 3 (cleaned transcript: "strahd's" becomes "Strahd's", "hope's" unchanged): NOT DONE. Needs the sample session's cleaned transcript; to be read on the server next.
+Check 4 (after the session, no "… check" or "… save" phrase among the names to check): NOT DONE. Same data as check 3.
+
+Owner checks (browser, can wait): the names-to-check menu starts on DMbot's guess; "Explorer League" says "Sounds like Explorer's League"; "Questions for you" opens the connections to answer on the page; deploy 46's checks 3 to 6.
+
+Session: dev1
+
+Deploy 48 checks 3 and 4 (dev1, 2026-11-25, read-only queries on the server, counts only):
+- Check 3 (cleaned transcript: "strahd's" becomes "Strahd's", "hope's" unchanged): NOT TESTED. Neither phrase is in the sample inputs (session-player.txt, session.txt, lore.txt) or in any of the five sample transcripts (172 lines each, 0 with either phrase in the cleaned or the raw text). The sample cannot show this; it needs a session line with "strahd's" and "hope's" typed or spoken, either as the owner's test or in a later sample input.
+- Check 4 (after the session, no "… check" or "… save" name among the names to check): PASSED. 315 names-to-check rows across the five sample campaigns, none whose name ends in " check" or " save".
+
+Session: dev1

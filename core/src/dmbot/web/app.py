@@ -129,6 +129,7 @@ from dmbot.web import (
 )
 from dmbot.web import homebrew as homebrew_pages
 from dmbot.web import house_rules as house_rule_pages
+from dmbot.web import look_alikes as look_alike_pages
 from dmbot.web import maps as map_pages
 from dmbot.web import recap_audio as audio_links
 from dmbot.web import rule_lookup as rule_lookup_pages
@@ -1237,6 +1238,54 @@ def create_app(
             return await read_campaign_checks(db, session, ref)
         except RecapError as err:
             status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # Names that look alike (#5259): the groups, for the DM, as Discord's 🔗 Look-alikes lists them.
+    @app.get("/me/campaigns/{ref}/look-alikes")
+    async def me_campaign_look_alikes(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        try:
+            return await look_alike_pages.read_groups(db, session, ref)
+        except RecapError as err:
+            status, detail = request_status.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # "Names that look alike": merge a group, say it is not the same, or take a merge back (#5259).
+    @app.post("/me/campaigns/{ref}/look-alikes/merge", status_code=202)
+    async def me_campaign_look_alike_merge(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        session, _token = signed
+        try:
+            body = await request.json()
+            return {"answer": await look_alike_pages.queue_merge(db, session, ref, body)}
+        except ValueError:
+            raise HTTPException(status_code=400, detail="bad_action") from None
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/look-alikes/apart", status_code=202)
+    async def me_campaign_look_alike_apart(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        session, _token = signed
+        try:
+            body = await request.json()
+            return {"answer": await look_alike_pages.queue_apart(db, session, ref, body)}
+        except ValueError:
+            raise HTTPException(status_code=400, detail="bad_action") from None
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/look-alikes/{batch}/undo", status_code=202)
+    async def me_campaign_look_alike_undo(ref: str, batch: str, signed: Signed) -> dict[str, str]:
+        session, _token = signed
+        try:
+            return {"answer": await look_alike_pages.queue_undo(db, session, ref, batch)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     # The words DMbot stopped asking about, for the DM to lift (#3577): the words, Never or Not

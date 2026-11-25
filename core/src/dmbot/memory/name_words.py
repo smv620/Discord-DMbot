@@ -14,6 +14,7 @@ from dmbot.memory.models import BACKGROUND_SOURCE, NPC, PLAYER_CHARACTER
 
 HEARD_AS_SHOWN = 3  # other spellings named on the card; the rest are "and N more" (#5133)
 SURE_HOWS = ("introduced", "typed")  # found by a name said out loud or typed: asked first
+SPELLED_OUT = "Spelled out at the table"  # a suggestion's note when someone spelled it (#2168)
 
 
 def _times(n: int) -> str:
@@ -139,3 +140,38 @@ def card_guess(source: str, type_: str, role: str | None) -> str:
     auto-accept does not act on. Discord's card and the website's both use it, so the one tap on
     Yes means the same in both."""
     return guess_kind(source, type_, role, extra_sources=("extractor",))
+
+
+# The short word for a kind in the lists and menus ("NPC", "place", "group"…): Discord's name
+# lists and the website's look-alike cards say it the same way (#5259).
+KIND_SHORT: dict[str, str] = {
+    "npc": "NPC",
+    PLAYER_CHARACTER: "PC",
+    "character": "character",
+    "place": "place",
+    "faction": "group",
+    "creature": "NPC",
+    "item": "item",
+    "deity": "NPC",
+    "spell": "spell",
+    "event": "event",
+    "clue": "clue",
+    "people": "people",
+    "thread": "thread",
+    "quest": "quest",
+    "mystery": "mystery",
+    "hook": "hook",
+    "goal": "goal",
+    "promise": "promise",
+    "concept": "other",
+    "person": "player or DM",
+}
+
+
+def kind_key(type_: str, role: str | None) -> str:
+    """The entry's kind key as `Entity.kind_key` says it (a character is `npc`, `player_character`
+    or just `character` by its role, any other entry its own type), for readers that have a row's
+    type and role and no `Entity`."""
+    if type_ == "character":
+        return {PLAYER_CHARACTER: PLAYER_CHARACTER, NPC: NPC}.get(role or "", "character")
+    return type_

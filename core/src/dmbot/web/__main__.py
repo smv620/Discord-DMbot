@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 import uvicorn
 
-from dmbot import alerts, entitlements, mail, person_key
+from dmbot import alerts, entitlements, mail, person_key, service_spend
 from dmbot.ai import DEFAULT_MODELS, AIModelTier, AnthropicClient, Feature
 from dmbot.config import ConfigError
 from dmbot.db import Database, DatabaseError
@@ -164,6 +164,9 @@ async def serve(settings: WebSettings) -> None:
         else None
     )
     entitlements.configure_free_users(settings.free_users)  # #771
+    # What the website's own paid calls cost (the support helper, the name search): no campaign, so
+    # their plan is `unknown` (#3672)
+    service_spend.configure(db, None)
     if not person_key.configure(settings.person_key):  # the hash kept after an account is deleted
         log.warning("DMBOT_PERSON_KEY is not set: trial and email records keep no hash (#4145)")
     entitlements.configure_free_guilds(settings.free_guilds)  # #3788
@@ -290,6 +293,7 @@ async def serve(settings: WebSettings) -> None:
             await google.close()
         if isinstance(payments, StripeProvider):
             await payments.close()
+        await service_spend.flush()  # the cost totals waiting (#3672)
         await db.close()
 
 
