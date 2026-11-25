@@ -1803,7 +1803,7 @@ class SaveAndResume(SessionTests):
     async def test_putting_a_line_back_notes_its_words_even_when_the_names_scan_is_full(
         self,
     ) -> None:
-        from dmbot.bot import HEARD_MAX
+        from dmbot.transcript.held_lines import HEARD_MAX
 
         table, _, _ = await self.left_out_line()
         table.heard.extend([(PLAYER, "x")] * (HEARD_MAX - len(table.heard)))
