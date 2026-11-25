@@ -72,6 +72,7 @@ from dmbot.ui.who_knows import (
 log = logging.getLogger(__name__)
 
 WHO_BUTTON = "👁️ Who knows this?"
+CORRECT_BUTTON = "✍️ Correct it"  # (ui/connection_say.py)
 EDIT_BUTTON = "✏️ Edit a connection…"  # (the site's help names it: web/test/button-labels)
 ALL_VALUE = "dmbot:all-links"  # no connection's id looks like this
 ALL_LABEL = "🌐 All connections on the website…"
@@ -366,6 +367,9 @@ class OneConnection(_Menu):
                 )
             )
         self.add_item(_Button(self._remove, label="🗑 Remove", style=grey, row=1))
+        if found.secrets and subject is not None and other is not None:
+            # correct it by saying what is true in your own words (#2940, the DM's only)
+            self.add_item(_Button(self._correct, label=CORRECT_BUTTON, style=grey, row=1))
         self.add_item(_Button(self._back, label="Back", style=grey, row=2))
         if r.predicate == route_words.ROUTE_TO and not r.route_state and found.secrets:
             # a route's stated length, the DM's (#4255; the ux-critic's words): 🛣️ (📏 is Size)
@@ -405,6 +409,18 @@ class OneConnection(_Menu):
                 row=4,
             )
             self.add_item(self.direction)
+
+    async def _correct(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui import connection_say  # (it builds on the name card)
+
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        r = found.relation
+        await connection_say.open_form(
+            interaction, self.campaign_id, r.subject_id, r.object_id, self.entity_id,
+            replacing_id=r.id,
+        )  # fmt: skip
 
     async def _condition(self, interaction: discord.Interaction) -> None:
         self.stop()
