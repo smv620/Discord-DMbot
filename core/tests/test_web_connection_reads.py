@@ -341,6 +341,34 @@ class Connecting(WithChecks):
             await self.code(web.status(self.web, self.session, self.cref, rid)), "not_found"
         )
 
+    async def test_each_job_has_its_own_number_and_replacing_says_if_it_is_hidden(self) -> None:
+        old = (
+            await self.memory.add_relation(
+                GUILD, self.one.id, self.tavin, FALLBACK_PREDICATE, self.mara, source="dm",
+                confidence=1.0, status=CONFIRMED, detail="owes",
+            )
+        ).value[0]  # fmt: skip
+        rid = await self.say(edit=old.id)
+        await self.work(Hosted(self, answer_of(owes())))
+        got = await web.status(self.web, self.session, self.cref, rid, moment=NOW)
+        self.assertEqual((got["jobNo"], got["replacing"]), (1, {"id": old.id, "hidden": False}))
+        await self.memory.update_relation(
+            GUILD, self.one.id, old.id, source="dm", secret=True, dm_chose_secret=True
+        )
+        got = await web.status(self.web, self.session, self.cref, rid, moment=NOW)
+        self.assertTrue(got["replacing"]["hidden"])  # read as it is now
+        # (Use this changes nothing but the number here: the old connection changed, so it fails)
+        await web.use(self.web, self.session, self.cref, rid, {"picks": [1], "who": "everyone"})
+        self.assertEqual(
+            (await web.status(self.web, self.session, self.cref, rid, moment=NOW))["jobNo"], 2
+        )
+
+    async def test_a_read_with_nothing_to_correct_has_no_replacing(self) -> None:
+        rid = await self.say()
+        await self.work(Hosted(self, answer_of(owes())))
+        got = await web.status(self.web, self.session, self.cref, rid, moment=NOW)
+        self.assertEqual((got["jobNo"], got["replacing"]), (1, None))
+
     async def test_the_sweep_removes_a_days_old_job_with_its_words(self) -> None:
         await self.say()
         await self.sql("UPDATE web_connection_reads SET created_at = created_at - 90000")
