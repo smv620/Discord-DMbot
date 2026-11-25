@@ -220,6 +220,45 @@ class Pressing(SyncTest):
         files = [c for c in it.followup.send.await_args_list if "file" in c.kwargs]
         self.assertEqual(len(files), 1)  # the updated file, privately (part 1)
 
+    async def test_a_rule_held_back_for_a_clash_gets_a_button_on_the_result(self) -> None:
+        # #3841: the file read holds the new rule 9 back; the result carries a button that opens
+        # the "which one applies" question, so the DM does not retype it.
+        import json
+
+        from dmbot.ai import Reply
+
+        async def complete(system: str, text: str, **_: Any) -> Reply:
+            # two new rules are checked in one call: the added 9 clashes, the changed 2 does not
+            answer = {
+                "checks": [
+                    {"new": 1, "disagrees_with": [1]},
+                    {"new": 2, "disagrees_with": []},
+                ]
+            }
+            return Reply(json.dumps(answer), cut=False)
+
+        self.bot.rule_conflict_ai = SimpleNamespace(complete=AsyncMock(side_effect=complete))
+
+        async def everything(guild_id: int, cid: str) -> Any:
+            return await self.store.list(guild_id, cid)
+
+        self.bot.all_house_rules = everything
+        _, view = await self.offer()
+        it = self.interaction()
+        await self.button(view, "Accept all").callback(it)
+        content, new_view = it.response.edited[-1]
+        self.assertNotIn(9, [r.number for r in self.store.rules])  # held back, not added
+        self.assertIn("Press a button", content)
+        self.assertEqual([str(b.label) for b in new_view.children], ["Add rule 9…"])
+        question = self.interaction()
+        await new_view.children[0].callback(question)
+        text, kw = question.response.sent[-1]
+        self.assertIn("Which one wins?", str(text))
+        self.assertEqual(
+            [str(b.label) for b in kw["view"].children][-1], "Cancel"
+        )  # (nothing is saved before the DM picks)
+        self.assertNotIn(9, [r.number for r in self.store.rules])
+
     async def test_added_rules_say_whether_the_linked_file_or_an_upload_gave_them(self) -> None:
         _, view = await self.offer()
         await self.button(view, "Accept all").callback(self.interaction())
