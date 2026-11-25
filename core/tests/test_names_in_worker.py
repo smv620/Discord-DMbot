@@ -52,6 +52,11 @@ class TheLinesTheScanReads(unittest.TestCase):
         ]
         self.assertEqual(held_lines(lines, {1, DM}), [(1, "keep"), (1, "table")])
 
+    def test_a_typed_line_the_filter_called_off_topic_is_still_scanned_as_it_is_live(self) -> None:
+        # (the live path scans every typed line; the label only hides it from the transcript)
+        lines = [line(1, "Gorvash, lol pizza", typed=True, topic="off_topic")]
+        self.assertEqual(held_lines(lines, {1}), [(1, "Gorvash, lol pizza")])
+
     def test_it_stops_at_the_bots_own_cap(self) -> None:
         many = [line(1, f"w{n}") for n in range(HEARD_MAX + 5)]
         self.assertEqual(len(held_lines(many, {1})), HEARD_MAX)
@@ -70,6 +75,8 @@ def _me(*, worker_on: bool, names_on: bool, queue: _Jobs | None = None) -> Any:
         consent=SimpleNamespace(consenting=mock.AsyncMock(return_value=frozenset({1, 2}))),
         save_transcript=mock.AsyncMock(),
         name_calls=[],
+        lookup=SimpleNamespace(drop=mock.Mock()),
+        tables={},
     )
     for name in (
         "_worker_does_after_session",
@@ -91,6 +98,10 @@ def _me(*, worker_on: bool, names_on: bool, queue: _Jobs | None = None) -> Any:
     me._suggest_names = local
     me.post_message = mock.AsyncMock(return_value=None)
     return me
+
+
+def _bot_with(queue: _Jobs) -> Any:
+    return _me(worker_on=True, names_on=True, queue=queue)
 
 
 def _session() -> Any:
@@ -133,6 +144,7 @@ class WhoDoesIt(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(me.name_calls, [])  # (the bot did not run its own)
         self.assertEqual(table.new_names, ["Oskar Vane"])  # (only a name still waiting)
         self.assertEqual(table.heard, [])
+        me.lookup.drop.assert_called_once_with([CID])  # (the bot's copy lacks the new names)
         me.save_transcript.assert_awaited()  # (the lines are stored before the worker reads them)
         me.transcripts.mark_names_repaired.assert_awaited()  # (the pass is marked done)
 
@@ -144,6 +156,54 @@ class WhoDoesIt(unittest.IsolatedAsyncioTestCase):
             await DMBot.suggest_names(me, table)
         self.assertEqual(me.name_calls, ["bot's own"])
         self.assertEqual(table.new_names, ["Local"])  # (not overwritten by the worker's answer)
+
+    async def test_a_bot_that_gives_up_waiting_leaves_the_mark_to_the_worker(self) -> None:
+        queue = _Jobs()
+        me = _bot_with(queue)
+        table = _session()
+
+        async def tick(_: float) -> None:
+            return None
+
+        # (the worker took it and is still running: the recap must not start on half-repaired lines)
+        await queue.add(1, CID, SID, jobs.NAMES, {3})
+        queue.rows[jobs.NAMES], queue.holder[jobs.NAMES] = jobs.RUNNING, "worker-live"
+        with (
+            mock.patch.object(botmod, "WORKER_TAKE_S", 10**9),
+            mock.patch.object(botmod, "WORKER_WAIT_MAX_S", 0),
+            mock.patch("asyncio.sleep", tick),
+            self.assertLogs("dmbot.bot", level="WARNING"),
+        ):
+            await DMBot.suggest_names(me, table)
+        me.transcripts.mark_names_repaired.assert_not_awaited()
+        self.assertEqual(table.new_names, [])
+        self.assertEqual(me.name_calls, [])
+
+    async def test_five_database_errors_in_a_row_also_leave_the_mark_alone(self) -> None:
+        class Broken(_Jobs):
+            async def status(self, *a: Any) -> jobs.Status | None:
+                raise RuntimeError("the database")
+
+        me = _bot_with(Broken())
+
+        async def tick(_: float) -> None:
+            return None
+
+        with (
+            mock.patch.object(botmod, "WORKER_TAKE_S", 10**9),
+            mock.patch("asyncio.sleep", tick),
+            self.assertLogs("dmbot.bot", level="WARNING"),
+        ):
+            await DMBot.suggest_names(me, _session())
+        me.transcripts.mark_names_repaired.assert_not_awaited()
+
+    async def test_a_worker_that_failed_still_lets_the_pass_be_marked_done(self) -> None:
+        queue = _Jobs()
+        queue.rows[jobs.NAMES] = jobs.FAILED
+        me = _bot_with(queue)
+        with self.assertLogs("dmbot.bot", level="WARNING"):
+            await DMBot.suggest_names(me, _session())
+        me.transcripts.mark_names_repaired.assert_awaited()
 
     async def test_a_session_with_no_stored_transcript_is_the_bots_own_step(self) -> None:
         me = _me(worker_on=True, names_on=True, queue=_Jobs())
