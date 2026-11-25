@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 # Kept as a switch so a build without the mover can never accept a move that would wait for ever.
 MOVES_ARE_RUN = True
 
-Why = Literal["no_plan", "try_it", "no_slot", "owner", "shares_rules"]
+Why = Literal["no_plan", "try_it", "no_slot", "owner"]
 Outcome = Literal[
     "accepted",
     "moving",
@@ -39,7 +39,6 @@ Outcome = Literal[
     "no_slot",
     "owner",
     "bad_server",
-    "shares_rules",
 ]
 
 _LINK = re.compile(r"(\d{1,19})-(\d{1,19})-([A-Za-z0-9_-]{20,128})")  # BIGINT holds 19 digits
@@ -75,19 +74,6 @@ async def _why_not(
     async with db.as_person(session.user_id, session.id_hash).guild(guild_id) as conn:
         verdict = await campaign_cap.handover_verdict(conn, session.user_id, now)
     return None if verdict == "ok" else verdict
-
-
-async def _shares_rules(db: Database, session: Session, link: tuple[int, int, str]) -> bool:
-    """Does the campaign share a rule set? Then it cannot move to another server yet (#2551); it
-    can still be handed over on this server."""
-    guild_id, offer_id, secret = link
-    async with db.as_person(session.user_id, session.id_hash).guild(guild_id) as conn:
-        cur = await conn.execute(
-            "SELECT dmbot_handover_shares_rules(%s, %s, %s) AS yes",
-            (guild_id, offer_id, hash_token(secret)),
-        )
-        row = await cur.fetchone()
-    return bool(row and row["yes"])
 
 
 async def _move_failed(db: Database, session: Session, link: tuple[int, int, str]) -> str | None:
@@ -130,14 +116,7 @@ async def _bot_in(db: Database, session: Session, guild_id: int) -> bool:
     return bool(row and row["yes"])
 
 
-# A code, as every other `why`; the page owns the words ("can't move to another server yet, but it
-# can be handed over on this server").
-MOVE_REFUSED = "shares_rules"
-
-
-async def _servers(
-    db: Database, session: Session, current: int, *, sharing: bool = False
-) -> list[dict[str, Any]]:
+async def _servers(db: Database, session: Session, current: int) -> list[dict[str, Any]]:
     """Where the campaign could run: the server it runs on now (when the person is in it), and,
     once the bot's move exists (`MOVES_ARE_RUN`), their other servers with whether DMbot is in
     each ("Add DMbot to a server" for the rest). The server list is a snapshot from sign-in, not a
@@ -153,8 +132,7 @@ async def _servers(
                     "name": g.name,
                     "current": False,
                     "botIn": await _bot_in(db, session, g.id),
-                    # Not a choice while the campaign shares a rule set (#2551): said up front.
-                    "why": MOVE_REFUSED if sharing else None,
+                    "why": None,  # (kept for the page: every server is a choice since #2551)
                 }
             )
     return sorted(out, key=lambda s: not s["current"])
@@ -169,13 +147,8 @@ async def look(db: Database, session: Session, raw: object, *, now: int) -> dict
         return ENDED
     guild_id = link[0]
     why = await _why_not(db, session, guild_id, offer, now=now)
-    sharing = await _shares_rules(db, session, link)
-    servers = await _servers(db, session, guild_id, sharing=sharing)
-    # A server the campaign cannot go to (it shares a rule set) is not a way to accept: with none
-    # left, the page is told why in a code, so it does not work that out itself.
-    can_go = any((s["current"] or s["botIn"]) and not s.get("why") for s in servers)
-    if why is None and not can_go and sharing:
-        why = "shares_rules"
+    servers = await _servers(db, session, guild_id)
+    can_go = any(s["current"] or s["botIn"] for s in servers)
     mine = next((g for g in session.guilds if g.id == guild_id), None)
     return {
         "status": "open",
@@ -230,8 +203,6 @@ async def accept(
     if why is not None:
         return why, None
     if elsewhere:
-        if await _shares_rules(db, session, link):
-            return "shares_rules", None  # refused before they accept or buy a plan
         return await _ask_for_move(db, session, link, target), None
     if await _open(db, session, link, claim=True) is None:
         return "ended", None

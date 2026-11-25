@@ -433,23 +433,21 @@ class Moving(LinkBase):
                 (THURSDAY.id, self.campaign.id, "c" * 32, status, ALICE.id),
             )
 
-    async def test_a_campaign_that_shares_rules_cannot_move_and_the_page_says_so_up_front(
-        self,
-    ) -> None:
+    async def test_a_campaign_that_shares_rules_can_move_to_another_server(self) -> None:
+        # #2551: a published rule set moves with its campaign, so it is no longer a reason to
+        # refuse another server: nothing is said up front and the wish is recorded.
         await self.share_rules("shared")
         token = await self.link()
         bob = await self.bob_in(THURSDAY, QUILLON)
         look = (await self.post(bob, "look", token=token)).json()
         [here, there] = look["servers"]
-        self.assertIsNone(here.get("why"))  # it can still be handed over on this server
-        self.assertEqual(there["why"], "shares_rules")  # a code; the page owns the words
+        self.assertIsNone(here.get("why"))
+        self.assertIsNone(there["why"])
         self.assertTrue(look["canAccept"])
         got = await self.post(bob, "accept", token=token, serverId=str(QUILLON.id))
-        self.assertEqual((got.status_code, got.json()["error"]), (409, "shares_rules"))
+        self.assertEqual((got.status_code, got.json()), (202, {"status": "moving"}))
         row = await self.row()
-        self.assertEqual((row["to_user_id"], row["move_to_guild_id"]), (0, None))  # not claimed
-        ok = await self.post(bob, "accept", token=token, serverId=str(THURSDAY.id))
-        self.assertEqual(ok.status_code, 200)  # the same server is fine
+        self.assertEqual(row["move_to_guild_id"], QUILLON.id)
 
     async def test_a_failed_move_shows_its_reason_to_the_person_who_accepted_only(self) -> None:
         token = await self.link()
@@ -468,20 +466,6 @@ class Moving(LinkBase):
         carol = await self.person(CAROL)
         other = (await self.post(carol, "look", token=token)).json()
         self.assertIsNone(other["moveFailed"])
-
-    async def test_a_campaign_that_shares_rules_cannot_be_accepted_by_someone_outside_its_server(
-        self,
-    ) -> None:
-        await self.share_rules("shared")
-        token = await self.link()
-        bob = await self.bob_in(QUILLON)  # not in the campaign's own server
-        look = (await self.post(bob, "look", token=token)).json()
-        self.assertFalse(look["canAccept"])
-        self.assertEqual(
-            look["why"], "shares_rules"
-        )  # said in a code, so the page need not work it out
-        [only] = look["servers"]
-        self.assertEqual(only["why"], "shares_rules")
 
     async def test_a_rule_set_that_is_not_shared_does_not_stop_a_move(self) -> None:
         await self.share_rules("unshared")

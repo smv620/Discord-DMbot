@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from dmbot.rules.conflicts import Checked
+from dmbot.rules.conflicts import Checked, Existing
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.house_file import Diff, FileRule
 
@@ -81,10 +81,21 @@ class Store(Protocol):
     ) -> HouseRule: ...
 
 
+@dataclass(frozen=True, slots=True)
+class Held:
+    """A rule from the file that was not added or changed because it may clash (#3841)."""
+
+    item: Item
+    others: tuple[Existing, ...]
+
+
 @dataclass(slots=True)
 class Applied:
     done: list[str] = field(default_factory=list)  # one plain line for each
     skipped: list[str] = field(default_factory=list)  # one plain line for each, with why
+    # The rules held back for a clash (#3841), each with the rules it clashes with, so the DM can
+    # open the "which one applies" question from a button instead of retyping the rule.
+    held: list[Held] = field(default_factory=list)
 
 
 def fingerprint(rules: Sequence[FileRule]) -> str:
@@ -202,6 +213,7 @@ async def apply(
         except Exception:
             log.exception("Couldn't read the house rules before adding from the file")
     held: dict[tuple[str, int], str] = {}  # (kind, file rule number) -> what it disagrees with
+    held_with: dict[tuple[str, int], list[Existing]] = {}  # ...and the rules themselves (#3841)
     if check is not None:
         # New rules and changed ones, in one call. A changed rule's old words are not compared
         # with (they are being replaced), like Edit's `skip`.
@@ -215,6 +227,9 @@ async def apply(
         for d in found.disagreements:
             at = fresh[d.new - 1]
             held.setdefault((at.kind, at.number), _named(d.other.number, d.other.from_set))
+            others = held_with.setdefault((at.kind, at.number), [])
+            if d.other not in others:
+                others.append(d.other)
         if found.unchecked and fresh:
             out.skipped.append(UNCHECKED)
     for item in items:
@@ -224,6 +239,7 @@ async def apply(
                     out.done.append(f"Rule {item.number} was already there.")
                     continue
                 if (ADD, item.number) in held:
+                    out.held.append(Held(item, tuple(held_with[ADD, item.number])))
                     out.skipped.append(
                         f"Rule {item.number} in the file may clash with {held[ADD, item.number]}"
                         ", so it wasn't added. To add it and pick a winner, use **Add a house "
@@ -245,6 +261,7 @@ async def apply(
                     )
             elif item.kind == CHANGE:
                 if (CHANGE, item.number) in held:
+                    out.held.append(Held(item, tuple(held_with[CHANGE, item.number])))
                     out.skipped.append(
                         f"Rule {item.number} in the file now says something that may clash with "
                         f"{held[CHANGE, item.number]}, so it wasn't changed. To change it and pick "
