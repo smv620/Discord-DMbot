@@ -22,6 +22,7 @@ from typing import Any, TypeGuard
 
 import aiohttp
 
+from dmbot import service_spend
 from dmbot.ai import OUT_OF_FUNDS, AIOutOfFunds
 
 API_BASE = "https://api.voyageai.com"
@@ -227,4 +228,12 @@ class Voyage:
         usage = reply.get("usage")
         if isinstance(usage, dict) and isinstance(usage.get("total_tokens"), int):
             self.tokens += usage["total_tokens"]
+            # The units, unpriced (no list price is on file; a guess is never recorded, #3672)
+            service_spend.record(
+                "voyage",
+                self.embed_model if path.endswith("embeddings") else self.rerank_model,
+                service_spend.SEARCH,
+                units_in=usage["total_tokens"],
+                unpriced=True,
+            )
         return reply

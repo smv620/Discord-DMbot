@@ -8,26 +8,7 @@ prices: any discount, credit or volume plan is not counted.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-
-@dataclass(frozen=True, slots=True)
-class Price:
-    dollars: float
-    unit: str
-    source: str  # the page it was read from
-    checked: str  # the date it was read, YYYY-MM-DD
-
-
-# Deepgram Nova-3, English, pay as you go. Core sends each piece of speech as a short file
-# (the pre-recorded API, dmbot.transcription.deepgram), billed per second.
-DEEPGRAM_PRERECORDED = Price(
-    0.0043, "per audio minute (billed per second)", "https://deepgram.com/pricing", "2026-10-09"
-)
-# For reference only: core does not use the streaming API.
-DEEPGRAM_STREAMING = Price(
-    0.0048, "per audio minute (billed per second)", "https://deepgram.com/pricing", "2026-10-09"
-)
+from dmbot.prices import DEEPGRAM_PRERECORDED, DEEPGRAM_STREAMING, Price  # noqa: F401
 
 _ANTHROPIC = "https://platform.claude.com/docs/en/about-claude/pricing"
 # Anthropic, base (uncached) tokens: model id -> (input, output) per million tokens. Core

@@ -42,6 +42,7 @@ SERVICES = ("anthropic", "gemini", "deepgram", "elevenlabs", "voyage")  # = the 
 TRANSCRIBE, RECAP_AUDIO, SEARCH = "transcribe", "recap_audio", "search"
 
 OwnerOf = Callable[[int, str], Awaitable[int | None]]
+CampaignOf = Callable[[int], str | None]  # the campaign a server is playing now, if any
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +70,7 @@ _Pending = tuple[int, str, str, str, str, int | None, str | None]
 _pending: dict[_Pending, Totals] = {}
 _db: Database | None = None
 _owner_of: OwnerOf | None = None
+_campaign_of: CampaignOf | None = None
 _clock: Callable[[], float] = time.time
 _source = PLAY
 _plans: dict[tuple[int, str], tuple[str, float]] = {}
@@ -83,12 +85,15 @@ def configure(
     clock: Callable[[], float] = time.time,
     *,
     source: str = PLAY,
+    campaign_of: CampaignOf | None = None,
 ) -> None:
     """Called once at startup. `owner_of(guild_id, campaign_id)` is the campaign's owner (the
     same lookup the AI credits use), or None. With no database nothing is recorded. `source`
-    `sample` for a sample run's process, so its spend is its own."""
-    global _db, _owner_of, _clock, _source
+    `sample` for a sample run's process, so its spend is its own. `campaign_of(guild_id)` is the
+    campaign a server is playing now, for a live call that knows its server and no campaign."""
+    global _db, _owner_of, _clock, _source, _campaign_of
     _db, _owner_of, _clock, _source = db, owner_of, clock, source if source == SAMPLE else PLAY
+    _campaign_of = campaign_of
 
 
 def month_start(now: float) -> int:
@@ -107,14 +112,19 @@ def record(
     micro_usd: int = 0,
     refused: int = 0,
     unpriced: bool = False,
+    guild_id: int | None = None,
 ) -> None:
-    """Add one call to the totals. Never waits, never raises: the call's own result stands."""
+    """Add one call to the totals. Never waits, never raises: the call's own result stands.
+    `guild_id`: the server, for a live call that has it (Deepgram's clip) and no log context."""
     if _db is None:
         return
     try:
         if service not in SERVICES:
             return
-        guild_id, campaign_id = logs.current_context()
+        context_guild, campaign_id = logs.current_context()
+        guild_id = guild_id if guild_id is not None else context_guild
+        if campaign_id is None and guild_id is not None and _campaign_of is not None:
+            campaign_id = _campaign_of(guild_id)
         key: _Pending = (
             month_start(_clock()),
             service,

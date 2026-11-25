@@ -35,6 +35,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from dmbot import service_spend
 from dmbot.devtools import sample_name, sample_respell
 from dmbot.devtools.sample_run import characters, costs, counts, map_step, plan, steps
 from dmbot.devtools.sample_run import decide as decide_mod
@@ -313,6 +314,7 @@ async def run(
         args.commit, tool="sample_run"
     )  # before the run: it cannot mask an error
     db = await Database.open(url, migrate=False, max_size=4)
+    service_spend.configure(db, None, source=service_spend.SAMPLE)  # (its AI cost is its own)
     done: list[Step] = []
     spent: list[costs.CostLine] = []  # the recap's own figures, for the block at the end (#4087)
     where: list[str] = []  # the campaign's id once it is known: the ledger is read from it
@@ -562,6 +564,7 @@ async def run(
         # The bot's own AI by step, read here so a run that stopped part way still counts what the
         # bot spent before it stopped (the db is open on every path only until the next line).
         ledger = await _ledger(db, args.guild, where[0], say) if where else []
+        await service_spend.flush()
         await db.close()
         for done_cid in where:  # (this run is over: its campaign may be replaced again, #5247)
             steps.MADE_HERE.discard(done_cid)
@@ -756,6 +759,7 @@ async def _make_room(
     except ValueError as exc:
         raise SampleError(str(exc)) from exc
     db = await Database.open(url, migrate=False, max_size=2)
+    service_spend.configure(db, None, source=service_spend.SAMPLE)
     try:
         campaigns = steps.campaign_store(db)
         await steps.require_paid(db, args.dm, int(time.time()), guild_id=args.guild)

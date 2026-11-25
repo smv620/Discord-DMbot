@@ -1285,7 +1285,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # it needs the campaign's owner, found the first time a job charges.
         credits.configure(recaps.db if recaps is not None else None, self._owner_of_campaign)
         # What each paid call costs, as business totals for the admin Costs page (#3672).
-        service_spend.configure(recaps.db if recaps is not None else None, self._owner_of_campaign)
+        service_spend.configure(
+            recaps.db if recaps is not None else None,
+            self._owner_of_campaign,
+            # the campaign a live call's server is playing now (a clip knows only its server)
+            campaign_of=lambda gid: t.campaign_id if (t := self.tables.get(gid)) else None,
+        )
         # (server, campaign) -> its read in progress: one a campaign, several a server (#4551)
         self._lore_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
         self._lore_swept: dict[int, float] = {}  # server -> when its queue was last swept
