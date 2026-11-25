@@ -6,6 +6,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { pcIconWords as w } from "../content/pc-icon-words";
+import { pcPictureWords as pw } from "../content/pc-picture-words";
 import type { AccountApi, IconChoice, PictureItem, WebNode } from "./api";
 import SavingWait from "./SavingWait";
 
@@ -107,7 +108,7 @@ export default function PcIconRow({
         )}
         {canPickPictures && (
           <button type="button" class="button secondary" aria-expanded={picking} aria-disabled={busy} onClick={() => setPicking((open) => !open)}>
-            {picking ? w.closePicker : w.setPicture}
+            {picking ? pw.closePicker : pw.setPicture}
           </button>
         )}
         {choice !== "default" && (
@@ -128,36 +129,36 @@ export default function PcIconRow({
       </div>
       {picking && canPickPictures && (
         <div class="stack" role="group" aria-labelledby={`pc-pictures-${node.id}`}>
-          <h5 id={`pc-pictures-${node.id}`}>{w.pickerHeading}</h5>
-          {looking && <p class="small muted" role="status">{w.loading}</p>}
+          <h5 id={`pc-pictures-${node.id}`}>{pw.pickerHeading}</h5>
+          {looking && <p class="small muted" role="status">{pw.loading}</p>}
           {lookProblem && (
             <>
-              <p class="warn small" role="alert">{w.lookFailed}</p>
+              <p class="warn small" role="alert">{pw.lookFailed}</p>
               <button type="button" class="button secondary" onClick={() => void look()}>
-                {w.tryAgain}
+                {pw.tryAgain}
               </button>
             </>
           )}
-          {shown !== null && !looking && pickable(shown, isDm).length === 0 && !more && <p class="small">{w.noPictures}</p>}
+          {shown !== null && !looking && pickable(shown, isDm).length === 0 && !more && <p class="small">{pw.noPictures}</p>}
           <ul class="stack small" style={{ maxHeight: "22rem", overflowY: "auto" }}>
             {pickable(shown ?? [], isDm).map((p) => (
               <li key={p.code} class="row">
-                <img src={p.previewUrl} alt={w.pictureAlt(p.description)} width={64} height={64} loading="lazy" />
+                <img src={p.previewUrl} alt={pw.pictureAlt(p.description)} width={64} height={64} loading="lazy" />
                 <button
                   type="button"
                   class="button secondary"
                   aria-disabled={busy}
-                  aria-label={p.description ? w.usePictureNamed(p.description) : undefined}
+                  aria-label={p.description ? pw.usePictureNamed(p.description) : undefined}
                   onClick={() => void go(async () => { const refused = await onChoose("custom", pictureId(p)); if (!refused) setPicking(false); return refused; }, w.done)}
                 >
-                  {w.usePicture}
+                  {pw.usePicture}
                 </button>
               </li>
             ))}
           </ul>
           {more && !looking && shown && (
             <button type="button" class="button secondary" onClick={() => void look(shown[shown.length - 1]?.cursor)}>
-              {w.more}
+              {pw.more}
             </button>
           )}
         </div>

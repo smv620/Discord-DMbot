@@ -13,6 +13,7 @@ import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
 import WebMap from "../src/account/WebMap";
 import { pcIconWords as w } from "../src/content/pc-icon-words";
+import { pcPictureWords as pw } from "../src/content/pc-picture-words";
 
 const live = vi.hoisted(() => ({ on: true }));
 vi.mock("../src/content/pc-icons-switch", () => ({
@@ -170,8 +171,8 @@ describe("Set a picture (#3622, core #5280)", () => {
     await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.click((await screen.findAllByText(/Mira Voss/, { selector: "text" }))[0] as HTMLElement);
     const row = (await screen.findByRole("group", { name: w.heading }, { timeout: 8000 })) as HTMLElement;
-    fireEvent.click(within(row).getByRole("button", { name: w.setPicture }));
-    const use = await within(row).findAllByRole("button", { name: new RegExp(w.usePicture) });
+    fireEvent.click(within(row).getByRole("button", { name: pw.setPicture }));
+    const use = await within(row).findAllByRole("button", { name: new RegExp(pw.usePicture) });
     fireEvent.click(use[0] as HTMLElement);
     await waitFor(() => expect(api.calls.some((c) => /:n1:custom:\d+$/.test(c))).toBe(true));
     const again = (await screen.findByRole("group", { name: w.heading })) as HTMLElement;
@@ -186,8 +187,8 @@ describe("Set a picture (#3622, core #5280)", () => {
     await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.click((await screen.findAllByText(/Mira Voss/, { selector: "text" }))[0] as HTMLElement);
     const row = (await screen.findByRole("group", { name: w.heading }, { timeout: 8000 })) as HTMLElement;
-    fireEvent.click(within(row).getByRole("button", { name: w.setPicture }));
-    fireEvent.click((await within(row).findAllByRole("button", { name: new RegExp(w.usePicture) }))[0] as HTMLElement);
+    fireEvent.click(within(row).getByRole("button", { name: pw.setPicture }));
+    fireEvent.click((await within(row).findAllByRole("button", { name: new RegExp(pw.usePicture) }))[0] as HTMLElement);
     await waitFor(() => expect(api.calls.filter((c) => /:n1:custom:\d+$/.test(c)).length).toBe(2));
     const again = (await screen.findByRole("group", { name: w.heading })) as HTMLElement;
     fireEvent.click(await within(again).findByRole("button", { name: w.undoLabel }));
@@ -200,21 +201,21 @@ describe("Set a picture (#3622, core #5280)", () => {
     let n = 0;
     api.pictures = async () => ({ ...pages[n++]!, isDm: false, usage: null, sessions: [], posters: [] });
     render(<PcIconRow node={pc({ iconHas: { discord: true, dndbeyond: true, pictures: true } })} api={api} refId="1.a" onChoose={async () => null} undo={false} onUndo={async () => null} />);
-    fireEvent.click(screen.getByRole("button", { name: w.setPicture }));
-    expect((await screen.findAllByRole("button", { name: new RegExp(w.usePicture) })).length).toBe(1);
+    fireEvent.click(screen.getByRole("button", { name: pw.setPicture }));
+    expect((await screen.findAllByRole("button", { name: new RegExp(pw.usePicture) })).length).toBe(1);
   });
 
   it("offers no picker when the campaign has no pictures to pick", () => {
     render(<PcIconRow node={pc({ iconHas: { discord: true, dndbeyond: true, pictures: false } })} api={mockApi("table")} refId="1.a" onChoose={async () => null} undo={false} onUndo={async () => null} />);
-    expect(screen.queryByRole("button", { name: w.setPicture })).toBeNull();
+    expect(screen.queryByRole("button", { name: pw.setPicture })).toBeNull();
   });
 
   it("says so when none of the pictures may be picked", async () => {
     const api = mockApi("table");
     api.pictures = async () => ({ pictures: [pic(1, { dmOnly: true })], more: false, isDm: true, usage: null, sessions: [], posters: [] });
     render(<PcIconRow node={pc({ iconHas: { discord: true, dndbeyond: true, pictures: true } })} api={api} refId="1.a" onChoose={async () => null} undo={false} onUndo={async () => null} />);
-    fireEvent.click(screen.getByRole("button", { name: w.setPicture }));
-    expect(await screen.findByText(w.noPictures)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: pw.setPicture }));
+    expect(await screen.findByText(pw.noPictures)).toBeTruthy();
   });
 
   it("posts the picture's id with the choice", async () => {
