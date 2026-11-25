@@ -9,6 +9,7 @@ import type {
   NameAnswerResult,
   IconChoice,
   ClarifyName,
+  ConnectionSaidRead,
   NameCheckList,
   NamesFixed,
   CleanupView,
@@ -81,6 +82,8 @@ export function withPictureIcons(graph: WebGraph, root: string): WebGraph {
     ),
   };
 }
+
+const saidPath = (ref: string): string => `/me/campaigns/${encodeURIComponent(ref)}/connections/read`;
 
 export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Partial<AccountApi> {
   // The party record's door answers with {answer}; the answer is waited for like the other queued changes (#4778 a2).
@@ -194,6 +197,14 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     },
     nameChecks: async (ref) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
+    saidSend: async (ref, input) => (await call("POST", saidPath(ref), input)) as { answer: string },
+    saidRead: async (ref, answer) => (await call("GET", `${saidPath(ref)}/${encodeURIComponent(answer)}`)) as ConnectionSaidRead,
+    saidUse: async (ref, answer, use) => {
+      await call("POST", `${saidPath(ref)}/${encodeURIComponent(answer)}/use`, use);
+    },
+    saidUndo: async (ref, answer) => {
+      await call("POST", `${saidPath(ref)}/${encodeURIComponent(answer)}/undo`);
+    },
     // One name on its own page (#3604): the same address as its answer, read with GET; the core door comes with #3596/#3602.
     clarifyName: async (ref, id) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check/${encodeURIComponent(id)}`)) as ClarifyName,

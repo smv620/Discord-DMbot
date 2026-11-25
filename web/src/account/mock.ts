@@ -1013,6 +1013,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let houseFileNow: HouseFileRequest | null = null;
   let houseFileLooks = 0;
   let loreLooks = 0;
+  const saidJobs = new Map<string, { text: string; looks: number; job: "read" | "use" | "undo"; edit?: string | undefined; partly?: boolean }>(); // (say a connection in words, #5293)
   let quickLooks = 0; // (the half-second counts reads of a running job, #3534 part 3)
   let aiFeedLooks = 0;
   // DMbot's own matches (#3602): two waiting in the table scenario, answered one at a time.
@@ -3195,6 +3196,69 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         loreNow = { ...loreNow, state: "done", stage: "done", namesFound: 4, linksFound: 3, updatedAt: at, waiting: { place: 5, character: 7, group: 2 } };
       loreNow = { ...loreNow, serverNow: at };
       return loreNow;
+    },
+    // Say a connection in words (#5293; core #5298): a read waits one look, reads one, then is ready. Words with "nothing" are read as no
+    // connection, "unreadable" fail, "secret" ask who knows from the start, and every ready read has two things DMbot understood.
+    async saidSend(ref, input) {
+      calls.push(`saidSend:${ref}:${input.a}:${input.b}:${input.edit ?? "-"}:${input.text.length}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (input.text.length > 1000 || input.text.trim() === "") throw new ApiError("bad-text");
+      if (input.text.includes("hourfull")) throw new ApiError("hour-full");
+      if (input.text.includes("busy")) throw new ApiError("slow-down");
+      const answer = `said-${saidJobs.size + 1}`;
+      saidJobs.set(answer, { text: input.text, looks: 0, job: "read", edit: input.edit });
+      return { answer };
+    },
+    async saidRead(ref, answer) {
+      calls.push(`saidRead:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const job = saidJobs.get(answer);
+      if (!job) throw new ApiError("not-found");
+      job.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { startedAt: at - job.looks, updatedAt: at, serverNow: at };
+      if (job.job === "undo" && job.text.includes("undofail") && job.looks >= 2) return { ...base, job: "undo", stage: "failed", state: "failed" as const, reason: "failed" };
+      if (job.job !== "read" && job.looks >= 2) {
+        return { ...base, job: job.job, stage: "done", state: "done" as const, ...(job.job === "use" ? { canUndo: true } : { partly: job.partly ?? false }) };
+      }
+      if (job.job !== "read") return { ...base, job: job.job, stage: "fixing", state: "running" as const };
+      if (job.looks < 2) return { ...base, job: "read", stage: job.looks < 1 ? "waiting" : "reading", state: "running" as const };
+      if (job.text.includes("unreadable")) return { ...base, job: "read", stage: "failed", state: "failed" as const, reason: "unreadable" };
+      if (job.text.includes("nothing")) return { ...base, job: "read", stage: "failed", state: "failed" as const, reason: "nothing" };
+      return {
+        ...base,
+        job: "read",
+        stage: "done",
+        state: "done" as const,
+        proposals: [
+          { number: 1, first: "Mara", second: "Tavin", kind: "owes", words: "owes", secret: false, sentence: "Mara “owes” Tavin" },
+          { number: 2, first: "Tavin", second: "Mara", kind: "knows", words: "knows", secret: job.text.includes("secret"), sentence: "Tavin knows Mara" },
+        ],
+        whoKnows: job.text.includes("secret") ? "dm" : "everyone",
+        characters: [{ id: "n1", name: "Tavin" }],
+        leftOut: job.text.includes("stranger") ? ["Zed"] : [],
+        replacing: job.edit ? true : null,
+      };
+    },
+    async saidUse(ref, answer, use) {
+      calls.push(`saidUse:${ref}:${answer}:${use.picks.join(",")}:${use.who}:${use.characters.join(",")}`);
+      await reachable();
+      signedIn();
+      const job = saidJobs.get(answer);
+      if (!job) throw new ApiError("not-found");
+      if (use.picks.length === 0) throw new ApiError("bad-choice");
+      saidJobs.set(answer, { ...job, job: "use", looks: 0 });
+    },
+    async saidUndo(ref, answer) {
+      calls.push(`saidUndo:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const job = saidJobs.get(answer);
+      if (!job) throw new ApiError("not-found");
+      saidJobs.set(answer, { ...job, job: "undo", looks: 0, partly: job.text.includes("partly") });
     },
     // The half-second counts read (#3534 part 3): numbers only; the words climb with each look of a running upload.
     async waitCounts(ref, kind, id) {
