@@ -7,6 +7,9 @@
 // failure says what happened and what to do next. Its own file, loaded only when the DM opens it, so the Story Graph keeps its weight.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+// What Discord counts: the words with their spaces collapsed.
+const tidy = (s: string): string => s.split(/\s+/).filter(Boolean).join(" ");
+
 import { SAID_MAX, saidWords as w } from "../content/connection-said-words";
 import { type AccountApi, ApiError, type ConnectionSaidRead } from "./api";
 import WorkProgress from "./WorkProgress";
@@ -14,7 +17,15 @@ import WorkProgress from "./WorkProgress";
 const POLL_MS = 1500;
 const POLL_LIMIT = 80; // about two minutes: a read can take up to ninety seconds
 
-type Phase = "form" | "reading" | "choose" | "using" | "used" | "undoing" | "undone";
+type Phase =
+  | "form"
+  | "reading"
+  | "choose"
+  | "using"
+  | "used"
+  | "undoing"
+  | "undone"
+  | "stuck";
 
 export default function ConnectionSaid({
   api,
@@ -43,45 +54,94 @@ export default function ConnectionSaid({
   const [seen, setSeen] = useState<ConnectionSaidRead | null>(null); // the last look (the wait panel reads it)
   const [read, setRead] = useState<ConnectionSaidRead | null>(null); // the ready read (what DMbot understood)
   const [picks, setPicks] = useState<Set<number>>(new Set());
-  const [who, setWho] = useState<"everyone" | "dm" | "some" | "keep">("everyone");
+  const [who, setWho] = useState<"everyone" | "dm" | "some" | "keep">(
+    "everyone",
+  );
   const [partly, setPartly] = useState(false);
   const box = useRef<HTMLTextAreaElement>(null);
+  const waitBox = useRef<HTMLDivElement>(null);
+  const lastJob = useRef<"use" | "undo">("use");
   const statusBox = useRef<HTMLParagraphElement>(null);
+  const readBox = useRef<HTMLParagraphElement>(null);
+  const sending = useRef(false); // (a double press sends once)
+  const floor = useRef(0); // the last row's time before a press: a finished row no newer than it is the earlier job's, not this one's
 
-  const waiting = phase === "reading" || phase === "using" || phase === "undoing";
+  const waiting =
+    phase === "reading" || phase === "using" || phase === "undoing";
   const job = phase === "reading" ? "read" : phase === "using" ? "use" : "undo";
+
+  // The wait takes focus, so a screen reader hears that DMbot is working and the pressed button's loss is not a loss.
+  useEffect(() => {
+    if (waiting) waitBox.current?.focus();
+  }, [waiting]);
 
   // Poll the one answer until the job we are waiting for is over (the door may still show the earlier job for a moment).
   useEffect(() => {
     if (!waiting || !answer || !api.saidRead) return;
     let live = true;
     let tries = 0;
+    let errors = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const look = async (): Promise<void> => {
       tries += 1;
       try {
         const got = await api.saidRead!(refId, answer);
         if (!live) return;
-        setSeen(got);
-        const mine = got.job === job;
-        if (mine && got.stage === "failed") return failed(got.reason ?? "failed");
+        errors = 0;
+        // Only this job's own row is shown or believed: the door may still show the earlier job for a moment, and a
+        // finished row no newer than the one seen before the press is the earlier job's (core's job id would be surer).
+        const mine =
+          got.job === job &&
+          (job === "read" ||
+            (got.updatedAt ?? 0) > floor.current ||
+            (got.stage !== "done" && got.stage !== "failed"));
+        if (mine) setSeen(got);
+        if (mine && got.stage === "failed")
+          return failed(got.reason ?? "failed");
         if (mine && got.stage === "done") return finished(got);
       } catch (error) {
         if (!live) return;
-        const kind = error instanceof ApiError ? error.kind : "network";
-        return back(w.refused[kind] ?? w.refused.server ?? "");
+        errors += 1; // (one failed look is not the end of the wait: the work may still be running)
+        if (errors >= 3) {
+          const kind = error instanceof ApiError ? error.kind : "network";
+          return back(w.refused[kind] ?? w.refused.server ?? "");
+        }
       }
       if (tries >= POLL_LIMIT) return back(w.stalled);
       timer = setTimeout(() => void look(), POLL_MS);
     };
     const failed = (reason: string): void => {
-      // A failed read goes back to the form with the words kept; a failed use or undo leaves the read to choose again.
-      setProblem(`${w.failed[reason] ?? w.failed.failed ?? ""} ${w.failedDo}`);
-      setPhase(job === "read" ? "form" : "choose");
+      // A failed read goes back to the form with the words kept; a failed use leaves the read to choose again (nothing was
+      // written); a failed undo stays on "done", so Use this can never be pressed a second time.
+      const said = w.failed[reason] ?? w.failed.failed ?? "";
+      if (job === "read") {
+        setProblem(
+          reason === "not_on_plan" || reason === "not_yours"
+            ? said
+            : `${said} ${w.failedDo}`,
+        );
+        setPhase("form");
+        setTimeout(() => box.current?.focus(), 0);
+      } else if (job === "use") {
+        setProblem(`${said} ${w.failedKeep}`);
+        setPhase("choose");
+      } else {
+        setProblem(w.undoFailed);
+        setPhase("used");
+      }
     };
     const back = (said: string): void => {
-      setProblem(said);
-      setPhase(job === "read" ? "form" : "choose");
+      // A read that never answered goes back to the form. A use or undo that did not answer may still have finished, so it
+      // only says so and never offers Use this again.
+      if (job === "read") {
+        setProblem(said);
+        setPhase("form");
+        setTimeout(() => box.current?.focus(), 0);
+      } else {
+        lastJob.current = job;
+        setProblem(w.stuck);
+        setPhase("stuck");
+      }
     };
     const finished = (got: ConnectionSaidRead): void => {
       if (job === "read") {
@@ -90,6 +150,8 @@ export default function ConnectionSaid({
         setWho(got.whoKnows ?? "everyone");
         setProblem("");
         setPhase("choose");
+        setTimeout(() => readBox.current?.focus(), 0);
+        return;
       } else if (job === "use") {
         setProblem("");
         setPhase("used");
@@ -115,37 +177,57 @@ export default function ConnectionSaid({
   }, [waiting, answer, job]);
 
   async function send(): Promise<void> {
-    const said = text.trim();
+    const said = tidy(text);
     if (said === "") return setProblem(w.empty);
     if (said.length > SAID_MAX) return setProblem(w.tooLong);
-    if (!api.saidSend) return;
+    if (!api.saidSend || sending.current) return;
+    sending.current = true;
     setProblem("");
     try {
-      const got = await api.saidSend(refId, { a, b, text: said, ...(edit ? { edit } : {}) });
+      const got = await api.saidSend(refId, {
+        a,
+        b,
+        text: said,
+        ...(edit ? { edit } : {}),
+      });
       setAnswer(got.answer);
       setSeen(null);
       setPhase("reading");
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
       setProblem(w.refused[kind] ?? w.refused.server ?? "");
+    } finally {
+      sending.current = false;
     }
   }
 
   async function use(): Promise<void> {
-    if (!answer || !read || !api.saidUse || picks.size === 0) return;
+    if (!answer || !read || !api.saidUse || sending.current) return;
+    if (picks.size === 0) return setProblem(w.pickOne);
+    sending.current = true;
+    floor.current = read.updatedAt ?? 0;
     setProblem("");
     try {
-      await api.saidUse(refId, answer, { picks: [...picks].sort((x, y) => x - y), who, characters: who === "some" ? (read.characters ?? []).map((c) => c.id) : [] });
+      await api.saidUse(refId, answer, {
+        picks: [...picks].sort((x, y) => x - y),
+        who,
+        characters:
+          who === "some" ? (read.characters ?? []).map((c) => c.id) : [],
+      });
       setSeen(null);
       setPhase("using");
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
       setProblem(w.refused[kind] ?? w.refused.server ?? "");
+    } finally {
+      sending.current = false;
     }
   }
 
   async function undo(): Promise<void> {
-    if (!answer || !api.saidUndo) return;
+    if (!answer || !api.saidUndo || sending.current) return;
+    sending.current = true;
+    floor.current = seen?.updatedAt ?? 0;
     setProblem("");
     try {
       await api.saidUndo(refId, answer);
@@ -154,14 +236,22 @@ export default function ConnectionSaid({
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
       setProblem(w.refused[kind] ?? w.refused.server ?? "");
+    } finally {
+      sending.current = false;
     }
   }
 
   const names = (read?.characters ?? []).map((c) => c.name).join(", ");
-  const secretKept = Boolean(read?.replacing) && (read?.proposals ?? []).some((p) => p.secret);
+  const secretKept =
+    Boolean(read?.replacing) && (read?.proposals ?? []).some((p) => p.secret);
   return (
     <section class="stack" aria-labelledby={`said-${a}-${b}`}>
       <h4 id={`said-${a}-${b}`}>{w.heading}</h4>
+      {problem && (
+        <p class="warn" role="alert">
+          {problem}
+        </p>
+      )}
       {phase === "form" && (
         <div class="stack">
           <label class="field" for={`said-text-${a}-${b}`}>
@@ -178,7 +268,7 @@ export default function ConnectionSaid({
             onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
           />
           <p class="small muted" id={`said-count-${a}-${b}`}>
-            {w.count(text.length, SAID_MAX)}
+            {w.count(tidy(text).length, SAID_MAX)}
           </p>
           <div class="row">
             <button type="button" class="button" onClick={() => void send()}>
@@ -191,21 +281,29 @@ export default function ConnectionSaid({
         </div>
       )}
       {waiting && (
-        <WorkProgress
-          stage={w.stages[seen?.stage ?? "waiting"] ?? w.working}
-          startedAt={seen?.startedAt}
-          updatedAt={seen?.updatedAt}
-          serverNow={seen?.serverNow}
-          state={seen?.state === "stalled" ? "stalled" : "running"}
-          whatToDo={w.stalled}
-        />
+        <div ref={waitBox} tabIndex={-1}>
+          <WorkProgress
+            stage={
+              phase === "using"
+                ? w.using
+                : phase === "undoing"
+                  ? w.undoing
+                  : (w.stages[seen?.stage ?? "waiting"] ?? w.working)
+            }
+            startedAt={seen?.startedAt}
+            updatedAt={seen?.updatedAt}
+            serverNow={seen?.serverNow}
+            state={seen?.state === "stalled" ? "stalled" : "running"}
+            whatToDo={w.stalled}
+          />
+        </div>
       )}
       {phase === "choose" && read && (
         <div class="stack">
-          <p>
+          <p tabIndex={-1} ref={readBox}>
             <strong>{w.readAs}</strong>
           </p>
-          <ul class="stack">
+          <ul class="stack" aria-label={w.readAs}>
             {(read.proposals ?? []).map((p) => (
               <li key={p.number}>
                 <label>
@@ -214,7 +312,8 @@ export default function ConnectionSaid({
                     checked={picks.has(p.number)}
                     onChange={(e) => {
                       const next = new Set(picks);
-                      if ((e.target as HTMLInputElement).checked) next.add(p.number);
+                      if ((e.target as HTMLInputElement).checked)
+                        next.add(p.number);
                       else next.delete(p.number);
                       setPicks(next);
                     }}
@@ -228,31 +327,56 @@ export default function ConnectionSaid({
             <legend>{w.whoHeading}</legend>
             {(["everyone", "dm"] as const).map((v) => (
               <label key={v}>
-                <input type="radio" name={`said-who-${a}-${b}`} checked={who === v} onChange={() => setWho(v)} /> {w.who[v]}
+                <input
+                  type="radio"
+                  name={`said-who-${a}-${b}`}
+                  checked={who === v}
+                  onChange={() => setWho(v)}
+                />{" "}
+                {w.who[v]}
               </label>
             ))}
             {names !== "" && (
               <label>
-                <input type="radio" name={`said-who-${a}-${b}`} checked={who === "some"} onChange={() => setWho("some")} /> {w.who.some(names)}
+                <input
+                  type="radio"
+                  name={`said-who-${a}-${b}`}
+                  checked={who === "some"}
+                  onChange={() => setWho("some")}
+                />{" "}
+                {w.who.some(names)}
               </label>
             )}
             {secretKept && (
               <label>
-                <input type="radio" name={`said-who-${a}-${b}`} checked={who === "keep"} onChange={() => setWho("keep")} /> {w.who.keep}
+                <input
+                  type="radio"
+                  name={`said-who-${a}-${b}`}
+                  checked={who === "keep"}
+                  onChange={() => setWho("keep")}
+                />{" "}
+                {w.who.keep}
               </label>
             )}
           </fieldset>
           {(read.leftOut ?? []).length > 0 && (
             <p class="small">
-              {w.leftOut((read.leftOut ?? []).map((n) => `“${n}”`).join(", "))} {w.leftOutKept}
+              {w.leftOut((read.leftOut ?? []).map((n) => `“${n}”`).join(", "))}
+              {who === "dm" ? ` ${w.leftOutKept}` : ""}
             </p>
           )}
-          <p class="small muted">{read.replacing ? w.replaces : w.canUndo}</p>
+          <p class="small muted">
+            {w.nothingYet} {read.replacing ? w.replaces : w.canUndo}
+          </p>
           <div class="row">
-            <button type="button" class="button" aria-disabled={picks.size === 0} onClick={() => void use()}>
+            <button type="button" class="button" onClick={() => void use()}>
               {w.use}
             </button>
-            <button type="button" class="button secondary" onClick={() => setPhase("form")}>
+            <button
+              type="button"
+              class="button secondary"
+              onClick={() => setPhase("form")}
+            >
               {w.again}
             </button>
             <button type="button" class="button secondary" onClick={onClose}>
@@ -268,7 +392,11 @@ export default function ConnectionSaid({
           </p>
           <div class="row">
             {(seen?.canUndo ?? true) && (
-              <button type="button" class="button secondary" onClick={() => void undo()}>
+              <button
+                type="button"
+                class="button secondary"
+                onClick={() => void undo()}
+              >
                 {w.undo}
               </button>
             )}
@@ -276,6 +404,23 @@ export default function ConnectionSaid({
               {w.close}
             </button>
           </div>
+        </div>
+      )}
+      {phase === "stuck" && (
+        <div class="row">
+          <button
+            type="button"
+            class="button"
+            onClick={() => (
+              setProblem(""),
+              setPhase(lastJob.current === "use" ? "using" : "undoing")
+            )}
+          >
+            {w.checkAgain}
+          </button>
+          <button type="button" class="button secondary" onClick={onClose}>
+            {w.close}
+          </button>
         </div>
       )}
       {phase === "undone" && (
@@ -287,11 +432,6 @@ export default function ConnectionSaid({
             {w.close}
           </button>
         </div>
-      )}
-      {problem && (
-        <p class="warn" role="alert">
-          {problem}
-        </p>
       )}
     </section>
   );

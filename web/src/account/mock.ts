@@ -3220,6 +3220,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       job.looks += 1;
       const at = Math.floor(Date.now() / 1000);
       const base = { startedAt: at - job.looks, updatedAt: at, serverNow: at };
+      if (job.job === "undo" && job.text.includes("undofail") && job.looks >= 2) return { ...base, job: "undo", stage: "failed", state: "failed" as const, reason: "failed" };
       if (job.job !== "read" && job.looks >= 2) {
         return { ...base, job: job.job, stage: "done", state: "done" as const, ...(job.job === "use" ? { canUndo: true } : { partly: job.partly ?? false }) };
       }

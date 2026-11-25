@@ -78,14 +78,14 @@ describe("what DMbot understood", () => {
     expect(screen.getByText("Mara “owes” Tavin")).toBeTruthy();
     expect(screen.getByText("Tavin knows Mara")).toBeTruthy();
     expect((screen.getByRole("radio", { name: w.who.everyone }) as HTMLInputElement).checked).toBe(true);
-    expect(screen.getByText(w.canUndo)).toBeTruthy();
+    expect(screen.getByText(`${w.nothingYet} ${w.canUndo}`)).toBeTruthy();
   });
 
   it("starts on Only me when DMbot read it as a secret, and says a correction replaces the old one", async () => {
     show({ edit: "l1" });
     await read("A secret between them.");
     expect((screen.getByRole("radio", { name: w.who.dm }) as HTMLInputElement).checked).toBe(true);
-    expect(screen.getByText(w.replaces)).toBeTruthy();
+    expect(screen.getByText(`${w.nothingYet} ${w.replaces}`)).toBeTruthy();
     expect(screen.getByRole("radio", { name: w.who.keep })).toBeTruthy(); // (a secret one being corrected may stay as it was)
   });
 
@@ -150,6 +150,33 @@ describe("using it", () => {
     expect(onClose).toHaveBeenCalled();
     expect(calls(api, "saidUse")).toEqual([]);
   });
+
+  it("sends Use this once for a double press, and a failed Undo stays on done, never back on Use this", async () => {
+    const { api } = show();
+    await read("undofail now");
+    const use = screen.getByRole("button", { name: w.use });
+    fireEvent.click(use);
+    fireEvent.click(use);
+    await screen.findByText(w.used, {}, slow);
+    expect(calls(api, "saidUse")).toHaveLength(1);
+    fireEvent.click(screen.getByRole("button", { name: w.undo }));
+    expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.undoFailed);
+    expect(screen.queryByRole("button", { name: w.use })).toBeNull();
+    expect(screen.getByRole("button", { name: w.undo })).toBeTruthy(); // (it can be pressed again)
+  }, 30_000);
+
+  it("sends As it was before when a hidden connection is corrected, and offers it for no other read", async () => {
+    const { api } = show({ edit: "l1" });
+    await read("A secret between them.");
+    fireEvent.click(screen.getByRole("radio", { name: w.who.keep }));
+    fireEvent.click(screen.getByRole("button", { name: w.use }));
+    await screen.findByText(w.used, {}, slow);
+    expect(calls(api, "saidUse")[0]).toBe("saidUse:100.cmp1:said-1:1,2:keep:");
+    cleanup();
+    show();
+    await read("A secret between them.");
+    expect(screen.queryByRole("radio", { name: w.who.keep })).toBeNull();
+  }, 30_000);
 
   it("says when part of it had changed since and was left", async () => {
     show();
