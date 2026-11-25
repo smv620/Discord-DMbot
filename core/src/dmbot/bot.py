@@ -366,6 +366,7 @@ from dmbot.memory import (
     voyage,
     waiting_now,
     web_actions,
+    web_connection_reads,
     web_report_requests,
     web_sheets,
     who_apply,
@@ -1319,6 +1320,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # A line fixed from the website's Transcripts page (#2883).
         self.web_line_fixes = web_line_fixes.ActionStore(recaps.db) if recaps is not None else None
         self._fix_tasks: dict[int, asyncio.Task[None]] = {}  # one running fix a server
+        # A connection said in the DM's own words on the website (#2940 slice C).
+        self.web_connection_reads = (
+            web_connection_reads.ActionStore(recaps.db) if recaps is not None else None
+        )
+        self._connection_tasks: dict[int, asyncio.Task[None]] = {}  # one running job a server
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
@@ -17568,6 +17574,49 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     ) -> None:
         with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
             await web_line_fixes.run_one(self, store, guild_id, item)
+
+    # ---- a connection said in words from the website (#2940): memory/web_connection_reads
+
+    async def names_lookup(self, guild_id: int, campaign_id: str) -> CampaignLookup | None:
+        return await self.lookup.get(guild_id, campaign_id) if self.lookup else None
+
+    async def run_web_connection_reads(self) -> None:
+        """Connections said in words on the website: a read, a Use this or an Undo. Each runs as a
+        tracked background task, at most one a server (a read is an AI call, a use writes the
+        graph), so the poll loop's other website actions do not wait for it. Only outcome words
+        are logged, never the DM's words."""
+        store = self.web_connection_reads
+        if store is None:
+            return
+        for guild in list(self.guilds):
+            task = self._connection_tasks.get(guild.id)
+            if task is not None and not task.done():
+                continue
+            item = await store.claim_next(guild.id)
+            if item is None:
+                continue
+            gid = guild.id
+            started = self._track(
+                self._run_connection_job(store, gid, item), f"connection-read-{gid}"
+            )
+            if started is None:  # shutting down: the row is taken again after a restart
+                return
+            self._connection_tasks[gid] = started
+
+            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
+                if self._connection_tasks.get(gid) is done:
+                    del self._connection_tasks[gid]
+
+            started.add_done_callback(forget)
+
+    async def _run_connection_job(
+        self,
+        store: web_connection_reads.ActionStore,
+        guild_id: int,
+        item: web_connection_reads.Item,
+    ) -> None:
+        with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
+            await web_connection_reads.run_one(self, store, guild_id, item)
 
     async def _graph_review_loop(self) -> None:
         """Every minute: the careful check of the DM's graph clean-up fixes that have waited 15
