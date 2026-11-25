@@ -221,7 +221,9 @@ class Cards(base.NamesTest):
     async def why(self, quote: str = "a heated debate about mithril") -> str:
         await self.know("Kesh")
         (rel,) = await self.relations()
-        await self.memory.record_link_source(GUILD, self.campaign.id, rel.id, "Notes, 9 Nov", quote)
+        await self.memory.record_link_source(
+            GUILD, self.campaign.id, rel.id, "Notes, 9 Nov", quote, kind="own_writing"
+        )
         return str(rel.id)
 
     async def test_the_dm_sees_where_a_kept_lore_connection_came_from_and_nobody_else(self) -> None:
@@ -246,7 +248,9 @@ class Cards(base.NamesTest):
         assert found is not None
         none = 'Read from your lore "Notes, 9 Nov". DMbot didn\'t keep the words.\n'
         self.assertEqual(await connection_edit.why_line(found), none)
-        await self.memory.record_link_source(GUILD, self.campaign.id, rel, "x", "*bold*")
+        await self.memory.record_link_source(
+            GUILD, self.campaign.id, rel, "x", "*bold*", kind="own_writing"
+        )
         self.assertNotIn("*bold*", await connection_edit.why_line(found))  # (the first one stays)
 
     async def test_nothing_recorded_or_a_failed_read_says_nothing(self) -> None:

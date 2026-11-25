@@ -188,6 +188,8 @@ from dmbot.memory.models import (
     SPECIES,
     STORY_LANGUAGE_MAX,
     THREAD_TYPES,
+    UPLOAD_KINDS,
+    UPLOAD_OWN_WRITING,
     WHO_SOURCE,
     WORKED_OUT_SOURCE,
     Alias,
@@ -6101,12 +6103,17 @@ class MemoryStore:
                 except MemoryRuleError:
                     log.info("A kept tie's first knower was refused")
             if link["upload"]:  # (where it came from, for the DM's "Why?", #2946)
+                # (a waiting backstory link is queued only by the 📜 read or the website's lore
+                # upload, both confirmed as the DM's own writing, #3742)
                 await w.conn.execute(
                     "INSERT INTO memory_link_sources (guild_id, campaign_id, relation_id, label,"
-                    " quote, created_at, inferred_reason) VALUES (%s, %s, %s, %s, %s, %s, '')"
-                    " ON CONFLICT DO NOTHING",
-                    (*w.ids, made.id, str(link["upload"])[:120], str(link["quote"])[:240], w.now),
-                )
+                    " quote, created_at, inferred_reason, upload_kind)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, '', %s) ON CONFLICT DO NOTHING",
+                    (
+                        *w.ids, made.id, str(link["upload"])[:120], str(link["quote"])[:240],
+                        w.now, UPLOAD_OWN_WRITING,
+                    ),
+                )  # fmt: skip
             # (answered: off the list in this same write, as the DM's own keep takes it off)
             await w.conn.execute(
                 "DELETE FROM backstory_links WHERE guild_id = %s AND campaign_id = %s AND id = %s",
@@ -6260,13 +6267,22 @@ class MemoryStore:
         label: str,
         quote: str = "",
         inferred: str = "",
+        *,
+        kind: str,
     ) -> None:
         """Remember the upload a connection was kept from (#2946), so the graph's line panel can
         tell the DM. The label is the DM's own name for the upload, cut to the column's limit;
         a connection that has one keeps the first. `quote`: the reader's own quote for the line
         (cut to 240), for the DM's "Why?" on the line panel (#3606), shown to the DM alone.
         `inferred`: why DMbot inferred it (#2959 item 5), "" for a stated one, so the "Why?" never
-        reads an inference as the DM's own text. Nothing else about the upload is stored."""
+        reads an inference as the DM's own text. Nothing else about the upload is stored.
+
+        `kind` (#3742): `UPLOAD_OWN_WRITING` for the DM's own lore or backstory (the 📜 read,
+        confirmed as own writing), else `UPLOAD_UNKNOWN`. It has no default, so a caller that reads
+        any other material (a shared adventure) must say so: the graph-improvement poster posts a
+        lore quote only from the DM's own writing."""
+        if kind not in UPLOAD_KINDS:
+            raise ValueError(f"unknown upload kind {kind!r}")
         label = clean_text(label)[:120]
         # spaces collapsed; control and zero-width characters dropped (the database refuses a NUL)
         quote = " ".join(
@@ -6280,7 +6296,8 @@ class MemoryStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "INSERT INTO memory_link_sources (guild_id, campaign_id, relation_id, label,"
-                " quote, created_at, inferred_reason) SELECT %s, %s, id, %s, %s, %s, %s"
+                " quote, created_at, inferred_reason, upload_kind)"
+                " SELECT %s, %s, id, %s, %s, %s, %s, %s"
                 " FROM memory_relations WHERE guild_id = %s AND campaign_id = %s AND id = %s"
                 " ON CONFLICT DO NOTHING",
                 (
@@ -6290,6 +6307,7 @@ class MemoryStore:
                     quote,
                     int(time.time()),
                     " ".join(inferred.split())[:80],
+                    kind,
                     guild_id,
                     campaign_id,
                     relation_id,

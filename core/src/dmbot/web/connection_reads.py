@@ -107,7 +107,9 @@ async def status(
     """Where the DM's own read stands: the shared progress shape plus `job`, and once the read is
     ready `proposals` (each `{number, first, second, kind, words, sentence, secret}`), `whoKnows`
     ("everyone", "dm" or "some"), `characters`, `leftOut` (the names that could not be placed),
-    and `replacing`. After Use this, `canUndo`. Nobody else's, and never the DM's own sentence."""
+    and `replacing` (null, or `{id, hidden}`: `hidden` when the connection being corrected is
+    secret or not yet revealed now). After Use this, `canUndo`. Nobody else's, and never the DM's
+    own sentence."""
     got = await _door(
         db,
         session,
@@ -126,7 +128,12 @@ async def status(
         now=when,
         reason=reason if reason in REASONS else ("failed" if reason else None),
     )
-    out: dict[str, Any] = {**shape, "job": got["job"], "canUndo": bool(got["canUndo"])}
+    out: dict[str, Any] = {
+        **shape,
+        "job": got["job"],
+        "jobNo": int(got["jobNo"]),  # (counts the row's jobs: a retried Use is told from the last)
+        "canUndo": bool(got["canUndo"]),
+    }
     if got["state"] == "ready" and got["job"] == "read":
         # (an entry deleted since the read leaves its proposals out; the page reads the rest)
         names = {e["id"]: e for e in (got["first"], got["second"]) if e}
