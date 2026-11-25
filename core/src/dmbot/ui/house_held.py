@@ -25,6 +25,9 @@ from dmbot.ui import house_conflicts
 from dmbot.ui.dmbot_commands import _Button, _Menu, _tell
 
 MAX_BUTTONS = 15  # three rows of five; the rest are named in the text and added by hand
+TAKEN = "That rule already has a question open, or it was answered."
+NO_CLASH = "That rule doesn't clash with your house rules any more. Add it in `/dmbot houserules`."
+ALREADY = "That rule is already in your house rules."
 LABEL_MAX = 80  # Discord's limit for a button label
 
 
@@ -43,6 +46,9 @@ class HeldView(_Menu):
         super().__init__()
         self.bot, self.campaign, self.source, self.source_name = bot, campaign, source, source_name
         self.held = list(held)[:MAX_BUTTONS]
+        # File numbers with a question open or answered: one at a time, and an answered rule is
+        # never added a second time by pressing its button again (a cancel frees it).
+        self.taken: set[int] = set()
         for h in self.held:
             verb = "Add" if h.item.kind == ADD else "Change"
             self.add_item(
@@ -83,9 +89,29 @@ class HeldView(_Menu):
             await _tell(interaction, "House rules aren't ready yet. Try again in a moment.")
             return
         item, user_id = h.item, interaction.user.id
+        if item.number in self.taken:
+            await _tell(interaction, TAKEN)
+            return
+        # The rules it clashed with, as they are now: one edited or removed since the read is
+        # compared again, and a question about words that no longer clash is not asked.
+        try:
+            now_there = await house_conflicts.existing_rules(bot, c)
+        except Exception:
+            await _tell(interaction, "I couldn't read your house rules just now. Try again.")
+            return
+        others = [o for o in h.others if o in now_there]
+        if not others:
+            await _tell(interaction, NO_CLASH)
+            return
+        self.taken.add(item.number)
         if item.kind == ADD:
 
             async def save() -> HouseRule:
+                if any(
+                    (r.rule, r.supersedes) == (item.rule, item.instead)
+                    for r in await rules.list(c.guild_id, c.id)
+                ):
+                    raise HouseRuleError(ALREADY)  # saved by another press or another DM
                 added_rule: HouseRule = await rules.add(
                     c.guild_id, c.id, user_id, item.rule, item.instead,
                     scenario=SCENARIO, wanted=item.number,
@@ -124,7 +150,7 @@ class HeldView(_Menu):
 
             saved_note = changed
             replacer = None  # a change has its own rule: nothing else to replace
-        found = Checked(tuple(Disagreement(1, other) for other in h.others))
+        found = Checked(tuple(Disagreement(1, other) for other in others))
         await house_conflicts.ask(
             interaction,
             bot,
@@ -135,6 +161,7 @@ class HeldView(_Menu):
             saved_note=saved_note,
             replace=replacer,
             done=self._answered,
+            cancelled=lambda: self.taken.discard(item.number),
         )
 
     async def _answered(self, interaction: discord.Interaction, note: str) -> None:

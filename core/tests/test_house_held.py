@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock
 
 from dmbot.rules import house_file_sync as sync
@@ -31,6 +31,11 @@ class Held(UITest):
         self.wins = SimpleNamespace(record=AsyncMock())
         self.bot.house_wins = self.wins
 
+        async def everything(guild_id: int, cid: str) -> Any:
+            return await self.store.list(guild_id, cid)
+
+        self.bot.all_house_rules = everything
+
         self.wanted: list[Any] = []
         plain_add = self.store.add
 
@@ -40,7 +45,7 @@ class Held(UITest):
             kw.pop("source_name", None)
             return await plain_add(*args, **kw)
 
-        self.store.add = add_from_file  # the file's add also carries the file's number
+        cast(Any, self.store).add = add_from_file  # the file's add also carries the file's number
 
     async def held(self, kind: str = sync.ADD) -> sync.Held:
         if kind == sync.ADD:
@@ -52,7 +57,7 @@ class Held(UITest):
                     sync.CHANGE, current.number, WORDS, None, current.rule, None, current.version
                 )
             ]
-        applied = await sync.apply(self.store, GUILD, "c1", DM, items, clash_with_rule_2)
+        applied = await sync.apply(cast(Any, self.store), GUILD, "c1", DM, items, clash_with_rule_2)
         self.assertEqual(self.store.calls, [])  # the file read saved nothing
         (held,) = applied.held
         return held
@@ -146,3 +151,44 @@ class Held(UITest):
             self.bot, self.campaigns["c1"], many, source="upload", source_name=None
         )
         self.assertEqual(len(view.children), house_held.MAX_BUTTONS)
+
+    async def test_pressing_a_button_twice_adds_the_rule_once(self) -> None:
+        view = self.view(await self.held())
+        first, second = self.it(), self.it()
+        await view.children[0].callback(first)
+        await view.children[0].callback(second)  # a question for it is already open
+        self.assertEqual(second.response.sent[-1][0], house_held.TAKEN)
+        _, question = self.asked(first)
+        await self.press(question, "New rule wins").callback(self.it())
+        again = self.it()
+        await view.children[0].callback(again)  # answered: not offered again
+        self.assertEqual(again.response.sent[-1][0], house_held.TAKEN)
+        self.assertEqual([c[0] for c in self.store.calls], ["add"])
+
+    async def test_two_questions_for_one_rule_cannot_both_add_it(self) -> None:
+        held = await self.held()
+        one, two = self.view(held), self.view(held)  # two DMs, two copies of the result
+        first, second = self.it(), self.it()
+        await one.children[0].callback(first)
+        await two.children[0].callback(second)
+        await self.press(self.asked(first)[1], "New rule wins").callback(self.it())
+        late = self.it()
+        await self.press(self.asked(second)[1], "New rule wins").callback(late)
+        self.assertEqual([c[0] for c in self.store.calls], ["add"])  # the second is refused
+
+    async def test_a_cancelled_question_can_be_opened_again(self) -> None:
+        view = self.view(await self.held())
+        first = self.it()
+        await view.children[0].callback(first)
+        await self.press(self.asked(first)[1], "Cancel").callback(self.it())
+        again = self.it()
+        await view.children[0].callback(again)
+        self.assertIn("Which one wins?", again.response.sent[-1][0])
+
+    async def test_a_rule_it_clashed_with_that_was_edited_or_removed_is_asked_again(self) -> None:
+        view = self.view(await self.held())
+        self.store.rules["c1"] = [r for r in self.store.rules["c1"] if r.number != 2]
+        it = self.it()
+        await view.children[0].callback(it)
+        self.assertEqual(it.response.sent[-1][0], house_held.NO_CLASH)
+        self.assertEqual(self.store.calls, [])

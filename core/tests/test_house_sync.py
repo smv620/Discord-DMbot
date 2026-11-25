@@ -231,7 +231,10 @@ class Pressing(SyncTest):
             # two new rules are checked in one call: the added 9 clashes, the changed 2 does not
             answer = {
                 "checks": [
-                    {"new": 1, "disagrees_with": [1]},
+                    {
+                        "new": 1,
+                        "disagrees_with": [2],
+                    },  # place 2 of rules 3 and 1 (2 is being changed): rule 1
                     {"new": 2, "disagrees_with": []},
                 ]
             }

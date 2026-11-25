@@ -387,7 +387,11 @@ async def _finish(interaction: discord.Interaction, key: str, pending: Pending) 
     result = house_file_sync.result_text(pending.applied)
     # A rule held back for a clash gets a button that opens the question (#3841).
     view: Any = None
-    campaign = await bot.campaigns.get(pending.guild_id, pending.campaign_id)
+    try:  # the result is shown even if this read fails: the rules are already applied
+        campaign = await bot.campaigns.get(pending.guild_id, pending.campaign_id)
+    except Exception:
+        log.exception("Couldn't read the campaign to finish a house-rules offer")
+        campaign = None
     if pending.applied.held and campaign is not None:
         from dmbot.ui import house_held  # (that module leads back here through the menus)
 
