@@ -46,6 +46,12 @@ def log_context(*, guild_id: int | None = None, campaign_id: str | None = None) 
             _guild.reset(guild_token)
 
 
+def current_context() -> tuple[int | None, str | None]:
+    """The server and campaign this task is tagged with (`log_context`, `set_log_context`), for the
+    cost totals to find a call's plan (#3672); None for a part that is not set."""
+    return _guild.get(), _campaign.get()
+
+
 def set_log_context(*, guild_id: int | None = None, campaign_id: str | None = None) -> None:
     """Tag the rest of the current task with these IDs.
 

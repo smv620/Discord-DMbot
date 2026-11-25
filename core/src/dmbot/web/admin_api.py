@@ -23,6 +23,7 @@ from typing import Annotated, Any, TypeGuard
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from fastapi.responses import RedirectResponse
 
+from dmbot import service_spend
 from dmbot.account_id import to_dmbot_id
 from dmbot.db import Database
 from dmbot.entitlements import GRANT_LEVELS
@@ -147,6 +148,20 @@ def router(
             cache=costs_cache,
             fetch=costs_fetch,
         )
+
+    @api.get("/costs/recorded")
+    async def costs_recorded(session: Admin, month: str | None = None) -> dict[str, Any]:
+        """What DMbot's own paid calls cost in a month, summed by service, model, feature, plan and
+        source (#3672): business totals, never a campaign. Costs are in millionths of a dollar."""
+        now = clock()
+        if month is None:
+            month = admin_costs.this_month(now)
+        if not admin_costs.MONTH.fullmatch(month):
+            raise HTTPException(status_code=400, detail="bad_month")
+        year, number = int(month[:4]), int(month[5:7])
+        start = int(datetime.datetime(year, number, 1, tzinfo=datetime.UTC).timestamp())
+        rows = await service_spend.read_month(db, start)
+        return {"month": month, "rows": rows}
 
     @api.get("/me")
     async def me(session: Admin) -> dict[str, str]:

@@ -244,6 +244,9 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Database.grant_writer()); account deletion deletes the person's own.
     ("SELECT, INSERT, UPDATE, DELETE", ("access_grants",)),
     ("SELECT, INSERT", ("access_log",)),
+    # What the paid calls cost (#3672): added to by the bot's flush, read by the admin page, each
+    # through its own setting (Database.spend_writer / spend_admin); nothing is ever deleted here.
+    ("SELECT, INSERT, UPDATE", ("service_spend",)),
 )
 
 # Consent given under older wording never counts for an import: the store door refuses a caller
