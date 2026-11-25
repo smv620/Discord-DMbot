@@ -1210,6 +1210,18 @@ class CampaignStore:
             "UPDATE campaign_pictures SET message_id = 0 WHERE guild_id = %s AND campaign_id = %s",
             (guild_id, campaign_id),
         )
+        # A rule set the campaign published moves with it (#2551): its rows follow the campaign
+        # (migration 0215's cascade) with the same id and share codes, so every follower keeps
+        # following. Only the publisher changes a set, so the new owner becomes the publisher and
+        # the editors the old publisher named are dropped (the new one names their own).
+        await conn.execute(
+            "UPDATE rule_sets SET created_by = %s WHERE guild_id = %s AND campaign_id = %s",
+            (new_owner, guild_id, campaign_id),  # the account, as authorship is kept (0432)
+        )
+        await conn.execute(
+            "DELETE FROM rule_set_editors WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
         await conn.execute("SELECT set_config('dmbot.moving_campaign', %s, true)", (campaign_id,))
         await conn.execute("SELECT set_config('dmbot.moving_to', %s, true)", (str(target),))
         cur = await conn.execute(
