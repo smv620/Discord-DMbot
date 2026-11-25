@@ -210,3 +210,136 @@ class OnTheDoor(WithChecks):
         got = await web.read_answers(self.web, self.session, self.ref, [name, other.value.id])
         self.assertEqual(set(got), {name})  # (the other campaign's name is not this campaign's)
         self.assertEqual(got[name][0]["label"], "new place")
+
+    # ---- the ranked fill and the detail of a guess (#5264) ----------------------------------
+
+    async def sql(self, statement: str, *args: Any) -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(statement, args)
+
+    async def ranked(self, name: str) -> list[dict[str, Any]]:
+        return (await web.read_answers(self.web, self.session, self.ref, [name])).get(name, [])
+
+    async def test_a_name_with_no_stored_answer_gets_the_entries_the_ranking_finds(self) -> None:
+        name = await self.suggest("Valeria")
+        valeria = await self.known("Valeria Thorne", "character")
+        await self.known("Brewner", "character")  # shares no word: not a guess
+        got = await self.ranked(name)
+        self.assertEqual([a["answer"] for a in got], [{"action": "same", "known": valeria}])
+        self.assertEqual(got[0]["label"], "a.k.a. Valeria Thorne, a character")
+        self.assertEqual(got[0]["confidence"], "")
+
+    async def test_stored_answers_come_first_and_the_list_is_at_most_five(self) -> None:
+        name = await self.suggest("Vale")
+        stored = await self.known("Ilse", "character")
+        await self.keep(name, StoredAnswer(ENTITY, "likely", target_id=stored))
+        for n in range(7):
+            await self.known(f"Vale Keep {n}", "place")
+        got = await self.ranked(name)
+        self.assertEqual(len(got), 5)
+        self.assertEqual((got[0]["answer"]["known"], got[0]["confidence"]), (stored, "likely"))
+        self.assertEqual(len({a["answer"]["known"] for a in got}), 5)  # none offered twice
+
+    async def test_the_same_names_in_the_same_order_as_discords_card(self) -> None:
+        from dmbot.memory import who_top
+
+        name = await self.suggest("Vale")
+        for n in ("Vale Keep", "Dale Vale", "Valerie", "Ilse Vale", "Old Vale Road", "Valley"):
+            await self.known(n, "place" if "Keep" in n or "Road" in n else "character")
+        entity = await self.memory.entity(GUILD, self.one.id, name)
+        assert entity is not None
+        card = await who_top.top_for(
+            self.memory, GUILD, self.one.id, entity, opted_in=set(), include_hidden=True
+        )
+        page = await self.ranked(name)
+        self.assertEqual(
+            [a["answer"]["known"] for a in page], [t.target_id for t in card if t.target_id]
+        )
+        self.assertEqual([a["label"] for a in page], [t.label for t in card if t.target_id])
+
+    async def test_an_entry_with_a_secret_name_is_not_a_guess_on_the_page(self) -> None:
+        name = await self.suggest("Vale")
+        await self.known("Vale Keep", "place", secret=True)
+        visible = await self.known("Vale Road", "place")
+        got = await self.ranked(name)
+        self.assertEqual([a["answer"]["known"] for a in got], [visible])
+
+    async def test_a_guess_carries_its_strongest_connection_and_the_cards_sentence(self) -> None:
+        name = await self.suggest("Mira")
+        mira = await self.known("Mira Vell", "character")
+        keep = await self.known("Bryn Shander", "place")
+        await self.memory.add_relation(
+            GUILD, self.one.id, mira, "located_in", keep, source="dm", confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        got = await self.ranked(name)
+        self.assertIn("Bryn Shander", got[0]["label"])  # "a.k.a. Mira Vell, in Bryn Shander"
+        await self.sql(
+            "INSERT INTO memory_card_summaries (guild_id, campaign_id, entity_id, who)"
+            " VALUES (%s, %s, %s, 'Mira Vell, the innkeeper of Bryn Shander')",
+            GUILD, self.one.id, mira,
+        )  # fmt: skip
+        off = await self.ranked(name)
+        self.assertNotIn("innkeeper", off[0]["label"])  # (the sentence waits for its switch)
+        on = await web.read_answers(self.web, self.session, self.ref, [name], card_summary=True)
+        self.assertEqual(on[name][0]["label"], "a.k.a. Mira Vell, the innkeeper of Bryn Shander")
+
+    async def test_a_secret_connection_is_never_a_detail_and_a_player_gets_nothing(self) -> None:
+        name = await self.suggest("Mira")
+        mira = await self.known("Mira Vell", "character")
+        den = await self.known("The Thieves' Den", "faction")
+        await self.memory.add_relation(
+            GUILD, self.one.id, mira, "member_of", den, source="dm", confidence=1.0,
+            status=CONFIRMED, secret=True,
+        )  # fmt: skip
+        got = await self.ranked(name)
+        self.assertNotIn("Thieves", got[0]["label"])
+        self.assertEqual(
+            await self.code(web.read_answers(self.web, await self.bob(), self.ref, [name])),
+            "not_found",
+        )
+
+    async def test_a_stored_new_answer_uses_a_slot_and_the_rest_are_ranked(self) -> None:
+        name = await self.suggest("Vale")
+        await self.keep(name, StoredAnswer(NEW, "maybe", new_kind="character"))
+        for n in range(6):
+            await self.known(f"Vale Keep {n}", "place")
+        got = await self.ranked(name)
+        self.assertEqual(len(got), 5)
+        self.assertEqual(got[0]["answer"], {"action": "confirm", "kind": "character"})
+
+    async def test_two_names_at_once_each_get_their_five(self) -> None:
+        names = [await self.suggest(f"Vale{n}") for n in range(2)]
+        for n in range(25):
+            await self.known(f"Vale Keep {n}", "place")
+        got = await web.read_answers(self.web, self.session, self.ref, names)
+        self.assertTrue(all(len(v) == 5 for v in got.values()))
+
+    async def test_three_stored_answers_are_filled_to_five_by_the_ranking(self) -> None:
+        name = await self.suggest("Vale")
+        known = [await self.known(f"Ilse {n}", "character") for n in range(3)]
+        await self.keep(name, *(StoredAnswer(ENTITY, "likely", target_id=k) for k in known))
+        for n in range(4):
+            await self.known(f"Vale Keep {n}", "place")
+        got = await self.ranked(name)
+        self.assertEqual([a["answer"]["known"] for a in got[:3]], known)  # stored, as kept
+        self.assertEqual(len(got), 5)
+
+    async def test_the_new_doors_answer_a_dm_only_and_never_another_campaigns_entries(self) -> None:
+        name = await self.suggest("Vale")
+        await self.known("Vale Keep", "place")
+        theirs = await self.memory.add_entity(
+            GUILD, self.two.id, type="place", name="Vale Hold", source="dm", status=CONFIRMED
+        )
+        bob = await self.bob()
+        async with self.web.user(bob.user_id, session=bob.id_hash) as conn:
+            cur = await conn.execute(
+                "SELECT dmbot_web_who_candidates(%s, %s, %s) AS a,"
+                " dmbot_web_who_details(%s, %s, %s) AS b",
+                (GUILD, self.one.id, [name], GUILD, self.one.id, [theirs.value.id]),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual((row["a"], row["b"]), (None, None))  # a player: nothing
+        got = await self.ranked(name)
+        self.assertNotIn("Vale Hold", " ".join(a["label"] for a in got))  # (another campaign's)
