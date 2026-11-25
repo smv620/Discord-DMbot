@@ -33,6 +33,13 @@ async function open(api = mockApi("table")) {
   return api;
 }
 
+/** The Undo shows while the merge's last read is still going; it takes a press only once that is done. */
+async function pressUndo() {
+  const button = (await screen.findByRole("button", { name: w.undo })) as HTMLButtonElement;
+  await waitFor(() => expect(button.disabled).toBe(false));
+  fireEvent.click(button);
+}
+
 describe("the groups", () => {
   it("show each group's names with kind and how often heard, all ticked, the most heard to keep", async () => {
     await open();
@@ -53,6 +60,7 @@ describe("the groups", () => {
     fireEvent.click(c.getByRole("button", { name: w.mergeFor("Bel-Eros") }));
     expect(await c.findByText(w.oneTicked)).toBeTruthy();
     fireEvent.click(boxes[1]!);
+    fireEvent.click(boxes[2]!);
     fireEvent.click(boxes[0]!);
     fireEvent.click(c.getByRole("button", { name: w.mergeFor("Bel-Eros") }));
     expect(await c.findByText(w.keepUnticked)).toBeTruthy();
@@ -86,7 +94,7 @@ describe("a merge", () => {
     fireEvent.click(c.getByRole("button", { name: w.mergeFor("Bel-Eros") }));
     fireEvent.click(c.getByRole("button", { name: w.yes }));
     await screen.findByText(w.done(2, "Bel-Eros"));
-    fireEvent.click(await screen.findByRole("button", { name: w.undo }));
+    await pressUndo();
     expect(await screen.findByText(w.undone)).toBeTruthy();
     expect(api.calls.some((x) => x.startsWith("undoLookAlikes:100.cmp1:21"))).toBe(true);
     await waitFor(() => expect(screen.getByRole("heading", { name: w.heading(2) })).toBeTruthy());
@@ -100,8 +108,45 @@ describe("a merge", () => {
     const c = within(card(0));
     fireEvent.click(c.getByRole("button", { name: w.mergeFor("Bel-Eros") }));
     fireEvent.click(c.getByRole("button", { name: w.yes }));
-    fireEvent.click(await screen.findByRole("button", { name: w.undo }));
+    await pressUndo();
     expect(await screen.findByText(w.tooLate)).toBeTruthy();
+  });
+});
+
+describe("a merge that does not finish as expected", () => {
+  it("sends the unticked names as not the same, and adds Discord's extra line when a secret name was joined", async () => {
+    const api = await open();
+    const real = api.mergeLookAlikes!.bind(api);
+    api.mergeLookAlikes = async (ref, body, onLook) => ({ ...(await real(ref, body, onLook)), secret: "A secret name was joined; players can't see it." });
+    const c = within(card(0));
+    fireEvent.click(c.getAllByRole("checkbox")[2]!); // Baleros unticked
+    fireEvent.click(c.getByRole("button", { name: w.mergeFor("Bel-Eros") }));
+    fireEvent.click(c.getByRole("button", { name: w.yes }));
+    expect(await screen.findByText(`${w.done(1, "Bel-Eros")} A secret name was joined; players can't see it.`)).toBeTruthy();
+    expect(api.calls.some((x) => x.startsWith("mergeLookAlikes") && x.includes(`"apart":["${"l3".repeat(16)}"]`))).toBe(true);
+  });
+
+  it("says it is still working when the bot has not answered yet, never that nothing changed", async () => {
+    const api = await open();
+    api.mergeLookAlikes = async () => {
+      throw new ApiError("still-waiting");
+    };
+    const c = within(card(0));
+    fireEvent.click(c.getByRole("button", { name: w.mergeFor("Bel-Eros") }));
+    fireEvent.click(c.getByRole("button", { name: w.yes }));
+    expect(await screen.findByText(w.stillWaiting)).toBeTruthy();
+    expect(screen.queryByText(w.couldNot)).toBeNull();
+  });
+
+  it("a group that comes back after Undo starts fresh, with no confirmation open", async () => {
+    await open();
+    const c = within(card(0));
+    fireEvent.click(c.getByRole("button", { name: w.mergeFor("Bel-Eros") }));
+    fireEvent.click(c.getByRole("button", { name: w.yes }));
+    await screen.findByText(w.done(2, "Bel-Eros"));
+    await pressUndo();
+    await waitFor(() => expect(screen.getByRole("heading", { name: w.heading(2) })).toBeTruthy());
+    expect(screen.queryByRole("button", { name: w.yes })).toBeNull();
   });
 });
 

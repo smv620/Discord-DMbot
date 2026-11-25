@@ -6,8 +6,10 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { lookAlikeWords as w } from "../content/lookalikes-words";
-import { ApiError, type AccountApi, type LookAlikeName } from "./api";
+import { ApiError, type AccountApi, type JobProgress, type LookAlikeName } from "./api";
 import SavingWait from "./SavingWait";
+import { stageWords } from "../content/work-progress";
+import WorkProgress from "./WorkProgress";
 
 /** How many groups show at once (Discord shows one; five keep the page short, like the other lists). */
 const SHOWN = 5;
@@ -15,6 +17,7 @@ const SHOWN = 5;
 /** The plain line for an answer that did not go through, by the error the API mapped. */
 function sayFailure(error: unknown): string {
   if (error instanceof ApiError) {
+    if (error.kind === "still-waiting") return w.stillWaiting;
     if (error.kind === "undo-late") return w.tooLate;
     if (error.kind === "changed" || error.kind === "gone") return w.changed;
     if (error.kind === "only-dm" || error.kind === "not-allowed" || error.kind === "not-found") return w.notAllowed;
@@ -48,6 +51,7 @@ export default function LookAlikes({
   const [failed, setFailed] = useState(false);
   const [views, setViews] = useState<Record<string, View>>({});
   const [busy, setBusy] = useState(false);
+  const [seen, setSeen] = useState<JobProgress | null>(null);
   const [said, setSaid] = useState<{ ok: boolean; text: string; undo?: { batch: number; count: number; keep: string } } | null>(null);
   const [problem, setProblem] = useState<{ group: string; text: string } | null>(null);
   const flight = useRef(false);
@@ -83,11 +87,14 @@ export default function LookAlikes({
     flight.current = true;
     setBusy(true);
     setSaid(null);
+    setSeen(null);
     try {
       await run();
     } catch (error) {
       if (live.current) setSaid({ ok: false, text: sayFailure(error) });
     } finally {
+      // A group that comes back (after Undo, or a refused answer) starts fresh: all ticked, nothing asked.
+      if (live.current) setViews({});
       await read();
       flight.current = false;
       if (live.current) setBusy(false);
@@ -106,8 +113,8 @@ export default function LookAlikes({
       const v = view(g);
       const others = g.filter((n) => v.ticked.has(n.id) && n.id !== v.keep);
       const keep = g.find((n) => n.id === v.keep);
-      if (!api.mergeLookAlikes || !keep) return;
-      const got = await api.mergeLookAlikes(campaignRef, { keep: keep.id, others: others.map((n) => n.id), apart: g.filter((n) => !v.ticked.has(n.id)).map((n) => n.id) });
+      if (!api.mergeLookAlikes || !keep) throw new ApiError("server");
+      const got = await api.mergeLookAlikes(campaignRef, { keep: keep.id, others: others.map((n) => n.id), apart: g.filter((n) => !v.ticked.has(n.id)).map((n) => n.id) }, (p) => setSeen(p));
       if (live.current) {
         const text = `${w.done(others.length, keep.name)}${got.secret ? ` ${got.secret}` : ""}`;
         setSaid({ ok: true, text, ...(got.batch !== null ? { undo: { batch: got.batch, count: others.length, keep: keep.name } } : {}) });
@@ -142,21 +149,30 @@ export default function LookAlikes({
       {heading && <h3 id={`${id ?? "lookalikes"}-heading`}>{w.heading(groups.length)}</h3>}
       <div role="status" aria-live="polite">
         {said?.ok && <p class="ok">{said.text}</p>}
-        {said?.ok && said.undo && (
-          <p class="small">
-            {w.undoHint(said.undo.count, said.undo.keep)}{" "}
-            <button type="button" class="button secondary" disabled={busy} onClick={() => void undo(said.undo!.batch)}>
-              {w.undo}
-            </button>
-          </p>
-        )}
+        {said?.ok && said.undo && <p class="small">{w.undoHint(said.undo.count, said.undo.keep)}</p>}
       </div>
+      {said?.ok && said.undo && (
+        <p>
+          <button type="button" class="button secondary" disabled={busy} onClick={() => void undo(said.undo!.batch)}>
+            {w.undo}
+          </button>
+        </p>
+      )}
       {said && !said.ok && (
         <p class="warn" role="alert">
           {said.text}
         </p>
       )}
-      <SavingWait active={busy} stage={w.stage} whatToDo={w.slow} />
+      {failed && groups && (
+        <p class="warn small" role="alert">
+          {w.refreshFailed}
+        </p>
+      )}
+      {busy && seen !== null ? (
+        <WorkProgress stage={stageWords({ working: w.stage }, seen.stage) || w.stage} startedAt={seen.startedAt} updatedAt={seen.updatedAt} serverNow={seen.serverNow} state={seen.state} whatToDo={w.slow} />
+      ) : (
+        <SavingWait active={busy} stage={w.stage} whatToDo={w.slow} />
+      )}
       {groups.length === 0 && <p class="small muted">{w.none}</p>}
       {shown.map((g, i) => {
         const v = view(g);
@@ -184,8 +200,8 @@ export default function LookAlikes({
               ))}
             </div>
             <div class="row">
-              <label for={`${key}-keep`}>{w.keepLabel}</label>
-              <select id={`${key}-keep`} value={v.keep} onChange={(e) => change(g, { keep: (e.target as HTMLSelectElement).value, confirming: false })}>
+              <label for={`lookalike-${i}-keep`}>{w.keepLabel}</label>
+              <select id={`lookalike-${i}-keep`} value={v.keep} onChange={(e) => change(g, { keep: (e.target as HTMLSelectElement).value, confirming: false })}>
                 {g.map((n) => (
                   <option key={n.id} value={n.id}>
                     {n.name}
