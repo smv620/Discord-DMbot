@@ -176,7 +176,9 @@ class Connecting(WithChecks):
     async def test_ten_reads_an_hour_and_one_the_ai_never_answered_is_not_counted(self) -> None:
         for _ in range(10):
             await self.say()
-            await self.sql("UPDATE web_connection_reads SET state = 'done' WHERE state = 'waiting'")
+            await self.sql(
+                "UPDATE web_connection_reads SET state = 'done', words = '' WHERE state = 'waiting'"
+            )
         self.assertEqual(await self.code(self.say()), "hour_full")
         await self.sql("UPDATE web_connection_reads SET state = 'failed', error = 'unreadable'")
         await self.say()  # none counted any more
@@ -258,7 +260,7 @@ class Connecting(WithChecks):
         await self.say()
         await self.work(Hosted(self, plan=False))
         self.assertEqual((await self.rows())[0]["error"], "not_on_plan")
-        await self.sql("UPDATE web_connection_reads SET state = 'done' WHERE true")
+        await self.sql("UPDATE web_connection_reads SET state = 'done', words = '' WHERE true")
         await self.say()
         await self.sql("DELETE FROM campaign_dms WHERE campaign_id = %s", self.one.id)
         await self.work(Hosted(self, answer_of(owes())))
