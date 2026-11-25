@@ -343,6 +343,8 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         # The maps they uploaded go, and the maps they answered "use it?" for stay with nobody as
         # the DM who said so (#3274, #4344).
         await conn.execute("SELECT dmbot_forget_maps()")
+        # The reads of their own words about two names, asked for on the website (#2940).
+        await conn.execute("SELECT dmbot_forget_connection_reads()")
         # A character drawn with a picture they posted goes back to the default icon (#3623).
         await conn.execute("SELECT dmbot_forget_pc_icon_pictures()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))

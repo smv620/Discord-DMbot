@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,11 +23,9 @@ import discord
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import fit_message
 from dmbot.memory import connection_said as said
-from dmbot.memory import kin, link_edits
-from dmbot.memory.link_words import link_words
+from dmbot.memory import link_edits
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED, Relation, name_key
-from dmbot.memory.ontology import FALLBACK_PREDICATE
+from dmbot.memory.models import CONFIRMED, Relation
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
@@ -69,15 +66,10 @@ def _limit(bot: Any) -> said.ReadLimit:
 
 
 def sentence(first: str, second: str, kind: str, words: str, subject_kind: str = "") -> str:
-    """One proposal as a plain sentence, built from its fields: "Mara “owes” Tavin". The DM's own
-    words are quoted, as a card quotes them; the fixed kinds read as DMbot words them. The names and
-    words are escaped, so a name can never format the message."""
-    if kind == FALLBACK_PREDICATE and words:
-        how = f"“{_md(words)}”"
-    else:
-        directional = kind == "kin_of" and kin.directional(words)
-        how = _md(link_words(kind, words, directional, subject_kind, feeling=True))
-    return f"{_md(first)} {how} {_md(second)}"
+    """One proposal as a plain sentence, built from its fields: "Mara “owes” Tavin"
+    (`connection_said.plain_sentence`, the website's words too). The names and words are escaped,
+    so a name can never format the message."""
+    return _md(said.plain_sentence(first, second, kind, words, subject_kind))
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,22 +82,6 @@ class Pair:
     first: said.End
     second: said.End
     replacing: Relation | None
-
-
-def _end(names: CampaignLookup, entry_id: str) -> said.End | None:
-    entity = names.entities.get(entry_id)
-    if entity is None:
-        return None
-    also = tuple(
-        dict.fromkeys(
-            n.text
-            for n in names.names
-            if n.entity_id == entry_id
-            and not n.secret
-            and name_key(n.text) != name_key(entity.name)
-        )
-    )
-    return said.End(entry_id, entity.name, also)
 
 
 async def _pair(
@@ -127,7 +103,7 @@ async def _pair(
     names = await _names(interaction, campaign)
     if memory is None or names is None:
         return None
-    first, second = _end(names, first_id), _end(names, second_id)
+    first, second = said.end_from(names, first_id), said.end_from(names, second_id)
     replacing = None
     if replacing_id is not None:
         replacing = await memory.relation(campaign.guild_id, campaign.id, replacing_id)
@@ -248,23 +224,6 @@ async def read_and_ask(
         await _replace(interaction, "Something went wrong. Nothing was changed.", None)
 
 
-def _characters(names: CampaignLookup, said_names: Sequence[str]) -> tuple[list[str], list[str]]:
-    """The characters the DM named as knowing it, and the names that matched none or several."""
-    found: list[str] = []
-    left: list[str] = []
-    for written in said_names:
-        hits = {
-            n.entity_id
-            for n in names.by_key.get(name_key(written), ())
-            if (e := names.entities.get(n.entity_id)) is not None and e.type == "character"
-        }
-        if len(hits) == 1:
-            found.extend(hits)
-        else:
-            left.append(written)
-    return list(dict.fromkeys(found)), left
-
-
 class ConfirmSaid(_Menu):
     """**DMbot read this as:** each connection as a plain sentence, who knows it, and the DM's
     choice. Nothing has been written."""
@@ -281,7 +240,7 @@ class ConfirmSaid(_Menu):
         self.pair, self.back_id, self.text, self.got = pair, back_id, text, got
         self._busy = asyncio.Lock()  # two presses at once must not write twice
         self.done = False
-        self.characters, self.left_out = _characters(pair.names, got.who.names)
+        self.characters, self.left_out = said.characters_named(pair.names, got.who.names)
         # Who knows: what the words said; else, for a correction of a hidden one, as it was
         hidden_before = pair.replacing is not None and (
             pair.replacing.secret or pair.replacing.unrevealed

@@ -28,7 +28,10 @@ from dmbot.memory import background as bg
 from dmbot.memory import kin, link_edits
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_keep import undo_batches
+from dmbot.memory.link_words import link_words
+from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, LIVE, MemoryRuleError, Relation, name_key
+from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.memory.store import MemoryStore
 
 log = logging.getLogger(__name__)
@@ -420,3 +423,52 @@ NO_ANSWER = frozenset({"call_failed", "cut_or_refused", "unreadable"})
 def no_answer(got: Said) -> bool:
     """The AI never gave an answer to read (down, cut, refused, unreadable): not the DM's read."""
     return not got.proposals and bool(got.lost) and {k for k, _ in got.lost} <= NO_ANSWER
+
+
+def end_from(names: CampaignLookup, entry_id: str) -> End | None:
+    """One entry as the reader is given it: its name and its other public names (a secret one is
+    never offered). None when the entry is not in the lookup."""
+    entity = names.entities.get(entry_id)
+    if entity is None:
+        return None
+    also = tuple(
+        dict.fromkeys(
+            n.text
+            for n in names.names
+            if n.entity_id == entry_id
+            and not n.secret
+            and name_key(n.text) != name_key(entity.name)
+        )
+    )
+    return End(entry_id, entity.name, also)
+
+
+def characters_named(
+    names: CampaignLookup, said_names: Sequence[str]
+) -> tuple[list[str], list[str]]:
+    """The characters the DM named as knowing it, and the names that matched none or several."""
+    found: list[str] = []
+    left: list[str] = []
+    for written in said_names:
+        hits = {
+            n.entity_id
+            for n in names.by_key.get(name_key(written), ())
+            if (e := names.entities.get(n.entity_id)) is not None and e.type == "character"
+        }
+        if len(hits) == 1:
+            found.extend(hits)
+        else:
+            left.append(written)
+    return list(dict.fromkeys(found)), left
+
+
+def plain_sentence(first: str, second: str, kind: str, words: str, subject_kind: str = "") -> str:
+    """One proposal as a plain sentence built from its fields ("Mara “owes” Tavin"): the same words
+    on Discord (which escapes them) and on the website. The DM's own words are quoted, as a card
+    quotes them; the fixed kinds read as DMbot words them."""
+    if kind == FALLBACK_PREDICATE and words:
+        how = f"“{words}”"
+    else:
+        directional = kind == "kin_of" and kin.directional(words)
+        how = link_words(kind, words, directional, subject_kind, feeling=True)
+    return f"{first} {how} {second}"
