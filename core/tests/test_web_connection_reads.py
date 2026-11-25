@@ -22,7 +22,7 @@ from dmbot.web.app import create_app
 from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, HEADERS, NOW
-from tests.test_web_api import FakeDiscord, settings
+from tests.test_web_api import ALICE, FakeDiscord, settings
 from tests.test_web_name_checks import GUILD, WithChecks
 
 WORDS = "Mara owes Tavin the favour, not the other way round. Only Tavin knows."
@@ -305,8 +305,8 @@ class Connecting(WithChecks):
                 payments=FakeProvider(b"h" * 32, "https://x.example"),
                 clock=lambda: NOW,
             )
-            token = await sessions.sign_in_by_email(
-                self.web, self.session.user_id, now=NOW, days=30
+            token = await sessions.sign_in(
+                self.web, cast(Any, ALICE), [await self._guild()], now=NOW, days=30
             )
             async with httpx.AsyncClient(
                 transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
@@ -317,6 +317,6 @@ class Connecting(WithChecks):
                     headers=HEADERS,
                     json={"a": self.mara, "b": self.tavin, "text": WORDS},
                 )
-            self.assertEqual(got.status_code, 202 if on else 404)
+            self.assertEqual(got.status_code, 202 if on else 404, got.text)
             if on:
                 self.assertIn("answer", got.json())
