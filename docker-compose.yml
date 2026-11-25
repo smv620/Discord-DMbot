@@ -218,6 +218,8 @@ services:
       DMBOT_WEB_LORE: ${DMBOT_WEB_LORE:-0}
       # (the same switch as the bot's: the card's one sentence on a top guess, #5264)
       DMBOT_CARD_SUMMARY: ${DMBOT_CARD_SUMMARY:-0}
+      # (the Shared story adventure on the website, #3694: off, its routes answer 404)
+      DMBOT_WEB_ADVENTURE: ${DMBOT_WEB_ADVENTURE:-0}
       # (a connection said in words on the website, #2940: off, its routes answer 404)
       DMBOT_WEB_CONNECTION_SAID: ${DMBOT_WEB_CONNECTION_SAID:-0}
       DMBOT_WEB_PAUSE: ${DMBOT_WEB_PAUSE:-0}

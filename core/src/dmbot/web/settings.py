@@ -167,6 +167,9 @@ class WebSettings:
     # The card's one sentence on a top guess (#5264; the bot's DMBOT_CARD_SUMMARY, read here the
     # same way): off, a guess's detail is its strongest tie or its kind, as on Discord's card.
     card_summary_on: bool = False
+    # The Shared story adventure on the website (#3694; DMBOT_WEB_ADVENTURE): off, its routes answer
+    # 404, so nothing is shown or queued before the page and the bot's half are there.
+    adventure_on: bool = False
     # A connection said in the DM's own words (#2940; DMBOT_WEB_CONNECTION_SAID): off, its routes
     # answer 404, so nothing is queued before the page is there.
     connection_said_on: bool = False
@@ -481,6 +484,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         raise ConfigError(
             f'DMBOT_WEB_REPORT_MAKE must be 1 (on) or 0 (off), got "{report_make_raw}".'
         )
+    adventure_raw = (get("DMBOT_WEB_ADVENTURE") or "0").lower()
+    if adventure_raw not in ("0", "1", "true", "false", "on", "off"):
+        raise ConfigError(f'DMBOT_WEB_ADVENTURE must be 1 (on) or 0 (off), got "{adventure_raw}".')
     said_raw = (get("DMBOT_WEB_CONNECTION_SAID") or "0").lower()
     if said_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError(f'DMBOT_WEB_CONNECTION_SAID must be 1 (on) or 0 (off), got "{said_raw}".')
@@ -537,6 +543,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         report_make_on=report_make_raw in ("1", "true", "on"),
         lore_on=lore_raw in ("1", "true", "on"),
         card_summary_on=card_raw in ("1", "true", "on"),
+        adventure_on=adventure_raw in ("1", "true", "on"),
         connection_said_on=said_raw in ("1", "true", "on"),
         pause_on=pause_raw in ("1", "true", "on"),
         story_mode_on=story_mode_raw in ("1", "true", "on"),

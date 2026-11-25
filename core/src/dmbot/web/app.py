@@ -44,6 +44,7 @@ from dmbot.site_ask.service import Limited, SiteAsk
 from dmbot.transcript import import_link
 from dmbot.web import (
     admin_api,
+    adventure,
     all_names,
     campaign_backup,
     campaign_delete,
@@ -4967,6 +4968,19 @@ def create_app(
                 now=clock(),
                 enforce_plans=settings.enforce_plans,
             )
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    # What DMbot holds of the DM's adventure (#3694 slice A): read-only, a DM of the campaign
+    # only. 404 while DMBOT_WEB_ADVENTURE is off. Counts and the DM's file names, never a word of
+    # the book.
+    @app.get("/me/campaigns/{ref}/adventure")
+    async def me_adventure(ref: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await adventure.held(db, session, ref)
         except RecapError:
             raise HTTPException(status_code=404, detail="not_found") from None
 
