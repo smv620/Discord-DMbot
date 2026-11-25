@@ -353,7 +353,7 @@ export interface HandoverServer {
   current: boolean;
   /** False: DMbot has to be added to it first. */
   botIn: boolean;
-  /** Why the campaign can't move to this server: a code (today `shares_rules`), never set on the server
+  /** Why the campaign can't move to this server: a code (none is sent today since #5291), never set on the server
    * it runs on now. Missing from an API older than #2550. */
   why?: string | null;
 }
@@ -368,9 +368,7 @@ export type HandoverLook =
       from: { name: string };
       server: { id: string; name: string };
       canAccept: boolean;
-      /** `shares_rules`: the campaign can only be handed over on the server it runs on now, and the person is
-       * not in that server (#2550); `canAccept` is false. */
-      why: null | "try_it" | "no_plan" | "no_slot" | "owner" | "shares_rules";
+      why: null | "try_it" | "no_plan" | "no_slot" | "owner";
       servers: HandoverServer[];
       /** A plain sentence, safe to show, on why the move this person asked for last time did not happen; the
        * offer is open again. Only the person who accepted ever gets one. Missing from an API older than #2550. */
@@ -3343,7 +3341,6 @@ export type ApiErrorKind =
   | "ended" // a hand-over offer that has ended (#2534)
   | "owner-offer" // the person is the campaign's own owner (#2534)
   | "bad-server" // a server DMbot can't run the campaign on (#2534)
-  | "shares-rules" // the campaign shares a rule set, so it can't move to another server yet (#2550)
   | "session-running" // a session is running, so the campaign can't be deleted (#2555)
   | "name-mismatch" // the typed name isn't the campaign's (#2555)
   | "no-backup" // a Try It campaign has no backup (#2555)
@@ -4248,7 +4245,6 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   not_receiving: "not-receiving",
   working: "restore-working",
   too_slow: "too-slow",
-  shares_rules: "shares-rules",
   not_the_owner: "not-allowed",
   session_running: "session-running",
   name_mismatch: "name-mismatch",
