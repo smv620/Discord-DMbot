@@ -28,11 +28,14 @@ export default function AddAll({
   api,
   campaign,
   upload,
+  source = "upload",
   onChanged,
 }: {
   api: AccountApi;
   campaign: string;
-  upload: LoreUpload;
+  /** The upload (or, with `source` "import", the import) and the names of it still waiting, by kind. */
+  upload: Pick<LoreUpload, "id" | "waiting">;
+  source?: "upload" | "import";
   /** Called after an add or an Undo is done, so the page reads the waiting counts again. */
   onChanged?: () => void;
 }) {
@@ -128,7 +131,7 @@ export default function AddAll({
     const waiting = upload.waiting ?? {};
     const chosen = kinds === "all" ? Object.keys(waiting) : kinds;
     setRequested(sumCounts(Object.fromEntries(chosen.map((k) => [k, waiting[k] ?? 0]))));
-    start("add", () => api.confirmKinds!(campaign, upload.id, kinds), kinds);
+    start("add", () => api.confirmKinds!(campaign, upload.id, kinds, source), kinds);
   }
 
   function undo(): void {

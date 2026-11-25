@@ -1647,6 +1647,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
   const made = new Map<number, string>();
   const staleSeen = new Set<string>(); // recaps whose scene 3 already answered `stale` (#2577)
   const namesUndone = new Set<string>(); // name fixes undone (#2645), by recap and id
+  const importWaitingNow: Record<string, number> = { place: 5, character: 7 }; // an import's names still waiting, by kind (#5276)
   const moreNamesPressed = new Set<string>(); // campaigns whose 📝 More names was pressed (#5081)
   // 🔗 Look-alikes (#5259): two groups; a merge or None are the same takes one away, and Undo of batch 21 puts the merged one back.
   const lookAlikeGroups = new Map<string, { id: string; name: string; kind: string; heard: number }[][]>();
@@ -2376,6 +2377,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const now = Math.floor(Date.now() / 1000);
       const file = lastImportFile ?? "session-1-2026-09-14.txt";
       return {
+        // The names the scan found that still wait for the DM (#5276): counts by kind, once the import is done.
+        ...(state === "done" ? { waiting: { ...importWaitingNow } } : {}),
         // The whole import's progress, the shared shape (#2564).
         import: {
           stage: state === "done" ? "done" : "cleaning",
@@ -3185,12 +3188,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       loreNow = { ...loreNow, serverNow: at };
       return loreNow;
     },
-    async confirmKinds(ref, upload, kinds) {
-      calls.push(`confirmKinds:${ref}:${upload}:${kinds === "all" ? "all" : kinds.join(",")}`);
+    async confirmKinds(ref, upload, kinds, source) {
+      calls.push(`confirmKinds:${ref}:${upload}:${kinds === "all" ? "all" : kinds.join(",")}${source === "import" ? ":import" : ""}`);
       await reachable();
       signedIn();
-      if (!loreNow || upload !== loreNow.id) throw new ApiError("not-found");
-      const waiting = loreNow.waiting ?? {};
+      // An import's names (#5276) are the two kinds its scan left; an upload's are the lore reading's.
+      if (source !== "import" && (!loreNow || upload !== loreNow.id)) throw new ApiError("not-found");
+      const waiting = source === "import" ? importWaitingNow : (loreNow?.waiting ?? {});
       const chosen = kinds === "all" ? Object.keys(waiting) : kinds;
       const counts = Object.fromEntries(chosen.filter((k) => (waiting[k] ?? 0) > 0).map((k) => [k, waiting[k]!]));
       const at = Math.floor(Date.now() / 1000);
