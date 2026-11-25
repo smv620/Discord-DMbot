@@ -2,7 +2,7 @@ name: Coverage
 
 # Coverage is a report, not a gate (#1858), and measuring it added 5 to 6 minutes to every part of
 # development's core run (#5228), so it has its own workflow: every night on development, and on
-# demand (Actions, "Coverage", Run workflow). The same eight parts as ci.yml, nothing skipped; each
+# demand (Actions, "Coverage", Run workflow). The same twelve parts as ci.yml, nothing skipped; each
 # part keeps `coverage.xml` and its log as artifacts for 30 days. A failing test makes the run red.
 on:
   schedule:
@@ -18,13 +18,13 @@ concurrency:
 
 jobs:
   coverage-parts:
-    name: coverage (part ${{ matrix.part }} of 8)
+    name: coverage (part ${{ matrix.part }} of 12)
     timeout-minutes: 60
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     strategy:
       fail-fast: false  # a red part must not hide what the others found
       matrix:
-        part: [1, 2, 3, 4, 5, 6, 7, 8]
+        part: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     defaults:
       run:
         working-directory: core
@@ -48,7 +48,7 @@ jobs:
       DMBOT_TEST_DATABASE_URL: postgresql://dmbot:dmbot@localhost:5432/dmbot_test
       DMBOT_TEST_SUPERUSER_URL: postgresql://postgres:postgres@localhost:5432/dmbot_test
       DMBOT_REQUIRE_DB_TESTS: "1"
-      DMBOT_TEST_SHARD: ${{ matrix.part }}/8
+      DMBOT_TEST_SHARD: ${{ matrix.part }}/12
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -94,7 +94,7 @@ jobs:
           -c "ALTER SYSTEM SET full_page_writes = off"
           -c "SELECT pg_reload_conf()"
       - name: pytest with coverage
-        # The same eight parts as ci.yml (`tests/shard.py`), nothing skipped or deselected, with
+        # The same twelve parts as ci.yml (`tests/shard.py`), nothing skipped or deselected, with
         # coverage measured (#1858). A report, not a gate: no threshold. A failing test fails this
         # part, and so the run, red (never silent).
         run: |
