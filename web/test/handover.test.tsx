@@ -417,7 +417,7 @@ describe("moving to another server (#2550)", () => {
     const api = await open("#shares");
     await screen.findByText(w.offer("The Silver Hall", "Mira"));
     expect((screen.getByRole("radio", { name: /Sunday Table/ }) as HTMLInputElement).disabled).toBe(true);
-    expect(screen.getByText(w.serverWhy.shares_rules!)).toBeTruthy();
+    expect(screen.getByText(w.cantMoveThere)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: w.accept }));
     expect(await screen.findByText(w.accepted)).toBeTruthy();
     expect(calls(api, "handoverAccept")).toEqual(["handoverAccept:shares:s1"]);
@@ -446,26 +446,9 @@ describe("moving to another server (#2550)", () => {
     expect(calls(api, "handoverAccept")).toEqual(["handoverAccept:open:s2"]);
   }, 20_000);
 
-  it("the real client reads 202 moving and 409 shares_rules", async () => {
+  it("the real client reads 202 moving", async () => {
     const moving = httpApi("https://api.example", (async () => new Response(JSON.stringify({ status: "moving" }), { status: 202 })) as typeof fetch);
     expect(await moving.handoverAccept!("tok", "s2")).toEqual({ moving: true });
-    const shares = httpApi("https://api.example", (async () => new Response(JSON.stringify({ detail: "shares_rules" }), { status: 409 })) as typeof fetch);
-    await expect(shares.handoverAccept!("tok", "s2")).rejects.toMatchObject({ kind: "shares-rules" });
-    expect(w.problem["shares-rules"]).toBeTruthy();
-  });
-
-  it("a refusal for sharing a rule set says so, and the link still works for the current server", async () => {
-    live.on = true;
-    const api = mockApi("table");
-    api.handoverAccept = async () => {
-      throw new ApiError("shares-rules");
-    };
-    render(<Handover api={api} hash="#open" />);
-    await screen.findByText(w.offer("The Silver Hall", "Mira"));
-    fireEvent.click(screen.getByRole("radio", { name: /Sunday Table/ }));
-    fireEvent.click(screen.getByRole("button", { name: w.accept }));
-    expect(await screen.findByText(w.problem["shares-rules"]!)).toBeTruthy();
-    expect(screen.getByRole("button", { name: w.accept })).toBeTruthy();
   });
 
   it("goes back to the offer, with the reason, when the move did not happen", async () => {
@@ -480,29 +463,6 @@ describe("moving to another server (#2550)", () => {
     expect(screen.queryByText(w.movingSlow)).toBeNull();
     expect(calls(api, "handoverLook").length).toBeGreaterThan(2); // it looked at the offer while it waited
   }, 25_000);
-
-  it("never starts on a server the campaign can't move to, and offers no Accept when only those are left", async () => {
-    await open("#greyonly");
-    expect(await screen.findByText(w.onlyHere)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: w.accept })).toBeNull();
-    expect(screen.getByRole("button", { name: w.decline })).toBeTruthy();
-    expect(screen.queryByText(w.noServers)).toBeNull();
-  });
-
-  it("a top-level shares_rules (canAccept false) says it can only be handed over where it runs now", async () => {
-    live.on = true;
-    const api = mockApi("table");
-    const real = api.handoverLook!.bind(api);
-    api.handoverLook = async (token) => {
-      const got = await real(token);
-      return got.status === "open" ? { ...got, canAccept: false, why: "shares_rules", servers: [] } : got;
-    };
-    render(<Handover api={api} hash="#open" />);
-    expect(await screen.findByText(w.why.shares_rules!)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: w.accept })).toBeNull();
-    expect(screen.queryByRole("link", { name: w.seePlans })).toBeNull(); // it is not a plan problem
-    expect(screen.getByRole("button", { name: w.decline })).toBeTruthy();
-  });
 
   it("does not hide the current server's choice behind a greyed one", async () => {
     await open("#shares");

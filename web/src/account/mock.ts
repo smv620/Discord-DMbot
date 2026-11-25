@@ -5828,7 +5828,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         return { status: "ended" };
       }
       const why = token === "no-plan" ? "no_plan" : token === "try-it" ? "try_it" : token === "own" ? "owner" : null;
-      // `shares` can't move to another server; `failed` has a move that did not happen last time (#2550).
+      // `shares` greys one server out with a generic reason; `failed` has a move that did not happen last time (#2550).
       return {
         status: "open",
         campaign: { name: "The Silver Hall" },
@@ -5837,14 +5837,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         canAccept: why === null,
         why,
         servers:
-          token === "greyonly"
-            ? // not in the server it runs on, and every other one is out too
-              [{ id: "s2", name: "Sunday Table", current: false, botIn: true, why: "shares_rules" }]
-            : [
-                { id: "s1", name: "Friday Night Dice", current: true, botIn: true },
-                { id: "s2", name: "Sunday Table", current: false, botIn: true, why: token === "shares" ? "shares_rules" : null },
-                { id: "s3", name: "New Server", current: false, botIn: false },
-              ],
+          [
+            { id: "s1", name: "Friday Night Dice", current: true, botIn: true },
+            { id: "s2", name: "Sunday Table", current: false, botIn: true, why: token === "shares" ? "other" : null }, // (a generic reason: none is sent today)
+            { id: "s3", name: "New Server", current: false, botIn: false },
+          ],
         moveFailed: token === "failed" || failedMove ? "A session is running. Try again after it ends." : null,
       };
     },
@@ -5854,7 +5851,6 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (token === "gone-after") throw new ApiError("ended");
       if (serverId === "s3") throw new ApiError("bad-server");
-      if (token === "shares" && serverId !== "s1") throw new ApiError("shares-rules");
       // Another server than where it runs: the bot moves it, and it appears under the person's campaigns.
       if (serverId !== "s1") {
         if (token === "movefail") moveState = "failing";
