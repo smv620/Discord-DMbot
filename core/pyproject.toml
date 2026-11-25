@@ -87,7 +87,7 @@ ignore_missing_imports = true
 
 # Feature boundaries (#2130, docs/PLAN.md "A worker container, and a smaller bot.py"). Run
 # `lint-imports` in core/. There are no exceptions left (#2827 removed the last): a new forbidden
-# import fails CI, and an `ignore_imports` line needs a new issue and a reason.
+# import fails CI, and an exception needs a new issue and a reason.
 [tool.importlinter]
 root_package = "dmbot"
 
