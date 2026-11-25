@@ -142,9 +142,41 @@ class TheCheck(Base):
         self.assertIn(f"`{self.one.id}`", report["report"])
         self.assertNotIn(self.one.name, report["report"])
         self.assertIn('In the story (description): "owes Rook a debt"', report["report"])
+        # (the same missed fix as structure, in the same row, for the poster, #3742)
+        (item,) = report["verdicts"]["items"]
+        self.assertEqual(report["verdicts"]["more_not_shown"], 0)
+        got = (item["quote"], item["sources"], item["speaker_ids"], item["upload_kinds"])
+        self.assertEqual(got, ("owes Rook a debt", ["description"], [], []))
+        self.assertIn(self.drunk, [e["id"] for e in item["entries"]])
         await self.ended(1, 1)
         self.assertEqual(await self.runner(ai, at=later).round(self.g), 0)
         self.assertEqual(len(ai.calls), 1)
+
+    async def test_a_lore_quote_carries_its_uploads_kind_into_the_verdicts(self) -> None:
+        for kind in ("own_writing", "unknown"):
+            with self.subTest(kind=kind):
+                async with self.db.guild(self.g) as conn:
+                    await conn.execute("DELETE FROM graph_reviews WHERE campaign_id = %s",
+                                       (self.one.id,))  # fmt: skip
+                    await conn.execute("DELETE FROM memory_link_sources WHERE campaign_id = %s",
+                                       (self.one.id,))  # fmt: skip
+                await self.memory.record_link_source(
+                    self.g, self.one.id, self.links["drunk-sailors"], "Old Fenn's story",
+                    "Old Fenn drinks with the Salt Crew every night", kind=kind,
+                )  # fmt: skip
+                await self.fix()
+                ai = FakeAI({"fixes": [{"fix": 1, "in_story": True,
+                                        "quote": "drinks with the Salt Crew"}]})  # fmt: skip
+                later = time.time() + gr.WAIT_S + 5
+                self.assertEqual(await self.runner(ai, at=later).round(self.g), 1)
+                (report,) = await self.reports()
+                (item,) = report["verdicts"]["items"]
+                self.assertEqual((item["sources"], item["upload_kinds"]), (["lore"], [kind]))
+                async with self.db.guild(self.g) as conn:  # (unlink, so the next fix is a fix)
+                    await conn.execute(
+                        "DELETE FROM memory_relations WHERE campaign_id = %s AND id = %s",
+                        (self.one.id, self.links["rook-drunk"]),
+                    )
 
     async def test_only_in_the_dm_s_head_makes_no_report(self) -> None:
         await self.fix()

@@ -90,6 +90,7 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     SPECIES,
+    UPLOAD_OWN_WRITING,
     Alias,
     Entity,
     MemoryRuleError,
@@ -4956,9 +4957,10 @@ class ConnectionOffer(_Menu):
             # this"): only a connection made just now, and never a reason to lose it.
             if c.upload and made.created_at >= now:
                 try:
+                    # (this read is the DM's own lore or backstory, confirmed as own writing)
                     await memory.record_link_source(
                         campaign.guild_id, campaign.id, made.id, c.upload, c.quote,
-                        inferred=c.inferred,
+                        inferred=c.inferred, kind=UPLOAD_OWN_WRITING,
                     )  # fmt: skip
                 except Exception as exc:
                     log.warning(

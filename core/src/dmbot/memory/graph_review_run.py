@@ -22,6 +22,8 @@ import uuid
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from typing import Any, Protocol
 
+from psycopg.types.json import Jsonb
+
 from dmbot import lineage
 from dmbot.memory import graph_review as gr
 from dmbot.memory.scene_step import parse_ref
@@ -186,7 +188,8 @@ class GraphReviews:
             # keeps, since an upload's text is blanked once it is read; oldest first, so the same
             # six reach the prompt each time)
             cur = await scope.conn.execute(
-                "SELECT r.subject_id, r.object_id, s.quote FROM memory_link_sources s"
+                "SELECT r.subject_id, r.object_id, s.quote, s.upload_kind"
+                " FROM memory_link_sources s"
                 " JOIN memory_relations r ON r.guild_id = s.guild_id"
                 " AND r.campaign_id = s.campaign_id AND r.id = s.relation_id"
                 " WHERE s.guild_id = %s AND s.campaign_id = %s AND s.quote <> ''"
@@ -194,10 +197,12 @@ class GraphReviews:
                 " ORDER BY s.created_at, s.relation_id",
                 (*scope.ids, ids, ids),
             )
-            lore: dict[str, list[str]] = {}
+            # (each quote with its upload's kind, #3742: `merge_kind`)
+            lore: dict[str, dict[str, str]] = {}
             for r in await cur.fetchall():
+                kind = str(r["upload_kind"])
                 for end in (str(r["subject_id"]), str(r["object_id"])):
-                    lore.setdefault(end, []).append(str(r["quote"]))
+                    gr.merge_kind(lore.setdefault(end, {}), str(r["quote"]), kind)
             cur = await scope.conn.execute(
                 "SELECT subject_id, scene FROM memory_scenes WHERE guild_id = %s"
                 " AND campaign_id = %s AND subject_kind = 'entity'"
@@ -207,10 +212,12 @@ class GraphReviews:
             scenes = {str(r["subject_id"]): str(r["scene"]) for r in await cur.fetchall()}
         sides: dict[str, gr.Side] = {}
         for eid, e in entities.items():
+            held = lore.get(eid, {})
             sides[eid] = gr.Side(
                 eid, str(e["name"]), str(e["type"]), str(e["description"] or ""),
                 scenes.get(eid, ""), tuple(await self._lines(guild_id, campaign_id, eid, agreed)),
-                tuple(dict.fromkeys(lore.get(eid, [])))[:6], e["made_by_commit"],
+                lore=tuple(held)[:6], made_by=e["made_by_commit"],
+                lore_kinds=tuple(held.values())[:6],
             )  # fmt: skip
         out: list[gr.Fix] = []
         seen: set[tuple[str, str]] = set()
@@ -328,17 +335,23 @@ class GraphReviews:
                 )
             if not missed or not await self._switch_on(conn, guild_id, campaign_id):
                 return 0
+            commit = lineage.running_commit()
+            text, structure = gr.report_and_verdicts(
+                campaign_id, fixes, verdicts, now=now, review_commit=commit
+            )
             await conn.execute(
                 "INSERT INTO graph_reviews (guild_id, campaign_id, id, created_at, checked,"
-                " missed, report, speaker_ids, review_commit, prompt_version, model)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                " missed, report, speaker_ids, review_commit, prompt_version, model, verdicts)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (
                     guild_id, campaign_id, uuid.uuid4().hex, now, len(verdicts), len(missed),
-                    gr.report(campaign_id, fixes, verdicts, now=now,
-                              review_commit=lineage.running_commit()),
+                    text,
                     sorted({u for v in missed for u in v.speaker_ids}),
-                    lineage.running_commit(), gr.PROMPT_VERSION,
+                    commit, gr.PROMPT_VERSION,
                     str(getattr(self._ai, "model", "") or "unknown")[:80],
+                    # (the same missed fixes as `report`, from one `_shown`, as structure for the
+                    # poster to check at post time, #3742)
+                    Jsonb(structure),
                 ),
             )  # fmt: skip
         log.info("Graph check kept a report: %d checked, %d missed", len(verdicts), len(missed))
