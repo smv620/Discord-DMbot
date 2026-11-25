@@ -1732,6 +1732,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.ai_client
             else None
         )
+        self.connection_said_ai = (  # a connection said in the DM's own words (#2940)
+            self.ai_client.tier(FEATURE_TIERS[Feature.CONNECTION_SAID], Feature.CONNECTION_SAID)
+            if self.ai_client
+            else None
+        )
         self.house_file_ai = (  # house rules found in any file or link (#2377)
             self.ai_client.tier(
                 FEATURE_TIERS[Feature.HOUSE_RULES], Feature.HOUSE_RULES, cache_system=True

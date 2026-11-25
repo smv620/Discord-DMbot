@@ -1159,6 +1159,7 @@ async def show_card(
         say=say,
         suggest=say and getattr(interaction.client, "said_as_ai", None) is not None,
         players_line=(sees_secrets(campaign, interaction.user.id) and entity.type != "person"),
+        words=secrets and entity.type != "person",  # (a person at the table has no story links)
         say_it_url=(
             all_names.say_it_url(site, campaign.guild_id, campaign.id, entity.name)
             if secrets
@@ -1362,6 +1363,7 @@ class NameCard(_Menu):
         suggest: bool = False,
         say_it_url: str = "",
         players_line: bool = False,
+        words: bool = False,
         hide: bool | None = None,
         undo_connection: int | None = None,
         undo_spelling: int | None = None,
@@ -1570,11 +1572,32 @@ class NameCard(_Menu):
                     continue
             else:
                 log.info("No room on a thread's card for its steps button")
+        if words:  # the DM's: connect this name to another by saying how in words (#2940)
+            # Placed wherever there is room, row 3 last: it holds a kind's own buttons (one of a
+            # kind, a thread's steps), which their tests and the DM look for there.
+            for row in (2, 1, 0, 3):
+                try:
+                    self.add_item(
+                        _Button(
+                            self._connect_words, label=CONNECT_WORDS_BUTTON, style=grey, row=row
+                        )
+                    )
+                    break
+                except ValueError:
+                    continue
+            else:
+                log.info("No room on a name card for the connect-in-words button")
         if say_it_url:  # the DM's private card only: opens the name on the website (#2580)
             try:  # placed wherever there is room; a card that is full simply goes without it
                 self.add_item(discord.ui.Button(label=all_names.SAY_IT, url=say_it_url))
             except ValueError:
                 log.info("No room on a name card for the Say it link")
+
+    async def _connect_words(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.name_dropdown import show_dropdown  # (it builds on this module)
+
+        # The other name from a list, then the form for the words (`choose_other`).
+        await show_dropdown(interaction, self.campaign_id, self.entity_id, IN_WORDS, replacing=self)
 
     async def _book(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.book_link import show_picker
@@ -3392,6 +3415,8 @@ class WhoKnowsName(WhoKnowsMenu):
 # ---- 🔗 Same as… and 🧭 Connect to…: pick the other name --------------------------------
 
 SAME = "same"
+IN_WORDS = "inwords"  # ✍️ Connect in words…: the other name is picked, then the words are written
+CONNECT_WORDS_BUTTON = "✍️ Connect in words…"
 
 
 class PickForm(discord.ui.Modal, title="Find the other name"):
@@ -3429,6 +3454,8 @@ def _asked(name: str, how: str) -> str:
     """The question being answered: "Belleros is the same as…", "Ulfgar is a member of…"."""
     if how == SAME:
         return f"{name} is the same as…"
+    if how == IN_WORDS:
+        return f"{name} and… (you'll say how in your own words)"
     if how in (place_links.NEXT_TO, place_links.TRAVEL_TO):  # (#4173 slice 6d)
         return place_links.asked(name, how)
     predicate = how.removesuffix(BACK)
@@ -3563,6 +3590,14 @@ async def choose_other(
     """The other name was picked (from the search results or the name dropdown): Same as…
     asks which name to keep, Connect to… saves the connection. `view` is stopped when it is
     taken over."""
+    if how == IN_WORDS:
+        # the words go in a form, which must be the answer to this press (#2940): so nothing is
+        # answered first, and the DM's right is checked by the form's own opener
+        from dmbot.ui import connection_say  # (it builds on this module)
+
+        view.origin = None  # the form's answer replaces this list; cancelling the form keeps it
+        await connection_say.open_form(interaction, campaign_id, entity_id, other_id, entity_id)
+        return
     await _answer_first(interaction, in_place=True)
     if how == SAME:
         found = await _current(interaction, campaign_id, entity_id)
