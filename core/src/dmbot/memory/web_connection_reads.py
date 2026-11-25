@@ -164,7 +164,16 @@ class ActionStore:
         that keeps them). False: not its row any more."""
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
-            if outcome.error:
+            if outcome.error and item.job == UNDO:
+                # An undo that could not be done leaves the change as it was and tries again later:
+                # the use stays done, with the reason, so Undo can be pressed once more.
+                cur = await conn.execute(
+                    "UPDATE web_connection_reads SET job = 'use', state = 'done', error = %s,"
+                    " updated_at = %s"
+                    " WHERE guild_id = %s AND id = %s AND state = 'working' AND claimed_at = %s",
+                    (outcome.error[:40], now, guild_id, item.id, item.claimed_at),
+                )
+            elif outcome.error:
                 cur = await conn.execute(
                     "UPDATE web_connection_reads SET state = 'failed', error = %s, words = '',"
                     " proposals = '[]'::jsonb, left_out = '{}', updated_at = %s"

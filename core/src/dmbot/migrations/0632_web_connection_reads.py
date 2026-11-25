@@ -123,10 +123,12 @@ SQL = (
         PERFORM pg_advisory_xact_lock(hashtextextended('connection_read:' || g::TEXT || c, 0));
         DELETE FROM web_connection_reads f
             WHERE f.guild_id = g AND f.campaign_id = c AND f.created_at < now_s - 86400;
-        -- A read the bot took and then went quiet on for ten minutes goes back to waiting.
+        -- A read the bot took and then went quiet on for ten minutes goes back to waiting. Only a
+        -- read: it writes nothing, so doing it again is safe. A use or an undo that went quiet is
+        -- taken again only by the bot's own claim, which knows whose claim it is.
         UPDATE web_connection_reads f SET state = 'waiting', claimed_at = 0, updated_at = now_s
             WHERE f.guild_id = g AND f.campaign_id = c AND f.state = 'working'
-              AND f.updated_at < now_s - 600;
+              AND f.job = 'read' AND f.updated_at < now_s - 600;
         IF EXISTS (SELECT 1 FROM web_connection_reads f
                    WHERE f.guild_id = g AND f.campaign_id = c AND f.job = 'read'
                      AND f.state IN ('waiting', 'working')) THEN
@@ -156,7 +158,10 @@ SQL = (
     BEGIN
         IF dmbot_current_user() IS NULL
            OR dmbot_current_guild() IS DISTINCT FROM g
-           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[])) THEN
+           OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
+           OR NOT EXISTS (SELECT 1 FROM campaign_dms d
+                          WHERE d.guild_id = g AND d.campaign_id = c
+                            AND d.user_id = dmbot_current_user()) THEN
             RETURN NULL;
         END IF;
         SELECT f.* INTO r FROM web_connection_reads f
@@ -223,6 +228,7 @@ SQL = (
            OR who NOT IN ('everyone', 'dm', 'some', 'keep')
            OR (who = 'keep' AND r.replacing_id IS NULL)
            OR chars IS NULL OR cardinality(chars) > 10
+           OR NOT (chars <@ r.characters)
            OR (who = 'some' AND cardinality(chars) = 0)
            OR (who <> 'some' AND cardinality(chars) <> 0) THEN
             RETURN jsonb_build_object('status', 'bad_choice');

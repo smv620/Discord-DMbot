@@ -288,6 +288,59 @@ class Connecting(WithChecks):
                     "bad_choice",
                 )
 
+    async def test_a_stale_claim_is_taken_again_and_the_old_worker_writes_nothing(self) -> None:
+        await self.say()
+        first = await self.reads.claim_next(GUILD)
+        assert first is not None
+        self.assertIsNone(await self.reads.claim_next(GUILD))  # held: nobody else may take it
+        await self.sql("UPDATE web_connection_reads SET claimed_at = 1")  # the worker went quiet
+        again = await self.reads.claim_next(GUILD)
+        assert again is not None and again.id == first.id
+        late = await self.reads.finish(GUILD, first, bot.Outcome(proposals=[]))
+        self.assertFalse(late)  # the old worker's answer is refused
+        self.assertEqual((await self.rows())[0]["state"], "working")
+
+    async def test_an_undo_that_could_not_be_done_can_be_pressed_again(self) -> None:
+        rid = await self.say()
+        await self.work(Hosted(self, answer_of(owes())))
+        await web.use(self.web, self.session, self.cref, rid, {"picks": [1], "who": "everyone"})
+        await self.work(Hosted(self))
+        await web.undo(self.web, self.session, self.cref, rid)
+        down = Hosted(self)
+        down.memory = cast(Any, None)  # the bot has no memory just now
+        await self.work(down)
+        got = await web.status(self.web, self.session, self.cref, rid, moment=NOW)
+        self.assertEqual((got["canUndo"], got["undoError"]), (True, "not_available"))  # still there
+        await web.undo(self.web, self.session, self.cref, rid)  # and it can be asked again
+        await self.work(Hosted(self))
+        self.assertEqual((await self.rows())[0]["state"], "undone")
+
+    async def test_only_the_characters_the_read_named_can_be_picked_to_know(self) -> None:
+        rid = await self.say()
+        await self.work(Hosted(self, answer_of(owes(), who="some", names=("Tavin",))))
+        stranger = await self.known("Brin", "character")
+        self.assertEqual(
+            await self.code(
+                web.use(
+                    self.web, self.session, self.cref, rid,
+                    {"picks": [1], "who": "some", "characters": [stranger]},
+                )
+            ),
+            "bad_choice",
+        )  # fmt: skip
+        await web.use(
+            self.web, self.session, self.cref, rid,
+            {"picks": [1], "who": "some", "characters": [self.tavin]},
+        )  # fmt: skip
+
+    async def test_a_dm_who_left_can_no_longer_read_a_ready_job(self) -> None:
+        rid = await self.say()
+        await self.work(Hosted(self, answer_of(owes())))
+        await self.sql("DELETE FROM campaign_dms WHERE campaign_id = %s", self.one.id)
+        self.assertEqual(
+            await self.code(web.status(self.web, self.session, self.cref, rid)), "not_found"
+        )
+
     async def test_the_sweep_removes_a_days_old_job_with_its_words(self) -> None:
         await self.say()
         await self.sql("UPDATE web_connection_reads SET created_at = created_at - 90000")

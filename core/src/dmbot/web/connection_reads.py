@@ -128,7 +128,8 @@ async def status(
     )
     out: dict[str, Any] = {**shape, "job": got["job"], "canUndo": bool(got["canUndo"])}
     if got["state"] == "ready" and got["job"] == "read":
-        names = {got["first"]["id"]: got["first"], got["second"]["id"]: got["second"]}
+        # (an entry deleted since the read leaves its proposals out; the page reads the rest)
+        names = {e["id"]: e for e in (got["first"], got["second"]) if e}
         out["proposals"] = [
             {
                 "number": i,
@@ -154,6 +155,8 @@ async def status(
             leftOut=got["leftOut"],
             replacing=got["replacing"],
         )
+    if got["state"] == "done" and got["job"] == "use" and reason:
+        out["undoError"] = reason if reason in REASONS else "failed"  # an Undo that could not run
     if got["state"] == "undone":
         out["partly"] = bool(got["partly"])
     return out
