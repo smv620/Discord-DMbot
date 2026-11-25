@@ -315,9 +315,12 @@ class Moving(HandoverTest):
             "npcs_channel_messages",
             "game_clocks",
             "memory_heard",
+            "rule_sets",  # (the new owner becomes the publisher: only created_by differs, below)
         }
         for table in set(before) - different:
             self.assertEqual(after[table], before[table], table)
+        published = [{**json.loads(r), "created_by": BUYER} for r in before["rule_sets"]]
+        self.assertEqual([json.loads(r) for r in after["rule_sets"]], published)
         self.assertEqual(after["npcs_channel_messages"], [])
         self.assertEqual(after["campaign_handover_offers"], [])
 
