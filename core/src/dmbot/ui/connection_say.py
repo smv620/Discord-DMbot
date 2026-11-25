@@ -22,6 +22,7 @@ from typing import Any
 import discord
 
 from dmbot.campaigns import Campaign
+from dmbot.discord_limits import fit_message
 from dmbot.memory import connection_said as said
 from dmbot.memory import kin, link_edits
 from dmbot.memory.link_words import link_words
@@ -220,13 +221,14 @@ async def read_and_ask(
         return
     c = pair.campaign
     allows = getattr(bot, "plan_allows", None)
-    if allows is not None and not await allows("ai", c.guild_id, c):
+    # (a plan that can't be checked is a no: the AI is paid for by the plan)
+    if allows is None or not await allows("ai", c.guild_id, c, fail_open=False):
         await _tell(interaction, NOT_ON_PLAN)
         return
     if not text.strip() or len(" ".join(text.split())) > said.TEXT_MAX:
         await _tell(interaction, said.NOTHING if not text.strip() else said.TOO_LONG)
         return  # (nothing was asked of the AI, so no read is counted)
-    wait = _limit(bot).take(c.guild_id, c.id)
+    wait, token = _limit(bot).claim(c.guild_id, c.id)
     if wait:
         await _tell(
             interaction,
@@ -236,8 +238,14 @@ async def read_and_ask(
     # Every wait shows that DMbot is working (CLAUDE.md): said before the read starts.
     await _replace(interaction, WORKING, None)
     got = await said.read(ai.complete, pair.first, pair.second, text)
-    view = ConfirmSaid(interaction, pair, back_id, text, got)
-    await view.show(interaction)
+    if said.no_answer(got):
+        _limit(bot).give_back(c.guild_id, c.id, token)  # the AI was down: not the DM's read
+    try:
+        view = ConfirmSaid(interaction, pair, back_id, text, got)
+        await view.show(interaction)
+    except Exception:
+        log.exception("Couldn't show a connection read in words")
+        await _replace(interaction, "Something went wrong. Nothing was changed.", None)
 
 
 def _characters(names: CampaignLookup, said_names: Sequence[str]) -> tuple[list[str], list[str]]:
@@ -278,12 +286,15 @@ class ConfirmSaid(_Menu):
         hidden_before = pair.replacing is not None and (
             pair.replacing.secret or pair.replacing.unrevealed
         )
-        if got.who.kind == said.ONLY_DM:
+        restricted = got.who.kind == said.SOME and not self.characters  # (named, none matched)
+        if got.who.kind == said.ONLY_DM or any(p.secret for p in got.proposals):
             self.who = WHO_DM
         elif got.who.kind == said.SOME and self.characters:
             self.who = WHO_SOME
         elif hidden_before:
             self.who = KEEP_WHO
+        elif restricted:
+            self.who = WHO_DM  # the DM meant it kept back: never widened to everyone by a miss
         else:
             self.who = WHO_ALL
         self.kept = list(range(len(got.proposals)))
@@ -332,6 +343,8 @@ class ConfirmSaid(_Menu):
         if self.left_out:
             said_names = ", ".join(f"“{_md(n)}”" for n in self.left_out)
             left = f"\nI couldn't tell who {said_names} is, so I left that out."
+            if self.who == WHO_DM:
+                left += " It stays with you alone unless you change it below."
         return f"{READ_AS}\n{body}\n{self.who_line()}{left}{replace}"
 
     def _buttons(self) -> None:
@@ -341,7 +354,9 @@ class ConfirmSaid(_Menu):
             if len(self.got.proposals) > 1:
                 options = [
                     discord.SelectOption(
-                        label=logic.shorten(s, logic.OPTION_LABEL_MAX), value=str(i), default=True
+                        label=logic.shorten(s, logic.OPTION_LABEL_MAX),
+                        value=str(i),
+                        default=i in self.kept,
                     )
                     for i, s in enumerate(self.sentences())
                 ]
@@ -382,11 +397,11 @@ class ConfirmSaid(_Menu):
         return _Select(self._who_picked, placeholder="Who knows this?", options=options, row=1)
 
     async def show(self, interaction: discord.Interaction) -> None:
-        await _replace(interaction, self.text_to_show(), self)
+        await _replace(interaction, fit_message(self.text_to_show()), self)
 
     async def _redraw(self, interaction: discord.Interaction) -> None:
         self._buttons()
-        await interaction.response.edit_message(content=self.text_to_show(), view=self)
+        await interaction.response.edit_message(content=fit_message(self.text_to_show()), view=self)
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         self.kept = sorted(int(v) for v in self.pick.values)
@@ -406,13 +421,13 @@ class ConfirmSaid(_Menu):
 
     async def _again(self, interaction: discord.Interaction) -> None:
         # the form can be opened only from a press, and shows the words as they were
-        self.stop()
         c = self.pair.campaign
         campaign = await _campaign_for(interaction, c.id)
         if campaign is None or not sees_secrets(campaign, interaction.user.id):
             if campaign is not None:
                 await _tell(interaction, ONLY_DMS)
             return
+        self.origin = None  # the form's answer replaces this message; cancelling it keeps it
         await interaction.response.send_modal(
             SayForm(
                 c.id, self.pair.first.id, self.pair.second.id, self.back_id,
@@ -460,7 +475,7 @@ class ConfirmSaid(_Menu):
         done = await said.apply(
             memory, c.guild_id, c.id, chosen, who=who,
             characters=self.characters if self.who == WHO_SOME else (),
-            replacing=again.replacing,
+            replacing=self.pair.replacing,  # as the DM saw it: apply refuses if it changed since
         )  # fmt: skip
         if done.problem:
             await _tell(interaction, done.problem)

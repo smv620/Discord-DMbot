@@ -33,6 +33,7 @@ from dmbot.memory.store import MemoryStore
 
 log = logging.getLogger(__name__)
 
+MAX_PROPOSALS = 10  # more than this in one read is taken as the AI running away: the first few stay
 TEXT_MAX = 1000  # characters the DM may write about one pair
 ROOM = 16_000  # the answer's room (the project's floor for background calls, ai.OUTPUT_FLOOR)
 UNREADABLE = "DMbot couldn't read that. Try shorter sentences."
@@ -252,6 +253,9 @@ async def read(
             lost["not_stated"] += 1  # only what the DM wrote, never a guess or a hand-over
             continue
         proposals.append(Proposal(a, b, c.how, c.words, c.quote, c.secret))
+    if len(proposals) > MAX_PROPOSALS:
+        lost["too_many"] += len(proposals) - MAX_PROPOSALS
+        del proposals[MAX_PROPOSALS:]
     who = _who(data.get("who"), said)
     log.info("A connection was read in words: %d proposed, lost %s", len(proposals), dict(lost))
     return Said(
@@ -367,28 +371,52 @@ async def undo(memory: MemoryStore, guild_id: int, campaign_id: str, applied: Ap
 class ReadLimit:
     """Ten reads an hour for one campaign (#2940, Supervisor's ruling). Kept in memory: a restart
     gives a campaign its reads back, which only ever favours the DM. Nothing but a campaign's key
-    and the times of its reads is held, never a word."""
+    and the times of its reads is held, never a word; a campaign with no read in the last hour
+    holds nothing at all."""
 
     def __init__(
         self, clock: Callable[[], float] = time.time, per_hour: int = READS_PER_HOUR
     ) -> None:
         self._clock = clock
         self._per_hour = per_hour
-        self._reads: dict[tuple[int, str], deque[float]] = {}
+        self._seq = 0
+        self._reads: dict[tuple[int, str], deque[tuple[float, int]]] = {}
+
+    def _trim(self, now: float) -> None:
+        for key in list(self._reads):
+            reads = self._reads[key]
+            while reads and now - reads[0][0] >= 3600:
+                reads.popleft()
+            if not reads:
+                del self._reads[key]
+
+    def claim(self, guild_id: int, campaign_id: str) -> tuple[int, int]:
+        """(0, a token) when a read is allowed now and counted, else (the minutes to wait, 0)."""
+        now = self._clock()
+        self._trim(now)
+        reads = self._reads.setdefault((guild_id, campaign_id), deque())
+        if len(reads) >= self._per_hour:
+            return max(1, int((reads[0][0] + 3600 - now) // 60) + 1), 0
+        self._seq += 1
+        reads.append((now, self._seq))
+        return 0, self._seq
 
     def take(self, guild_id: int, campaign_id: str) -> int:
         """0 when a read is allowed now (and is counted); else the minutes to wait."""
-        now = self._clock()
-        reads = self._reads.setdefault((guild_id, campaign_id), deque())
-        while reads and now - reads[0] >= 3600:
-            reads.popleft()
-        if len(reads) >= self._per_hour:
-            return max(1, int((reads[0] + 3600 - now) // 60) + 1)
-        reads.append(now)
-        return 0
+        return self.claim(guild_id, campaign_id)[0]
 
-    def give_back(self, guild_id: int, campaign_id: str) -> None:
-        """A read that never reached the AI (nothing was asked) is not counted."""
+    def give_back(self, guild_id: int, campaign_id: str, token: int) -> None:
+        """A read that never got an answer (the AI was down) is not counted: exactly that one."""
         reads = self._reads.get((guild_id, campaign_id))
         if reads:
-            reads.pop()
+            kept = [r for r in reads if r[1] != token]
+            reads.clear()
+            reads.extend(kept)
+
+
+NO_ANSWER = frozenset({"call_failed", "cut_or_refused", "unreadable"})
+
+
+def no_answer(got: Said) -> bool:
+    """The AI never gave an answer to read (down, cut, refused, unreadable): not the DM's read."""
+    return not got.proposals and bool(got.lost) and {k for k, _ in got.lost} <= NO_ANSWER

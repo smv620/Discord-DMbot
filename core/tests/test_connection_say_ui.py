@@ -56,6 +56,7 @@ class Saying(UITest):
         self.ai = SimpleNamespace(complete=AsyncMock())
         self.bot.connection_said_ai = self.ai
         self.bot.lookup = None  # (the names are not cached in this test)
+        self.bot.plan_allows = AsyncMock(return_value=True)
         self.memory = SimpleNamespace(relation=AsyncMock(return_value=old_link()))
         self.read = AsyncMock(return_value=said.Said((proposal(),), said.Who(said.ONLY_DM)))
         self.apply = AsyncMock(return_value=said.Applied((7,), ("n" * 32,)))
@@ -190,11 +191,76 @@ class Saying(UITest):
         now[0] = 3601.0
         self.assertEqual(limit.take(1, "a"), 0)  # an hour later
 
-    async def test_a_read_that_was_never_asked_is_not_counted(self) -> None:
-        limit = said.ReadLimit(per_hour=1)
+    async def test_a_read_the_ai_never_answered_is_not_counted(self) -> None:
+        self.read.return_value = said.Said(problem=said.UNREADABLE, lost=(("call_failed", 2),))
+        for _ in range(said.READS_PER_HOUR + 3):  # an outage and a DM who keeps trying
+            await self.say()
+        self.read.return_value = said.Said((proposal(),), said.Who())
+        ok = await self.say()
+        self.assertIn("DMbot read this as:", self.confirm(ok)[0])  # still allowed
+
+    async def test_a_blank_text_asks_nothing_and_counts_nothing(self) -> None:
+        it = self.it(DM, discord.InteractionType.modal_submit)
+        await ui.read_and_ask(it, "c1", MARA, TAVIN, MARA, "   ")
+        self.read.assert_not_awaited()
+
+    async def test_a_plan_that_cannot_be_checked_is_a_no(self) -> None:
+        self.bot.plan_allows = AsyncMock(return_value=False)
+        await self.say()
+        self.assertFalse(self.bot.plan_allows.await_args.kwargs["fail_open"])
+        del self.bot.plan_allows
+        it = await self.say()
+        self.assertIn(ui.NOT_ON_PLAN, str(it.followup.send.await_args_list))
+        self.read.assert_not_awaited()
+
+    async def test_a_connection_changed_since_the_read_is_not_replaced(self) -> None:
+        it = await self.say(replacing_id="r" * 32)
+        _, view = self.confirm(it)
+        self.memory.relation = AsyncMock(return_value=old_link(secret=True))  # changed meanwhile
+        await self.press(view, "✅ Use this").callback(self.it())
+        saw = self.apply.await_args.kwargs["replacing"]  # type: ignore[union-attr]
+        self.assertFalse(saw.secret)  # apply gets what the DM saw, so it can refuse the change
+
+    async def test_a_miss_on_who_knows_never_widens_it_to_everyone(self) -> None:
+        self.read.return_value = said.Said((proposal(),), said.Who(said.SOME, ("the cook",)))
+        text, _ = self.confirm(await self.say())
+        self.assertIn("only you, the DM", text)
+        self.assertIn("stays with you alone", text)
+
+    async def test_a_secret_proposal_is_shown_as_the_dms_alone(self) -> None:
+        secret = said.Proposal(MARA, TAVIN, "knows", "", "Mara knows Tavin", True)
+        self.read.return_value = said.Said((secret,), said.Who())
+        text, _ = self.confirm(await self.say())
+        self.assertIn("only you, the DM", text)
+
+    async def test_the_picker_keeps_what_was_unticked_when_who_changes(self) -> None:
+        two = (proposal(), said.Proposal(TAVIN, MARA, "knows", "", "Tavin knows Mara"))
+        self.read.return_value = said.Said(two, said.Who())
+        _, view = self.confirm(await self.say())
+        pick = next(c for c in view.children if getattr(c, "placeholder", "") == "Which of these?")
+        view.kept = [1]
+        view._buttons()
+        again = next(c for c in view.children if getattr(c, "placeholder", "") == "Which of these?")
+        self.assertEqual([o.default for o in again.options], [False, True])
+        self.assertIsNot(pick, again)
+
+    async def test_a_read_with_a_failure_showing_it_is_said_not_left_working(self) -> None:
+        with patch.object(ui.ConfirmSaid, "show", AsyncMock(side_effect=RuntimeError("boom"))):
+            it = await self.say()
+        self.assertIn("Nothing was changed", it.edited[-1][0])
+
+    def test_the_limit_forgets_a_quiet_campaign_and_gives_back_exactly_one(self) -> None:
+        now = [0.0]
+        limit = said.ReadLimit(lambda: now[0], per_hour=2)
+        _, first = limit.claim(1, "a")
+        _, second = limit.claim(1, "a")
+        limit.give_back(1, "a", first)  # the older one: the newer stays counted
         self.assertEqual(limit.take(1, "a"), 0)
-        limit.give_back(1, "a")
-        self.assertEqual(limit.take(1, "a"), 0)
+        self.assertGreater(limit.take(1, "a"), 0)
+        self.assertNotEqual(first, second)
+        now[0] = 7300.0
+        limit.take(2, "b")
+        self.assertEqual(list(limit._reads), [(2, "b")])
 
     def test_a_cut_reply_is_a_reply_object(self) -> None:
         self.assertTrue(Reply("x", cut=True).cut)

@@ -3593,7 +3593,7 @@ async def choose_other(
         # answered first, and the DM's right is checked by the form's own opener
         from dmbot.ui import connection_say  # (it builds on this module)
 
-        view.stop()
+        view.origin = None  # the form's answer replaces this list; cancelling the form keeps it
         await connection_say.open_form(interaction, campaign_id, entity_id, other_id, entity_id)
         return
     await _answer_first(interaction, in_place=True)
