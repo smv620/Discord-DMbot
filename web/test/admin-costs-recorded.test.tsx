@@ -7,10 +7,13 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AdminApiError, type AdminApi, type RecordedRow } from "../src/admin/api";
-import Recorded, { sumBy } from "../src/admin/Recorded";
+import Recorded, { costCell, sumBy } from "../src/admin/Recorded";
 import { microDollars, recordedText as w } from "../src/content/admin";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 const row = (r: Partial<RecordedRow> & Pick<RecordedRow, "service" | "feature">): RecordedRow => ({
   model: "m",
@@ -62,7 +65,10 @@ describe("the section", () => {
     expect(service.getByText("$3.00")).toBeTruthy(); // anthropic's play use: 2.50 + 0.50, not the sample's 0.70
     expect(screen.getByRole("heading", { name: w.byPlan })).toBeTruthy();
     expect(screen.getByRole("heading", { name: w.byFeature })).toBeTruthy();
-    expect(screen.getAllByText(w.refused(4), { exact: false }).length).toBeGreaterThan(0);
+    // the refused calls sit in the anthropic row's own cell
+    expect(within(service.getByRole("row", { name: /Anthropic/ })).getByText(w.refused(4))).toBeTruthy();
+    expect(service.getByText("Deepgram")).toBeTruthy();
+    expect(service.getByText("ElevenLabs")).toBeTruthy();
   });
 
   it("shows the plan's words, and keeps the sample's test spend apart from the totals", async () => {
@@ -76,6 +82,55 @@ describe("the section", () => {
     expect(screen.getByText("25 calls · $0.70")).toBeTruthy();
   });
 
+  it("never shows $0 for a feature or a plan that is only ElevenLabs or Voyage", async () => {
+    const only = [
+      row({ service: "elevenlabs", feature: "recap_audio", plan: "guild", calls: 3, micro_usd: 0, unpriced: 3 }),
+      row({ service: "voyage", feature: "search", plan: "unknown", calls: 30, micro_usd: 0, unpriced: 30 }),
+    ];
+    render(<Recorded api={apiWith(async () => ({ month: "2027-01", rows: only }))} month="2027-01" onSignedOut={() => {}} />);
+    await screen.findByRole("heading", { name: w.byFeature });
+    for (const name of [w.byService, w.byPlan, w.byFeature]) {
+      const table = within(screen.getByRole("heading", { name }).parentElement as HTMLElement);
+      expect(table.queryByText("$0.00")).toBeNull();
+      expect(table.getAllByText(w.notPriced).length).toBe(2);
+    }
+    expect(within(screen.getByRole("heading", { name: w.byFeature }).parentElement as HTMLElement).getByText(w.features.recap_audio!)).toBeTruthy();
+  });
+
+  it("says a figure leaves out what is not priced when a total mixes the two", () => {
+    const [mixed] = sumBy([row({ service: "anthropic", feature: "recap", micro_usd: 1_200_000, calls: 5 }), row({ service: "voyage", feature: "recap", calls: 2, micro_usd: 0, unpriced: 2 })], "feature");
+    expect(costCell(mixed!)).toBe(w.plusNotPriced("$1.20"));
+  });
+
+  it("keeps sample ElevenLabs spend from reading as $0, and shows the sample apart from the plan table", async () => {
+    const withSample = [
+      row({ service: "anthropic", feature: "recap", micro_usd: 1_000_000 }),
+      row({ service: "elevenlabs", feature: "recap_audio", source: "sample", calls: 4, micro_usd: 0, unpriced: 4, plan: "guild" }),
+    ];
+    render(<Recorded api={apiWith(async () => ({ month: "2027-01", rows: withSample }))} month="2027-01" onSignedOut={() => {}} />);
+    await screen.findByRole("heading", { name: w.sampleHeading });
+    expect(screen.getByText(`4 calls · ${w.notPriced}`)).toBeTruthy();
+    const plans = within(screen.getByRole("heading", { name: w.byPlan }).parentElement as HTMLElement);
+    expect(plans.queryByText(w.plans.guild!)).toBeNull(); // (the sample's plan is not in the plan totals)
+  });
+
+  it("shows the checked-price note when calls were recorded at the high default price", async () => {
+    const r = [row({ service: "anthropic", feature: "recap", unpriced: 3 })];
+    render(<Recorded api={apiWith(async () => ({ month: "2027-01", rows: r }))} month="2027-01" onSignedOut={() => {}} />);
+    expect(await screen.findByText(w.unpriced(3))).toBeTruthy();
+  });
+
+  it("reads again when the month changes, and shows no figures from the old month meanwhile", async () => {
+    const read = vi.fn(async (m?: string) => ({ month: m ?? "", rows: m === "2027-01" ? rows : [] }));
+    const api = apiWith(read);
+    const { rerender } = render(<Recorded api={api} month="2027-01" onSignedOut={() => {}} />);
+    await screen.findByRole("heading", { name: w.byService });
+    rerender(<Recorded api={api} month="2026-12" onSignedOut={() => {}} />);
+    expect(await screen.findByText(w.none)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: w.byService })).toBeNull();
+    expect(read).toHaveBeenCalledWith("2026-12");
+  });
+
   it("says nothing was recorded for an empty month", async () => {
     render(<Recorded api={apiWith(async () => ({ month: "2027-01", rows: [] }))} month="2027-01" onSignedOut={() => {}} />);
     expect(await screen.findByText(w.none)).toBeTruthy();
@@ -84,10 +139,9 @@ describe("the section", () => {
   it("says it is reading while it waits, with how long", async () => {
     vi.useFakeTimers();
     render(<Recorded api={apiWith(() => new Promise(() => {}))} month="2027-01" onSignedOut={() => {}} />);
-    expect(screen.getByText(w.reading(0))).toBeTruthy();
+    expect(screen.getByText(`${w.stage}. ${w.reading(0)}`)).toBeTruthy();
     await vi.advanceTimersByTimeAsync(3000);
-    expect(screen.getByText(w.reading(3))).toBeTruthy();
-    vi.useRealTimers();
+    expect(screen.getByText(`${w.stage}. ${w.reading(3)}`)).toBeTruthy();
   });
 
   it("offers another try after a failure, and goes back to sign-in when the session ended", async () => {

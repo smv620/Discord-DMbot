@@ -340,15 +340,30 @@ export const recordedText = {
   cost: "Cost",
   refused: (n: number): string => `refused: ${n}`,
   notPriced: "not priced",
+  plusNotPriced: (dollars: string): string => `${dollars} + not priced`,
+  refusedColumn: "Refused",
   unpriced: (n: number): string => `${n} ${n === 1 ? "call was" : "calls were"} recorded at the high default price because no checked price exists yet.`,
   /** What a service's units are. */
   units: {
-    anthropic: "pieces of text",
-    gemini: "pieces of text",
+    anthropic: "words and parts of words",
+    gemini: "words and parts of words",
     deepgram: "audio seconds",
     elevenlabs: "credits",
-    voyage: "pieces of text",
+    voyage: "words and parts of words",
   } as Record<string, string>,
+  /** The names of the paid services as their makers write them. */
+  services: { anthropic: "Anthropic", gemini: "Gemini", deepgram: "Deepgram", elevenlabs: "ElevenLabs", voyage: "Voyage" } as Record<string, string>,
+  /** What each recorded feature is, in plain words (a feature the page has no words for shows its own word). */
+  features: {
+    names: "Names",
+    cleaner: "Cleaning transcripts",
+    recap: "Recaps",
+    sidebar: "The DM sidebar",
+    transcribe: "Turning voices into text",
+    recap_audio: "Recap voices",
+    search: "Search by meaning",
+  } as Record<string, string>,
+  stage: "Reading DMbot's records",
   /** The plan words of a campaign owner's plan at the time. */
   plans: {
     "try-it": "Try It",
