@@ -402,7 +402,15 @@ def create_app(
             # (a FastAPI Exception handler runs outside it). The log has the path, no data.
             log.exception("Request failed: %s %s", request.method, mask_tokens(request.url.path))
             response = JSONResponse({"error": "server"}, status_code=500)
-        response.headers["Cache-Control"] = "no-store"
+        # (every answer is `no-store`, except a character's icon picture, which says its own short
+        # private cache: the page draws many of them and Supervisor ruled 300 seconds, #3623)
+        if not (
+            request.method == "GET"
+            and "/pc-icons/" in request.url.path
+            and request.url.path.endswith("/picture")
+            and response.status_code == 200
+        ):
+            response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
@@ -4681,28 +4689,36 @@ def create_app(
 
     @app.get("/me/campaigns/{ref}/pc-icons/{entity_id}/picture")
     async def me_pc_icon_picture(ref: str, entity_id: str, request: Request) -> Response:
-        """The picture a character's icon is (#3623): a short redirect to a signed address of the
-        private bucket, for a signed-in member of the campaign's server, while the picture is still
-        kept and not the DM's alone. Anyone else, or no picture, gets the one `not_found`. The
-        picture's public code is never involved."""
+        """The picture a character's icon is (#3623), for a signed-in member of the campaign's
+        server, while the picture is still kept and not the DM's alone. The small preview's bytes
+        are sent by the website itself (private cache, at most `PREVIEW_MAX_BYTES`), so the page
+        needs no other image host; full pictures keep the signed redirect. Anyone else, no picture,
+        or one that cannot be read gets the one `not_found`. The picture's public code is never
+        involved."""
         shared_gate(request, picture_limit)
         headers = {
-            "Cache-Control": "private, max-age=120",
+            "Cache-Control": "private, max-age=300",
             "X-Robots-Tag": "noindex, nofollow",
             "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
         }
         token = request.cookies.get(session_cookie)
         viewer = await sessions.find(db, token, now=clock()) if token else None
         sign = picture_signer()
-        try:
-            keys = (
-                await pc_icons.file_keys(db, viewer, ref, entity_id) if viewer is not None else None
-            )
-        except RecapError:
-            keys = None
-        if keys is None or sign is None:
+        data: bytes | None = None
+        kind: str | None = None
+        if viewer is not None and sign is not None:
+            try:
+                keys = await pc_icons.file_keys(db, viewer, ref, entity_id)
+            except RecapError:
+                keys = None
+            if keys is not None:
+                key = keys[1] or keys[0]
+                kind = pc_icons.content_type(key)
+                data = await pc_icons.fetch_bytes(sign(key)) if kind is not None else None
+        if data is None or kind is None:
             raise HTTPException(status_code=404, detail="not_found", headers=headers)
-        return RedirectResponse(sign(keys[1] or keys[0]), status_code=302, headers=headers)
+        return Response(content=data, media_type=kind, headers=headers)
 
     @app.post("/me/campaigns/{ref}/pc-icons/{entity_id}")
     async def me_pc_icon(

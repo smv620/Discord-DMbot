@@ -7,14 +7,21 @@ names."""
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, ClassVar
+from unittest import mock
+
+import httpx
 
 from dmbot.accounts import delete_person
 from dmbot.campaigns.models import CampaignError
 from dmbot.memory.pc_icons_backup import DAMAGED, PcIconsSection
-from dmbot.web import pc_icons
+from dmbot.web import pc_icons, sessions
+from dmbot.web.app import create_app
+from dmbot.web.payments import FakeProvider
 from tests.test_pc_icons import CAROL, Icons
+from tests.test_recap_web import NOW
 from tests.test_web_all_names import MEMBER
+from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 from tests.test_web_relationships import BOB_USER
 
 CODE = "c" * 43
@@ -34,8 +41,8 @@ class Pictures(Icons):
             cur = await conn.execute(
                 "INSERT INTO campaign_pictures (guild_id, campaign_id, poster_id, code, public,"
                 " consent_version, right_granted_at, sha256, object_key, preview_key, size_bytes,"
-                " made_at, dm_only, deleted_at) VALUES (%s, %s, %s, %s, %s, 7, 1, %s, 'key/a',"
-                " 'key/a-preview', 10, 1, %s, %s) RETURNING id",
+                " made_at, dm_only, deleted_at) VALUES (%s, %s, %s, %s, %s, 7, 1, %s, 'key/a.webp',"
+                " 'key/a-preview.webp', 10, 1, %s, %s) RETURNING id",
                 (
                     self.g, campaign or self.one.id, poster,
                     code or (CODE[:-3] + f"{abs(hash((poster, dm_only, deleted))) % 1000:03d}"),
@@ -175,7 +182,7 @@ class TheFile(Pictures):
         pic = await self.picture(BOB_USER.id)
         await self.use(pic)
         keys = await pc_icons.file_keys(self.web, self.player, self.cref, str(self.hero))
-        self.assertEqual(keys, ("key/a", "key/a-preview"))
+        self.assertEqual(keys, ("key/a.webp", "key/a-preview.webp"))
 
     async def test_nothing_for_a_character_with_another_kind_of_icon(self) -> None:
         self.assertIsNone(
@@ -202,3 +209,81 @@ class TheBackup(Pictures):
         with self.assertRaises(CampaignError) as caught:
             section.check(bad)
         self.assertEqual(str(caught.exception), DAMAGED)
+
+
+class TheRoute(Pictures):
+    """The icon's own route: the preview's bytes, sent by the website, for members only."""
+
+    R2: ClassVar[dict[str, str]] = {
+        "pictures_r2_account": "acct",
+        "pictures_r2_bucket": "bkt",
+        "pictures_r2_key": "k",
+        "pictures_r2_secret": "s",
+    }
+
+    async def client(self, who: Any, **changes: Any) -> httpx.AsyncClient:
+        app = create_app(
+            settings(**{**self.R2, **changes}), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, "https://x"), clock=lambda: NOW,
+        )  # fmt: skip
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers={"X-DMbot-Request": "1"},
+        )
+        if who is None:
+            return client
+        user, guilds = (BOB_USER, [MEMBER]) if who is self.player else (ALICE, [THURSDAY])
+        token = await sessions.sign_in(self.web, user, guilds, now=NOW, days=30)
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+        return client
+
+    def path(self) -> str:
+        return f"/me/campaigns/{self.cref}/pc-icons/{self.hero}/picture"
+
+    async def test_a_member_gets_the_previews_bytes_with_a_private_cache(self) -> None:
+        await self.use(await self.picture(BOB_USER.id))
+        asked: list[str] = []
+
+        async def fetch(url: str) -> bytes:
+            asked.append(url)
+            return b"RIFFxxxxWEBP"
+
+        with mock.patch.object(pc_icons, "fetch_bytes", fetch):
+            async with await self.client(self.player) as client:
+                got = await client.get(self.path())
+        self.assertEqual((got.status_code, got.content), (200, b"RIFFxxxxWEBP"))
+        self.assertEqual(got.headers["content-type"], "image/webp")
+        self.assertEqual(got.headers["cache-control"], "private, max-age=300")
+        self.assertEqual(len(asked), 1)
+        self.assertIn("key/a-preview", asked[0])  # (the preview, not the full picture)
+
+    async def test_no_sign_in_no_choice_a_gone_picture_or_no_bucket_is_one_not_found(self) -> None:
+        fetch = mock.AsyncMock(return_value=b"x")
+        with mock.patch.object(pc_icons, "fetch_bytes", fetch):
+            async with await self.client(None) as anon:
+                self.assertEqual((await anon.get(self.path())).status_code, 404)
+            async with await self.client(self.player) as member:
+                self.assertEqual((await member.get(self.path())).status_code, 404)  # no choice
+                pic = await self.picture(BOB_USER.id)
+                await self.use(pic)
+                await self.sql(
+                    "UPDATE campaign_pictures SET dm_only = TRUE, public = FALSE WHERE id = %s", pic
+                )
+                self.assertEqual((await member.get(self.path())).status_code, 404)
+            fetch.assert_not_awaited()
+        await self.sql("UPDATE campaign_pictures SET dm_only = FALSE WHERE id = %s", pic)
+        async with await self.client(self.player, pictures_r2_account="") as nobucket:
+            self.assertEqual((await nobucket.get(self.path())).status_code, 404)
+
+    async def test_a_read_that_fails_or_is_too_long_is_not_found(self) -> None:
+        await self.use(await self.picture(BOB_USER.id))
+        with mock.patch.object(pc_icons, "fetch_bytes", mock.AsyncMock(return_value=None)):
+            async with await self.client(self.player) as client:
+                self.assertEqual((await client.get(self.path())).status_code, 404)
+
+    def test_a_key_without_an_image_extension_is_never_sent(self) -> None:
+        self.assertEqual(pc_icons.content_type("a/b.webp"), "image/webp")
+        self.assertEqual(pc_icons.content_type("a/b.JPG"), "image/jpeg")
+        self.assertIsNone(pc_icons.content_type("a/b"))
+        self.assertIsNone(pc_icons.content_type("a/b.html"))

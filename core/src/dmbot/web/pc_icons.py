@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import aiohttp
+
 from dmbot.db import Database
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -126,3 +128,32 @@ async def file_keys(
     if not isinstance(got, dict) or not got.get("key"):
         return None
     return str(got["key"]), str(got.get("previewKey") or "")
+
+
+PREVIEW_MAX_BYTES = 262_144  # the most the icon route will read and send: a preview is a few kB
+FETCH_TIMEOUT_S = 5.0
+_TYPES = {".webp": "image/webp", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+          ".gif": "image/gif"}  # fmt: skip
+
+
+def content_type(key: str) -> str | None:
+    """The image type a bucket key says it is, from its extension, or None for anything else (the
+    route then answers `not_found`: it never sends bytes it cannot name)."""
+    dot = key.rfind(".")
+    return _TYPES.get(key[dot:].lower()) if dot >= 0 else None
+
+
+async def fetch_bytes(url: str) -> bytes | None:
+    """The picture's bytes from its signed address, read here so the page needs no other host (the
+    icon is the one place a picture is served by the website itself, Supervisor's ruling on #3623).
+    At most `PREVIEW_MAX_BYTES`: a longer answer, a failed one or a slow one is None. Nothing is
+    logged but a type, and the address is never kept."""
+    try:
+        timeout = aiohttp.ClientTimeout(total=FETCH_TIMEOUT_S)
+        async with aiohttp.ClientSession(timeout=timeout) as http, http.get(url) as reply:
+            if reply.status != 200:
+                return None
+            data = await reply.content.read(PREVIEW_MAX_BYTES + 1)
+    except (aiohttp.ClientError, TimeoutError):
+        return None
+    return data if 0 < len(data) <= PREVIEW_MAX_BYTES else None
