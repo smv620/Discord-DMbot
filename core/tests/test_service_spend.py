@@ -6,6 +6,7 @@ of anything; and a failing write never fails the call. Invented ids. Needs Postg
 from __future__ import annotations
 
 import re
+import unittest
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -213,3 +214,69 @@ def test_only_the_cost_module_and_the_admin_page_open_the_doors() -> None:
     }
     assert writers == {"service_spend.py"}
     assert admins == {"service_spend.py"}  # (the admin route reads through `read_month`)
+
+
+class TheProviders(unittest.IsolatedAsyncioTestCase):
+    """Voyage and ElevenLabs record the units their answers report, unpriced; nothing else."""
+
+    def calls(self) -> list[Any]:
+        return [(c.args, c.kwargs) for c in self.record.call_args_list]
+
+    async def asyncSetUp(self) -> None:
+        patcher = patch.object(service_spend, "record")
+        self.record = patcher.start()
+        self.addCleanup(patcher.stop)
+
+    async def test_voyage_records_the_tokens_it_reports_by_model_unpriced(self) -> None:
+        from tests.test_voyage import Fake, client, vectors
+
+        voyage = client(Fake((200, vectors(2)), (200, {"data": [], "usage": {"total_tokens": 9}})))
+        await voyage.embed(["a", "b"])
+        await voyage.rerank("q", ["a"], top_k=1)
+        self.assertEqual(
+            self.calls(),
+            [
+                (("voyage", "voyage-3.5", "search"), {"units_in": 14, "unpriced": True}),
+                (("voyage", "rerank-2.5", "search"), {"units_in": 9, "unpriced": True}),
+            ],
+        )
+
+    async def test_a_failed_voyage_call_records_nothing(self) -> None:
+        from dmbot.memory.voyage import ProviderError
+        from tests.test_voyage import Fake, client
+
+        with self.assertRaises(ProviderError):
+            await client(Fake((500, {}))).embed(["a"])
+        self.record.assert_not_called()
+
+    async def test_elevenlabs_records_its_own_credits_for_each_answered_call_unpriced(self) -> None:
+        from dmbot.recaps.audio.eleven import ElevenLabs
+        from tests.test_recap_audio_step import Fake as Voices
+
+        fake = Voices()
+        eleven = ElevenLabs(fake, voice_id="v", speech_model="eleven_v3")
+        await eleven.speech("Hello.", seed=1)
+        got = self.calls()
+        self.assertEqual(len(got), 1)
+        (args, kwargs) = got[0]
+        self.assertEqual(args, ("elevenlabs", "eleven_v3", "recap_audio"))
+        self.assertEqual((kwargs["units_in"], kwargs["unpriced"]), (eleven.credits, True))
+        self.assertGreater(eleven.credits, 0)
+
+    async def test_a_refused_elevenlabs_call_records_nothing(self) -> None:
+        from dmbot.recaps.audio.eleven import ElevenLabs, ProviderError
+        from tests.test_recap_audio_step import Fake as Voices
+
+        fake = Voices()
+        fake.fail["text-to-speech"] = 500
+        with self.assertRaises(ProviderError):
+            await ElevenLabs(fake, voice_id="v").speech("Hello.", seed=1)
+        self.record.assert_not_called()
+
+    async def test_the_prices_come_from_one_place(self) -> None:
+        from dmbot import prices
+        from dmbot.devtools.costs import prices as measuring
+
+        self.assertIs(measuring.DEEPGRAM_PRERECORDED, prices.DEEPGRAM_PRERECORDED)
+        self.assertEqual(prices.deepgram_micro_usd(60), 4300)
+        self.assertEqual(prices.deepgram_micro_usd(0), 0)
