@@ -682,8 +682,9 @@ always; DMbot never picks one.
   your DM.", and the DM is told privately.
 - **Built in slices (#2284, CloudDev, 2026-10-21):** the save-time check, the stored "wins" and
   backups first; the answer-time question after. At save, a rule accepted from the linked file that
-  disagrees is held back with a line saying so (the DM adds it by hand and picks), and the rest of the
-  file is added. A check that cannot run never blocks a save: the rule is saved and the DM is told it
+  disagrees is held back with a line saying so, and the rest of the file is added. Each held rule
+  has a button that opens the same "which one applies" question with its words filled in, so the DM
+  picks without retyping it (#3841, 2026-11-25); DMbot never picks. A check that cannot run never blocks a save: the rule is saved and the DM is told it
   was not checked. Editing or removing a rule forgets what was decided about it, in the same
   transaction.
 - **Between sources** the order is unchanged: the campaign's own house rules, then the set it
@@ -5963,10 +5964,10 @@ Supervisor's details marked).**
      fails, nothing is removed and the offer opens again with a plain reason. As after loading a backup,
      the old server's channels (DM screen, voice, chat) don't carry over; the new owner picks them with
      `/dmbot start`. Rulesets the campaign follows keep being followed; a ruleset it published moves with
-     it and the new owner becomes its publisher. *(Supervisor, 2026-10-23, #2550:)* **for now** a campaign
-     that **shares** a rule set (`status = 'shared'`) can't move to another server: the hand-over page says
-     so before anyone accepts, and it can still be handed over on its own server. Moving a shared set with
-     its followers is #2551. **How the move is done (#2550):** the campaign's rows are moved, not copied: a
+     it and the new owner becomes its publisher. A campaign that **shares** a rule set moves too (#2551,
+     Supervisor 2026-11-25; until then it was refused, #2550): the set, its versions and share codes move
+     in the same update, its followers keep following and the code still works, the new owner becomes the
+     publisher, and the old publisher's editors are dropped (the new publisher names their own). **How the move is done (#2550):** the campaign's rows are moved, not copied: a
      single change of its `guild_id`, carried into every row by `ON UPDATE CASCADE` (CLAUDE.md, Code
      standards), with the busy checks (a session, a recap job or import at work) and the new owner's paid
      slot checked in the same step, so nothing can be lost or left behind.
