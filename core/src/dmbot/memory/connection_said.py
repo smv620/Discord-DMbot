@@ -27,7 +27,7 @@ from dmbot.memory import background as bg
 from dmbot.memory import kin, link_edits
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_keep import undo_batches
-from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError, Relation, name_key
+from dmbot.memory.models import CONFIRMED, DM, LIVE, MemoryRuleError, Relation, name_key
 from dmbot.memory.store import MemoryStore
 
 log = logging.getLogger(__name__)
@@ -39,8 +39,10 @@ TOO_LONG = "That is too long. Keep it under 1,000 characters."
 NOTHING = "DMbot didn't find a connection between those two names in that. Name both of them."
 CHANGED = "That connection changed since you started, so nothing was changed. Try again."
 GONE = "One of the names is gone, so nothing was changed."
+PART_LEFT = "Part of it could not be taken back: check the connections."
 
-ALL, ONLY_DM, SOME = "all", "dm", "some"  # who knows it, as the DM's words say
+# Who knows it, as the DM's words say: the same three words `link_edits` uses (WHO_KNOWS)
+ALL, ONLY_DM, SOME = link_edits.EVERYONE, link_edits.ONLY_THE_DM, link_edits.SOME_CHARACTERS
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +135,7 @@ def instructions(own: Mapping[str, str] | None = None) -> str:
         'A sentence that names only one entry, or neither, is no connection. "who" says who '
         'knows the connection, only from the text: kind "dm" when it is a secret or only the DM '
         'knows ("it\'s a secret", "keep it hidden"), kind "some" with the names of the people '
-        'who know it ("only Tavin knows"), else kind "all" with no names.'
+        'who know it ("only Tavin knows"), else kind "everyone" with no names.'
     )
 
 
@@ -149,7 +151,7 @@ def request(first: End, second: End, text: str) -> str:
 Complete = Callable[..., Awaitable[Any]]
 
 
-def _who(raw: object) -> Who:
+def _who(raw: object, text: str = "") -> Who:
     if not isinstance(raw, dict):
         return Who()
     kind = raw.get("kind")
@@ -157,7 +159,12 @@ def _who(raw: object) -> Who:
     if kind == ONLY_DM:
         return Who(ONLY_DM)
     if kind == SOME and isinstance(names, list):
-        said = tuple(" ".join(n.split()) for n in names if isinstance(n, str) and n.strip())
+        heard = name_key(text)  # (the people named must be in the DM's own words)
+        said = tuple(
+            " ".join(n.split())
+            for n in names
+            if isinstance(n, str) and n.strip() and name_key(n) in heard
+        )
         return Who(SOME, said[:10]) if said else Who()
     return Who()
 
@@ -216,9 +223,19 @@ async def read(
     )
     ends = {first.id: first.forms(), second.id: second.forms()}
 
+    # A spelling shared by both entries names neither of them for certain: never matched.
+    shared = ends[first.id] & ends[second.id]
+
     def entry_of(written: str) -> str | None:
         key = name_key(written)
+        if key in shared:
+            return None
         return next((i for i, keys in ends.items() if key in keys), None)
+
+    def spelled_as(variant: str, entry: str) -> bool:
+        """The text's own spelling, when the AI wrote the end another way (one letter off), is
+        one of this entry's names: else it is another name (a third entry "Tavan" for "Tavin")."""
+        return not variant or name_key(variant) in ends[entry]
 
     proposals: list[Proposal] = []
     for c in found:
@@ -226,8 +243,14 @@ async def read(
         if a is None or b is None or a == b:
             lost["not_this_pair"] += 1  # only the two given entries can be connected here
             continue
+        if not (spelled_as(c.variant_a, a) and spelled_as(c.variant_b, b)):
+            lost["not_this_pair"] += 1
+            continue
+        if c.inferred or c.change or c.from_holder:
+            lost["not_stated"] += 1  # only what the DM wrote, never a guess or a hand-over
+            continue
         proposals.append(Proposal(a, b, c.how, c.words, c.quote, c.secret))
-    who = _who(data.get("who"))
+    who = _who(data.get("who"), said)
     log.info("A connection was read in words: %d proposed, lost %s", len(proposals), dict(lost))
     return Said(
         tuple(proposals),
@@ -267,26 +290,38 @@ async def apply(
     campaign_id: str,
     proposals: Sequence[Proposal],
     *,
-    who: str = link_edits.EVERYONE,
+    who: str | None = None,
     characters: Sequence[str] = (),
     replacing: Relation | None = None,
 ) -> Applied:
     """Write what the DM confirmed, as the DM, in one go. `who` and `characters` say who knows each
-    (`link_edits.WHO_KNOWS`). `replacing`: the connection being corrected, as the DM saw it; it is
-    taken back only if it is still exactly that, and only after the new ones are made. A proposal
-    that names an entry gone since is refused whole: nothing is written. Every write is noted in
-    one list, so a single Undo (`undo`) takes the whole thing back."""
+    (`link_edits.WHO_KNOWS`). With no `who` a correction keeps who saw the old connection (a hidden
+    one stays hidden, with the player characters who knew it), and a new connection is shown to
+    everyone. `replacing`: the connection being corrected, as the DM saw it; it must join the same
+    two entries, and is taken back only if it is still exactly that, after the new ones are made.
+    A name gone since (rejected, merged or not there) refuses the whole thing: nothing is written.
+    Every write is noted in one list, so a single Undo (`undo`) takes the whole thing back, and a
+    failure part way puts back what was already written."""
     if not proposals and replacing is None:
         return Applied(problem=NOTHING)
     ids = {i for p in proposals for i in (p.first, p.second)}
     if replacing is not None:
+        if ids and ids != {replacing.subject_id, replacing.object_id}:
+            return Applied(problem=CHANGED)  # not the connection between these two names
         now = await memory.relation(guild_id, campaign_id, replacing.id)
         if now is None or not same_as_read(replacing, now):
             return Applied(problem=CHANGED)
     for entry_id in ids:
         entry = await memory.entity(guild_id, campaign_id, entry_id)
-        if entry is None or entry.status not in (CONFIRMED,):  # (rejected or merged: gone)
+        if entry is None or entry.status not in LIVE:
             return Applied(problem=GONE)
+    answer, chosen = who, list(characters)
+    if answer is None and replacing is not None and (replacing.secret or replacing.unrevealed):
+        known = (await memory.connection_knowers(guild_id, campaign_id, [replacing.id])).get(
+            replacing.id, []
+        )
+        answer, chosen = (link_edits.SOME_CHARACTERS if known else link_edits.ONLY_THE_DM), known
+    hidden = answer not in (None, link_edits.EVERYONE)
     made: list[int] = []
     links: list[str] = []
     try:
@@ -294,26 +329,31 @@ async def apply(
             written = await memory.add_relation(
                 guild_id, campaign_id, p.first, p.kind, p.second,
                 source=DM, confidence=1.0, status=CONFIRMED, detail=p.words[:100],
-                secret=p.secret or who != link_edits.EVERYONE,
+                secret=p.secret or hidden,
                 directional=p.kind == "kin_of" and kin.directional(p.words),
                 by_hand=True,
             )  # fmt: skip
             link_edits.keep_batch(made, written)
             link = written.value[0]
             links.append(link.id)
-            if who != link_edits.EVERYONE or p.secret:
+            if hidden or p.secret:
                 await link_edits.set_who_knows(
                     memory, guild_id, campaign_id, link,
-                    who if who != link_edits.EVERYONE else link_edits.ONLY_THE_DM,
-                    characters, made=made,
+                    answer if hidden and answer is not None else link_edits.ONLY_THE_DM,
+                    chosen, made=made,
                 )  # fmt: skip
         if replacing is not None and replacing.id not in links:
             link_edits.keep_batch(
                 made, await link_edits.remove(memory, guild_id, campaign_id, replacing)
             )
-    except MemoryRuleError as exc:
-        await undo_batches(memory, guild_id, campaign_id, made)  # nothing is half done
-        return Applied(problem=str(exc))
+    except BaseException as exc:  # a write failed part way: put back what was written
+        whole = await undo_batches(memory, guild_id, campaign_id, made)
+        if not isinstance(exc, MemoryRuleError):
+            log.warning("A connection read in words could not be written")
+            if not whole:
+                log.error("...and part of it could not be taken back")
+            raise
+        return Applied(problem=str(exc) if whole else f"{exc} {PART_LEFT}")
     return Applied(tuple(made), tuple(links))
 
 

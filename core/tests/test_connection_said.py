@@ -204,3 +204,75 @@ class Saying(ConfirmedMemoryTest):
         done = await said.apply(self.memory, GUILD, self.c, [p])
         self.assertEqual(done.problem, said.GONE)
         self.assertEqual(await self.links(), [])
+
+    async def test_a_one_letter_off_third_name_is_never_taken_for_the_entry(self) -> None:
+        await self.add("Tavan", type="character", role="npc")  # a third name, one letter off
+        ai = Fake(answer(line("Mara", "works for", "Tavin", "Mara works for Tavan")))
+        got = await self.read("Mara works for Tavan.", ai)
+        self.assertEqual(got.proposals, ())
+        self.assertIn(("not_this_pair", 1), got.lost)
+
+    async def test_a_guess_or_a_hand_over_is_not_what_the_dm_wrote(self) -> None:
+        guessed = line("Mara", "works for", "Tavin", "Mara works for Tavin")
+        guessed["inferred"] = "she seems to"
+        ai = Fake(answer(guessed))
+        self.assertEqual((await self.read("Mara works for Tavin.", ai)).proposals, ())
+
+    async def test_people_who_know_must_be_named_in_the_dms_words(self) -> None:
+        ai = Fake(
+            answer(
+                line("Mara", "works for", "Tavin", "Mara works for Tavin"),
+                who="some",
+                names=("Tavin", "Zorn"),
+            )
+        )
+        got = await self.read("Mara works for Tavin. Only Tavin knows.", ai)
+        self.assertEqual(got.who.names, ("Tavin",))  # Zorn is nowhere in the text
+
+    async def test_a_correction_with_no_word_on_who_knows_keeps_a_hidden_one_hidden(self) -> None:
+        old = (
+            await self.relate(
+                self.tavin, FALLBACK_PREDICATE, self.mara, status=CONFIRMED, detail="owes"
+            )
+        ).value[0]
+        await link_edits.set_who_knows(
+            self.memory, GUILD, self.c, old, link_edits.SOME_CHARACTERS, [self.other]
+        )
+        old = (await self.memory.relation(GUILD, self.c, old.id)) or old
+        ai = Fake(answer(line("Mara", "other", "Tavin", "Mara owes Tavin", "owes")))
+        got = await self.read("Mara owes Tavin, not the other way round.", ai)
+        done = await said.apply(self.memory, GUILD, self.c, got.proposals, replacing=old)
+        self.assertEqual(done.problem, "")
+        [new] = [
+            r
+            for r in await self.memory.relations(GUILD, self.c, include_secret=True)
+            if r.id in done.links
+        ]
+        self.assertTrue(new.secret or new.unrevealed)  # never shown to the players by a fix
+
+    async def test_a_failure_part_way_puts_back_what_was_written(self) -> None:
+        both = [
+            said.Proposal(self.mara, self.tavin, "knows", "", "Mara knows Tavin"),
+            said.Proposal(self.tavin, self.mara, "serves", "", "Tavin serves Mara"),
+        ]
+        real = self.memory.add_relation
+        calls = 0
+
+        async def second_fails(*args: Any, **kw: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise RuntimeError("the database went away")
+            return await real(*args, **kw)
+
+        self.memory.add_relation = second_fails  # type: ignore[method-assign]
+        with self.assertRaises(RuntimeError):
+            await said.apply(self.memory, GUILD, self.c, both)
+        self.assertEqual([r for r in await self.links() if r["status"] == CONFIRMED], [])
+
+    async def test_a_connection_between_other_names_is_not_the_one_to_replace(self) -> None:
+        elsewhere = (await self.relate(self.other, "knows", self.mara, status=CONFIRMED)).value[0]
+        p = said.Proposal(self.mara, self.tavin, "serves", "", "Mara serves Tavin")
+        done = await said.apply(self.memory, GUILD, self.c, [p], replacing=elsewhere)
+        self.assertEqual(done.problem, said.CHANGED)
+        self.assertEqual(done.batches, ())
