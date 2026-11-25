@@ -1504,6 +1504,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if user_id is not None and user_id not in admins.values():  # the same person twice
                 admins[role] = user_id
         self.ai_watch = AIWatch(admins=admins, state_dir=settings.data_dir, send=self._tell_admin)
+        # The month's AI budget warnings and the first refusal's notice (#5270)
+        service_spend.watch(self.ai_watch, settings.ai_monthly_budget_usd)
         # Owner alerts (#1907): email first; a private message is the way when mail is what broke.
         if (alerter := alerts.current()) is not None:
             alerter.set_tell_owner(self._tell_app_owner)
