@@ -139,7 +139,6 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
 
     from dmbot import plan_rules
     from dmbot.ai import TierClient
-    from dmbot.bot import DMBot
     from dmbot.campaigns import speaker_removal, web_backup, web_line_delete, web_restore
     from dmbot.campaigns.store import CampaignStore
     from dmbot.campaigns.web_delete import WebDeleteNotices
@@ -238,7 +237,7 @@ def _attachable(
     return out
 
 
-async def setup(bot: DMBot) -> None:
+async def setup(bot: discord.Client) -> None:
     """The extension entry: the recap buttons keep working after a restart (a button is dropped
     by Discord's "This interaction failed" unless it is registered at start-up)."""
     bot.add_dynamic_items(RecapNamesButton)  # the private message's check (#2027)
