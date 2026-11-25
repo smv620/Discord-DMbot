@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-11-12 UTC by dev1 (after deploy 22)
+Last updated: 2026-11-25 UTC by dev1 (after deploy 48)
 
 For the people at the table: docs/next-test-step.md has the one next small test (#569).
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,14 +9,18 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at c030d95a (deploy 22: migrations 0440, 0441, 0443, 0444; the wizard fixes, the Cerric duplicate fix, Who knows this?, account deletion, What's new split). Bot connected to 2 servers, 0 ERROR lines; web-api healthy; sample run 22 exit 0 (counts on #3545); recap kept as a draft. Open: a features.json write fails on start (/data/status owned by root). Full entry: docs/testing-history.log.
+core + web-api at 83f05b757 (deploy 48: migrations 0619_web_name_guess, 0620_recap_lines_noted; the kind menu starts on DMbot's guess, "Sounds like" names, the final-s match, rules phrases never offered as names, the Story Graph's waiting list and What people believe switched on). Bot connected to 2 servers, 0 ERROR lines and 0 tracebacks in the 10-minute window; web-api healthy; sample run 48 exit 0 (counts on #3545). Checks 3 and 4 (cleaned transcript; names-to-check phrases) not done yet. Full entry: docs/testing-history.log.
+Open: the commit label on the sample run said 4f82f2c, not 83f05b757 (counts-only; source not found). Deploy 47 was folded into deploy 48.
+
 READY TO DEPLOY
 ------------------------------------------------------------------------------
-Part C: waits for migrations 0293 (#3083) and 0294 (#3085) to be merged, so all of them run together, in order. Nothing to deploy yet.
+Deploy 49 (Supervisor's handover pending on #3720). Nothing handed over to dev1 yet.
 
 ------------------------------------------------------------------------------
 OWNER CHECKS (not done yet)
 ------------------------------------------------------------------------------
+Deploy 48 (83f05b757), owner checks (browser, can wait): A. The names-to-check menu starts on DMbot's guess. B. "Explorer League" says "Sounds like Explorer's League". C. "Questions for you" opens the connections to answer on the page. D. A session after a recap: the "Read them as play" note appears once, and 👀 Show them shows the lines.
+Deploy 46 (4f82f2c8), owner checks 3 to 6 (Supervisor's ruling: deploy 46 counts as checked without its sample): recap names to check (Pick what it is, Change the words, Where it was said, split and group); Other new names; the cleaned transcript's capitals; the waiting list's travels-with line.
 Deploy 22 (c030d95a), owner checks (not done yet): A. In the wizard on dev.getdmbot.com, Back keeps the pasted text, and step 3 lists this server's members. B. A character typed with a dndbeyond.com sheet link gets its sheet after the finish. C. Open the campaign opens the campaign's page. D. The lore's "Cerric" and the wizard's "Cerric Vanya'elen" are one entry.
 Deploy 20 (f624c4b8), owner checks (not done yet): A. In Discord, a rivals connection on a name card reads "X and Y are rivals". B. On the website's Story Graph, the same pair reads the same way in the details panel. C. On the waiting list, an item that changed hands shows the "(... sold it)" bracket, if the sample makes one. D. The wolf figurine (#4170) now reads as sold to Belleros, not carried by Claude (deploy 18's check, retried on this deploy).
 Deploy 16 (7db2efd0), owner checks: DONE by the owner, the sample recap draft on the website works for review (2026-11-11). the Keep-all card's new line on an upload with connections from other files; a PDF with picture-only pages (the note). DONE by the owner: a PDF with pictures and text uploaded as lore, accepted and worked (size and the note not yet confirmed). Deploy 15, owner checks: next test is Test N in docs/next-test-step.md (a 20 to 50 MB PDF
@@ -32,6 +36,8 @@ Part B (eleventh deploy, 0fcaf7fc): same-person prompt (Yes, No, Later); public 
 ------------------------------------------------------------------------------
 BLOCKERS
 ------------------------------------------------------------------------------
+- AI account usage limit: refused every AI call from 2026-11-24 20:15 UTC until the owner raised the limit for the key's workspace (sample 48 ran at 23:53 UTC). Watch for it again.
+- Sample tool: parallel runs under one deploy label can delete each other's campaigns (bug #5247, session dev1; may explain the deploy 46 lore loss). A sample-tool change, #5249, merged in deploy 49's batch; not yet checked against #5247.
 - Party backfill (#3036): dry run of link_party on the test server, counts only, not yet run.
 - Supervisor's checks on the Story Graph and lore work need the owner at the table.
 - Deploy 16 restore check: the format 5 backup restores with one more memory row (2032 for 2031) and some changed row fields, on 7db2efd0 only (03e9527c restores clean). Not explained yet; deploy 17 waits for it.
