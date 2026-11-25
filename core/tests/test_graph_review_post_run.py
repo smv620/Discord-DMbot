@@ -6,7 +6,10 @@ hour and stops after five. Invented names."""
 from __future__ import annotations
 
 import json
+import unittest
 from typing import Any
+
+import aiohttp
 
 from dmbot.campaigns import CampaignStore
 from dmbot.config import ConfigError, load_settings
@@ -143,7 +146,7 @@ class Posting(DatabaseTest):
         await self.report("a")
 
         async def down(query: str, variables: Any) -> dict[str, Any]:
-            raise gp.PostError("http_502")
+            raise gp.PostError("not_created")
 
         broken = run.ReportPoster(
             self.store, gp.GitHub("smv620/dmbot-improvements", down),
@@ -158,6 +161,44 @@ class Posting(DatabaseTest):
         self.assertEqual(await self.poster().round(GUILD), 0)  # five failures: left alone
         self.assertEqual(self.created(), 0)
 
+    async def test_a_down_github_or_a_wrong_token_never_counts_against_a_report(self) -> None:
+        await self.report("a")
+
+        async def down(query: str, variables: Any) -> dict[str, Any]:
+            raise gp.PostError("http_502")
+
+        async def odd(query: str, variables: Any) -> dict[str, Any]:
+            raise RuntimeError("quotes the report words")
+
+        for transport in (down, odd):
+            broken = run.ReportPoster(
+                self.store, gp.GitHub("smv620/dmbot-improvements", transport),
+                consenting=lambda g: _people(self.people), improvement_allowed=_same,
+            )  # fmt: skip
+            for _ in range(7):
+                self.assertEqual(await broken.round(GUILD), 0)
+                self.clock[0] += 3601
+        self.assertEqual((await self.row("a"))["post_failures"], 0)
+        self.assertEqual(await self.poster().round(GUILD), 1)  # fixed: it goes out at once
+
+    async def test_a_report_stored_in_a_shape_that_cannot_be_read_is_held(self) -> None:
+        await self.report(
+            "a", verdicts={"items": [{"fix": 1, "entries": [{"id": "x"}]}], "more_not_shown": 0}
+        )
+        self.assertEqual(await self.poster().round(GUILD), 0)
+        self.assertEqual((await self.row("a"))["held"], gp.BAD_VERDICTS)
+        self.assertEqual(self.created(), 0)
+
+    async def test_held_reports_do_not_stop_the_next_one_posting(self) -> None:
+        await self.report("a", at=1000, speakers=(ALICE, BOB))
+        await self.report("b", at=1001, speakers=(ALICE, BOB))
+        await self.report("c", at=1002)
+        self.people = {ALICE}
+        self.assertEqual(await self.poster().round(GUILD), 1)
+        self.assertEqual((await self.row("a"))["held"], "speaker_stopped")
+        self.assertEqual((await self.row("b"))["held"], "speaker_stopped")
+        self.assertEqual((await self.row("c"))["discussion"] is not None, True)
+
     async def test_the_lease_keeps_two_workers_off_one_report(self) -> None:
         await self.report("a")
         first = await self.store.claim_next(GUILD)
@@ -165,6 +206,56 @@ class Posting(DatabaseTest):
         self.assertIsNone(await self.store.claim_next(GUILD))  # leased for ten minutes
         self.clock[0] += run.LEASE_S + 1
         self.assertIsNotNone(await self.store.claim_next(GUILD))
+
+
+class FakeReply:
+    def __init__(self, status: int, body: Any) -> None:
+        self.status = status
+        self._body = body
+
+    async def __aenter__(self) -> FakeReply:
+        return self
+
+    async def __aexit__(self, *exc: Any) -> None:
+        return None
+
+    async def json(self) -> Any:
+        return self._body
+
+
+class FakeSession:
+    def __init__(self, reply: FakeReply | Exception) -> None:
+        self.reply = reply
+        self.sent: list[dict[str, Any]] = []
+
+    def post(self, url: str, **kwargs: Any) -> FakeReply:
+        self.sent.append(kwargs)
+        if isinstance(self.reply, Exception):
+            raise self.reply
+        return self.reply
+
+
+class TheTransport(unittest.IsolatedAsyncioTestCase):
+    async def call(self, reply: FakeReply | Exception) -> tuple[Any, FakeSession]:
+        session = FakeSession(reply)
+        send = run.aiohttp_transport("github_pat_secret_token_value", session)  # type: ignore[arg-type]
+        try:
+            return await send("query", {"a": 1}), session
+        except gp.PostError as exc:
+            return str(exc), session
+
+    async def test_the_data_comes_back_and_the_token_is_only_a_header(self) -> None:
+        got, session = await self.call(FakeReply(200, {"data": {"x": 1}}))
+        self.assertEqual(got, {"x": 1})
+        self.assertNotIn("secret_token_value", json.dumps(session.sent[0]["json"]))
+
+    async def test_a_failure_says_its_kind_and_nothing_else(self) -> None:
+        got, _ = await self.call(FakeReply(401, {"message": "secret_token_value"}))
+        self.assertEqual(got, "http_401")
+        got, _ = await self.call(FakeReply(200, {"errors": [{"message": "the words"}]}))
+        self.assertEqual(got, "graphql_error")
+        got, _ = await self.call(aiohttp.ClientConnectionError("secret_token_value"))
+        self.assertEqual(got, "network_ClientConnectionError")
 
 
 async def _people(people: set[int]) -> set[int]:
@@ -175,8 +266,8 @@ async def _same(people: Any) -> set[int]:
     return set(people)
 
 
-class TheConfig(DatabaseTest):
-    async def test_the_repository_is_checked_and_the_token_is_never_printed(self) -> None:
+class TheConfig(unittest.TestCase):
+    def test_the_repository_is_checked_and_the_token_is_never_printed(self) -> None:
         base = {"DISCORD_TOKEN": "t", "EARS_SHARED_SECRET": "s", "DATABASE_URL": "postgresql://x"}
         got = load_settings(
             {**base, "DMBOT_IMPROVEMENTS_REPO": "smv620/dmbot-improvements",
@@ -187,3 +278,5 @@ class TheConfig(DatabaseTest):
         self.assertEqual(load_settings(base).improvements_repo, "")
         with self.assertRaises(ConfigError):
             load_settings({**base, "DMBOT_IMPROVEMENTS_REPO": "not a repo"})
+        with self.assertRaises(ConfigError):
+            load_settings({**base, "DMBOT_IMPROVEMENTS_REPO": "../dmbot-improvements"})

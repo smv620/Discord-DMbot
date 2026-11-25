@@ -179,6 +179,18 @@ class FakeGitHub:
         }
 
 
+class TheScrubbing(unittest.TestCase):
+    def test_a_discord_bot_token_is_cut_out(self) -> None:
+        # built in pieces so no scanner mistakes this made-up shape for a real token
+        token = ".".join(["MTIzNDU2Nzg5MDEyMzQ1Njc4", "GabcDE", "abcdefghijklmnopqrstuvwxyz0"])
+        got = render(stored(verdict(quote=f"the key is {token} ok")))
+        text = got.body if not isinstance(got, gp.Held) else ""
+        self.assertNotIn(token, text)
+
+    def test_hidden_direction_and_zero_width_characters_are_removed(self) -> None:
+        self.assertEqual(gp.escape("a\u202eb\u200bc"), "abc")
+
+
 class TheClient(unittest.IsolatedAsyncioTestCase):
     async def test_it_looks_up_the_ids_once_and_posts_one_discussion(self) -> None:
         fake = FakeGitHub()

@@ -1909,8 +1909,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             and improvement is not None
             else None
         )
-        # Posting the stored reports to the owner's private repository (#3742): built only when the
-        # repository and its token are set, so with neither nothing is posted and nothing waits.
+        # Posting the stored reports to the owner's private repository (#3742): the store is cheap,
+        # the loop that posts runs only when the repository and its token are both set, so with
+        # either empty nothing is posted and nothing waits. It needs the graph checks (and so the
+        # AI client), which produce the reports in the first place.
         self.graph_report_store = (
             GraphReportStore(memory._db)
             if memory is not None and self.graph_reviews is not None

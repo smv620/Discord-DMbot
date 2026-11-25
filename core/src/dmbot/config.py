@@ -614,8 +614,9 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
             'DMBOT_STORY_REVEALS_PRECHECK must be 1 (on) or 0 (off), got "' + precheck_raw + '".'
         )
     improvements_repo = (get("DMBOT_IMPROVEMENTS_REPO") or "").strip()
-    if improvements_repo and not re.fullmatch(
-        r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}", improvements_repo
+    if improvements_repo and (
+        not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}", improvements_repo)
+        or any(part in (".", "..") for part in improvements_repo.split("/"))
     ):
         raise ConfigError("DMBOT_IMPROVEMENTS_REPO must be owner/name, or empty.")
     card_raw = (get("DMBOT_CARD_SUMMARY") or "0").lower()

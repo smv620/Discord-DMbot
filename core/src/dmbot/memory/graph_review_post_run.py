@@ -120,7 +120,13 @@ class GraphReportStore:
                 (why[:30], guild_id, report.campaign_id, report.id),
             )
 
-    async def failed(self, guild_id: int, report: gp.Stored) -> None:
+    async def failed(self, guild_id: int, report: gp.Stored, *, its_fault: bool) -> None:
+        """A try that did not post. Only a report's own fault counts toward giving up on it: a
+        token or a category that is wrong, or GitHub being down, would otherwise end every report
+        after five hours and fixing the cause would not bring them back. The row stays leased, so it
+        is tried again in an hour either way."""
+        if not its_fault:
+            return
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE graph_reviews SET post_failures = post_failures + 1"
@@ -154,7 +160,14 @@ class ReportPoster:
         many were posted (0 or 1)."""
         while (taken := await self._store.claim_next(guild_id)) is not None:
             report, sharing = taken
-            made = gp.render(report, allowed_speakers=await self._people(guild_id), sharing=sharing)
+            try:
+                made = gp.render(
+                    report, allowed_speakers=await self._people(guild_id), sharing=sharing
+                )
+            except (KeyError, ValueError, TypeError, AttributeError) as exc:
+                # a stored report that can't be read: held with a fixed word, never retried hot
+                made = gp.Held(gp.BAD_VERDICTS)
+                log.warning("A graph report could not be read: %s", type(exc).__name__)
             if isinstance(made, gp.Held):
                 await self._store.held(guild_id, report, made.why)
                 log.info("A graph report was held back: %s", made.why)
@@ -164,11 +177,11 @@ class ReportPoster:
                 if number is None:
                     number = await self._github.create(made)
             except gp.PostError as exc:
-                await self._store.failed(guild_id, report)
+                await self._store.failed(guild_id, report, its_fault=str(exc) == "not_created")
                 log.warning("A graph report could not be posted: %s", exc)
                 return 0
             except Exception as exc:  # the type only: nothing here may quote the report
-                await self._store.failed(guild_id, report)
+                await self._store.failed(guild_id, report, its_fault=False)
                 log.warning("A graph report could not be posted: %s", type(exc).__name__)
                 return 0
             await self._store.posted(guild_id, report, number)

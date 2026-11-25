@@ -51,7 +51,8 @@ _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 # Anything shaped like a key or a token: the usual prefixes, or a long run of key characters.
 _KEY = re.compile(
     r"\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
-    r"|xox[abp]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|[A-Za-z0-9_-]{32,})\b"
+    r"|xox[abp]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|[A-Za-z0-9_-]{23,28}\.[A-Za-z0-9_-]{6,7}\."
+    r"[A-Za-z0-9_-]{27,}|[A-Za-z0-9_-]{32,})\b"
 )
 REMOVED = "[removed]"
 
@@ -72,13 +73,15 @@ def scrub(text: str, counts: dict[str, int] | None = None) -> str:
     return out
 
 
+# Zero-width and bidirectional control characters: a quote can't hide or reverse text with them.
+_CONTROLS = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]")
 _SPECIAL = re.compile(r"([\\`*_{}\[\]()<>#+\-.!|~$&:])")
 
 
 def escape(text: str) -> str:
     """Markdown-safe: every character that can format is escaped, a line break is a space, and an
     `@` can't become a mention (a zero-width space follows it)."""
-    flat = " ".join(text.split())
+    flat = " ".join(_CONTROLS.sub("", text).split())
     return _SPECIAL.sub(r"\\\1", flat).replace("@", "@​")
 
 
@@ -125,6 +128,7 @@ NO_VERDICTS = "no_verdicts"  # a report from before verdicts were stored: never 
 SPEAKER_STOPPED = "speaker_stopped"
 NOT_SHARING = "not_sharing"
 TOO_BIG = "too_big"
+BAD_VERDICTS = "bad_verdicts"  # stored in a shape that can't be read: held, never posted
 
 
 def stamp(created_at: int) -> str:
