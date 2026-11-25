@@ -1,0 +1,125 @@
+name: Coverage
+
+# Coverage is a report, not a gate (#1858), and measuring it added 5 to 6 minutes to every part of
+# development's core run (#5228), so it has its own workflow: every night on development, and on
+# demand (Actions, "Coverage", Run workflow). The same eight parts as ci.yml, nothing skipped; each
+# part keeps `coverage.xml` and its log as artifacts for 30 days. A failing test makes the run red.
+on:
+  schedule:
+    - cron: "17 3 * * *"  # 03:17 UTC, on the default branch (development)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  coverage-parts:
+    name: coverage (part ${{ matrix.part }} of 8)
+    timeout-minutes: 60
+    runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
+    strategy:
+      fail-fast: false  # a red part must not hide what the others found
+      matrix:
+        part: [1, 2, 3, 4, 5, 6, 7, 8]
+    defaults:
+      run:
+        working-directory: core
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        # The health check asks over TCP as the postgres user (#3958). The image first runs a
+        # temporary server that listens on the unix socket only, then stops it and starts the real
+        # one: a plain `pg_isready` inside the container answers over the socket, so it said
+        # "ready" during that first phase and the job's first connection from the runner raced the
+        # real server's start. It also ran as root, which filled every log with
+        # `role "root" does not exist`.
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -p 5432 -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 12
+    env:
+      # DMbot runs as an ordinary role so row-level security applies (superusers skip it).
+      DMBOT_TEST_DATABASE_URL: postgresql://dmbot:dmbot@localhost:5432/dmbot_test
+      DMBOT_TEST_SUPERUSER_URL: postgresql://postgres:postgres@localhost:5432/dmbot_test
+      DMBOT_REQUIRE_DB_TESTS: "1"
+      DMBOT_TEST_SHARD: ${{ matrix.part }}/8
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: core/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - name: more locks per transaction
+        # A migrated test schema holds hundreds of tables, functions and policies, and dropping one
+        # with CASCADE locks them all in one transaction: four drops at once ran the service
+        # container's default (64) out of shared memory, which failed a job with no failing test
+        # or hid the real failure under it (#3030). GitHub service containers take no command line,
+        # so the setting is written and the container restarted (the server needs it at start).
+        run: |
+          psql "postgresql://postgres:postgres@localhost:5432/postgres" \
+            -c "ALTER SYSTEM SET max_locks_per_transaction = 512"
+          docker restart "${{ job.services.postgres.id }}"
+          # Wait until a real query as the configured user works; give up loudly, not by falling
+          # through to a confusing connection error (#3958).
+          ready=""
+          for _ in $(seq 1 60); do
+            if psql "postgresql://postgres:postgres@localhost:5432/postgres" -tAc 'SELECT 1' >/dev/null 2>&1; then
+              ready=yes
+              break
+            fi
+            sleep 1
+          done
+          test -n "$ready" || { echo "::error title=Postgres::The database service did not come back within a minute of its restart"; exit 1; }
+          test "$(psql "postgresql://postgres:postgres@localhost:5432/postgres" -tAc 'SHOW max_locks_per_transaction')" = 512
+      - name: test database
+        run: >-
+          psql "postgresql://postgres:postgres@localhost:5432/postgres"
+          -c "CREATE ROLE dmbot LOGIN PASSWORD 'dmbot'"
+          -c "CREATE DATABASE dmbot_test OWNER dmbot ENCODING 'UTF8'"
+      - name: faster test database
+        # A throwaway database in a throwaway container: nothing here needs to survive a crash,
+        # and every test builds and drops its own schema, so waiting for the disk is the cost.
+        run: >-
+          psql "postgresql://postgres:postgres@localhost:5432/postgres"
+          -c "ALTER SYSTEM SET fsync = off"
+          -c "ALTER SYSTEM SET synchronous_commit = off"
+          -c "ALTER SYSTEM SET full_page_writes = off"
+          -c "SELECT pg_reload_conf()"
+      - name: pytest with coverage
+        # The same eight parts as ci.yml (`tests/shard.py`), nothing skipped or deselected, with
+        # coverage measured (#1858). A report, not a gate: no threshold. A failing test fails this
+        # part, and so the run, red (never silent).
+        run: |
+          set -o pipefail
+          pytest -q --tb=short -rfE -n 4 --cov=dmbot --cov-report=term-missing:skip-covered \
+            --cov-report=xml 2>&1 | tee pytest.log
+      - name: keep the coverage report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: core-coverage-part-${{ matrix.part }}
+          path: |
+            core/coverage.xml
+            core/pytest.log
+          if-no-files-found: ignore
+          retention-days: 30
+
+  coverage:
+    name: coverage (every part)
+    needs: coverage-parts
+    # always(): a failed or cancelled part must fail this job, so a bad night is red on the run.
+    if: ${{ always() }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "coverage parts: ${{ needs.coverage-parts.result }}"
+          test "${{ needs.coverage-parts.result }}" = "success"
