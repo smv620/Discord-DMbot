@@ -26,7 +26,7 @@ class SplitTest(unittest.TestCase):
     def test_every_test_file_is_in_exactly_one_part(self) -> None:
         files = sorted(p.name for p in TESTS.glob("test_*.py"))
         self.assertGreater(len(files), 100)  # the real suite, not an empty glob
-        for total in (1, 2, 3, 4, 8):
+        for total in (1, 2, 3, 4, 8, 12):
             parts = [
                 {f for f in files if shard.part_of(f, total) == n} for n in range(1, total + 1)
             ]
@@ -47,11 +47,11 @@ class BalanceTest(unittest.TestCase):
         missing = sorted(n for n in shard._times() if not (TESTS / n).exists())
         self.assertEqual(missing, [], "renamed or deleted: refresh tests/shard_times.json")
 
-    def test_eight_parts_carry_about_the_same_measured_time(self) -> None:
-        loads = [0.0] * 8
+    def test_the_parts_carry_about_the_same_measured_time(self) -> None:
+        loads = [0.0] * 12
         for name, seconds in shard._times().items():
-            loads[shard.part_of(name, 8) - 1] += seconds
-        mean = sum(loads) / 8
+            loads[shard.part_of(name, 12) - 1] += seconds
+        mean = sum(loads) / 12
         self.assertGreater(mean, 100)  # (the table is the real measurement, not an empty file)
         self.assertLess(max(loads), mean * 1.1)
 
