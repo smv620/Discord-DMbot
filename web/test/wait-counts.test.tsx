@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { type AccountApi, ApiError, type LoreUpload, type WaitCountsLore } from "../src/account/api";
 import Lore from "../src/account/Lore";
 import { mockApi } from "../src/account/mock";
-import { COUNTS_EVERY_MS, useWaitCounts } from "../src/account/useWaitCounts";
+import { COUNTS_EVERY_MS, MAX_FAILURES, useWaitCounts } from "../src/account/useWaitCounts";
 
 const live = vi.hoisted(() => ({ on: true }));
 vi.mock("../src/content/wait-counts-switch", () => ({
@@ -55,20 +55,71 @@ describe("the half-second counts read", () => {
     expect(screen.getByTestId("words").textContent).toBe("300");
   });
 
-  it("does not ask at all for a job that is not running, or while its switch is off", async () => {
+  it("does not ask at all for a job that is not running", async () => {
     vi.useFakeTimers();
     const api = mockApi("table");
     const ask = vi.fn(async () => reading());
     api.waitCounts = ask;
     render(<Probe api={api} active={false} />);
-    live.on = false;
-    cleanup();
-    render(<Probe api={api} active />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(COUNTS_EVERY_MS * 4);
     });
     expect(ask).not.toHaveBeenCalled();
     expect(screen.getByTestId("words").textContent).toBe("none");
+  });
+
+  it("does not ask at all while its switch is off", async () => {
+    vi.useFakeTimers();
+    live.on = false;
+    const api = mockApi("table");
+    const ask = vi.fn(async () => reading());
+    api.waitCounts = ask;
+    render(<Probe api={api} active />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(COUNTS_EVERY_MS * 4);
+    });
+    expect(ask).not.toHaveBeenCalled();
+  });
+
+  it("never has two asks on their way at once, even when the tab is hidden and seen again mid-read", async () => {
+    vi.useFakeTimers();
+    let open = 0;
+    let most = 0;
+    const api = mockApi("table");
+    api.waitCounts = async () => {
+      open += 1;
+      most = Math.max(most, open);
+      await new Promise((ok) => setTimeout(ok, 800)); // (slower than the rhythm)
+      open -= 1;
+      return reading();
+    };
+    render(<Probe api={api} active />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
+    document.dispatchEvent(new Event("visibilitychange"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(most).toBe(1);
+  });
+
+  it("stops asking when the page goes away", async () => {
+    vi.useFakeTimers();
+    const ask = vi.fn(async () => reading());
+    const api = mockApi("table");
+    api.waitCounts = ask;
+    render(<Probe api={api} active />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(COUNTS_EVERY_MS + 10);
+    });
+    cleanup();
+    const seen = ask.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(COUNTS_EVERY_MS * 5);
+    expect(ask.mock.calls.length).toBe(seen);
   });
 
   it("stops while the tab is hidden and starts again when it is seen", async () => {
@@ -86,7 +137,7 @@ describe("the half-second counts read", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(COUNTS_EVERY_MS * 6);
     });
-    expect(ask.mock.calls.length).toBeLessThanOrEqual(before + 1); // (at most the look already on its way)
+    expect(ask.mock.calls.length).toBe(before); // (nothing while hidden)
     const hiddenCount = ask.mock.calls.length;
     Object.defineProperty(document, "visibilityState", { value: "visible", configurable: true });
     document.dispatchEvent(new Event("visibilitychange"));
@@ -96,7 +147,7 @@ describe("the half-second counts read", () => {
     expect(ask.mock.calls.length).toBeGreaterThan(hiddenCount);
   });
 
-  it("stops for good when a read fails, leaving the slower look to carry on", async () => {
+  it("tries again after a blip, and stops after three failures in a row, leaving the slower look to carry on", async () => {
     vi.useFakeTimers();
     const ask = vi.fn(async () => {
       throw new ApiError("not-found");
@@ -107,7 +158,7 @@ describe("the half-second counts read", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(COUNTS_EVERY_MS * 6);
     });
-    expect(ask).toHaveBeenCalledTimes(1);
+    expect(ask).toHaveBeenCalledTimes(MAX_FAILURES);
   });
 });
 

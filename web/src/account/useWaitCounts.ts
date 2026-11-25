@@ -9,6 +9,8 @@ import { WAIT_COUNTS_LIVE } from "../content/wait-counts-switch";
 import type { AccountApi, WaitCountsImport, WaitCountsLore } from "./api";
 
 export const COUNTS_EVERY_MS = 500;
+/** Reads that fail one after another before the page stops asking (the slower look carries on alone). */
+export const MAX_FAILURES = 3;
 
 type Reading<K extends "lore" | "import"> = K extends "lore" ? WaitCountsLore : WaitCountsImport;
 
@@ -17,11 +19,11 @@ export function useWaitCounts<K extends "lore" | "import">(api: AccountApi, ref:
   const [reading, setReading] = useState<Reading<K> | null>(null);
   const on = WAIT_COUNTS_LIVE && active && Boolean(ref && id && api.waitCounts);
   useEffect(() => {
-    if (!on || !ref || !id || !api.waitCounts) {
-      setReading(null);
-      return;
-    }
+    setReading(null); // (never the last job's numbers under a new job)
+    if (!on || !ref || !id || !api.waitCounts) return;
     let live = true;
+    let inflight = false;
+    let failures = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const visible = (): boolean => typeof document === "undefined" || document.visibilityState !== "hidden";
     const stop = (): void => {
@@ -30,20 +32,27 @@ export function useWaitCounts<K extends "lore" | "import">(api: AccountApi, ref:
     };
     const look = async (): Promise<void> => {
       timer = undefined;
-      if (!live || !visible()) return;
+      if (!live || inflight || !visible()) return; // (one ask at a time, ever)
+      inflight = true;
+      let carryOn = true;
       try {
         const got = (await api.waitCounts!(ref, kind, id)) as Reading<K>;
         if (!live) return;
+        failures = 0;
         setReading(got);
-        if (kind === "lore" && ((got as WaitCountsLore).state === "done" || (got as WaitCountsLore).state === "failed")) return; // (the job is over)
+        // (an import's end is seen by the page's own slower look, which turns `active` off: a few more asks at most)
+        if (kind === "lore" && ((got as WaitCountsLore).state === "done" || (got as WaitCountsLore).state === "failed")) carryOn = false;
       } catch {
-        return; // (gone, refused or too many looks: the slower look carries on alone)
+        failures += 1;
+        carryOn = failures < MAX_FAILURES; // (a blip is tried again; a job that is gone or refused stops for good)
+      } finally {
+        inflight = false;
       }
-      if (live && visible()) timer = setTimeout(() => void look(), COUNTS_EVERY_MS);
+      if (live && carryOn && visible() && timer === undefined) timer = setTimeout(() => void look(), COUNTS_EVERY_MS);
     };
     const onVisibility = (): void => {
       if (!visible()) stop();
-      else if (live && timer === undefined) void look();
+      else if (live && !inflight && timer === undefined) void look();
     };
     document.addEventListener("visibilitychange", onVisibility);
     void look();

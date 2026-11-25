@@ -220,7 +220,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
     const p = upload.progress;
     const state = failed ? "failed" : done ? "done" : p ? (p.state === "stalled" ? "stalled" : "running") : quiet > STALLED_S ? "stalled" : "running";
     // A quick reading older than the last full look is ignored (what is shown only ever moves forward).
-    const quick = fast && fast.updatedAt >= upload.updatedAt ? fast : null;
+    const quick = fast && fast.updatedAt > upload.updatedAt ? fast : null;
     // The quick reading's own count is shown only where it is the same count the full look gives (the same total), never a different unit.
     const sameCount = quick !== null && quick.total > 0 && (p ? p.total === quick.total : upload.total === quick.total);
     const counted = p ? typeof p.done === "number" && typeof p.total === "number" && p.total > 0 : upload.total > 0;
@@ -230,12 +230,12 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
         {opened && open && <p>{words.openNote}</p>}
         <WorkProgress
           stage={stageWords(words.stages, p?.stage ?? upload.stage)}
-          done={counted ? (sameCount ? (quick as NonNullable<typeof quick>).done : p ? p.done : upload.done) : null}
+          done={counted ? (quick && sameCount ? quick.done : p ? p.done : upload.done) : null}
           total={counted ? (p ? p.total : upload.total) : null}
           unit={p?.unit ? (words.units[p.unit] ?? words.unit) : words.unit}
-          counts={quick ? { ...p?.counts, words: quick.wordsDone, calls: quick.callsMade } : p?.counts}
+          counts={quick ? { ...p?.counts, words: Math.max(p?.counts?.words ?? 0, quick.wordsDone), calls: Math.max(p?.counts?.calls ?? 0, quick.callsMade) } : p?.counts}
           startedAt={upload.createdAt}
-          updatedAt={quick ? Math.max(upload.updatedAt, quick.updatedAt) : upload.updatedAt}
+          updatedAt={quick ? quick.updatedAt : upload.updatedAt}
           serverNow={quick ? quick.serverNow : upload.serverNow}
           state={state}
           frozen={stopped}

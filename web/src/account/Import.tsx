@@ -794,7 +794,7 @@ export default function Import({
             done={progress.import.done}
             total={progress.import.total}
             unit={progress.import.unit ? words.unit[progress.import.unit] : undefined}
-            counts={fast ? { ...progress.import.counts, words: sumOf(fast.sessions.map((s) => s.wordsDone)), calls: sumOf(fast.sessions.map((s) => s.callsMade)) } : progress.import.counts}
+            counts={fast ? { ...progress.import.counts, words: Math.max(progress.import.counts?.words ?? 0, sumOf(fast.sessions.map((s) => s.wordsDone))), calls: Math.max(progress.import.counts?.calls ?? 0, sumOf(fast.sessions.map((s) => s.callsMade))) } : progress.import.counts}
             startedAt={progress.import.startedAt}
             updatedAt={fast ? Math.max(progress.import.updatedAt ?? 0, ...fast.sessions.map((s) => s.updatedAt)) : progress.import.updatedAt}
             serverNow={fast ? fast.serverNow : progress.import.serverNow}
