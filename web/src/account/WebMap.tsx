@@ -34,6 +34,7 @@ import {
   type LayoutMode,
   type SimNode,
 } from "./webForce";
+import { ADVENTURE_LIVE } from "../content/adventure-switch";
 import { PC_ICONS_LIVE } from "../content/pc-icons-switch";
 import { QUEST_SHEET_LIVE } from "../content/quest-sheet-switch";
 import { pcIconWords } from "../content/pc-icon-words";
@@ -866,6 +867,10 @@ export default function WebMap({
               what="the icon choices"
               props={{ node: detail, api, refId, onChoose: (choice: IconChoice, picture?: number) => onIcon(detail.id, choice, picture), undo: iconUndo?.id === detail.id && iconUndo.now === (detail.iconChoice ?? "default"), onUndo: iconUndo?.undo ?? (async () => null) }}
             />
+          )}
+          {/* The DM says which entry of their adventure this name is (#3694 slice G2): the adventure's calls load only when it is opened. */}
+          {ADVENTURE_LIVE && canEdit && api?.adventureApi && (
+            <LazyPanel key={`adv-${detail.id}`} load={() => import("./AdventureLink")} what="the adventure link" props={{ api, refId, entity: { id: detail.id, name: detail.name } }} />
           )}
           {api && <NodeSummary key={detail.id} api={api} refId={refId} id={detail.id} />}
           {/* The lineage and class of a character (#3925): the DM's view only, and only for a character's own node. */}
