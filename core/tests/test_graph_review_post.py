@@ -110,10 +110,14 @@ class TheRules(unittest.TestCase):
         assert isinstance(post, gp.Post)
         self.assertNotIn("served Tavin", post.body)
 
-    def test_a_description_is_always_quoted(self) -> None:
-        post = render(stored(verdict(sources=["description"], speaker_ids=[], quote="Mara, a spy")))
-        assert isinstance(post, gp.Post)
-        self.assertIn("Mara, a spy", post.body)
+    def test_a_description_is_never_quoted_its_words_may_be_anyones(self) -> None:
+        for sources in (["description"], ["description", "line"]):
+            post = render(
+                stored(verdict(sources=sources, speaker_ids=[ALICE], quote="Mara, a spy"))
+            )
+            assert isinstance(post, gp.Post)
+            self.assertNotIn("Mara, a spy", post.body)
+            self.assertIn(gp.GENERIC_LORE, post.body)
 
     def test_ids_mentions_emails_and_keys_are_cut_out_and_counted_never_named(self) -> None:
         dirty = (

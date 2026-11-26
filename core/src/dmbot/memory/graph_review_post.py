@@ -7,8 +7,10 @@ rules below hold *now*: they are checked at posting time, not when the report wa
 - a report with a quote from anyone who has since stopped being recorded, or opted out of improving
   DMbot: the **whole report is held** back (a half-report would mislead), and stays on the server;
 - a quote of a lore passage unless every upload it came from is known to be the DM's own writing
-  (`own_writing`); otherwise the words say "a passage from the campaign's lore" and give the
-  entry's id. A shared adventure or rulebook is never quoted;
+  (`own_writing`), and a quote from an entry's description never (it can hold words from the table,
+  an upload or a picture, and nothing records which); otherwise the words say "a passage from the
+  campaign's story (words held back)" and give the entry's id. A shared adventure or rulebook is
+  never quoted;
 - a Discord id, a mention, an email address or anything shaped like a key: they are cut out of every
   word that goes (`scrub`), and counted. Only the campaign's internal id names the campaign.
 Every word that goes is Markdown-escaped (`escape`), so a name or a quote can't format the post or
@@ -37,7 +39,7 @@ TITLE_MAX = 200
 BODY_MAX = 60_000  # GitHub's limit is 65,536 characters
 LABEL_MAX = 100
 OLD_BUILD = "an older build"
-GENERIC_LORE = "a passage from the campaign's lore"
+GENERIC_LORE = "a passage from the campaign's story (words held back)"
 # The DM's own writing: the only lore that is quoted (`models.UPLOAD_OWN_WRITING`). An upload of
 # any other or unknown kind is read as "unknown": the safe side.
 OWN_UPLOADS = frozenset({"own_writing"})
@@ -145,7 +147,9 @@ def title_of(report: Stored) -> str:
 
 def quotable(verdict: Mapping[str, Any], allowed_speakers: Collection[int]) -> bool:
     """May this quote's words go? Every source it came from must pass: a line only from people who
-    still agree, a description always, a lore passage only from the DM's own writing."""
+    still agree, a lore passage only from the DM's own writing, and a description never: it can
+    hold words from the table ("Met in play: ..."), an upload or a picture, and nothing records
+    which (GraphEngineer on #3742), so it is treated as of unknown source until each writer says."""
     sources = [str(s) for s in verdict.get("sources", [])]
     if not sources:
         return False
@@ -158,7 +162,7 @@ def quotable(verdict: Mapping[str, Any], allowed_speakers: Collection[int]) -> b
             kinds = verdict.get("upload_kinds") or []
             if not kinds or not all(str(k) in OWN_UPLOADS for k in kinds):
                 return False
-        elif source != "description":
+        else:  # a description, or any source this rule does not know: the words are held
             return False
     return True
 
