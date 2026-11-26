@@ -365,6 +365,19 @@ describe("reading a file now (#3694 slice E)", () => {
     expect(api.calls.filter((c) => c.startsWith("adventureStartRead"))).toEqual(["adventureStartRead:100.cmp1:d2"]);
   }, 40_000);
 
+  it("stops re-reading the list once nothing is reading", async () => {
+    const api = await open();
+    fireEvent.click(readButtons()[0] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: w.readYes }));
+    await screen.findByText(w.started, {}, slow);
+    await vi.waitFor(() => expect(screen.queryByText(w.readingStage)).toBeNull(), { timeout: 20_000 });
+    await vi.waitFor(() => expect(screen.getByText(/read: 3 chapters/)).toBeTruthy(), { timeout: 25_000 });
+    const seen = api.calls.filter((c) => c === "adventure:100.cmp1").length;
+    await new Promise((ok) => setTimeout(ok, 3500));
+    // (the 30-second just-started window may still re-read once or twice; it must not run on without end)
+    expect(api.calls.filter((c) => c === "adventure:100.cmp1").length).toBeLessThanOrEqual(seen + 2);
+  }, 60_000);
+
   it("offers no Read it now when the API cannot start a read", async () => {
     const api = mockApi("table");
     delete (api as { adventureStarting?: unknown }).adventureStarting;

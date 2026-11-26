@@ -27,7 +27,7 @@ export function ReadingWait({ doc }: { doc: AdventureDocument }) {
       total={read.totalChunks}
       unit={w.readingUnit}
       startedAt={seen.startedAt}
-      updatedAt={read.updatedAt}
+      updatedAt={seen.movedAt ?? undefined} // (the page's own clock for all three times: they never mix with the server's)
       state={seen.quiet ? "stalled" : "running"}
     />
   );

@@ -33,6 +33,7 @@ export function readLine(d: AdventureDocument): string {
 }
 
 const READING_EVERY_MS = 3000;
+const JUST_STARTED_MS = 30_000;
 const REMOVE_FIRST_MS = 400;
 const REMOVE_EVERY_MS = 1500;
 const REMOVE_LOOKS = 40; // about a minute: a removal is quick
@@ -95,12 +96,14 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
   }, [job?.phase]);
 
   // While any file is being read the list is read again by itself (the card does the same), so the wait shows how far it is.
+  // A read that has only just been told to start may not show as reading yet, so the list keeps being read for a little while too.
   const reading = (list?.documents ?? []).some((d) => d.read?.status === "reading");
+  const watchUntil = useRef(0);
   useEffect(() => {
-    if (!reading) return;
+    if (!reading && Date.now() > watchUntil.current) return;
     const timer = setTimeout(() => setTries((n) => n + 1), READING_EVERY_MS);
     return () => clearTimeout(timer);
-  }, [reading, list]);
+  }, [reading, list, failed]); // (a failed re-read re-arms it too: the wait never freezes)
 
   async function look(offset: number): Promise<void> {
     if (!api.adventureRead || busy.current) return;
@@ -227,7 +230,10 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
                       {d.restored ? `, ${w.giveAgain}` : `, ${readLine(d)}`}
                     </span>
                     <ReadingWait doc={d} />
-                    <AdventureReadNow api={api} refId={refId} doc={d} disabled={job?.phase === "working"} onStarted={() => setTries((n) => n + 1)} />
+                    <AdventureReadNow key={`${refId}:${d.id}`} api={api} refId={refId} doc={d} disabled={job?.phase === "working"} onStarted={() => {
+                      watchUntil.current = Date.now() + JUST_STARTED_MS;
+                      setTries((n) => n + 1);
+                    }} />
                     {api.adventureRemove && api.adventureRemoval && confirming !== d.id && job?.phase !== "working" && (
                       <button type="button" class="button secondary" aria-label={`${w.remove} ${d.name}`} onClick={() => setConfirming(d.id)}>
                         {w.remove}
