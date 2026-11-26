@@ -37,18 +37,21 @@ SQL = r"""
             'items', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                            'kind', i.kind, 'name', i.name, 'summary', i.summary,
-                           'quote', i.quote) ORDER BY i.ord)
+                           'quote', i.quote) ORDER BY i.part, i.ord)
                 FROM (
-                    SELECT row_number() OVER () AS ord, p.* FROM (
-                        SELECT x.kind, x.name, x.summary, x.quote FROM (
-                            SELECT n.kind, n.name, n.summary, n.quote FROM plan_nodes n
-                            WHERE n.guild_id = g AND n.campaign_id = c
-                            ORDER BY CASE n.kind WHEN 'chapter' THEN 0 WHEN 'place' THEN 1
-                                     ELSE 2 END,
-                                     n.document_id, n.position, n.created_at, n.name_key, n.id
-                            LIMIT lim OFFSET off) x
-                        UNION ALL
-                        SELECT 'link', a.name || ' → ' || b.name, l.need, l.quote
+                    SELECT 0 AS part, row_number() OVER () AS ord, x.kind, x.name, x.summary,
+                           x.quote
+                    FROM (
+                        SELECT n.kind, n.name, n.summary, n.quote FROM plan_nodes n
+                        WHERE n.guild_id = g AND n.campaign_id = c
+                        ORDER BY CASE n.kind WHEN 'chapter' THEN 0 WHEN 'place' THEN 1
+                                 ELSE 2 END,
+                                 n.document_id, n.position, n.created_at, n.name_key, n.id
+                        LIMIT lim OFFSET off) x
+                    UNION ALL
+                    SELECT 1, row_number() OVER (), y.kind, y.name, y.summary, y.quote FROM (
+                        SELECT 'link' AS kind, a.name || ' → ' || b.name AS name,
+                               l.need AS summary, l.quote AS quote
                         FROM plan_links l
                         JOIN plan_nodes a ON (a.guild_id, a.campaign_id, a.id)
                                            = (l.guild_id, l.campaign_id, l.from_id)
@@ -57,8 +60,7 @@ SQL = r"""
                         WHERE l.guild_id = g AND l.campaign_id = c
                         ORDER BY l.created_at, l.id
                         LIMIT GREATEST(lim - GREATEST(LEAST(n_nodes - off, lim), 0), 0)
-                        OFFSET GREATEST(off - n_nodes, 0)
-                    ) p
+                        OFFSET GREATEST(off - n_nodes, 0)) y
                 ) i), '[]'::jsonb));
     END
     $fn$;
