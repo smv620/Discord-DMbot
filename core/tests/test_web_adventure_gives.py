@@ -10,9 +10,10 @@ import unittest
 from typing import Any
 
 from dmbot.campaigns import CampaignStore
+from dmbot.dm_screen.adventure_card import FILE_TYPES as card_types
 from dmbot.memory import web_adventure_gives as bot
 from dmbot.memory.adventure import AdventureStore
-from dmbot.memory.name_documents import DocumentError
+from dmbot.memory.name_documents import MAX_DOCUMENT_BYTES, MAX_PDF_BYTES, DocumentError
 from dmbot.pictures.bucket import BucketError
 from dmbot.web import adventure as web
 from tests.pg import DatabaseTest
@@ -60,6 +61,23 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(web.clean_name("C:\\books\\The Lost Light.pdf"), "The Lost Light.pdf")
         self.assertEqual(web.clean_name("../../etc/pass\nwd.txt"), "passwd.txt")
         self.assertEqual(len(web.clean_name("x" * 300 + ".pdf")), 120)
+
+    def test_only_the_file_types_discord_takes_are_taken(self) -> None:
+        self.assertEqual(web.FILE_TYPES, card_types)
+
+    def test_a_pdf_limit_is_the_website_cap_and_the_others_are_the_cores(self) -> None:
+        self.assertEqual(web.max_bytes("a.pdf"), web.PDF_MAX_BYTES)
+        self.assertEqual(web.max_bytes("a.docx"), MAX_DOCUMENT_BYTES)
+        self.assertEqual(web.max_bytes("a.txt"), MAX_DOCUMENT_BYTES)
+        self.assertLessEqual(web.PDF_MAX_BYTES, MAX_PDF_BYTES)
+
+    def test_a_name_with_no_printable_characters_is_empty(self) -> None:
+        self.assertEqual(web.clean_name("\n\t\x00"), "")
+
+    def test_an_upper_case_ending_is_still_checked_by_its_bytes(self) -> None:
+        self.assertFalse(web.sniff("BOOK.PDF", b"not a pdf"))
+        self.assertTrue(web.sniff("BOOK.PDF", b"%PDF-1.4"))
+        self.assertEqual(web.max_bytes("BOOK.PDF"), web.PDF_MAX_BYTES)
 
 
 class Gives(DatabaseTest):
