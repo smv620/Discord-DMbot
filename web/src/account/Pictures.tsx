@@ -11,6 +11,7 @@ import {
   ApiError,
   type AccountApi,
   type PictureAction,
+  type PictureActionLook,
   type PictureFilter,
   type PictureItem,
   type PictureList,
@@ -73,6 +74,9 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
   // When each waiting tile began to wait (page clock, seconds): kept with the waiting state, so the wait can say how long (#3347).
   const waitingSince = useRef<Record<string, number>>({});
   const [since, setSince] = useState<Record<string, number>>({});
+  // The action ids the API gave for waiting tiles, and the last look at each (#3355): the wait then shows the API's own stage and times.
+  const actionIds = useRef<Record<string, string | number>>({});
+  const [looks, setLooks] = useState<Record<string, PictureActionLook>>({});
   // One rhythm for every waiting tile: the list is read again every WAITING_RECHECK_MS while any tile waits (#3322).
   const rhythm = useRef<ReturnType<typeof setInterval> | null>(null);
   // False once the page is left: an action still in flight then must not schedule anything (#3322).
@@ -84,6 +88,13 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
     for (const code of Object.keys(next)) kept[code] = waitingSince.current[code] ?? Math.floor(Date.now() / 1000);
     waitingSince.current = kept;
     setSince(kept);
+    // What is no longer waiting forgets its id and its look.
+    for (const code of Object.keys(actionIds.current)) if (!(code in next)) delete actionIds.current[code];
+    setLooks((old) => {
+      const stay: Record<string, PictureActionLook> = {};
+      for (const [code, look] of Object.entries(old)) if (code in next) stay[code] = look;
+      return Object.keys(stay).length === Object.keys(old).length ? old : stay;
+    });
     setWaiting(next);
     if (Object.keys(next).length === 0) stopRhythm();
     else startRhythm();
@@ -97,8 +108,30 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
     rhythm.current = setInterval(() => {
       if (!mounted.current || Object.keys(waitingNow.current).length === 0) return stopRhythm();
       if (typeof document !== "undefined" && document.hidden) return; // a hidden tab does not read
+      void lookAtActions();
       void readFirst(appliedRef.current, true);
     }, WAITING_RECHECK_MS);
+  }
+  /** One look at each waiting action that has an id (#3355). A look that fails changes nothing: the list read still ends the wait. */
+  async function lookAtActions(): Promise<void> {
+    if (!ref || !api.pictureActionLook) return;
+    for (const [code, id] of Object.entries(actionIds.current)) {
+      try {
+        const look = await api.pictureActionLook(ref, id);
+        if (!mounted.current || actionIds.current[code] !== id) continue;
+        if (look.state === "refused" || look.state === "failed") {
+          const { [code]: _gone, ...rest } = waitingNow.current;
+          setProblem(code, look.note || words.actionFailed);
+          setWaitingState(rest);
+        } else if (look.state === "done") {
+          const { [code]: _gone, ...rest } = waitingNow.current;
+          setWaitingState(rest);
+          void readFirst(appliedRef.current, true);
+        } else setLooks((old) => ({ ...old, [code]: look }));
+      } catch {
+        // The list read goes on.
+      }
+    }
   }
   /** Has this tile been waiting for STUCK_SECONDS or more, by the page's clock? */
   const stalledNow = (code: string): boolean => {
@@ -225,7 +258,9 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
       const result = await api.pictureAction(ref, tile.code, action);
       if (!mounted.current) return; // the page was left while the action was on its way
       if (result.state === "waiting") {
+        if (result.id !== undefined) actionIds.current[tile.code] = result.id;
         setWaitingState({ ...waitingNow.current, [tile.code]: action });
+        void lookAtActions();
         void readFirst(appliedRef.current);
       } else if (action === "delete") {
         setTiles((old) => old.filter((t) => t.code !== tile.code));
@@ -363,13 +398,24 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
                   )}
                   {tile.permanent && <div class="tag">{words.permanentTag}</div>}
                   {waiting[tile.code] && (
-                    <WorkProgress
-                      stage={words.waitingStage}
-                      startedAt={since[tile.code] ?? Math.floor(Date.now() / 1000)}
-                      state={stalledNow(tile.code) ? "stalled" : "running"}
-                      whatToDo={stalledNow(tile.code) ? words.stuck : undefined}
-                      progressUnknown
-                    />
+                    looks[tile.code] ? (
+                      <WorkProgress
+                        stage={looks[tile.code]?.state === "working" ? words.workingStage : words.waitingStage}
+                        startedAt={looks[tile.code]?.startedAt}
+                        updatedAt={looks[tile.code]?.updatedAt}
+                        serverNow={looks[tile.code]?.serverNow}
+                        state={looks[tile.code]?.stalled ? "stalled" : "running"}
+                        whatToDo={looks[tile.code]?.stalled ? words.stuck : undefined}
+                      />
+                    ) : (
+                      <WorkProgress
+                        stage={words.waitingStage}
+                        startedAt={since[tile.code] ?? Math.floor(Date.now() / 1000)}
+                        state={stalledNow(tile.code) ? "stalled" : "running"}
+                        whatToDo={stalledNow(tile.code) ? words.stuck : undefined}
+                        progressUnknown
+                      />
+                    )
                   )}
                   {problems[tile.code] && (
                     <p class="note bad" role="alert">

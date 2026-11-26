@@ -1520,6 +1520,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { group: "e2".repeat(16), answer: "waiting" as const, names: ["Tavin", "Oskar"], kind: "join" as const },
   ];
   // The kept pictures (#3275): five pretend pictures, each 100 MB; the permanent ones count toward the limit.
+  // How many times each waiting picture action has been looked at (#3355).
+  const pictureLooks = new Map<string, number>();
   const pictureRows = [
     { code: "pic-1", at: 1791004000, sessionNumber: 2, poster: "Mira", description: "A map of the Brass Ford", permanent: false, isPublic: true },
     { code: "pic-2", at: 1791003000, sessionNumber: 2, poster: "Cerric", description: "Cerric's oath scroll", permanent: true, isPublic: true },
@@ -2247,7 +2249,27 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       } else {
         picture.permanent = false;
       }
-      return { state: waiting ? ("waiting" as const) : ("done" as const), note: "" };
+      return waiting ? { state: "waiting" as const, note: "", id: "act-5" } : { state: "done" as const, note: "" };
+    },
+    // How the waiting delete of pic-5 stands (#3355): working on the first look, done on the second.
+    async pictureActionLook(campaignRef, id) {
+      calls.push(`pictureActionLook:${campaignRef}:${id}`);
+      await reachable();
+      signedIn();
+      const looks = (pictureLooks.get(String(id)) ?? 0) + 1;
+      pictureLooks.set(String(id), looks);
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        id,
+        action: "delete",
+        state: looks > 1 ? ("done" as const) : ("working" as const),
+        stage: looks > 1 ? "done" : "working",
+        note: "",
+        startedAt: now - 5,
+        updatedAt: now,
+        serverNow: now,
+        stalled: false,
+      };
     },
     async sessionNotesList(campaignRef) {
       calls.push(`sessionNotesList:${campaignRef}`);
