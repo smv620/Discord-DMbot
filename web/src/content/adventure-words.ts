@@ -46,6 +46,8 @@ export const adventureWords = {
   giveSend: "Give this file",
   giveCancel: "Cancel",
   giveNone: "No file was picked. Press Pick a file and pick one.",
+  giveEmpty: "That file is empty. Pick the right file.",
+  giveName: "That file's name is too long. Rename it shorter and try again.",
   giveWrong: "DMbot can read PDF, Word (.docx) and text (.txt, .md) files. Save it as one of those.",
   giveBig: (mb: number): string => `That file is over ${mb} MB. Try a smaller file, or save a text copy (.txt).`,
   giving: "Giving the file…",

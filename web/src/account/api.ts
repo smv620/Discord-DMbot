@@ -3820,10 +3820,10 @@ export interface AccountApi {
   adventure?(campaignRef: string): Promise<AdventureList>;
   /** What was read from the adventure, fifty at a time (slice B). The book's own words: show them on the DM's page only. */
   adventureRead?(campaignRef: string, offset: number): Promise<AdventureRead>;
-  /** Remove a file (slice C): queued for the bot, answered at once with the removal to poll with `adventureRemoval`. 404 for a non-DM or while off. */
   /** Give a file (slice D): the file itself is the body, its name goes in the address. 202 with the give to poll with `adventureGiving`. Refusals: `bad-file`, `not-on`, `too-many-masters` (the 20-file limit), `slow-down` (busy), `too-soon`, `uploads-off`, `not-found`. */
   adventureGive?(campaignRef: string, file: Blob, name: string): Promise<{ give: string }>;
   adventureGiving?(campaignRef: string, give: string): Promise<AdventureGive>;
+  /** Remove a file (slice C): queued for the bot, answered at once with the removal to poll with `adventureRemoval`. 404 for a non-DM or while off. */
   adventureRemove?(campaignRef: string, document: string): Promise<{ removal: string }>;
   adventureRemoval?(campaignRef: string, removal: string): Promise<AdventureRemoval>;
   saidSend?(campaignRef: string, input: { a: string; b: string; text: string; edit?: string }): Promise<{ answer: string }>;

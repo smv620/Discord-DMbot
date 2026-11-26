@@ -26,6 +26,8 @@ const kindOf = (name: string): "pdf" | "other" | null => {
 export function whyNot(file: { name: string; size: number }): string {
   const kind = kindOf(file.name);
   if (kind === null) return w.giveWrong;
+  if (file.size === 0) return w.giveEmpty;
+  if (file.name.length > 200) return w.giveName;
   const max = kind === "pdf" ? PDF_MAX : OTHER_MAX;
   return file.size > max ? w.giveBig(max / (1024 * 1024)) : "";
 }
@@ -40,6 +42,7 @@ export default function AdventureGive({ api, refId, onKept }: { api: AccountApi;
   const epoch = useRef(0);
   const sending = useRef(false);
   const statusBox = useRef<HTMLParagraphElement>(null);
+  const fileBox = useRef<HTMLInputElement>(null);
   const waitBox = useRef<HTMLDivElement>(null);
 
   // Leaving the page or changing campaign ends the watching.
@@ -65,17 +68,17 @@ export default function AdventureGive({ api, refId, onKept }: { api: AccountApi;
     setSaid("");
     setSeen(null);
     setBusy(true);
-    const end = (said_: string, bad: boolean): void => {
+    const end = (text: string, bad: boolean): void => {
       if (!here()) return;
       setBusy(false);
-      if (bad) setProblem(said_);
+      if (bad) setProblem(text);
       else {
-        setSaid(said_);
+        setSaid(text);
         setFile(null);
         setOpen(false);
       }
       onKept(); // (the files are read again, whatever happened)
-      setTimeout(() => statusBox.current?.focus(), 0);
+      setTimeout(() => (bad ? fileBox.current : statusBox.current)?.focus(), 0);
     };
     try {
       let id: string;
@@ -100,7 +103,9 @@ export default function AdventureGive({ api, refId, onKept }: { api: AccountApi;
           setSeen(got);
           if (got.state === "done") return end(w.given(got.name || file.name), false);
           if (got.state === "failed") return end(w.giveFailed[got.error] ?? w.giveFailed.failed ?? "", true);
-        } catch {
+        } catch (error) {
+          // A job that is gone or a person signed out is not a blip: stop at once.
+          if (error instanceof ApiError && (error.kind === "not-found" || error.kind === "signed-out")) return end(w.giveSlow, true);
           errors += 1; // (one failed look is not a failed give: it is queued and will probably finish)
           if (errors >= 3) return end(w.giveSlow, true);
         }
@@ -115,7 +120,11 @@ export default function AdventureGive({ api, refId, onKept }: { api: AccountApi;
   return (
     <div class="stack">
       {!open && !busy && (
-        <button type="button" class="button secondary" onClick={() => (setOpen(true), setSaid(""), setProblem(""))}>
+        <button type="button" class="button secondary" onClick={() => {
+            setOpen(true);
+            setSaid("");
+            setProblem("");
+          }}>
           {w.give}
         </button>
       )}
@@ -132,6 +141,7 @@ export default function AdventureGive({ api, refId, onKept }: { api: AccountApi;
           <input
             id={`adv-file-${refId}`}
             type="file"
+            ref={fileBox}
             accept=".pdf,.docx,.txt,.md,.text"
             disabled={busy}
             aria-describedby={`adv-file-help-${refId}`}
@@ -164,7 +174,11 @@ export default function AdventureGive({ api, refId, onKept }: { api: AccountApi;
             <button type="button" class="button" disabled={busy} onClick={() => void give()}>
               {w.giveSend}
             </button>
-            <button type="button" class="button secondary" disabled={busy} onClick={() => (setOpen(false), setFile(null), setProblem(""))}>
+            <button type="button" class="button secondary" disabled={busy} onClick={() => {
+                setOpen(false);
+                setFile(null);
+                setProblem("");
+              }}>
               {w.giveCancel}
             </button>
           </div>

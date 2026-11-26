@@ -246,7 +246,7 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
               <p class="small muted">{w.using(list.charactersHeld, list.charactersMax)}</p>
             </>
           )}
-          <AdventureGive api={api} refId={refId} onKept={() => setTries((n) => n + 1)} />
+          <AdventureGive key={refId} api={api} refId={refId} onKept={() => setTries((n) => n + 1)} />
           <p class="small">{w.inDiscord}</p>
           <div class="row">
             <button type="button" class="button secondary" onClick={() => setTries((n) => n + 1)}>
