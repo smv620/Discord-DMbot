@@ -145,7 +145,7 @@ match. "In Discord" says where the DM finds it today.
 | A hand-over offer closed because the Discord accounts on an account changed, and why (#2533 slice 3, #4467) | A notice to both people, and the offer message loses its buttons | Account page: "Offers that were closed", for a week, with the reason (no names, no accounts) |
 | Delete this campaign | Delete this campaign | Backup and delete (delete is live) |
 | Campaign invite link; D&D Beyond invite | Campaign management | Campaign settings: the invite panel (`InvitePanel`, `INVITE_LIVE`, switched off) (WebDev confirmed) |
-| Give your adventure (Shared story); read it; match it to files; refresh; remove | Shared story, adventure card | Lore upload and reading, with the right-to-use box (`LORE_LIVE`); matching to files, refresh and remove not checked ⚠ |
+| Give your adventure (Shared story); read it; match it to files; refresh; remove | Shared story, adventure card | Lore upload and reading, with the right-to-use box (`LORE_LIVE`); seeing the files, how far each read is and what was read: the Upload lore page, `ADVENTURE_LIVE` (#3694 slices A and B, switched off); giving a file, reading it, matching, refresh and remove: not built yet (#3694 slices C to G) ⚠ |
 | Story mode (the story guide choice) | 📖 Story | Story mode (`STORY_MODE_LIVE`) |
 | Import button and the import's clock offer | Import, the clock card | Import older sessions: clock (`IMPORT_CLOCK_LIVE`, #3199); consent (#3306) |
 | Transcripts: download, keep, channel | Transcripts card | Transcripts: read, download |

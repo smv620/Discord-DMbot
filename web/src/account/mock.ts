@@ -3197,6 +3197,42 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       loreNow = { ...loreNow, serverNow: at };
       return loreNow;
     },
+    // The Shared story adventure (#3694 slices A and B): made-up files and chapters only. A reference ending ".no-adventure" is a campaign with
+    // none, ".adventure-off" has Shared story off, ".player" is not a DM (404).
+    async adventure(ref) {
+      calls.push(`adventure:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const at = Math.floor(Date.now() / 1000);
+      const none = ref.includes(".no-adventure");
+      return {
+        mode: ref.includes(".adventure-off") ? "off" : "guide",
+        documents: none
+          ? []
+          : [
+              { id: "d1", name: "The Glass Orchard.pdf", characters: 120000, restored: false, addedAt: at - 9000, read: { status: "done" as const, nextChunk: 40, totalChunks: 40, stopReason: "", skippedParts: 2, updatedAt: at - 8000 }, found: { chapters: 12, places: 1, people: 30, links: 4 } },
+              { id: "d2", name: "Second Book.docx", characters: 40000, restored: false, addedAt: at - 800, read: { status: "stopped" as const, nextChunk: 5, totalChunks: 20, stopReason: "month_cap", skippedParts: 0, updatedAt: at - 300 }, found: { chapters: 0, places: 0, people: 0, links: 0 } },
+              { id: "d3", name: "Notes.txt", characters: 3000, restored: true, addedAt: at - 100, read: null, found: { chapters: 0, places: 0, people: 0, links: 0 } },
+            ],
+        documentsMax: 20,
+        charactersMax: 2000000,
+        charactersHeld: none ? 0 : 163000,
+      };
+    },
+    async adventureRead(ref, offset) {
+      calls.push(`adventureRead:${ref}:${offset}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const total = ref.includes(".nothing-read") ? 0 : 120;
+      const items = Array.from({ length: Math.max(0, Math.min(50, total - offset)) }, (_, i) => {
+        const n = offset + i + 1;
+        const kind = (["chapter", "place", "person", "link"] as const)[n % 4]!;
+        return { kind, name: kind === "link" ? `Gate ${n} → Key ${n}` : `Made-up ${kind} ${n}`, summary: `A made-up line about number ${n}.`, quote: n % 3 === 0 ? `“A made-up quote ${n}.”` : "" };
+      });
+      return { total, offset, items };
+    },
     // Say a connection in words (#5293; core #5298): a read waits one look, reads one, then is ready. Words with "nothing" are read as no
     // connection, "unreadable" fail, "secret" ask who knows from the start, and every ready read has two things DMbot understood.
     async saidSend(ref, input) {
