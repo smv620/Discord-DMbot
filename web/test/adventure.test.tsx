@@ -386,3 +386,62 @@ describe("reading a file now (#3694 slice E)", () => {
     expect(readButtons()).toHaveLength(0);
   });
 });
+
+describe("Guide me: where is the table (#3694 slice F)", () => {
+  const open = async (ref = "100.cmp1") => {
+    const api = mockApi("table");
+    render(<Adventure api={api} refId={ref} />);
+    await screen.findByText("The Glass Orchard.pdf", {}, slow);
+    return api;
+  };
+
+  it("shows Discord's message as it is, and nothing before the DM asks", async () => {
+    const api = await open();
+    expect(api.calls.some((c) => c.startsWith("adventureGuide:"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: w.guide }));
+    expect(await screen.findByText(/The table seems to be in Made-up chapter two\./, {}, slow)).toBeTruthy();
+    expect(api.calls.filter((c) => c.startsWith("adventureGuide:"))).toEqual(["adventureGuide:100.cmp1:d1:read:-"]); // (the first file that has been read)
+  }, 30_000);
+
+  it("picks another chapter, offers the way back to DMbot's guess and to the chapter it was on, and hides again", async () => {
+    const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: w.guide }));
+    await screen.findByText(/seems to be in Made-up chapter two/, {}, slow);
+    fireEvent.change(screen.getByLabelText(w.guideAnother), { target: { value: "c1" } });
+    fireEvent.click(screen.getByRole("button", { name: w.guideUse }));
+    expect(await screen.findByText(/The table is in Made-up chapter one \(you said so\)/, {}, slow)).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.guideBackGuess })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.guideBackTo("Made-up chapter one") })).toBeNull(); // (it was DMbot's guess before, so only the guess to go back to)
+    fireEvent.change(screen.getByLabelText(w.guideAnother), { target: { value: "c3" } });
+    fireEvent.click(screen.getByRole("button", { name: w.guideUse }));
+    expect(await screen.findByText(/The table is in Made-up chapter three/, {}, slow)).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.guideBackTo("Made-up chapter one") })).toBeTruthy(); // (the chapter it was on)
+    fireEvent.click(screen.getByRole("button", { name: w.guideBackTo("Made-up chapter one") }));
+    expect(await screen.findByText(/The table is in Made-up chapter one/, {}, slow)).toBeTruthy(); // (back to the chapter it was on)
+    fireEvent.click(screen.getByRole("button", { name: w.guideBackGuess }));
+    expect(await screen.findByText(/seems to be in Made-up chapter two/, {}, slow)).toBeTruthy();
+    expect(api.calls.filter((c) => c.startsWith("adventureGuide:")).map((c) => c.split(":").slice(3).join(":"))).toEqual(["read:-", "pick:c1", "pick:c3", "pick:c1", "clear:-"]);
+    fireEvent.click(screen.getByRole("button", { name: w.guideHide }));
+    expect(screen.queryByText(/seems to be in/)).toBeNull();
+  }, 60_000);
+
+  it("sends one ask for a double press, and never puts the book's words in a call", async () => {
+    const api = await open();
+    const ask = screen.getByRole("button", { name: w.guide });
+    fireEvent.click(ask);
+    fireEvent.click(ask);
+    await screen.findByText(/seems to be in Made-up chapter two/, {}, slow);
+    expect(api.calls.filter((c) => c.startsWith("adventureGuide:"))).toHaveLength(1);
+    expect(api.calls.join("\n")).not.toContain("Made-up place");
+  }, 30_000);
+
+  it("says plainly when Guide me is not switched on, and offers no button while Shared story only watches", async () => {
+    await open("100.cmp1.not-guide");
+    fireEvent.click(screen.getByRole("button", { name: w.guide }));
+    expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.guideRefused["not-on"]);
+    expect(screen.getByRole("button", { name: w.guide })).toBeTruthy(); // (it can be asked again)
+    cleanup();
+    await open("100.cmp1.adventure-watch");
+    expect(screen.queryByRole("button", { name: w.guide })).toBeNull();
+  });
+});

@@ -1475,6 +1475,24 @@ export interface AdventureReadStart {
   updatedAt: number;
   serverNow: number;
 }
+/** Where the table is in the adventure, from Discord's 🧭 Guide me (#3694 slice F; core #5317): `text` is Discord's own message, the book's own words, for the DM's page only; `chapters` fills the "I'm in another chapter" picker. */
+export interface AdventureGuideAnswer {
+  text: string;
+  /** True when the DM named the chapter, false when it is DMbot's guess. */
+  picked: boolean;
+  chapter: { id: string; name: string } | null;
+  chapters: { id: string; name: string }[];
+}
+export interface AdventureGuide {
+  state: "waiting" | "working" | "done" | "failed";
+  error: string;
+  job: "read" | "pick" | "clear";
+  documentId: string;
+  answer: AdventureGuideAnswer | null;
+  createdAt: number;
+  updatedAt: number;
+  serverNow: number;
+}
 export interface AdventureRead {
   total: number;
   offset: number;
@@ -3270,8 +3288,7 @@ export type ApiErrorKind =
   | "not-in-party" // a leave of someone not in the party now (#4778 a2)
   | "already-back" // a return of someone already back (#4778 a2)
   | "not-a-pc" // a character that is not a player character now (#4778 a2)
-  | "not-readable" // the file has no text to read, or its text is gone (#3694 slice E)
-  | "already-read" // the file was read already (#3694 slice E)
+  | "not-readable" // the file has no text to read, or its text is gone (#3694 slice E; a file read already has no Read button, so that rare refusal reads as the general one)
   | "not-on" // Shared story is not on, or the right to use the material is not on record (#3694 slice D)
   | "bad-file" // a sent map is not a PNG, JPEG or WebP picture the page can use, or is too big (#4347)
   | "uploads-off" // sending a map is not set up on the server yet (#4347)
@@ -3834,7 +3851,10 @@ export interface AccountApi {
   /** What was read from the adventure, fifty at a time (slice B). The book's own words: show them on the DM's page only. */
   adventureRead?(campaignRef: string, offset: number): Promise<AdventureRead>;
   /** Give a file (slice D): the file itself is the body, its name goes in the address. 202 with the give to poll with `adventureGiving`. Refusals: `bad-file`, `not-on`, `too-many-masters` (the 20-file limit), `slow-down` (busy), `too-soon`, `uploads-off`, `not-found`. */
-  /** Read a file now (slice E): the DM's yes after the cost is shown. 202 with the start to poll; refusals `not-readable`, `already-read`, `slow-down` (busy), `too-soon`, `not-found`. */
+  /** Read a file now (slice E): the DM's yes after the cost is shown. 202 with the start to poll; refusals `not-readable`, `slow-down` (busy), `too-soon`, `not-found`. */
+  /** Guide me (slice F): `read` asks where the table is, `pick` says which chapter it is in, `clear` goes back to DMbot's guess. Queued for the bot; poll with `adventureGuiding`. Refusals: `not-on` (not on Guide me), `slow-down` (busy), `too-soon`, `not-found`. */
+  adventureGuide?(campaignRef: string, document: string, job: "read" | "pick" | "clear", chapter?: string): Promise<{ guide: string }>;
+  adventureGuiding?(campaignRef: string, guide: string): Promise<AdventureGuide>;
   adventureStartRead?(campaignRef: string, document: string): Promise<{ read: string }>;
   adventureStarting?(campaignRef: string, read: string): Promise<AdventureReadStart>;
   adventureGive?(campaignRef: string, file: Blob, name: string): Promise<{ give: string }>;
@@ -4341,7 +4361,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   bad_file: "bad-file",
   not_on: "not-on",
   not_readable: "not-readable",
-  already_read: "already-read",
+  not_guide: "not-on",
   uploads_off: "uploads-off",
   nothing: "nothing",
   not_counted: "not-counted",
@@ -4481,7 +4501,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["adventure", "adventureRead", "adventureStartRead", "adventureStarting", "adventureGive", "adventureGiving", "adventureRemove", "adventureRemoval", "saidSend", "saidRead", "saidUse", "saidUndo", "placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "moreNames", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "lookAlikes", "mergeLookAlikes", "lookAlikesApart", "undoLookAlikes", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal", "changeRouteLength", "deedQuestions", "answerDeed", "continuityHits", "askContinuity", "answerContinuity"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["adventure", "adventureRead", "adventureGuide", "adventureGuiding", "adventureStartRead", "adventureStarting", "adventureGive", "adventureGiving", "adventureRemove", "adventureRemoval", "saidSend", "saidRead", "saidUse", "saidUndo", "placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "moreNames", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "lookAlikes", "mergeLookAlikes", "lookAlikesApart", "undoLookAlikes", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal", "changeRouteLength", "deedQuestions", "answerDeed", "continuityHits", "askContinuity", "answerContinuity"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "visitCampaign", "loreAdd", "loreRead", "waitCounts", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
