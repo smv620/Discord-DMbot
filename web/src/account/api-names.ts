@@ -43,6 +43,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
+import type { RuleCard } from "./api";
 import type { AccountApi, ApiHelpers, CharacterLanguages, ContinuityHits, DeedQuestions, HeardQuestions, LookAlikes, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, NodeTrait, PlotThreads, RevealProposal, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes, LeaveGroup } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
@@ -127,6 +128,17 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
           `/me/campaigns/${encodeURIComponent(campaignRef)}/names`,
         )) as { names: CampaignName[] }
       ).names,
+    // Answered at once (no queue): bad_text and too_soon are this route's own codes (#5156).
+    ruleLookup: async (campaignRef, name) =>
+      (await call(
+        "POST",
+        `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-lookup`,
+        { name },
+        false,
+        undefined,
+        false,
+        { ...errorKinds, bad_text: "bad-text", too_soon: "too-soon" },
+      )) as RuleCard,
     suggestSaidAs: async (campaignRef, nameId) =>
       (
         (await call(

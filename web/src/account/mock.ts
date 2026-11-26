@@ -5392,6 +5392,15 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // "How to say it" (#2317): a made-up respelling, the first half in capitals (suggest) or the second
     // (from a recording), so the two can be told apart in a demo.
+    // "Look up a rule" (#5156): a card for a known name, the none answer with close names for "nobody", the three errors.
+    async ruleLookup(campaignRef, name) {
+      calls.push(`ruleLookup:${campaignRef}:${name}`);
+      if (name.trim() === "" || name.length > 100) throw new ApiError("bad-text");
+      if (/toosoon/i.test(name)) throw new ApiError("too-soon");
+      if (/notallowed/i.test(name)) throw new ApiError("not-found");
+      if (/nobody/i.test(name)) return { kind: "none" as const, parts: ["No rule, spell or creature by that name was found."], close: ["Fireball", "Firebolt"] };
+      return { kind: "card" as const, parts: ["**Fireball**\n*3rd-level evocation*\nA bright streak flies to a point you choose."], close: [] };
+    },
     async suggestSaidAs(campaignRef, nameId) {
       calls.push(`suggestSaidAs:${campaignRef}:${nameId}`);
       await reachable();
