@@ -17,7 +17,6 @@ const LOOKS = 60;
 type Job = "read" | "pick" | "clear";
 
 export default function AdventureGuide({ api, refId, document }: { api: AccountApi; refId: string; document: string }) {
-  const [shown, setShown] = useState(false);
   const [busy, setBusy] = useState(false);
   const [seen, setSeen] = useState<{ stage: string; startedAt: number; updatedAt: number; serverNow: number } | null>(null);
   const [answer, setAnswer] = useState<AdventureGuideAnswer | null>(null);
@@ -28,13 +27,14 @@ export default function AdventureGuide({ api, refId, document }: { api: AccountA
   const sending = useRef(false);
   const textBox = useRef<HTMLParagraphElement>(null);
   const waitBox = useRef<HTMLDivElement>(null);
+  const askBox = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     return () => {
-      epoch.current += 1; // leaving the page, or another campaign or file, ends the watching
+      epoch.current += 1; // leaving the page or another campaign ends the watching (the file's id may change as reads finish: that is not a new campaign)
       sending.current = false;
     };
-  }, [api, refId, document]);
+  }, [api, refId]);
   useEffect(() => {
     if (busy) waitBox.current?.focus();
   }, [busy]);
@@ -44,7 +44,6 @@ export default function AdventureGuide({ api, refId, document }: { api: AccountA
     sending.current = true;
     const mine = epoch.current;
     const here = (): boolean => mine === epoch.current;
-    setShown(true);
     setBusy(true);
     setProblem("");
     setSeen(null);
@@ -94,8 +93,8 @@ export default function AdventureGuide({ api, refId, document }: { api: AccountA
   if (!api.adventureGuide || !api.adventureGuiding) return null;
   return (
     <div class="stack">
-      {!shown && (
-        <button type="button" class="button secondary" onClick={() => void run("read")}>
+      {!answer && !busy && (
+        <button type="button" class="button secondary" ref={askBox} onClick={() => void run("read")}>
           {w.guide}
         </button>
       )}
@@ -124,10 +123,10 @@ export default function AdventureGuide({ api, refId, document }: { api: AccountA
           </p>
           {answer.chapters.length > 0 && (
             <div class="stack">
-              <label class="field" for={`adv-guide-${document}`}>
+              <label class="field" for={`adv-guide-${refId}`}>
                 {w.guideAnother}
               </label>
-              <select id={`adv-guide-${document}`} value={chosen} onChange={(e) => setChosen((e.target as HTMLSelectElement).value)}>
+              <select id={`adv-guide-${refId}`} value={chosen} onChange={(e) => setChosen((e.target as HTMLSelectElement).value)}>
                 <option value="">{w.guideWhich}</option>
                 {answer.chapters.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -135,30 +134,34 @@ export default function AdventureGuide({ api, refId, document }: { api: AccountA
                   </option>
                 ))}
               </select>
-              <div class="row">
-                <button type="button" class="button" disabled={!chosen} onClick={() => void run("pick", chosen, answer)}>
-                  {w.guideUse}
-                </button>
-                {before && (
-                  <button type="button" class="button secondary" onClick={() => void run("pick", before.id, answer)}>
-                    {w.guideBackTo(before.name)}
-                  </button>
-                )}
-                {answer.picked && (
-                  <button type="button" class="button secondary" onClick={() => void run("clear")}>
-                    {w.guideBackGuess}
-                  </button>
-                )}
-              </div>
+              <button type="button" class="button" disabled={!chosen} onClick={() => void run("pick", chosen, answer)}>
+                {w.guideUse}
+              </button>
             </div>
           )}
-          <button type="button" class="button secondary" onClick={() => {
-              setShown(false);
-              setAnswer(null);
-              setBefore(null);
-            }}>
-            {w.guideHide}
-          </button>
+          <div class="row">
+            {before && (
+              <button type="button" class="button secondary" onClick={() => void run("pick", before.id, answer)}>
+                {w.guideBackTo(before.name)}
+              </button>
+            )}
+            {answer.picked && (
+              <button type="button" class="button secondary" onClick={() => void run("clear")}>
+                {w.guideBackGuess}
+              </button>
+            )}
+            <button
+              type="button"
+              class="button secondary"
+              onClick={() => {
+                setAnswer(null);
+                setBefore(null);
+                setTimeout(() => askBox.current?.focus(), 0);
+              }}
+            >
+              {w.guideHide}
+            </button>
+          </div>
         </div>
       )}
     </div>

@@ -416,17 +416,30 @@ describe("Guide me: where is the table (#3694 slice F)", () => {
     fireEvent.click(screen.getByRole("button", { name: w.guideUse }));
     expect(await screen.findByText(/The table is in Made-up chapter three/, {}, slow)).toBeTruthy();
     expect(screen.getByRole("button", { name: w.guideBackTo("Made-up chapter one") })).toBeTruthy(); // (the chapter it was on)
+    fireEvent.click(screen.getByRole("button", { name: w.guideBackTo("Made-up chapter one") }));
+    expect(await screen.findByText(/The table is in Made-up chapter one/, {}, slow)).toBeTruthy(); // (back to the chapter it was on)
     fireEvent.click(screen.getByRole("button", { name: w.guideBackGuess }));
     expect(await screen.findByText(/seems to be in Made-up chapter two/, {}, slow)).toBeTruthy();
-    expect(api.calls.filter((c) => c.startsWith("adventureGuide:")).map((c) => c.split(":").slice(3).join(":"))).toEqual(["read:-", "pick:c1", "pick:c3", "clear:-"]);
+    expect(api.calls.filter((c) => c.startsWith("adventureGuide:")).map((c) => c.split(":").slice(3).join(":"))).toEqual(["read:-", "pick:c1", "pick:c3", "pick:c1", "clear:-"]);
     fireEvent.click(screen.getByRole("button", { name: w.guideHide }));
     expect(screen.queryByText(/seems to be in/)).toBeNull();
   }, 60_000);
+
+  it("sends one ask for a double press, and never puts the book's words in a call", async () => {
+    const api = await open();
+    const ask = screen.getByRole("button", { name: w.guide });
+    fireEvent.click(ask);
+    fireEvent.click(ask);
+    await screen.findByText(/seems to be in Made-up chapter two/, {}, slow);
+    expect(api.calls.filter((c) => c.startsWith("adventureGuide:"))).toHaveLength(1);
+    expect(api.calls.join("\n")).not.toContain("Made-up place");
+  }, 30_000);
 
   it("says plainly when Guide me is not switched on, and offers no button while Shared story only watches", async () => {
     await open("100.cmp1.not-guide");
     fireEvent.click(screen.getByRole("button", { name: w.guide }));
     expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.guideRefused["not-on"]);
+    expect(screen.getByRole("button", { name: w.guide })).toBeTruthy(); // (it can be asked again)
     cleanup();
     await open("100.cmp1.adventure-watch");
     expect(screen.queryByRole("button", { name: w.guide })).toBeNull();

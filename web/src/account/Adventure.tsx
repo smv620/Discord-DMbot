@@ -195,7 +195,7 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
   seeingNow.current = seeing;
   if (!api.adventure || gone) return null;
   // Guide me needs a finished read: its route names one of the files (the guide covers the whole campaign), so the first such file is used.
-  const doneDoc = (list?.documents ?? []).find((d) => d.read?.status === "done");
+  const doneDoc = [...(list?.documents ?? [])].filter((d) => d.read?.status === "done").sort((x, y) => x.addedAt - y.addedAt)[0]; // (the oldest, so the choice stays put as later reads finish)
   const anyRead = (list?.documents ?? []).some((d) => d.read !== null);
   const left = Math.min(50, total - items.length);
   return (
@@ -267,7 +267,7 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
               <p class="small muted">{w.using(list.charactersHeld, list.charactersMax)}</p>
             </>
           )}
-          {list.mode === "guide" && doneDoc && <AdventureGuide key={`${refId}:${doneDoc.id}`} api={api} refId={refId} document={doneDoc.id} />}
+          {list.mode === "guide" && doneDoc && <AdventureGuide key={refId} api={api} refId={refId} document={doneDoc.id} />}
           <AdventureGive key={refId} api={api} refId={refId} onKept={() => setTries((n) => n + 1)} />
           <p class="small">{w.inDiscord}</p>
           <div class="row">

@@ -116,7 +116,6 @@ export const adventureWords = {
   guideBackTo: (name: string): string => `Back to ${name}`,
   guideBackGuess: "Back to DMbot's guess",
   guideHide: "Hide",
-  guideNoChapters: "DMbot hasn't read any chapters yet. Read a file first.",
   guideRefused: {
     "not-on": "Guide me isn't switched on for this campaign. In Settings, set Shared story to Guide me.",
     "slow-down": "DMbot is already working on this. Try again in a minute.",
