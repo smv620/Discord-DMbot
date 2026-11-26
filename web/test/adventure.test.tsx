@@ -230,3 +230,104 @@ describe("on the Upload lore page", () => {
     expect(screen.queryByRole("heading", { name: w.heading })).toBeNull();
   });
 });
+
+describe("giving a file (#3694 slice D)", () => {
+  const give = (name: string, size = 100) => new File([new Uint8Array(size)], name);
+  const pick = async (file: File) => {
+    fireEvent.click(await screen.findByRole("button", { name: w.give }, slow));
+    fireEvent.change(screen.getByLabelText(w.giveFile), { target: { files: [file] } });
+  };
+
+  it("turns away a file of the wrong kind or too big before anything is sent", async () => {
+    const api = mockApi("table");
+    render(<Adventure api={api} refId="100.cmp1" />);
+    await pick(give("map.png"));
+    expect(screen.getByRole("alert").textContent).toBe(w.giveWrong);
+    fireEvent.change(screen.getByLabelText(w.giveFile), { target: { files: [give("book.docx", 11 * 1024 * 1024)] } });
+    expect(screen.getByRole("alert").textContent).toBe(w.giveBig(10));
+    fireEvent.click(screen.getByRole("button", { name: w.giveSend }));
+    expect(api.calls.some((c) => c.startsWith("adventureGive:"))).toBe(false);
+  });
+
+  it("turns away an empty file and one with a very long name, and lets a 20 MB PDF through", async () => {
+    render(<Adventure api={mockApi("table")} refId="100.cmp1" />);
+    await pick(give("empty.txt", 0));
+    expect(screen.getByRole("alert").textContent).toBe(w.giveEmpty);
+    fireEvent.change(screen.getByLabelText(w.giveFile), { target: { files: [give(`${"x".repeat(201)}.txt`)] } });
+    expect(screen.getByRole("alert").textContent).toBe(w.giveName);
+    fireEvent.change(screen.getByLabelText(w.giveFile), { target: { files: [give("big.pdf", 20 * 1024 * 1024)] } });
+    expect(screen.queryByRole("alert")).toBeNull(); // (a PDF may be up to 50 MB)
+  });
+
+  it("asks for a file first", async () => {
+    render(<Adventure api={mockApi("table")} refId="100.cmp1" />);
+    fireEvent.click(await screen.findByRole("button", { name: w.give }, slow));
+    fireEvent.click(screen.getByRole("button", { name: w.giveSend }));
+    expect(screen.getByRole("alert").textContent).toBe(w.giveNone);
+  });
+
+  it("gives a file, shows the wait and then that it was kept, and the list has it", async () => {
+    const api = mockApi("table");
+    render(<Adventure api={api} refId="100.cmp1" />);
+    await pick(give("The Salt Road.pdf"));
+    const send = screen.getByRole("button", { name: w.giveSend });
+    fireEvent.click(send);
+    fireEvent.click(send); // (a double press sends once)
+    expect(await screen.findByText(w.stagesGive.waiting as string, {}, slow)).toBeTruthy();
+    expect(await screen.findByText(w.given("The Salt Road.pdf"), {}, slow)).toBeTruthy();
+    expect(await screen.findByText("The Salt Road.pdf", {}, slow)).toBeTruthy();
+    expect(api.calls.filter((c) => c.startsWith("adventureGive:"))).toEqual(["adventureGive:100.cmp1:The Salt Road.pdf:100"]);
+  }, 30_000);
+
+  it("says what a refused or failed give means, in plain words", async () => {
+    render(<Adventure api={mockApi("table")} refId="100.cmp1" />);
+    await pick(give("badfile.pdf"));
+    fireEvent.click(screen.getByRole("button", { name: w.giveSend }));
+    expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.giveRefused["bad-file"]);
+    cleanup();
+    render(<Adventure api={mockApi("table")} refId="100.cmp1" />);
+    await pick(give("dupfile.txt"));
+    fireEvent.click(screen.getByRole("button", { name: w.giveSend }));
+    expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.giveFailed.already);
+  }, 30_000);
+
+  it("says no text was found, and stops watching when the page goes away", async () => {
+    const api = mockApi("table");
+    render(<Adventure api={api} refId="100.cmp1" />);
+    await pick(give("emptyfile.pdf"));
+    fireEvent.click(screen.getByRole("button", { name: w.giveSend }));
+    expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.giveFailed.no_text);
+    cleanup();
+    const second = mockApi("table");
+    render(<Adventure api={second} refId="100.cmp1" />);
+    await pick(give("The Last Road.pdf"));
+    fireEvent.click(screen.getByRole("button", { name: w.giveSend }));
+    await screen.findByText(w.stagesGive.waiting as string, {}, slow);
+    cleanup();
+    const seen = second.calls.filter((c) => c.startsWith("adventureGiving")).length;
+    await new Promise((ok) => setTimeout(ok, 2500));
+    expect(second.calls.filter((c) => c.startsWith("adventureGiving")).length).toBeLessThanOrEqual(seen + 1);
+  }, 30_000);
+
+  it("says a refused give in plain words, and is not stuck when the campaign changes mid-give", async () => {
+    const api = mockApi("table");
+    const { rerender } = render(<Adventure api={api} refId="100.cmp1" />);
+    await pick(give("busyfile.pdf"));
+    fireEvent.click(screen.getByRole("button", { name: w.giveSend }));
+    expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.giveRefused["slow-down"]);
+    fireEvent.change(screen.getByLabelText(w.giveFile), { target: { files: [give("book.pdf")] } });
+    fireEvent.click(screen.getByRole("button", { name: w.giveSend }));
+    await screen.findByText(w.stagesGive.waiting as string, {}, slow);
+    rerender(<Adventure api={api} refId="200.cmp2" />);
+    expect(await screen.findByRole("button", { name: w.give }, slow)).toBeTruthy(); // (a fresh panel for the new campaign)
+    expect(screen.queryByText(w.stagesGive.waiting as string)).toBeNull();
+  }, 30_000);
+
+  it("offers no Give a file when the API cannot take one", async () => {
+    const api = mockApi("table");
+    delete (api as { adventureGiving?: unknown }).adventureGiving;
+    render(<Adventure api={api} refId="100.cmp1" />);
+    await screen.findByText("The Glass Orchard.pdf", {}, slow);
+    expect(screen.queryByRole("button", { name: w.give })).toBeNull();
+  });
+});
