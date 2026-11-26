@@ -367,6 +367,7 @@ from dmbot.memory import (
     voyage,
     waiting_now,
     web_actions,
+    web_adventure_removals,
     web_connection_reads,
     web_report_requests,
     web_sheets,
@@ -1337,6 +1338,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             web_connection_reads.ActionStore(recaps.db) if recaps is not None else None
         )
         self._connection_tasks: dict[int, asyncio.Task[None]] = {}  # one running job a server
+        # Removing a Shared story file from the website (#3694 slice C): instant, so no task.
+        self.web_adventure_removals = (
+            web_adventure_removals.RemovalStore(recaps.db) if recaps is not None else None
+        )
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
@@ -17607,6 +17612,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def names_lookup(self, guild_id: int, campaign_id: str) -> CampaignLookup | None:
         return await self.lookup.get(guild_id, campaign_id) if self.lookup else None
+
+    async def run_web_adventure_removals(self) -> None:
+        """Files removed from the Shared story adventure on the website (#3694): each is the same
+        call as Discord's 🗑, done in order, a few a pass. Outcome words are logged, never a name."""
+        store = self.web_adventure_removals
+        if store is None or self.adventure is None:
+            return
+        for guild in list(self.guilds):
+            for _ in range(5):
+                item = await store.claim_next(guild.id)
+                if item is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
+                    await web_adventure_removals.run_one(self.adventure, store, guild.id, item)
 
     async def run_web_connection_reads(self) -> None:
         """Connections said in words on the website: a read, a Use this or an Undo. Each runs as a

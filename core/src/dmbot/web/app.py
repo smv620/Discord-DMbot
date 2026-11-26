@@ -4996,6 +4996,29 @@ def create_app(
         except RecapError:
             raise HTTPException(status_code=404, detail="not_found") from None
 
+    # Remove one file of the adventure (#3694 slice C): queued for the bot, one confirmation on
+    # the page. Poll the removal. 404 while DMBOT_WEB_ADVENTURE is off, and for a file or a
+    # campaign that is not the caller's.
+    @app.post("/me/campaigns/{ref}/adventure/{document}/remove", status_code=202)
+    async def me_adventure_remove(ref: str, document: str, signed: Signed) -> dict[str, str]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return {"removal": await adventure.remove(db, session, ref, document)}
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    @app.get("/me/campaigns/{ref}/adventure/removals/{removal}")
+    async def me_adventure_removal(ref: str, removal: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await adventure.removal(db, session, ref, removal)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     # A connection said in the DM's own words (#2940 slice C): queued for the bot, which reads it,
     # shows proposals, and writes only what the DM confirms. 404 while DMBOT_WEB_CONNECTION_SAID is
     # off. The DM's words are never logged.

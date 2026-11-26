@@ -10,6 +10,7 @@ ever shown on the DM's own pages and never put in a log. The same numbers as Dis
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from dmbot.db import Database
@@ -67,3 +68,48 @@ async def read_nodes(db: Database, session: Session, ref: str, offset: int = 0) 
     if got is None:
         raise RecapError("not_found")
     return {"total": got["total"], "offset": start, "items": got["items"]}
+
+
+_ID = re.compile(r"^[0-9a-f]{32}$")
+
+
+async def remove(db: Database, session: Session, ref: str, document: str) -> str:
+    """Slice C: queue the removal of one file, as Discord's 🗑 does it (the bot calls the same
+    `AdventureStore.remove`). Returns the removal's id for `removal`. A DM of the campaign only;
+    "not found" for anyone else, a malformed id and a file that is not there, so the page can't
+    tell the cases apart."""
+    if not _ID.match(document):
+        raise RecapError("not_found")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_adventure_remove(%s, %s, %s) AS r", (guild_id, campaign_id, document)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None or got["status"] != "ok":
+        raise RecapError("not_found")
+    return str(got["id"])
+
+
+async def removal(db: Database, session: Session, ref: str, removal_id: str) -> dict[str, Any]:
+    """How a queued removal went: `{state: waiting|working|done|failed, error, updatedAt}`, where
+    `error` is a code (`not_yours`, `failed`) the page turns into words."""
+    if not _ID.match(removal_id):
+        raise RecapError("not_found")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_adventure_remove_read(%s, %s, %s) AS r",
+            (guild_id, campaign_id, removal_id),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None or got.get("missing"):
+        raise RecapError("not_found")
+    return {"id": got["id"], "state": got["state"], "error": got["error"],
+            "updatedAt": got["updatedAt"]}  # fmt: skip

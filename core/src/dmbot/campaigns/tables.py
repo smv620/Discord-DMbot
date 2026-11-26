@@ -282,6 +282,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "web_sheet_actions": _WAIT,
     "web_line_fixes": _WAIT,
     "web_connection_reads": _WAIT,
+    "web_adventure_removals": _WAIT,
     "rule_set_codes": "a share code is a bearer secret; a restored publisher gets a new one "
     "(Supervisor, #2553; PLAN:947)",
     "memory_mentions": "where each name was said, made again as lines are read (PLAN:164)",
