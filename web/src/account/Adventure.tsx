@@ -30,6 +30,10 @@ export function readLine(d: AdventureDocument): string {
   return w.stopped(percent, w.why[read.stopReason] ?? w.carryOn);
 }
 
+const REMOVE_FIRST_MS = 400;
+const REMOVE_EVERY_MS = 1500;
+const REMOVE_LOOKS = 40; // about a minute: a removal is quick
+
 export default function Adventure({ api, refId }: { api: AccountApi; refId: string }) {
   const [list, setList] = useState<AdventureList | null>(null);
   const [gone, setGone] = useState(false); // (not a DM, or the switch is off: nothing is shown at all)
@@ -40,6 +44,13 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
   const [total, setTotal] = useState(0);
   const [looking, setLooking] = useState(false);
   const [lookFailed, setLookFailed] = useState(false);
+  // One removal at a time. `confirming` is the file the DM was asked about; `job` is the removal itself and where it stands.
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [job, setJob] = useState<{ doc: string; phase: "working" | "done" | "failed"; said: string } | null>(null);
+  const [seconds, setSeconds] = useState(0); // (how long the removal has been working)
+  const removeBusy = useRef(false);
+  const seeingNow = useRef(false); // (read at the end of a removal, not at its start)
+  const epoch = useRef(0); // bumped when the campaign changes or the page goes away: a removal still polling then stops
   const [asked, setAsked] = useState(false); // (a read of the list has come back at least once)
   const busy = useRef(false);
   const latest = useRef(0); // a late answer to an earlier ask is dropped
@@ -63,6 +74,23 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
     };
   }, [api, refId, tries]);
 
+  // A change of campaign or leaving the page ends any removal still being watched, and clears what it showed.
+  useEffect(() => {
+    return () => {
+      epoch.current += 1;
+      removeBusy.current = false;
+    };
+  }, [api, refId]);
+  useEffect(() => {
+    setConfirming(null);
+    setJob(null);
+  }, [refId]);
+  useEffect(() => {
+    if (job?.phase !== "working") return;
+    const timer = setInterval(() => setSeconds((n) => n + 1), 1000);
+    return () => clearInterval(timer);
+  }, [job?.phase]);
+
   async function look(offset: number): Promise<void> {
     if (!api.adventureRead || busy.current) return;
     busy.current = true; // (a double press asks once: state is not read until the next draw)
@@ -85,6 +113,58 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
     }
   }
 
+  /** The one confirmed press: queue the removal, then poll it until the bot has finished or said why not. */
+  async function remove(doc: AdventureDocument): Promise<void> {
+    if (!api.adventureRemove || !api.adventureRemoval || removeBusy.current) return;
+    removeBusy.current = true;
+    const mine = epoch.current;
+    const here = (): boolean => mine === epoch.current;
+    setConfirming(null);
+    setSeconds(0);
+    setJob({ doc: doc.id, phase: "working", said: w.removing });
+    const finish = (phase: "done" | "failed", said: string): void => {
+      if (!here()) return;
+      setJob({ doc: doc.id, phase, said });
+      setTries((n) => n + 1); // (the files are read again, whatever happened)
+      if (phase === "done" && seeingNow.current) reread();
+    };
+    try {
+      let id: string;
+      try {
+        id = (await api.adventureRemove(refId, doc.id)).removal;
+      } catch (error) {
+        return finish("failed", error instanceof ApiError && error.kind === "not-found" ? w.removeNotYours : w.removeFailed);
+      }
+      let errors = 0;
+      for (let i = 0; i < REMOVE_LOOKS; i += 1) {
+        await new Promise((ok) => setTimeout(ok, i === 0 ? REMOVE_FIRST_MS : REMOVE_EVERY_MS));
+        if (!here()) return;
+        try {
+          const got = await api.adventureRemoval(refId, id);
+          errors = 0;
+          if (got.state === "done") return finish("done", w.removed);
+          if (got.state === "failed") return finish("failed", got.error === "not_yours" ? w.removeNotYours : w.removeFailed);
+        } catch {
+          errors += 1; // (one failed look is not a failed removal: it is queued and will probably finish)
+          if (errors >= 3) return finish("failed", w.removeSlow);
+        }
+      }
+      finish("failed", w.removeSlow);
+    } finally {
+      removeBusy.current = false;
+    }
+  }
+
+  /** What was read is read again after a removal, so the removed book's words are not left on the screen. */
+  function reread(): void {
+    latest.current += 1;
+    busy.current = false;
+    setItems([]);
+    setTotal(0);
+    setAsked(false);
+    void look(0);
+  }
+
   function hide(): void {
     latest.current += 1; // (an ask still on its way is dropped)
     busy.current = false;
@@ -97,6 +177,7 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
     setTimeout(() => seeBox.current?.focus(), 0);
   }
 
+  seeingNow.current = seeing;
   if (!api.adventure || gone) return null;
   const anyRead = (list?.documents ?? []).some((d) => d.read !== null);
   const left = Math.min(50, total - items.length);
@@ -134,6 +215,30 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
                       {w.pages(d.characters)}
                       {d.restored ? `, ${w.giveAgain}` : `, ${readLine(d)}`}
                     </span>
+                    {api.adventureRemove && api.adventureRemoval && confirming !== d.id && job?.phase !== "working" && (
+                      <button type="button" class="button secondary" aria-label={`${w.remove} ${d.name}`} onClick={() => setConfirming(d.id)}>
+                        {w.remove}
+                      </button>
+                    )}
+                    {confirming === d.id && (
+                      <div class="stack" role="group" aria-labelledby={`adv-ask-${d.id}`}>
+                        <p id={`adv-ask-${d.id}`}>{w.removeAsk(d.name)}</p>
+                        <div class="row">
+                          <button type="button" class="button" onClick={() => void remove(d)}>
+                            {w.removeYes}
+                          </button>
+                          <button type="button" class="button secondary" autoFocus onClick={() => setConfirming(null)}>
+                            {w.removeNo}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {job?.doc === d.id && (
+                      <p class={job.phase === "failed" ? "warn" : "muted"} role={job.phase === "failed" ? "alert" : "status"}>
+                        {job.said}
+                        {job.phase === "working" && seconds >= 5 ? ` ${w.removingFor(seconds)}` : ""}
+                      </p>
+                    )}
                   </li>
                 ))}
               </ol>

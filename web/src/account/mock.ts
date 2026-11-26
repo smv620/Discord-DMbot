@@ -1013,6 +1013,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let houseFileNow: HouseFileRequest | null = null;
   let houseFileLooks = 0;
   let loreLooks = 0;
+  const adventureRemovals = new Map<string, { document: string; looks: number }>(); // (removing a file of the adventure, #3694 slice C)
+  const adventureGone = new Set<string>();
   const saidJobs = new Map<string, { text: string; looks: number; job: "read" | "use" | "undo"; edit?: string | undefined; partly?: boolean }>(); // (say a connection in words, #5293)
   let quickLooks = 0; // (the half-second counts reads of a running job, #3534 part 3)
   let aiFeedLooks = 0;
@@ -3206,7 +3208,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (webView(ref) !== "dm") throw new ApiError("not-found");
       const at = Math.floor(Date.now() / 1000);
       const none = ref.includes(".no-adventure");
-      return {
+      const built = {
         mode: ref.includes(".adventure-off") ? "off" : "guide",
         documents: none
           ? []
@@ -3219,6 +3221,30 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         charactersMax: 2000000,
         charactersHeld: none ? 0 : 163000,
       };
+      return { ...built, documents: built.documents.filter((d) => !adventureGone.has(`${ref}:${d.id}`)) };
+    },
+    async adventureRemove(ref, document) {
+      calls.push(`adventureRemove:${ref}:${document}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (!["d1", "d2", "d3"].includes(document)) throw new ApiError("not-found");
+      const id = `rm-${adventureRemovals.size + 1}`;
+      adventureRemovals.set(id, { document, looks: 0 });
+      return { removal: id };
+    },
+    async adventureRemoval(ref, removal) {
+      calls.push(`adventureRemoval:${ref}:${removal}`);
+      await reachable();
+      signedIn();
+      const got = adventureRemovals.get(removal);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      if (got.looks < 2) return { id: removal, state: "working" as const, error: "", updatedAt: at };
+      if (got.document === "d2") return { id: removal, state: "failed" as const, error: "failed", updatedAt: at }; // (the second file always fails: the failure words)
+      adventureGone.add(`${ref}:${got.document}`);
+      return { id: removal, state: "done" as const, error: "", updatedAt: at };
     },
     async adventureRead(ref, offset) {
       calls.push(`adventureRead:${ref}:${offset}`);
