@@ -237,8 +237,18 @@ describe("who knows this, on a held connection", () => {
     const panel = await openPanel(pageWith(graph([held({ who: "some", knownBy: holders })])));
     expect(within(panel).getByText(w.whoStateSomeGrouped(["Mara", "Tavin"], ["Oda"], ["Brann"]))).toBeTruthy();
     expect(w.whoStateSomeGrouped(["Mara", "Tavin"], ["Oda"], ["Brann"])).toBe(
-      "Hidden from the party. Known to: Mara and Tavin in the party; Oda, who left the party; others: Brann.",
+      "Hidden from the party. In the party: Mara and Tavin. Left the party: Oda. Others: Brann.",
     );
+  });
+
+  it("a status the page does not know keeps the plain list, so no name is dropped", async () => {
+    live.line = true;
+    const odd = [
+      { id: "a", name: "Mara", status: "party" as const },
+      { id: "b", name: "Tavin", status: "visitor" as unknown as "party" },
+    ];
+    const panel = await openPanel(pageWith(graph([held({ who: "some", knownBy: odd })])));
+    expect(within(panel).getByText(w.whoStateSome("Mara and Tavin"))).toBeTruthy();
   });
 
   it("an older server (no status) or the switch off keeps the plain list", async () => {

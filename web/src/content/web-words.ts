@@ -300,13 +300,13 @@ export const webPage = {
   // A connection's knowers by who they are (#5332): the party first, then those who left, then the others (an NPC, or a player
   // character who was never in the party). The API sends them in that order.
   whoStateSomeGrouped: (party: string[], left: string[], others: string[]): string =>
-    `Hidden from the party. Known to: ${[
-      party.length > 0 ? `${namesList(party)} in the party` : "",
-      left.length > 0 ? `${namesList(left)}, who left the party` : "",
-      others.length > 0 ? `others: ${namesList(others)}` : "",
+    `Hidden from the party. ${[
+      party.length > 0 ? `In the party: ${namesList(party)}.` : "",
+      left.length > 0 ? `Left the party: ${namesList(left)}.` : "",
+      others.length > 0 ? `Others: ${namesList(others)}.` : "",
     ]
       .filter((x) => x !== "")
-      .join("; ")}.`,
+      .join(" ")}`,
   guessNamed: (name: string, g: "sure" | "likely"): string => `${name} (DMbot's guess, ${g})`,
   whoKeepsGuesses: "Saving keeps DMbot's guesses you leave ticked as yours.",
   whoDoneDm: "Now only you know this.",

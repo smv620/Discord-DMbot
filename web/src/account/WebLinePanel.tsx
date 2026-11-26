@@ -169,7 +169,7 @@ export function WhoKnows({
       : current === "dm"
         ? words.whoStateDm
         : current === "some" && holders.length > 0
-          ? KNOW_LINE_LIVE && holders.every((h) => h.status !== undefined)
+          ? KNOW_LINE_LIVE && holders.every((h) => h.status === "party" || h.status === "left" || h.status === "npc")
             ? words.whoStateSomeGrouped(
                 ...(["party", "left", "npc"] as const).map((s) => holders.filter((h) => h.status === s).map((h) => (h.guess ? words.guessNamed(h.name, h.guess) : h.name))) as [string[], string[], string[]],
               )

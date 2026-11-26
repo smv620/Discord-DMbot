@@ -56,11 +56,40 @@ describe("the line under a Some know pick", () => {
 
   it("a look that fails leaves the picker as it was", async () => {
     const api = await openPicker();
-    api.knowLine = async () => {
+    const asked = vi.fn(async () => {
       throw new Error("down");
-    };
+    });
+    api.knowLine = asked;
     fireEvent.click(await screen.findByRole("checkbox", { name: "Wren" }));
+    await waitFor(() => expect(asked).toHaveBeenCalledTimes(1));
     await waitFor(() => expect((screen.getByRole("button", { name: w.someSave }) as HTMLButtonElement).disabled).toBe(false));
+    expect(screen.queryByText(/Known to:/)).toBeNull();
+  });
+
+  it("drops a late answer to an older tick", async () => {
+    const api = await openPicker();
+    const waiting: ((v: { line: string }) => void)[] = [];
+    api.knowLine = vi.fn(() => new Promise<{ line: string }>((resolve) => waiting.push(resolve)));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Wren" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Ash" }));
+    await waitFor(() => expect(waiting).toHaveLength(2));
+    waiting[1]!({ line: "✅ The whole party knows" });
+    expect(await screen.findByText("✅ The whole party knows")).toBeTruthy();
+    waiting[0]!({ line: "👥 Known to: Wren" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText("👥 Known to: Wren")).toBeNull();
+    expect(screen.getByText("✅ The whole party knows")).toBeTruthy();
+  });
+
+  it("Cancel takes the line away, and reopening the picker starts without one", async () => {
+    await openPicker();
+    fireEvent.click(await screen.findByRole("checkbox", { name: "Wren" }));
+    expect(await screen.findByText("👥 Known to: 1 of the party")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.someCancel }));
+    expect(screen.queryByText(/Known to:/)).toBeNull();
+    const panel = screen.getByText("Mira Voss knows Far Hall").closest(".panel") as HTMLElement;
+    fireEvent.click(Array.from(panel.querySelectorAll("button")).find((b) => b.textContent === w.someButton)!);
+    await screen.findByText(w.someLegend);
     expect(screen.queryByText(/Known to:/)).toBeNull();
   });
 });
