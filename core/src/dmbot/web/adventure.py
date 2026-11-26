@@ -26,8 +26,6 @@ from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
-CHARS_PER_WORD = 5  # a high guess, so the estimate is never below the charge (credits.py)
-
 
 def _estimate(document: dict[str, Any]) -> str | None:
     """What reading this file will cost, in the card's own sentence ("About 120 AI credits for the
@@ -36,11 +34,7 @@ def _estimate(document: dict[str, Any]) -> str | None:
     read = document.get("read")
     if document["restored"] or (read and read["status"] == "done"):
         return None
-    words = int(document["characters"]) // CHARS_PER_WORD
-    units = credits.units_of("adventure", words=words)
-    return credits.estimate_words(
-        "adventure", credits.estimate("adventure", units, allowance=0, used=0)
-    )
+    return credits.adventure_estimate_words(int(document["characters"]))
 
 
 async def held(db: Database, session: Session, ref: str) -> dict[str, Any]:

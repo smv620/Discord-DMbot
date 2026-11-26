@@ -5,6 +5,7 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../src/content/import-switch", () => ({ IMPORT_LIVE: true }));
 vi.mock("../src/content/import-words", async (original) => ({
   ...(await original<typeof import("../src/content/import-words")>()),
   IMPORT_LIVE: true,

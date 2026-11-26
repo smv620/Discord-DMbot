@@ -44,6 +44,9 @@ vi.mock("../src/content/lore-words", async (original) => ({
     return true;
   },
 }));
+vi.mock("../src/content/recap-style-switch", () => ({ RECAP_STYLE_LIVE: true }));
+vi.mock("../src/content/import-switch", () => ({ IMPORT_LIVE: true }));
+vi.mock("../src/content/lore-switch", () => ({ LORE_LIVE: true }));
 vi.mock("../src/content/maps-switch", () => ({ MAPS_LIVE: true }));
 vi.mock("../src/content/pictures-switch", () => ({ PICTURES_LIVE: true }));
 
