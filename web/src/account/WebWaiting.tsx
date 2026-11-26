@@ -13,6 +13,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { handBracket, handKeeps } from "../content/hand-over-words";
 import { differs, waitingWords as w } from "../content/web-waiting";
 import { SOME_KNOW_LIVE } from "../content/some-know-switch";
+import { KNOW_LINE_LIVE } from "../content/know-line-switch";
 import { ApiError, type AccountApi, type PartyCharacter, type Waiting, type WaitingAnswer, type WaitingBackstory, type WaitingLook } from "./api";
 import { currentItem, itemDomId, openItem, pairFromItem } from "./itemLink";
 import WaitingBulk from "./WaitingBulk";
@@ -124,6 +125,23 @@ export default function WebWaiting({
   const [undo, setUndo] = useState<string | null>(null);
   // The "Some know" picker open on one claim (#4680 part 1): nobody is ticked when it opens.
   const [picker, setPicker] = useState<{ kind: "claim" | "backstory"; id: string; party: PartyCharacter[] | null; chosen: string[] } | null>(null);
+  // The line the ticked characters will give (#5332), asked as the ticks change; a stale answer is dropped by its number.
+  const [knowLine, setKnowLine] = useState<string | null>(null);
+  const knowLooks = useRef(0);
+  const chosenKey = picker?.chosen.join(",") ?? "";
+  useEffect(() => {
+    const mine = ++knowLooks.current;
+    if (!KNOW_LINE_LIVE || !api.knowLine || !picker || picker.chosen.length === 0) return void setKnowLine(null);
+    api
+      .knowLine(campaignRef, { characters: picker.chosen, common: false })
+      .then((got) => {
+        if (mine === knowLooks.current) setKnowLine(got.line);
+      })
+      .catch(() => {
+        // Only a preview: with no line, the picker works as before.
+        if (mine === knowLooks.current) setKnowLine(null);
+      });
+  }, [chosenKey, picker?.id, campaignRef]);
   // The last "Some know" can be taken back by its batch, until the next answer.
   const [someUndo, setSomeUndo] = useState<{ id: string; batch: number } | null>(null);
   const counter = useRef(0);
@@ -258,6 +276,11 @@ export default function WebWaiting({
               <span>{p.name}</span>
             </label>
           ))
+        )}
+        {knowLine && (
+          <p class="small" role="status">
+            {knowLine}
+          </p>
         )}
         <div class="row">
           <button type="button" class="button" disabled={busy || picker.party === null || picker.chosen.length === 0} onClick={() => void saveSome(kind, id)}>

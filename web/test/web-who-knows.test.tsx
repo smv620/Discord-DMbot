@@ -12,7 +12,12 @@ import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
 import { webPage as w } from "../src/content/web-words";
 
-const live = vi.hoisted(() => ({ on: true }));
+const live = vi.hoisted(() => ({ on: true, line: false }));
+vi.mock("../src/content/know-line-switch", () => ({
+  get KNOW_LINE_LIVE() {
+    return live.line;
+  },
+}));
 vi.mock("../src/content/who-knows-switch", () => ({
   get WHO_KNOWS_LIVE() {
     return live.on;
@@ -22,6 +27,7 @@ vi.mock("../src/content/who-knows-switch", () => ({
 afterEach(() => {
   cleanup();
   live.on = true;
+  live.line = false;
 });
 
 /** One connection between Mira and Aldric, with the given links. */
@@ -218,6 +224,36 @@ describe("who knows this, on a held connection", () => {
     expect(changes[0]).toMatchObject({ action: "who", id: "l1", who: "some", characters: ["pc-cerric", "pc-mira"] });
     expect(changes[0]).toHaveProperty("shown");
     expect((changes[0] as { shown: string[] }).shown).toEqual(expect.arrayContaining(["pc-cerric", "pc-mira"]));
+  });
+
+  it("with the know-line switch on, the state line groups the party, those who left and the others (#5332)", async () => {
+    live.line = true;
+    const holders = [
+      { id: "a", name: "Mara", status: "party" as const },
+      { id: "b", name: "Tavin", status: "party" as const },
+      { id: "c", name: "Oda", status: "left" as const },
+      { id: "d", name: "Brann", status: "npc" as const },
+    ];
+    const panel = await openPanel(pageWith(graph([held({ who: "some", knownBy: holders })])));
+    expect(within(panel).getByText(w.whoStateSomeGrouped(["Mara", "Tavin"], ["Oda"], ["Brann"]))).toBeTruthy();
+    expect(w.whoStateSomeGrouped(["Mara", "Tavin"], ["Oda"], ["Brann"])).toBe(
+      "Hidden from the party. Known to: Mara and Tavin in the party; Oda, who left the party; others: Brann.",
+    );
+  });
+
+  it("an older server (no status) or the switch off keeps the plain list", async () => {
+    const two = [
+      { id: "a", name: "Mara", status: "party" as const },
+      { id: "b", name: "Tavin" },
+    ];
+    live.line = true;
+    const mixed = await openPanel(pageWith(graph([held({ who: "some", knownBy: two })])));
+    expect(within(mixed).getByText(w.whoStateSome("Mara and Tavin"))).toBeTruthy();
+    cleanup();
+    live.line = false;
+    const withStatus = [{ id: "a", name: "Mara", status: "left" as const }];
+    const off = await openPanel(pageWith(graph([held({ who: "some", knownBy: withStatus })])));
+    expect(within(off).getByText(w.whoStateSome("Mara"))).toBeTruthy();
   });
 
   it("the state line names the characters, and \"and n more\" past five", async () => {

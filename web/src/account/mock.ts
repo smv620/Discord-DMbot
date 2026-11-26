@@ -3005,6 +3005,16 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The party's player characters, for the "Some know" picker on a waiting claim (#4680 part 1): DM only. A ref ending
     // `.party-none` has an empty party.
+    // The line of a pick not yet made (#5332): the same words as Discord's `party_icons.line`, for a party of three.
+    async knowLine(ref, pick) {
+      calls.push(`knowLine:${ref}:${pick.characters.join(",")}:${pick.common}`);
+      await reachable();
+      signedIn();
+      if (pick.common) return { line: "🌍 Everyone knows" };
+      if (pick.characters.length === 0) return { line: "🤫 No one in the party knows" };
+      if (pick.characters.length >= 3) return { line: "✅ The whole party knows" };
+      return { line: `👥 Known to: ${pick.characters.length} of the party` };
+    },
     async partyCharacters(ref) {
       calls.push(`partyCharacters:${ref}`);
       await reachable();
