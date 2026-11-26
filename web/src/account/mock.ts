@@ -3016,6 +3016,16 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         { id: "p2", name: "Ash" },
       ];
     },
+    // The line of a pick not yet made (#5332): the same words as Discord's `party_icons.line`, for a party of three.
+    async knowLine(ref, pick) {
+      calls.push(`knowLine:${ref}:${pick.characters.join(",")}:${pick.common}`);
+      await reachable();
+      signedIn();
+      if (pick.common) return { line: "🌍 Everyone knows" };
+      if (pick.characters.length === 0) return { line: "🤫 No one in the party knows" };
+      if (pick.characters.length >= 3) return { line: "✅ The whole party knows" };
+      return { line: `👥 Known to: ${pick.characters.length} of the party` };
+    },
     async answerWaiting(ref, answer, onLook) {
       calls.push(
         `answerWaiting:${ref}:${answer.kind}:${answer.action}:${"ids" in answer ? answer.ids.join(",") : answer.id}${"entity" in answer ? `:${answer.entity}` : ""}${"secret" in answer && answer.secret ? ":secret" : ""}`,

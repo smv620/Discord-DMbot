@@ -11,6 +11,7 @@ import { feelingOf } from "../content/knows-feeling-words";
 import { KNOWS_HOW_LIVE } from "../content/knows-how-switch";
 import { knowsHowOf, knowsHowWords } from "../content/knows-how-words";
 import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
+import { KNOW_LINE_LIVE } from "../content/know-line-switch";
 import { webPage as words } from "../content/web-words";
 import { type AccountApi, type WebEdge, type WebLinkChange, type WebRevealTarget, type WebViewer } from "./api";
 import LazyPanel from "./LazyPanel";
@@ -168,7 +169,11 @@ export function WhoKnows({
       : current === "dm"
         ? words.whoStateDm
         : current === "some" && holders.length > 0
-          ? words.whoStateSome(words.whoNames(holders.map((h) => (h.guess ? words.guessNamed(h.name, h.guess) : h.name))))
+          ? KNOW_LINE_LIVE && holders.every((h) => h.status === "party" || h.status === "left" || h.status === "npc")
+            ? words.whoStateSomeGrouped(
+                ...(["party", "left", "npc"] as const).map((s) => holders.filter((h) => h.status === s).map((h) => (h.guess ? words.guessNamed(h.name, h.guess) : h.name))) as [string[], string[], string[]],
+              )
+            : words.whoStateSome(words.whoNames(holders.map((h) => (h.guess ? words.guessNamed(h.name, h.guess) : h.name))))
           : current === "all"
             ? words.whoStateAll
             : current === "common"
