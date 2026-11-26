@@ -109,7 +109,7 @@ jobs:
     needs: changes
     if: ${{ always() && needs.changes.outputs.done != 'true' && (needs.changes.result != 'success' || needs.changes.outputs.web != 'false') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
-    timeout-minutes: 10
+    timeout-minutes: 20  # was 10: the suite grew to 8 to 9 minutes and a slow runner cancelled #5315's run (#5320)
     defaults:
       run:
         working-directory: web

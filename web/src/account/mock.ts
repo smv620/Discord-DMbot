@@ -1015,6 +1015,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let loreLooks = 0;
   const adventureRemovals = new Map<string, { document: string; looks: number }>(); // (removing a file of the adventure, #3694 slice C)
   const adventureGone = new Set<string>();
+  const adventureGives = new Map<string, { ref: string; name: string; size: number; looks: number }>(); // (giving a file, #3694 slice D)
+  const adventureGiven: { ref: string; name: string; size: number }[] = [];
   const saidJobs = new Map<string, { text: string; looks: number; job: "read" | "use" | "undo"; edit?: string | undefined; partly?: boolean }>(); // (say a connection in words, #5293)
   let quickLooks = 0; // (the half-second counts reads of a running job, #3534 part 3)
   let aiFeedLooks = 0;
@@ -3221,7 +3223,35 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         charactersMax: 2000000,
         charactersHeld: none ? 0 : 163000,
       };
-      return { ...built, documents: built.documents.filter((d) => !adventureGone.has(`${ref}:${d.id}`)) };
+      const added = adventureGiven.filter((g) => g.ref === ref).map((g, i) => ({ id: `g${i + 1}`, name: g.name, characters: 5000, restored: false, addedAt: Math.floor(Date.now() / 1000), read: null, found: { chapters: 0, places: 0, people: 0, links: 0 } }));
+      return { ...built, documents: [...built.documents, ...added].filter((d) => !adventureGone.has(`${ref}:${d.id}`)) };
+    },
+    async adventureGive(ref, file, name) {
+      calls.push(`adventureGive:${ref}:${name}:${file.size}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (name.includes("badfile")) throw new ApiError("bad-file");
+      if (name.includes("busyfile")) throw new ApiError("slow-down");
+      const id = `give-${adventureGives.size + 1}`;
+      adventureGives.set(id, { ref, name, size: file.size, looks: 0 });
+      return { give: id };
+    },
+    async adventureGiving(ref, give) {
+      calls.push(`adventureGiving:${ref}:${give}`);
+      await reachable();
+      signedIn();
+      const got = adventureGives.get(give);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { error: "", name: got.name, sizeBytes: got.size, characters: 0, chunks: 0, createdAt: at - got.looks, updatedAt: at, serverNow: at };
+      if (got.looks === 1) return { ...base, state: "waiting" as const, stage: "waiting" as const };
+      if (got.looks === 2) return { ...base, state: "working" as const, stage: "reading" as const };
+      if (got.name.includes("dupfile")) return { ...base, state: "failed" as const, stage: "failed" as const, error: "already" };
+      if (got.name.includes("emptyfile")) return { ...base, state: "failed" as const, stage: "failed" as const, error: "no_text" };
+      adventureGiven.push({ ref, name: got.name, size: got.size });
+      return { ...base, state: "done" as const, stage: "done" as const, characters: 5000, chunks: 3 };
     },
     async adventureRemove(ref, document) {
       calls.push(`adventureRemove:${ref}:${document}`);
