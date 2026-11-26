@@ -2009,7 +2009,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // Match names (#3694 slice G1): two made-up pairs; answers are kept per campaign, and a save of a pair named "Gate" is refused as already linked.
     async adventureMatch(ref, body) {
-      calls.push(`adventureMatch:${ref}:${body.job}${body.job === "decide" ? `:${body.picks.map((p) => `${p[0]}>${p[1]}=${p[2]}`).join(",")}` : ""}${body.job === "undo" ? `:${body.source}` : ""}`);
+      calls.push(`adventureMatch:${ref}:${body.job}${body.job === "decide" ? `:${body.picks.map((p) => `${p[0]}>${p[1]}=${p[2]}`).join(",")}` : ""}${body.job === "undo" ? `:${body.source}` : ""}${body.job === "options" ? `:${body.skip}` : ""}${body.job === "pick" || body.job === "unpick" ? `:${body.plan}` : ""}`);
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");

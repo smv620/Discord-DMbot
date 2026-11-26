@@ -33,26 +33,28 @@ export default function AdventureLink({ api: site, refId, entity }: { api: Accou
   const calls = useRef<AdventureApi | null>(null);
   const waitBox = useRef<HTMLDivElement>(null);
   const headBox = useRef<HTMLHeadingElement>(null);
+  const moreBox = useRef<HTMLDivElement>(null);
+  const openBox = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     return () => {
       epoch.current += 1; // leaving the page, or another name, ends the watching
       sending.current = false;
     };
-  }, [site, refId, entity.id]);
+  }, [refId, entity.id]); // (not `site`: a new api object is the same page)
   useEffect(() => {
     if (busy) waitBox.current?.focus();
   }, [busy]);
 
   /** Queue one ask and poll it to its end; `done` gets the finished job and its id. */
-  async function run(body: Body, done: (got: AdventureMatch, id: string) => void, slow: string = w.matchSlow): Promise<void> {
+  async function run(body: Body, done: (got: AdventureMatch, id: string) => void, slow: string = w.matchSlow, keep = ""): Promise<void> {
     if (sending.current) return;
     sending.current = true;
     const ask = (runs.current += 1);
     const mine = epoch.current;
     const here = (): boolean => mine === epoch.current;
     setBusy(true);
-    setProblem("");
+    setProblem(keep); // (a refusal just heard stays on the screen while the lists are read again)
     setSeen(null);
     const stop = (text: string): void => {
       if (!here()) return;
@@ -60,7 +62,11 @@ export default function AdventureLink({ api: site, refId, entity }: { api: Accou
       setProblem(text);
     };
     try {
-      calls.current ??= (await site.adventureApi?.()) ?? null;
+      try {
+        calls.current ??= (await site.adventureApi?.()) ?? null;
+      } catch {
+        return stop(w.matchRefused.network ?? ""); // (the calls' file did not load)
+      }
       const api = calls.current;
       if (!api || !here()) return stop(w.matchRefused.server ?? "");
       let id: string;
@@ -69,8 +75,9 @@ export default function AdventureLink({ api: site, refId, entity }: { api: Accou
       } catch (error) {
         return stop(w.matchRefused[error instanceof ApiError ? error.kind : "network"] ?? w.matchRefused.server ?? "");
       }
+      let finished: AdventureMatch | null = null;
       let errors = 0;
-      for (let i = 0; i < LOOKS; i += 1) {
+      for (let i = 0; i < LOOKS && finished === null; i += 1) {
         await new Promise((ok) => setTimeout(ok, i === 0 ? FIRST_MS : EVERY_MS));
         if (!here()) return;
         try {
@@ -79,37 +86,41 @@ export default function AdventureLink({ api: site, refId, entity }: { api: Accou
           if (!here()) return;
           setSeen(got);
           if (got.state === "failed") return stop(got.error === "gone" ? w.linkGone : (w.matchFailed[got.error] ?? w.matchFailed.failed ?? ""));
-          if (got.state === "done") {
-            setBusy(false);
-            sending.current = false; // (so that `done` can ask again)
-            done(got, id);
-            return;
-          }
+          if (got.state === "done") finished = got;
         } catch (error) {
           if (error instanceof ApiError && (error.kind === "not-found" || error.kind === "signed-out")) return stop(slow);
           errors += 1;
           if (errors >= 3) return stop(slow);
         }
       }
-      stop(slow);
+      if (finished === null) return stop(slow);
+      setBusy(false);
+      sending.current = false; // (so that `done` can ask again)
+      try {
+        done(finished, id);
+      } catch {
+        stop(w.matchRefused.server ?? ""); // (an answer that could not be read is not a poll to repeat)
+      }
     } finally {
       if (here() && runs.current === ask) sending.current = false;
     }
   }
 
   /** Read the entry's links and the book's entries (the first page, or the page at `skip`, added to what is shown). */
-  function look(skip: number, after?: () => void): void {
+  function look(skip: number, after?: () => void, keep = ""): void {
     setOpen(true);
+    if (skip === 0) setLooked(false); // (what is on the screen is not shown as current while it is read again)
     void run({ job: "options", entity: entity.id, skip }, (got) => {
       const a = got.answer;
       setLinked(a?.linked ?? []);
-      setOptions((now) => (skip === 0 ? (a?.options ?? []) : [...now, ...(a?.options ?? [])]));
+      // Paging by `skip` over a list that can change: an entry already shown is never shown twice.
+      setOptions((now) => (skip === 0 ? (a?.options ?? []) : [...now, ...(a?.options ?? []).filter((o) => !now.some((n) => n.planId === o.planId))]));
       setTotal(a?.total ?? 0);
       setPage({ offset: a?.offset ?? skip, size: a?.pageSize ?? 25 });
       setLooked(true);
       after?.();
-      setTimeout(() => headBox.current?.focus(), 0);
-    });
+      setTimeout(() => (skip === 0 ? headBox.current : moreBox.current?.querySelector<HTMLElement>("li:nth-last-child(1) button"))?.focus(), 0);
+    }, w.matchSlow, keep);
   }
 
   function change(job: "pick" | "unpick", plan: AdventureOption): void {
@@ -117,11 +128,11 @@ export default function AdventureLink({ api: site, refId, entity }: { api: Accou
     void run({ job, entity: entity.id, plan: plan.planId }, (got, id) => {
       const written = got.answer?.written ?? 0;
       const refusal = got.answer?.refusal ?? "";
+      // What happened is said first; the lists are then read again (and if that read fails, the result is still there).
       setUndoOf(got.canUndo ? id : null);
-      look(0, () => {
-        if (refusal) setProblem(w.matchRefusals[refusal] ?? w.matchRefusals.failed ?? "");
-        else setSaid(job === "pick" ? w.linkLinked(plan.name) : written > 0 ? w.linkTakenOff : w.linkAlreadyOff);
-      });
+      const refused = refusal ? (w.matchRefusals[refusal] ?? w.matchRefusals.failed ?? "") : "";
+      if (!refused) setSaid(job === "pick" ? w.linkLinked(plan.name) : written > 0 ? w.linkTakenOff : w.linkAlreadyOff);
+      look(0, undefined, refused);
     }, w.matchSlowSave);
   }
 
@@ -130,7 +141,8 @@ export default function AdventureLink({ api: site, refId, entity }: { api: Accou
     void run({ job: "undo", source: undoOf }, (got) => {
       const note = got.answer?.note ?? "";
       setUndoOf(null);
-      look(0, () => setSaid(note ? (w.matchUndoNotes[note] ?? w.matchUndone) : w.matchUndone));
+      setSaid(note ? (w.matchUndoNotes[note] ?? w.matchUndone) : w.matchUndone);
+      look(0);
     });
   }
 
@@ -139,7 +151,7 @@ export default function AdventureLink({ api: site, refId, entity }: { api: Accou
   return (
     <div class="stack">
       {!open && (
-        <button type="button" class="button secondary" onClick={() => look(0)}>
+        <button type="button" class="button secondary" ref={openBox} onClick={() => look(0)}>
           {w.linkOpen}
         </button>
       )}
@@ -159,8 +171,13 @@ export default function AdventureLink({ api: site, refId, entity }: { api: Accou
             </p>
           )}
           <p role="status">{said}</p>
+          {open && !busy && !looked && (
+            <button type="button" class="button secondary" onClick={() => look(0)}>
+              {w.matchAgain}
+            </button>
+          )}
           {looked && !busy && (
-            <div class="stack">
+            <div class="stack" ref={moreBox}>
               {linked.length > 0 && (
                 <ul class="stack">
                   {linked.map((l) => (
@@ -209,6 +226,7 @@ export default function AdventureLink({ api: site, refId, entity }: { api: Accou
                 setSaid("");
                 setProblem("");
                 setUndoOf(null);
+                setTimeout(() => openBox.current?.focus(), 0);
               }}
             >
               {w.linkClose}

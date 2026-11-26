@@ -576,7 +576,7 @@ describe("one name's link to the adventure (#3694 slice G2)", () => {
     fireEvent.click(screen.getByRole("button", { name: w.linkMore }));
     expect(await screen.findByText(/Entry 30/, {}, slow)).toBeTruthy();
     expect(screen.getAllByRole("button", { name: /^Link to this one: / })).toHaveLength(30);
-    expect(callsOf(api)).toEqual(["adventureMatch:100.cmp1:options", "adventureMatch:100.cmp1:options"]);
+    expect(callsOf(api)).toEqual(["adventureMatch:100.cmp1:options:0", "adventureMatch:100.cmp1:options:25"]); // (the second page asks to skip the first twenty-five)
   }, 60_000);
 
   it("links to one entry, says so, shows it as linked with Take off, and Undo takes it back", async () => {
@@ -585,13 +585,43 @@ describe("one name's link to the adventure (#3694 slice G2)", () => {
     await screen.findByText(/Entry 2 /, {}, slow);
     fireEvent.click(screen.getByRole("button", { name: "Link to this one: Entry 2" }));
     expect(await screen.findByText(w.linkLinked("Entry 2"), {}, slow)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Take off Entry 2" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Take off Entry 2" }, slow)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Link to this one: Entry 2" })).toBeNull(); // (it is linked now)
     fireEvent.click(screen.getByRole("button", { name: w.matchUndo }));
     expect(await screen.findByText(w.matchUndone, {}, slow)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Take off Entry 2" })).toBeNull();
     expect(callsOf(api).some((c) => c.includes(":pick"))).toBe(true);
   }, 90_000);
+
+  it("takes a link off after linking it, and says it was already off when it was", async () => {
+    const api = await live2();
+    fireEvent.click(screen.getByRole("button", { name: w.linkOpen }));
+    await screen.findByText(/Entry 2 /, {}, slow);
+    fireEvent.click(screen.getByRole("button", { name: "Link to this one: Entry 2" }));
+    await screen.findByText(w.linkLinked("Entry 2"), {}, slow);
+    fireEvent.click(await screen.findByRole("button", { name: "Take off Entry 2" }, slow));
+    expect(await screen.findByText(w.linkTakenOff, {}, slow)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Take off Entry 2" })).toBeNull();
+    expect(callsOf(api).filter((c) => c.includes(":unpick:"))).toEqual(["adventureMatch:100.cmp1:unpick:p2"]);
+  }, 90_000);
+
+  it("can be tried again when the adventure's calls do not load, and says an entry that is gone", async () => {
+    const api = mockApi("table");
+    const real = api.adventureApi!;
+    let tries = 0;
+    api.adventureApi = async () => {
+      tries += 1;
+      if (tries === 1) throw new Error("chunk");
+      return real();
+    };
+    const { default: AdventureLink } = await import("../src/account/AdventureLink");
+    render(<AdventureLink api={api} refId="100.cmp1" entity={{ id: "n1", name: "Mira" }} />);
+    fireEvent.click(screen.getByRole("button", { name: w.linkOpen }));
+    expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.matchRefused.network);
+    expect(screen.getByRole("button", { name: w.linkClose }).hasAttribute("disabled")).toBe(false); // (not stuck busy)
+    fireEvent.click(screen.getByRole("button", { name: w.matchAgain }));
+    expect(await screen.findByText(/Entry 1 /, {}, slow)).toBeTruthy();
+  }, 60_000);
 
   it("takes a link off, and says plainly when the book has nothing or the store refuses", async () => {
     await live2("100.cmp1.link-none");
