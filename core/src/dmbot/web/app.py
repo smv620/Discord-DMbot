@@ -5144,6 +5144,51 @@ def create_app(
         except RecapError:
             raise HTTPException(status_code=404, detail="not_found") from None
 
+    # Match to files (#3694 slice G1): queued for the bot, which does what Discord's 🔗 does. The
+    # body is `{"job": "suggest"}`, `{"job": "decide", "picks": [[book id, table id, "same" |
+    # "not_same"], ...]}` (at most ten) or `{"job": "undo", "source": <a decide job's id>}`. Poll
+    # `.../adventure/matches/{id}`. The answer holds the book's and the table's names: a DM only.
+    match_refusals = {
+        "not_on": (409, "not_on"),
+        "bad_job": (400, "bad_job"),
+        "nothing_to_undo": (409, "nothing_to_undo"),
+        "busy": (409, "busy"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/adventure/matches", status_code=202)
+    async def me_adventure_match(ref: str, body: dict[str, Any], signed: Signed) -> dict[str, str]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        job, source, raw = body.get("job"), body.get("source", ""), body.get("picks", [])
+        picks: list[tuple[str, str, str]] = []
+        if not isinstance(job, str) or not isinstance(source, str) or not isinstance(raw, list):
+            raise HTTPException(status_code=400, detail="bad_job")
+        for item in raw:
+            if (
+                not isinstance(item, list)
+                or len(item) != 3
+                or not all(isinstance(part, str) for part in item)
+            ):
+                raise HTTPException(status_code=400, detail="bad_job")
+            picks.append((item[0], item[1], item[2]))
+        try:
+            return {"match": await adventure.match(db, session, ref, job, picks, source)}
+        except RecapError as err:
+            status, detail = match_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/adventure/matches/{match_id}")
+    async def me_adventure_matching(ref: str, match_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await adventure.matching(db, session, ref, match_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     # A connection said in the DM's own words (#2940 slice C): queued for the bot, which reads it,
     # shows proposals, and writes only what the DM confirms. 404 while DMBOT_WEB_CONNECTION_SAID is
     # off. The DM's words are never logged.

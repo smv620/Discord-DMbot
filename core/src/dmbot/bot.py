@@ -104,6 +104,7 @@ from dmbot.campaigns.lineage_section import LineageSection
 from dmbot.campaigns.models import (
     SHARED_STORY,
     STORY_GUIDE,
+    STORY_OFF,
     CampaignError,
 )
 from dmbot.campaigns.moves import HandoverMover
@@ -369,6 +370,7 @@ from dmbot.memory import (
     web_actions,
     web_adventure_gives,
     web_adventure_guides,
+    web_adventure_matches,
     web_adventure_reads,
     web_adventure_removals,
     web_connection_reads,
@@ -377,6 +379,7 @@ from dmbot.memory import (
     who_apply,
     who_step,
 )
+from dmbot.memory import book_links as book_links_model
 from dmbot.memory import guide as guide_model
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
@@ -1368,6 +1371,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # out here for the page, because the website's role cannot read the story memory.
         self.web_adventure_guides = (
             web_adventure_guides.GuideStore(recaps.db) if recaps is not None else None
+        )
+        # Match to files from the website (#3694 slice G1): the calls of Discord's 🔗.
+        self.web_adventure_matches = (
+            web_adventure_matches.MatchStore(recaps.db) if recaps is not None else None
         )
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
@@ -17696,6 +17703,57 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
             await web_adventure_gives.run_one(adventure, store, staging, read, guild_id, item)
+
+    async def run_web_adventure_matches(self) -> None:
+        """Match to files asked for on the website (#3694 slice G1): the pairs worth asking about,
+        the DM's Same or Not the same, and Undo, all done with the calls Discord's 🔗 makes
+        (`memory.book_links`, which is not changed), each job checked again here (a DM, the Shared
+        story switch on with a DM's confirmation). A few a pass. Names are the book's own: only
+        outcome words are logged."""
+        store, memory = self.web_adventure_matches, self.memory
+        if store is None or memory is None:
+            return
+
+        async def check(guild_id: int, campaign_id: str, user_id: int) -> str | None:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is None or user_id not in campaign.dm_user_ids:
+                return web_adventure_matches.NOT_YOURS
+            if campaign.story_mode == STORY_OFF or not await self.campaigns.story_confirmed(
+                guild_id, campaign_id
+            ):
+                return web_adventure_matches.NOT_ON
+            return None
+
+        async def suggest(guild_id: int, campaign_id: str) -> list[dict[str, str]]:
+            pairs = await book_links_model.suggestions(memory, guild_id, campaign_id)
+            return [
+                {
+                    "planId": p.plan_id,
+                    "planName": p.plan_name,
+                    "planKind": p.plan_kind,
+                    "entityId": p.entity_id,
+                    "entityName": p.entity_name,
+                }
+                for p in pairs
+            ]
+
+        async def decide(
+            guild_id: int, campaign_id: str, pick: tuple[str, str, str], user_id: int
+        ) -> int | None:
+            written = await book_links_model.decide(memory, guild_id, campaign_id, [pick], user_id)
+            return written.batch
+
+        async def undo(guild_id: int, campaign_id: str, batch: int) -> object:
+            return await memory.undo(guild_id, campaign_id, batch)
+
+        host = web_adventure_matches.Host(check, suggest, decide, undo)
+        for guild in list(self.guilds):
+            for _ in range(5):
+                item = await store.claim_next(guild.id)
+                if item is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
+                    await web_adventure_matches.run_one(host, store, guild.id, item)
 
     async def run_web_adventure_guides(self) -> None:
         """Guide me asked for on the website (#3694 slice F): where the table is in the DM's
