@@ -170,9 +170,12 @@ class Gives(DatabaseTest):
         # (the object is left to the bucket's own one-day rule; the file is kept all the same)
         class CannotDelete(FakeStaging):
             async def delete(self, key: str) -> None:
+                self.deleted.append(key)  # (recorded, so the call is seen to have happened)
                 raise BucketError("x")
 
-        out = await self.give("d" * 32, CannotDelete({KEY: BOOK.encode()}))
+        staging = CannotDelete({KEY: BOOK.encode()})
+        out = await self.give("d" * 32, staging)
+        self.assertEqual(staging.deleted, [KEY])
         self.assertEqual(out.error, "")
         got = await self.row("d" * 32)
         self.assertEqual(got["state"], "done")
@@ -181,7 +184,7 @@ class Gives(DatabaseTest):
 
     async def test_an_unexpected_reader_error_ends_the_row_as_failed(self) -> None:
         async def broken(name: str, raw: bytes) -> str:
-            raise RuntimeError("the words of the book")
+            raise RuntimeError(BOOK[:40])  # (book text in the message: it must never be logged)
 
         with self.assertLogs("dmbot.memory.web_adventure_gives", level="WARNING") as logged:
             out = await self.give("e" * 32, FakeStaging({KEY: BOOK.encode()}), broken)
@@ -190,4 +193,4 @@ class Gives(DatabaseTest):
         self.assertEqual((got["state"], got["object_key"]), ("failed", ""))
         self.assertEqual(await self.adventure.documents(GUILD, self.campaign), [])
         self.assertIn("RuntimeError", "".join(logged.output))
-        self.assertNotIn("the words of the book", "".join(logged.output))
+        self.assertNotIn(BOOK[:40], "".join(logged.output))
