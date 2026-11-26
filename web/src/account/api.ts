@@ -123,7 +123,7 @@ export type CampaignSettingName = "visibility" | "level" | "retention";
 
 /** A choice the queue carries: the three above, an optional rule switched on or off (#2753), or a game master
  * added or removed (#2768: `value` is the person's id, `on` true to add). */
-export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause" | "story_mode" | "dndbeyond_invite" | "rulesets" | "share_improve" | "ask_before_adding" | "map_checks";
+export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause" | "story_mode" | "dndbeyond_invite" | "rulesets" | "share_improve" | "ask_before_adding" | "map_checks" | "rules_cards";
 
 /** One of a campaign's game masters (#2768; core web/game_masters.py). `plan` is the one whose plan runs the
  * campaign (cannot be removed); `you` is the person looking (may leave). */
@@ -278,6 +278,8 @@ export interface CampaignSettings {
   /** The campaign's chosen world (#5238; core #5231): its name, or `guessed` when DMbot only guessed it from the adventure and the DM has not
    * kept it yet; null when none is set. Shown only; missing from an older API. */
   world?: { id: string; name: string; guessed: boolean } | null;
+  /** "Rules cards" (#5155; core #5157): on or off, a short card on the DM screen when a spell, condition or creature is named. A game master's read only; missing from an API older than that. */
+  rulesCards?: boolean;
   gameMasters: number;
 }
 
