@@ -82,22 +82,36 @@ class TheRules(unittest.TestCase):
     def test_a_report_with_no_stored_verdicts_is_never_posted(self) -> None:
         self.assertEqual(render(stored(verdicts=None)), gp.Held(gp.NO_VERDICTS))
 
-    def test_a_lore_passage_is_never_quoted_whatever_its_upload_says(self) -> None:
+    def held_body(self, **over: Any) -> str:
+        post = render(stored(verdict(quote="the silver key is under the step", **over)))
+        assert isinstance(post, gp.Post)
+        self.assertNotIn("silver key", post.body)  # (no quoted word of it anywhere in the post)
+        return post.body
+
+    def test_a_lore_read_quote_is_held_whatever_its_upload_says(self) -> None:
         for kinds in (["own_writing"], ["own_writing", "unknown"], ["unknown"], []):
             with self.subTest(kinds=kinds):
-                post = render(
-                    stored(
-                        verdict(
-                            sources=["lore"],
-                            speaker_ids=[],
-                            upload_kinds=kinds,
-                            quote="the silver key is under the step",
-                        )
-                    )
+                body = self.held_body(sources=["lore"], speaker_ids=[], upload_kinds=kinds)
+                self.assertIn(gp.UPLOADED_LINE, body)
+
+    def test_a_scroll_read_quote_is_held_too(self) -> None:
+        # (the 📜 read of a player's backstory records its link source as `own_writing` as well)
+        body = self.held_body(sources=["lore"], speaker_ids=[ALICE], upload_kinds=["own_writing"])
+        self.assertIn(gp.UPLOADED_LINE, body)
+
+    def test_a_description_quote_is_held_alone_or_beside_a_line(self) -> None:
+        for sources in (["description"], ["description", "line"], ["line", "lore"]):
+            with self.subTest(sources=sources):
+                body = self.held_body(
+                    sources=sources, speaker_ids=[ALICE], upload_kinds=["own_writing"]
                 )
-                assert isinstance(post, gp.Post)
-                self.assertNotIn("silver key", post.body)
-                self.assertIn(gp.GENERIC_LORE, post.body)
+                self.assertIn(gp.GENERIC_LORE, body)
+
+    def test_the_dms_own_typed_words_still_post(self) -> None:
+        post = render(stored(verdict(sources=["lore"], speaker_ids=[], quote="held words")))
+        assert isinstance(post, gp.Post)
+        self.assertIn("Mara serves Tavin", post.body)  # (the DM's fix words, from the structure)
+        self.assertNotIn("held words", post.body)
 
     def test_a_line_from_someone_who_still_agrees_is_still_quoted_and_the_fix_posts(self) -> None:
         post = render(stored(verdict(sources=["line"], speaker_ids=[ALICE])))
@@ -110,15 +124,6 @@ class TheRules(unittest.TestCase):
         post = render(stored(mixed))
         assert isinstance(post, gp.Post)
         self.assertNotIn("served Tavin", post.body)
-
-    def test_a_description_is_never_quoted_its_words_may_be_anyones(self) -> None:
-        for sources in (["description"], ["description", "line"]):
-            post = render(
-                stored(verdict(sources=sources, speaker_ids=[ALICE], quote="Mara, a spy"))
-            )
-            assert isinstance(post, gp.Post)
-            self.assertNotIn("Mara, a spy", post.body)
-            self.assertIn(gp.GENERIC_LORE, post.body)
 
     def test_ids_mentions_emails_and_keys_are_cut_out_and_counted_never_named(self) -> None:
         dirty = (

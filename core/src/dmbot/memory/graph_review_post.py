@@ -8,8 +8,9 @@ rules below hold *now*: they are checked at posting time, not when the report wa
   DMbot: the **whole report is held** back (a half-report would mislead), and stays on the server;
 - a quote of a lore passage or of an entry's description, never (Supervisor's ruling on #3742): an
   upload confirms the right to use its text, not who wrote it, and a description can hold words from
-  the table, an upload or a picture with nothing recording which. The words say "a passage from the
-  campaign's story (words held back)" and give the entry's id. Only a line from someone who still
+  the table, an upload or a picture with nothing recording which. The words say "a line from the
+  uploaded text" (lore) or "a passage from the campaign's story (words held back)" and give the
+  entry's id. Only a line from someone who still
   agrees, the fix itself and its structure post. A shared adventure or rulebook is never quoted;
 - a Discord id, a mention, an email address or anything shaped like a key: they are cut out of every
   word that goes (`scrub`), and counted. Only the campaign's internal id names the campaign.
@@ -40,6 +41,7 @@ BODY_MAX = 60_000  # GitHub's limit is 65,536 characters
 LABEL_MAX = 100
 OLD_BUILD = "an older build"
 GENERIC_LORE = "a passage from the campaign's story (words held back)"
+UPLOADED_LINE = "a line from the uploaded text"  # a lore or 📜 read quote: held (Supervisor)
 # The DM's own writing: the only lore that is quoted (`models.UPLOAD_OWN_WRITING`). An upload of
 # any other or unknown kind is read as "unknown": the safe side.
 MARKER = "dmbot-report"
@@ -202,10 +204,10 @@ def render(report: Stored, *, allowed_speakers: Collection[int], sharing: bool) 
             section.append(f'- In the story ({where}): "{clean(str(item.get("quote", "")), cut)}"')
         else:
             ids = ", ".join(f"`{escape_code(str(e['id']))}`" for e in item.get("entries", []))
+            sources = {str(s) for s in item.get("sources", [])}
+            held = UPLOADED_LINE if sources == {"lore"} else GENERIC_LORE
             section.append(
-                f"- In the story: {GENERIC_LORE} (entries {ids})"
-                if ids
-                else f"- In the story: {GENERIC_LORE}"
+                f"- In the story: {held} (entries {ids})" if ids else f"- In the story: {held}"
             )
         section.append("")
         if sum(len(x) + 1 for x in lines + section) > BODY_MAX:
