@@ -4,7 +4,8 @@
 // underscore inside a word (snake_case_name) is not italic.
 export type Piece = { text: string; kind: "plain" | "bold" | "italic" | "code" };
 
-const MARK = /\*\*([^*\n]+?)\*\*|`([^`\n]+)`|\*([^*\n]+?)\*|(?<!\w)_([^_\n]+?)_(?!\w)/g;
+// ***x*** is shown as bold (Discord shows it bold and italic; the page keeps it to one style).
+const MARK = /\*\*\*([^*\n]+?)\*\*\*|\*\*([^*\n]+?)\*\*|`([^`\n]+)`|\*([^*\n]+?)\*|(?<!\w)_([^_\n]+?)_(?!\w)/g;
 
 /** The text cut into plain, bold, italic and code pieces, in order. */
 export function discordPieces(text: string): Piece[] {
@@ -14,8 +15,9 @@ export function discordPieces(text: string): Piece[] {
     const at = m.index ?? 0;
     if (at > last) pieces.push({ text: text.slice(last, at), kind: "plain" });
     if (m[1] !== undefined) pieces.push({ text: m[1], kind: "bold" });
-    else if (m[2] !== undefined) pieces.push({ text: m[2], kind: "code" });
-    else pieces.push({ text: (m[3] ?? m[4]) as string, kind: "italic" });
+    else if (m[2] !== undefined) pieces.push({ text: m[2], kind: "bold" });
+    else if (m[3] !== undefined) pieces.push({ text: m[3], kind: "code" });
+    else pieces.push({ text: (m[4] ?? m[5]) as string, kind: "italic" });
     last = at + m[0].length;
   }
   if (last < text.length) pieces.push({ text: text.slice(last), kind: "plain" });

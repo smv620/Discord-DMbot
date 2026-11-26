@@ -2384,8 +2384,6 @@ export interface WorldFeelingNote {
   target: string;
   step: "Hostile" | "Unfriendly" | "Wary" | "Friendly" | "Devoted";
 }
-/** One heads-up from this session (#3695): where the story may clash with itself (a line now and one earlier), what it is about, and
- * the choice the DM has. Only the DM sees these; the door answers anyone else with not-allowed. */
 /** The card a "Look up a rule" box shows (#5156; core #5160): `parts` in Discord's markdown, one page each; `close` names
  * the close matches for "none". Errors: not-found, bad-text, too-soon. */
 export interface RuleCard {
@@ -2393,6 +2391,8 @@ export interface RuleCard {
   parts: string[];
   close: string[];
 }
+/** One heads-up from this session (#3695): where the story may clash with itself (a line now and one earlier), what it is about, and
+ * the choice the DM has. Only the DM sees these; the door answers anyone else with not-allowed. */
 export interface ContinuityHit {
   id: string;
   kind: string;

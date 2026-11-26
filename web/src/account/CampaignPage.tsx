@@ -140,7 +140,7 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
       )}
       {isDm && <CampaignSettings key={ref} api={api} campaignRef={ref} page={page} />}
       {isDm && RULE_LOOKUP_LIVE && ref && api.ruleLookup && (
-        <LazyPanel load={() => import("./RuleLookup")} what="look up a rule" props={{ api, campaignRef: ref }} />
+        <LazyPanel key={ref} load={() => import("./RuleLookup")} what="look up a rule" props={{ api, campaignRef: ref }} />
       )}
       {/* A backup of its own (#3148): before this, the only way to one on the website was inside Delete.
           A game master's waits for /me to say the plan is not Try It; a player's /me plan is their own, not the

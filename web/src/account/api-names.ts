@@ -128,7 +128,8 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
           `/me/campaigns/${encodeURIComponent(campaignRef)}/names`,
         )) as { names: CampaignName[] }
       ).names,
-    // Answered at once (no queue): bad_text and too_soon are this route's own codes (#5156).
+    // Answered at once (no queue). Its codes are not_found, bad_text and too_soon (#5156); the last two are named here
+    // so the page shows them as bad-text and too-soon, whatever the shared table says.
     ruleLookup: async (campaignRef, name) =>
       (await call(
         "POST",

@@ -56,6 +56,10 @@ describe("Look up a rule", () => {
     expect(((screen.getByLabelText(w.label, { exact: false })) as HTMLInputElement).value).toBe("Firebolt");
   });
 
+  it("bold-italic shows as bold", () => {
+    expect(discordPieces("***Fireball***")).toEqual([{ text: "Fireball", kind: "bold" }]);
+  });
+
   it("shows the three errors as plain words", async () => {
     const cases: [string, string][] = [
       ["not-found", w.notFound],
@@ -85,9 +89,11 @@ describe("Look up a rule", () => {
       await gate;
       return { kind: "card", parts: ["done"], close: [] } as RuleCard;
     };
-    panel(api);
-    await ask("Fireball");
-    await ask("Fireball");
+    const view = panel(api);
+    fireEvent.input(screen.getByLabelText(w.label, { exact: false }), { target: { value: "Fireball" } });
+    const form = view.container.querySelector("form") as HTMLFormElement;
+    fireEvent.submit(form);
+    fireEvent.submit(form);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(3_000);
     });
