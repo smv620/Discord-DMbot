@@ -2051,7 +2051,8 @@ def create_app(
         """Make a picture private or public, mark it permanent or not, or delete it (#3274):
         `{"action": "private" | "public" | "permanent" | "unpermanent" | "delete"}`. The change is
         queued for the bot, which applies it with its locks and limits; this waits a few seconds for
-        its answer. 200 `done`, 202 `waiting` (it will happen), 409 with the reason and the words
+        its answer. 200 `done`, 202 `waiting` with an `id` to follow at `.../pictures/actions/{id}`
+        (it will happen), 409 with the reason and the words
         for a refusal. The poster or a game master; a game master only for permanent."""
         who, _token = signed
         try:
@@ -2073,6 +2074,16 @@ def create_app(
                 raise HTTPException(status_code=403, detail="not_allowed") from None
             raise HTTPException(status_code=404, detail="not_found") from None
         return JSONResponse(got, status_code=200 if got["state"] == "done" else 202)
+
+    @app.get("/me/campaigns/{ref}/pictures/actions/{action_id}")
+    async def me_picture_action(ref: str, action_id: str, signed: Signed) -> dict[str, Any]:
+        """How a picture choice is going, for the page that clicked it (#3355, route 6): the stage,
+        when it was asked and last moved, the server's clock and whether it has stalled."""
+        who, _token = signed
+        try:
+            return await pictures.read_action(db, who, ref, action_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
 
     @app.get("/me/campaigns/{ref}/pictures")
     async def me_pictures(

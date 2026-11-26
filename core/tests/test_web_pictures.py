@@ -605,6 +605,62 @@ class TheActions(Kept):
                 assert got is not None
                 self.assertEqual(got["r"] is not None, expect)
 
+    async def test_a_click_the_bot_has_not_answered_gives_an_id_to_follow(self) -> None:
+        link = await self.keep()
+        waiting = await self.act(self.session, link, "private")
+        self.assertEqual((waiting["state"], waiting["note"]), ("waiting", ""))
+        got = await pictures.read_action(self.web, self.session, self.cref, waiting["id"])
+        self.assertEqual((got["id"], got["action"]), (waiting["id"], "private"))
+        self.assertEqual(
+            (got["state"], got["stage"], got["stalled"]), ("waiting", "waiting", False)
+        )
+        self.assertEqual(got["updatedAt"], got["startedAt"])  # (nothing has moved it yet)
+        self.assertGreaterEqual(got["serverNow"], got["startedAt"])
+        self.assertEqual(
+            set(got),
+            {
+                "id",
+                "action",
+                "state",
+                "stage",
+                "note",
+                "startedAt",
+                "updatedAt",
+                "serverNow",
+                "stalled",
+            },
+        )  # fmt: skip  (times and words only)
+
+    async def test_a_choice_that_has_not_moved_for_five_minutes_has_stalled_and_an_end_has_not(
+        self,
+    ) -> None:
+        link = await self.keep()
+        waiting = await self.act(self.session, link, "private")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE picture_actions SET created_at = created_at - 900, updated_at = 0"
+                " WHERE id = %s",
+                (waiting["id"],),
+            )
+        stuck = await pictures.read_action(self.web, self.session, self.cref, waiting["id"])
+        self.assertTrue(stuck["stalled"])
+        await self.answer("done")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE picture_actions SET updated_at = created_at WHERE id = %s",
+                (waiting["id"],),
+            )
+        ended = await pictures.read_action(self.web, self.session, self.cref, waiting["id"])
+        self.assertEqual((ended["state"], ended["stalled"]), ("done", False))
+
+    async def test_only_the_person_who_asked_can_follow_an_action(self) -> None:
+        link = await self.keep()
+        waiting = await self.act(self.session, link, "private")
+        bob = await self.signed_in(BOB)
+        for who, ident in ((bob, waiting["id"]), (self.session, "0" * 32), (self.session, "nope")):
+            with self.assertRaises(RecapError):
+                await pictures.read_action(self.web, who, self.cref, ident)
+
     async def test_the_website_role_cannot_read_the_queue_table(self) -> None:
         async with self.web.user(ALICE.id, session="x") as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
