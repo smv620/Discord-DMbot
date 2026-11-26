@@ -483,3 +483,82 @@ class Reading(Holding):
                         headers=HEADERS,
                     )
                     self.assertEqual(polled.json()["state"], "waiting")
+
+
+class Guiding(Holding):
+    async def guide_on(self) -> None:
+        await self.sql("UPDATE campaigns SET story_mode = 'guide' WHERE id = %s", self.one.id)
+
+    async def test_a_dm_asks_and_the_job_waits_for_the_bot(self) -> None:
+        await self.guide_on()
+        await self.give("a" * 32, "Book.pdf")
+        gid = await web.guide(self.web, self.session, self.cref, "a" * 32, "read")
+        got = await web.guiding(self.web, self.session, self.cref, gid)
+        self.assertEqual((got["state"], got["job"], got["answer"]), ("waiting", "read", {}))
+
+    async def test_a_pick_needs_a_chapter_and_the_others_do_not_take_one(self) -> None:
+        await self.guide_on()
+        await self.give("b" * 32, "Book.pdf")
+        for job, chapter in (("pick", ""), ("read", "c" * 32), ("dance", ""), ("clear", "c" * 32)):
+            with self.assertRaises(RecapError) as caught:
+                await web.guide(self.web, self.session, self.cref, "b" * 32, job, chapter)
+            self.assertEqual(caught.exception.code, "bad_job")
+        await web.guide(self.web, self.session, self.cref, "b" * 32, "pick", "c" * 32)
+
+    async def test_it_needs_guide_me_on_and_a_file_that_is_there(self) -> None:
+        await self.give("d" * 32, "Book.pdf")
+        with self.assertRaises(RecapError) as off:
+            await web.guide(self.web, self.session, self.cref, "d" * 32, "read")
+        self.assertEqual(off.exception.code, "not_guide")
+        await self.guide_on()
+        with self.assertRaises(RecapError) as gone:
+            await web.guide(self.web, self.session, self.cref, "e" * 32, "read")
+        self.assertEqual(gone.exception.code, "gone")
+
+    async def test_a_second_job_while_one_is_open_is_busy(self) -> None:
+        await self.guide_on()
+        await self.give("f" * 32, "Book.pdf")
+        await web.guide(self.web, self.session, self.cref, "f" * 32, "read")
+        with self.assertRaises(RecapError) as caught:
+            await web.guide(self.web, self.session, self.cref, "f" * 32, "clear")
+        self.assertEqual(caught.exception.code, "busy")
+
+    async def test_a_player_and_bad_ids_are_not_found_and_the_answer_is_the_dms_alone(self) -> None:
+        await self.guide_on()
+        await self.give("1" * 32, "Book.pdf")
+        for who, doc in ((await self.bob(), "1" * 32), (self.session, "nope")):
+            with self.assertRaises(RecapError) as caught:
+                await web.guide(self.web, who, self.cref, doc, "read")
+            self.assertEqual(caught.exception.code, "not_found")
+        gid = await web.guide(self.web, self.session, self.cref, "1" * 32, "read")
+        with self.assertRaises(RecapError):
+            await web.guiding(self.web, await self.bob(), self.cref, gid)
+        with self.assertRaises(RecapError):
+            await web.guiding(self.web, self.session, self.cref, "0" * 32)
+
+    async def test_the_routes_answer_404_until_the_switch_is_on(self) -> None:
+        await self.guide_on()
+        await self.give("2" * 32, "Book.pdf")
+        for on in (False, True):
+            app = create_app(
+                settings(adventure_on=on),
+                self.web,
+                FakeDiscord(),
+                payments=FakeProvider(b"h" * 32, "https://x.example"),
+                clock=lambda: NOW,
+            )
+            token = await sessions.sign_in(self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+            ) as client:
+                client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+                got = await client.post(
+                    f"/me/campaigns/{self.cref}/adventure/{'2' * 32}/guide", headers=HEADERS
+                )
+                self.assertEqual(got.status_code, 202 if on else 404, got.text)
+                if on:
+                    polled = await client.get(
+                        f"/me/campaigns/{self.cref}/adventure/guides/{got.json()['guide']}",
+                        headers=HEADERS,
+                    )
+                    self.assertEqual(polled.json()["state"], "waiting")

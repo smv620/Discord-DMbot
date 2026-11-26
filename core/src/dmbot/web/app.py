@@ -5110,6 +5110,40 @@ def create_app(
         except RecapError:
             raise HTTPException(status_code=404, detail="not_found") from None
 
+    # Guide me for one file (#3694 slice F): queued for the bot, which answers with the same
+    # function as Discord's 🧭. `job` is `read`, `pick` (with `chapter`) or `clear`. Poll
+    # `.../adventure/guides/{id}`. The answer is the book's own names: a DM only, never logged.
+    guide_refusals = {
+        "gone": (404, "not_found"),
+        "not_guide": (409, "not_guide"),
+        "bad_job": (400, "bad_job"),
+        "busy": (409, "busy"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/adventure/{document}/guide", status_code=202)
+    async def me_adventure_guide(
+        ref: str, document: str, signed: Signed, job: str = "read", chapter: str = ""
+    ) -> dict[str, str]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return {"guide": await adventure.guide(db, session, ref, document, job, chapter)}
+        except RecapError as err:
+            status, detail = guide_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/adventure/guides/{guide_id}")
+    async def me_adventure_guiding(ref: str, guide_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await adventure.guiding(db, session, ref, guide_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     # A connection said in the DM's own words (#2940 slice C): queued for the bot, which reads it,
     # shows proposals, and writes only what the DM confirms. 404 while DMBOT_WEB_CONNECTION_SAID is
     # off. The DM's words are never logged.
