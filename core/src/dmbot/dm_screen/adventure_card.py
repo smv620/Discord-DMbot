@@ -25,6 +25,7 @@ from typing import Any, cast
 
 import discord
 
+from dmbot import credits
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import STORY_GUIDE, STORY_OFF
 from dmbot.discord_limits import MESSAGE_MAX
@@ -907,7 +908,9 @@ class ReadButton(
         await interaction.edit_original_response(
             content=(
                 f"Read **{name}** now? DMbot sends its text to its AI, once, and lists the "
-                "chapters, places and people. It can take a few minutes, longer for a big book. "
+                "chapters, places and people.\n"
+                f"{credits.adventure_estimate_words(doc.characters)}\n"
+                "It can take a few minutes, longer for a big book. "
                 "You can keep playing. It stops by itself at DMbot's reading limit.\n"
                 "Nothing pops up when it's done: press **Refresh** to see how far it is."
                 + (

@@ -17,6 +17,7 @@ from typing import Any
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
+from dmbot import credits
 from dmbot.ai import PRICE_PER_MILLION, AIOutOfFunds, Reply
 from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
@@ -799,6 +800,14 @@ class Card(Setup):
         self.assertEqual(self.labels(ask), ["Yes, read it", "Not now"])
         self.assertEqual(await self.count("adventure_reads"), 0)  # asking starts nothing
         self.assertEqual(doc.chunks, 3)
+
+    async def test_the_read_confirmation_says_what_it_will_cost(self) -> None:
+        # (the same sentence the website's list shows, from the one function, #5316)
+        doc = await self.book()
+        await self.card()
+        ask = self.pressing()
+        await ui.ReadButton(self.a.id).callback(ask)
+        self.assertIn(credits.adventure_estimate_words(doc.characters), ask.sent["content"])
 
     async def test_yes_starts_one_read_and_the_card_shows_it(self) -> None:
         doc = await self.book()
