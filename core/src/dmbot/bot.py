@@ -368,6 +368,7 @@ from dmbot.memory import (
     waiting_now,
     web_actions,
     web_adventure_gives,
+    web_adventure_guides,
     web_adventure_reads,
     web_adventure_removals,
     web_connection_reads,
@@ -376,6 +377,7 @@ from dmbot.memory import (
     who_apply,
     who_step,
 )
+from dmbot.memory import guide as guide_model
 from dmbot.memory import health as memory_health
 from dmbot.memory import notify as memory_notify
 from dmbot.memory import scan as name_scan
@@ -1361,6 +1363,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # the read (the same calls as Discord's button), which then runs on its own, so no task.
         self.web_adventure_reads = (
             web_adventure_reads.ReadStore(recaps.db) if recaps is not None else None
+        )
+        # Guide me from the website (#3694 slice F): the same function as Discord's 🧭, worked
+        # out here for the page, because the website's role cannot read the story memory.
+        self.web_adventure_guides = (
+            web_adventure_guides.GuideStore(recaps.db) if recaps is not None else None
         )
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
@@ -17689,6 +17696,68 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
             await web_adventure_gives.run_one(adventure, store, staging, read, guild_id, item)
+
+    async def run_web_adventure_guides(self) -> None:
+        """Guide me asked for on the website (#3694 slice F): where the table is in the DM's
+        adventure, "I'm in another chapter" and "back to DMbot's guess", all answered with the
+        calls Discord's 🧭 makes (`ui.guide.compose`, `memory.guide.pick` and `clear`), each job
+        checked again here (a DM, "Guide me" on with a DM's confirmation, the plan). A few a pass.
+        The answer is the book's own words: only outcome words are logged."""
+        store, memory, adventure = self.web_adventure_guides, self.memory, self.adventure
+        if store is None or memory is None or adventure is None:
+            return
+
+        async def check(guild_id: int, campaign_id: str, user_id: int) -> str | None:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is None or user_id not in campaign.dm_user_ids:
+                return web_adventure_guides.NOT_YOURS
+            if campaign.story_mode != STORY_GUIDE or not await self.campaigns.story_confirmed(
+                guild_id, campaign_id
+            ):
+                return web_adventure_guides.NOT_GUIDE
+            if not await self.plan_allows("adventure", guild_id, campaign, fail_open=False):
+                return web_adventure_guides.PLAN
+            return None
+
+        async def compose(
+            guild_id: int, campaign_id: str, document_id: str
+        ) -> dict[str, Any] | None:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is None:
+                return None
+            files = await adventure.documents(guild_id, campaign_id)
+            composed = await guide_screen.compose(
+                self, campaign, memory, files, document_id, verified=True
+            )
+            if composed is None:
+                return None
+            text, found, _clashes = composed
+            here = found.chapter
+            return {
+                "text": text,
+                "picked": found.picked,
+                "chapter": None if here is None else {"id": here.id, "name": here.name},
+                "chapters": [{"id": c.id, "name": c.name} for c in found.chapters],
+            }
+
+        async def pick(
+            guild_id: int, campaign_id: str, document_id: str, chapter_id: str, user_id: int
+        ) -> object:
+            return await guide_model.pick(
+                memory, guild_id, campaign_id, document_id, chapter_id, user_id
+            )
+
+        async def clear(guild_id: int, campaign_id: str, document_id: str) -> object:
+            return await guide_model.clear(memory, guild_id, campaign_id, document_id)
+
+        host = web_adventure_guides.Host(check, compose, pick, clear)
+        for guild in list(self.guilds):
+            for _ in range(5):
+                item = await store.claim_next(guild.id)
+                if item is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
+                    await web_adventure_guides.run_one(host, store, guild.id, item)
 
     async def run_web_adventure_reads(self) -> None:
         """ "Yes, read it" pressed on the website for a Shared story file (#3694): the plan check,
