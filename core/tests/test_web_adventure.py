@@ -397,3 +397,89 @@ class Giving(Holding):
             await web.giving(self.web, await self.bob(), self.cref, gid)
         with self.assertRaises(RecapError):
             await web.giving(self.web, self.session, self.cref, "0" * 32)
+
+
+class Reading(Holding):
+    async def test_a_dm_says_yes_and_the_request_waits_for_the_bot(self) -> None:
+        await self.give("a" * 32, "Book.pdf")
+        rid = await web.read(self.web, self.session, self.cref, "a" * 32)
+        got = await web.reading(self.web, self.session, self.cref, rid)
+        self.assertEqual((got["state"], got["error"], got["documentId"]), ("waiting", "", "a" * 32))
+
+    async def test_a_second_yes_while_one_is_open_is_busy(self) -> None:
+        await self.give("b" * 32, "Book.pdf")
+        await web.read(self.web, self.session, self.cref, "b" * 32)
+        with self.assertRaises(RecapError) as caught:
+            await web.read(self.web, self.session, self.cref, "b" * 32)
+        self.assertEqual(caught.exception.code, "busy")
+
+    async def test_a_missing_file_a_restored_one_and_a_read_one_say_so(self) -> None:
+        with self.assertRaises(RecapError) as gone:
+            await web.read(self.web, self.session, self.cref, "c" * 32)
+        self.assertEqual(gone.exception.code, "gone")
+        await self.give("d" * 32, "Restored.pdf", chunks=0)
+        with self.assertRaises(RecapError) as empty:
+            await web.read(self.web, self.session, self.cref, "d" * 32)
+        self.assertEqual(empty.exception.code, "not_readable")
+        await self.give("e" * 32, "Done.pdf")
+        await self.sql(
+            "INSERT INTO adventure_reads (guild_id, campaign_id, document_id, status, next_chunk,"
+            " total_chunks, started_by, started_at, updated_at)"
+            " VALUES (%s, %s, %s, 'done', 3, 3, %s, 1, 1)",
+            GUILD, self.one.id, "e" * 32, ALICE.id,
+        )  # fmt: skip
+        with self.assertRaises(RecapError) as done:
+            await web.read(self.web, self.session, self.cref, "e" * 32)
+        self.assertEqual(done.exception.code, "already_read")
+
+    async def test_a_player_a_bad_id_and_another_dm_are_all_not_found(self) -> None:
+        await self.give("f" * 32, "Book.pdf")
+        for who, doc in ((await self.bob(), "f" * 32), (self.session, "nope")):
+            with self.assertRaises(RecapError) as caught:
+                await web.read(self.web, who, self.cref, doc)
+            self.assertEqual(caught.exception.code, "not_found")
+        rid = await web.read(self.web, self.session, self.cref, "f" * 32)
+        with self.assertRaises(RecapError):
+            await web.reading(self.web, await self.bob(), self.cref, rid)
+
+    async def test_the_list_carries_the_cost_in_the_cards_words_until_it_is_read(self) -> None:
+        await self.give("1" * 32, "Book.pdf")
+        await self.give("2" * 32, "Restored.pdf", chunks=0)
+        got = await web.held(self.web, self.session, self.cref)
+        by_name = {d["name"]: d for d in got["documents"]}
+        self.assertRegex(by_name["Book.pdf"]["estimate"], r"^About [\d,]+ AI credits? for the adv")
+        self.assertIsNone(by_name["Restored.pdf"]["estimate"])
+        await self.sql(
+            "INSERT INTO adventure_reads (guild_id, campaign_id, document_id, status, next_chunk,"
+            " total_chunks, started_by, started_at, updated_at)"
+            " VALUES (%s, %s, %s, 'done', 3, 3, %s, 1, 1)",
+            GUILD, self.one.id, "1" * 32, ALICE.id,
+        )  # fmt: skip
+        again = await web.held(self.web, self.session, self.cref)
+        self.assertIsNone({d["name"]: d for d in again["documents"]}["Book.pdf"]["estimate"])
+
+    async def test_the_routes_answer_404_until_the_switch_is_on(self) -> None:
+        await self.give("3" * 32, "Book.pdf")
+        for on in (False, True):
+            app = create_app(
+                settings(adventure_on=on),
+                self.web,
+                FakeDiscord(),
+                payments=FakeProvider(b"h" * 32, "https://x.example"),
+                clock=lambda: NOW,
+            )
+            token = await sessions.sign_in(self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+            ) as client:
+                client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+                got = await client.post(
+                    f"/me/campaigns/{self.cref}/adventure/{'3' * 32}/read", headers=HEADERS
+                )
+                self.assertEqual(got.status_code, 202 if on else 404, got.text)
+                if on:
+                    polled = await client.get(
+                        f"/me/campaigns/{self.cref}/adventure/reads/{got.json()['read']}",
+                        headers=HEADERS,
+                    )
+                    self.assertEqual(polled.json()["state"], "waiting")
