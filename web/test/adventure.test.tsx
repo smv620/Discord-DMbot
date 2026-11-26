@@ -31,7 +31,8 @@ describe("how far a read is, in Discord's words", () => {
   it("says not read yet, and what a finished read found, with the parts that could not be read", () => {
     expect(readLine(doc())).toBe("not read yet");
     const done = doc({ read: { status: "done", nextChunk: 4, totalChunks: 4, stopReason: "", skippedParts: 1, updatedAt: 1 }, found: { chapters: 1, places: 2, people: 30, links: 0 } });
-    expect(readLine(done)).toBe(`read: 1 chapter, 2 places, 30 people, 0 "this needs that" notes, 1 part couldn't be read`);
+    expect(readLine(done)).toBe(`read: 1 chapter, 2 places, 30 people, 1 part couldn't be read`);
+    expect(readLine(doc({ read: { status: "done", nextChunk: 4, totalChunks: 4, stopReason: "", skippedParts: 0, updatedAt: 1 } }))).toBe(w.nothingFound);
   });
 
   it("says the percent while reading, and why a stopped read stopped and what to do", () => {
@@ -54,8 +55,8 @@ describe("the panel", () => {
     expect(await screen.findByText("The Glass Orchard.pdf", {}, slow)).toBeTruthy();
     expect(screen.getByText(/about 60 pages, read: 12 chapters, 1 place, 30 people, 4 "this needs that" notes, 2 parts couldn't be read/)).toBeTruthy();
     expect(screen.getByText(/stopped at 25%\. DMbot has used up its reading for this month/)).toBeTruthy();
-    expect(screen.getByText(/give DMbot this file again to use it/)).toBeTruthy();
-    expect(screen.getByText(w.heldMore(163000, 2000000))).toBeTruthy();
+    expect(screen.getByText(/give this file again in Discord to use it/)).toBeTruthy();
+    expect(screen.getByText(w.using(163000, 2000000))).toBeTruthy();
   });
 
   it("says when there is nothing yet, and when Shared story is off", async () => {
@@ -93,11 +94,58 @@ describe("the panel", () => {
     expect(await screen.findByText(w.of(50, 120), {}, slow)).toBeTruthy();
     expect(screen.getByText("Made-up chapter 4")).toBeTruthy();
     expect(screen.getByText("Gate 3 → Key 3")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: w.more }));
+    fireEvent.click(screen.getByRole("button", { name: w.more(50) }));
     expect(await screen.findByText(w.of(100, 120), {}, slow)).toBeTruthy();
     expect(api.calls.filter((c) => c.startsWith("adventureRead"))).toEqual(["adventureRead:100.cmp1:0", "adventureRead:100.cmp1:50"]);
     fireEvent.click(screen.getByRole("button", { name: w.hide }));
     expect(screen.queryByText("Made-up chapter 4")).toBeNull();
+  });
+
+  it("drops a late answer after Hide, so See again starts clean, and a failed Show more keeps what is on screen", async () => {
+    const api = mockApi("table");
+    const real = api.adventureRead!.bind(api);
+    let n = 0;
+    let release: () => void = () => {};
+    api.adventureRead = async (ref, offset) => {
+      n += 1;
+      if (n === 2) await new Promise<void>((ok) => (release = ok)); // (the second ask is slow)
+      if (n === 4) throw new ApiError("network");
+      return real(ref, offset);
+    };
+    render(<Adventure api={api} refId="100.cmp1" />);
+    fireEvent.click(await screen.findByRole("button", { name: w.see }, slow));
+    await screen.findByText(w.of(50, 120), {}, slow);
+    fireEvent.click(screen.getByRole("button", { name: w.more(50) })); // (slow)
+    fireEvent.click(screen.getByRole("button", { name: w.hide }));
+    release();
+    fireEvent.click(await screen.findByRole("button", { name: w.see }));
+    expect(await screen.findByText(w.of(50, 120), {}, slow)).toBeTruthy(); // (not 100: the late page was dropped)
+    fireEvent.click(screen.getByRole("button", { name: w.more(50) }));
+    expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.readDown);
+    expect(screen.getByText(w.of(50, 120))).toBeTruthy(); // (what was shown stays)
+  });
+
+  it("sends one ask for a double press of Show more", async () => {
+    const api = show();
+    fireEvent.click(await screen.findByRole("button", { name: w.see }, slow));
+    await screen.findByText(w.of(50, 120), {}, slow);
+    const more = screen.getByRole("button", { name: w.more(50) });
+    fireEvent.click(more);
+    fireEvent.click(more);
+    await screen.findByText(w.of(100, 120), {}, slow);
+    expect(api.calls.filter((c) => c.startsWith("adventureRead"))).toEqual(["adventureRead:100.cmp1:0", "adventureRead:100.cmp1:50"]);
+  });
+
+  it("offers neither the list nor See while Shared story is off, and Refresh reads the files again", async () => {
+    const api = show("100.adventure-off");
+    expect(await screen.findByText(w.notOn, {}, slow)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.see })).toBeNull();
+    cleanup();
+    const on = show();
+    await screen.findByText("The Glass Orchard.pdf", {}, slow);
+    fireEvent.click(screen.getByRole("button", { name: w.refresh }));
+    await vi.waitFor(() => expect(on.calls.filter((c) => c === "adventure:100.cmp1")).toHaveLength(2));
+    void api;
   });
 
   it("says nothing was read when nothing was", async () => {
