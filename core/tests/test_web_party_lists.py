@@ -98,7 +98,10 @@ class PartyLists(Web):
                 if each["id"] == self.links["mira-heir"]:
                     self.assertEqual(
                         each["knownBy"],
-                        [{"id": self.rook, "name": "Rook"}, {"id": self.tavin, "name": "Tavin"}],
+                        [
+                            {"id": self.rook, "name": "Rook", "status": "party"},
+                            {"id": self.tavin, "name": "Tavin", "status": "left"},
+                        ],
                     )
                     return
         self.fail("the connection is not in the answer")

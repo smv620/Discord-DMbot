@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { adventureWords as w } from "../content/adventure-words";
 import AdventureGive from "./AdventureGive";
 import AdventureGuide from "./AdventureGuide";
+import AdventureMatchPanel from "./AdventureMatch";
 import AdventureReadNow, { ReadingWait } from "./AdventureReadNow";
 import { type AccountApi, type AdventureApi, type AdventureDocument, type AdventureItem, type AdventureList, ApiError } from "./api";
 
@@ -281,6 +282,7 @@ function AdventureSection({ api, refId }: { api: AdventureApi; refId: string }) 
             </>
           )}
           {list.mode === "guide" && doneDoc && <AdventureGuide key={refId} api={api} refId={refId} document={doneDoc.id} />}
+          {doneDoc && <AdventureMatchPanel key={refId} api={api} refId={refId} />}
           <AdventureGive key={refId} api={api} refId={refId} onKept={() => setTries((n) => n + 1)} />
           <p class="small">{w.inDiscord}</p>
           <div class="row">

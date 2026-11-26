@@ -881,6 +881,9 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     // The party's player characters for the "Some know" picker (#4680 part 1): DM only; the door answers anyone else with nothing.
     partyCharacters: async (ref) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/party-characters`)) as { characters: PartyCharacter[] }).characters,
+    // The line a pick of "Some know" will say, before it is made (#5332, core #5338). Answered at once; nothing is kept.
+    knowLine: async (ref, pick) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/know-line`, pick)) as { line: string },
     // Queued for the bot (202 {answer}); this waits for it and gives back the batch of a make, for Undo (#4598).
     answerSecret: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;

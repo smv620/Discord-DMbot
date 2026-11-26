@@ -887,8 +887,10 @@ export default function Import({
                   whatToDo={words.stalledDo}
                 />
               )}
-              {s.names?.stage === "names_read" && (s.namesUnread ?? 0) > 0 && <p class="small">{words.namesUnread(s.namesUnread ?? 0)}</p>}
               {s.names?.stage === "names_stopped" && <p class="small">{words.namesStopped}</p>}
+              {(s.names?.stage === "names_read" || s.names?.stage === "names_stopped") && (s.namesUnread ?? 0) > 0 && (
+                <p class="small">{words.namesUnread(s.namesUnread ?? 0)}</p>
+              )}
               {importId && isFinal(s) && s.clock && (
                 <ClockOffer api={api} campaignRef={ref} importId={importId} file={s.file} clock={s.clock} />
               )}

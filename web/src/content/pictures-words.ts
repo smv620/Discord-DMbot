@@ -45,6 +45,7 @@ export const picturesPage = {
   working: "Working on it. This can take a minute.",
   // The wait for the bot (#3347): the stage, and what to do once it looks stuck.
   waitingStage: "Waiting for DMbot to pick it up.",
+  workingStage: "DMbot is working on it.",
   stuck: "DMbot hasn't finished this one. It may still go through. Reload the page in a few minutes to see where it stands before you try again.",
   notAllowed: "Only the DM can do that.",
 } as const;

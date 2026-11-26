@@ -1015,6 +1015,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let loreLooks = 0;
   const adventureRemovals = new Map<string, { document: string; looks: number }>(); // (removing a file of the adventure, #3694 slice C)
   const adventureGone = new Set<string>();
+  const adventureMatches = new Map<string, { ref: string; body: Parameters<AdventureApi["adventureMatch"]>[1]; looks: number }>(); // (match names, #3694 slice G1)
+  const adventureMatched = new Set<string>();
+  const adventureUndoers = new Map<string, () => void>();
+  const adventureLinks = new Map<string, Set<string>>(); // (one name's links to the adventure, #3694 slice G2)
   const adventureGuides = new Map<string, { ref: string; job: "read" | "pick" | "clear"; document: string; looks: number }>(); // (Guide me, #3694 slice F)
   const adventurePick = new Map<string, string>();
   const adventureStarts = new Map<string, { ref: string; document: string; looks: number }>(); // (starting a read, #3694 slice E)
@@ -1516,6 +1520,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { group: "e2".repeat(16), answer: "waiting" as const, names: ["Tavin", "Oskar"], kind: "join" as const },
   ];
   // The kept pictures (#3275): five pretend pictures, each 100 MB; the permanent ones count toward the limit.
+  // How many times each waiting picture action has been looked at (#3355).
+  const pictureLooks = new Map<string, number>();
   const pictureRows = [
     { code: "pic-1", at: 1791004000, sessionNumber: 2, poster: "Mira", description: "A map of the Brass Ford", permanent: false, isPublic: true },
     { code: "pic-2", at: 1791003000, sessionNumber: 2, poster: "Cerric", description: "Cerric's oath scroll", permanent: true, isPublic: true },
@@ -2003,6 +2009,65 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         },
       };
     },
+    // Match names (#3694 slice G1): two made-up pairs; answers are kept per campaign, and a save of a pair named "Gate" is refused as already linked.
+    async adventureMatch(ref, body) {
+      calls.push(`adventureMatch:${ref}:${body.job}${body.job === "decide" ? `:${body.picks.map((p) => `${p[0]}>${p[1]}=${p[2]}`).join(",")}` : ""}${body.job === "undo" ? `:${body.source}` : ""}${body.job === "options" ? `:${body.skip}` : ""}${body.job === "pick" || body.job === "unpick" ? `:${body.plan}` : ""}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (ref.includes(".match-busy")) throw new ApiError("slow-down");
+      const id = `match-${adventureMatches.size + 1}`;
+      adventureMatches.set(id, { ref, body, looks: 0 });
+      return { match: id };
+    },
+    async adventureMatching(ref, match) {
+      calls.push(`adventureMatching:${ref}:${match}`);
+      await reachable();
+      signedIn();
+      const got = adventureMatches.get(match);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { error: "", job: got.body.job, canUndo: false, createdAt: at - got.looks, updatedAt: at, serverNow: at };
+      if (got.looks < 2) return { ...base, state: "working" as const, answer: null };
+      // One name's own links (#3694 slice G2): thirty made-up entries in the book, up to twenty-five a page; a name "Taken" refuses a pick.
+      if (got.body.job === "options" || got.body.job === "pick" || got.body.job === "unpick") {
+        const body = got.body;
+        const key = `${ref}:${body.entity}`;
+        const mine = adventureLinks.get(key) ?? new Set<string>();
+        const entry = (n: number) => ({ planId: `p${n}`, name: `Entry ${n}`, kind: n % 2 ? "character" : "place", chapter: n % 3 ? `Chapter ${n % 3}` : "" });
+        const all = Array.from({ length: ref.includes(".link-none") ? 0 : 30 }, (_, i) => entry(i + 1));
+        if (body.job === "options") {
+          const rest = all.filter((e) => !mine.has(e.planId));
+          return { ...base, state: "done" as const, answer: { entity: { id: body.entity, name: "Mira" }, linked: all.filter((e) => mine.has(e.planId)), options: rest.slice(body.skip, body.skip + 25), total: rest.length, offset: body.skip, pageSize: 25 } };
+        }
+        if (body.job === "pick" && ref.includes(".link-taken")) return { ...base, state: "done" as const, answer: { written: 0, refusal: "taken_book", at: 0 } };
+        const had = mine.has(body.plan);
+        if (body.job === "pick") mine.add(body.plan);
+        else mine.delete(body.plan);
+        adventureLinks.set(key, mine);
+        const wrote = body.job === "pick" ? !had : had;
+        if (wrote) adventureUndoers.set(match, () => (body.job === "pick" ? mine.delete(body.plan) : mine.add(body.plan)));
+        return { ...base, state: "done" as const, canUndo: wrote, answer: { written: wrote ? 1 : 0, refusal: "", at: null } };
+      }
+      if (got.body.job === "suggest") {
+        const left = [
+          { planId: "b1", planName: "Captain Varn", planKind: "character", entityId: "e1", entityName: "Varn" },
+          { planId: "b2", planName: "The Salt Gate", planKind: "place", entityId: "e2", entityName: "Gate" },
+        ].filter((p) => !adventureMatched.has(`${ref}:${p.planId}`));
+        return { ...base, state: "done" as const, answer: { pairs: ref.includes(".match-none") ? [] : left } };
+      }
+      if (got.body.job === "decide") {
+        const picks = got.body.picks;
+        const stopAt = picks.findIndex((p) => p[0] === "b2" && p[2] === "same" && ref.includes(".match-taken"));
+        const written = stopAt === -1 ? picks.length : stopAt;
+        for (const p of picks.slice(0, written)) adventureMatched.add(`${ref}:${p[0]}`);
+        return { ...base, state: "done" as const, canUndo: written > 0, answer: { written, refusal: stopAt === -1 ? "" : "taken_book", at: stopAt === -1 ? null : stopAt } };
+      }
+      if (got.body.job === "undo") adventureUndoers.get(got.body.source)?.(); // (a link change taken back)
+      for (const key of [...adventureMatched].filter((k) => k.startsWith(`${ref}:`))) adventureMatched.delete(key);
+      return { ...base, state: "done" as const, answer: { undone: 1, note: ref.includes(".match-late") ? "too_late" : "" } };
+    },
     async adventureStartRead(ref, document) {
       calls.push(`adventureStartRead:${ref}:${document}`);
       await reachable();
@@ -2184,7 +2249,27 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       } else {
         picture.permanent = false;
       }
-      return { state: waiting ? ("waiting" as const) : ("done" as const), note: "" };
+      return waiting ? { state: "waiting" as const, note: "", id: "act-5" } : { state: "done" as const, note: "" };
+    },
+    // How the waiting delete of pic-5 stands (#3355): working on the first look, done on the second.
+    async pictureActionLook(campaignRef, id) {
+      calls.push(`pictureActionLook:${campaignRef}:${id}`);
+      await reachable();
+      signedIn();
+      const looks = (pictureLooks.get(String(id)) ?? 0) + 1;
+      pictureLooks.set(String(id), looks);
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        id,
+        action: "delete",
+        state: looks > 1 ? ("done" as const) : ("working" as const),
+        stage: looks > 1 ? "done" : "working",
+        note: "",
+        startedAt: now - 5,
+        updatedAt: now,
+        serverNow: now,
+        stalled: false,
+      };
     },
     async sessionNotesList(campaignRef) {
       calls.push(`sessionNotesList:${campaignRef}`);
@@ -2636,7 +2721,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
             reason: null,
             stage: "done" as const,
             clock: null,
-            // The reader stopped early (#5127): the names found so far are still suggested.
+            // The reader stopped early (#5127): some names may be missing; the session itself is safe.
             names: {
               stage: "names_stopped" as const,
               done: 2,
@@ -2930,6 +3015,16 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         { id: "p1", name: "Wren" },
         { id: "p2", name: "Ash" },
       ];
+    },
+    // The line of a pick not yet made (#5332): the same words as Discord's `party_icons.line`, for a party of three.
+    async knowLine(ref, pick) {
+      calls.push(`knowLine:${ref}:${pick.characters.join(",")}:${pick.common}`);
+      await reachable();
+      signedIn();
+      if (pick.common) return { line: "🌍 Everyone knows" };
+      if (pick.characters.length === 0) return { line: "🤫 No one in the party knows" };
+      if (pick.characters.length >= 3) return { line: "✅ The whole party knows" };
+      return { line: `👥 Known to: ${pick.characters.length} of the party` };
     },
     async answerWaiting(ref, answer, onLook) {
       calls.push(
