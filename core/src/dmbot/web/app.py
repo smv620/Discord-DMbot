@@ -4984,6 +4984,18 @@ def create_app(
         except RecapError:
             raise HTTPException(status_code=404, detail="not_found") from None
 
+    # What was read from it (#3694 slice B), 50 lines a page: the book's own words, so a DM of the
+    # campaign only, never logged. 404 while DMBOT_WEB_ADVENTURE is off.
+    @app.get("/me/campaigns/{ref}/adventure/read")
+    async def me_adventure_read(ref: str, signed: Signed, offset: int = 0) -> dict[str, Any]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await adventure.read_nodes(db, session, ref, offset)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     # A connection said in the DM's own words (#2940 slice C): queued for the bot, which reads it,
     # shows proposals, and writes only what the DM confirms. 404 while DMBOT_WEB_CONNECTION_SAID is
     # off. The DM's words are never logged.

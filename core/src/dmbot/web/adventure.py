@@ -44,3 +44,26 @@ async def held(db: Database, session: Session, ref: str) -> dict[str, Any]:
         "charactersMax": CAMPAIGN_MAX_CHARS,
         "charactersHeld": sum(int(d["characters"]) for d in documents),
     }
+
+
+PAGE = 50  # the door's own cap too
+
+
+async def read_nodes(db: Database, session: Session, ref: str, offset: int = 0) -> dict[str, Any]:
+    """Slice B: a page of what was read, as Discord's "See what was read" lists it: `{total,
+    offset, items: [{kind, name, summary, quote}]}`, `kind` being chapter, place, person or link.
+    This is the book's own content: a DM of the campaign only (anyone else is "not found"), never
+    logged, never cached here, and one page per call."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    start = max(0, offset)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_plan_nodes(%s, %s, %s, %s) AS r", (guild_id, campaign_id, start, PAGE)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    return {"total": got["total"], "offset": start, "items": got["items"]}
