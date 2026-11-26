@@ -158,6 +158,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.memory.web_actions import ActionStore
     from dmbot.memory.web_adventure_gives import GiveStore as AdventureGiveStore
     from dmbot.memory.web_adventure_guides import GuideStore as AdventureGuideStore
+    from dmbot.memory.web_adventure_matches import MatchStore as AdventureMatchStore
     from dmbot.memory.web_adventure_reads import ReadStore as AdventureReadStore
     from dmbot.memory.web_adventure_removals import RemovalStore as AdventureRemovalStore
     from dmbot.memory.web_connection_reads import ActionStore as ConnectionReadStore
@@ -329,6 +330,7 @@ class RecapFeatures:
         web_adventure_gives: AdventureGiveStore | None
         web_adventure_reads: AdventureReadStore | None
         web_adventure_guides: AdventureGuideStore | None
+        web_adventure_matches: AdventureMatchStore | None
 
         @property
         def guilds(self) -> Sequence[discord.Guild]: ...
@@ -441,6 +443,8 @@ class RecapFeatures:
         async def run_web_adventure_reads(self) -> None: ...
 
         async def run_web_adventure_guides(self) -> None: ...
+
+        async def run_web_adventure_matches(self) -> None: ...
         async def run_web_recap_style(self) -> None: ...
         async def run_member_avatars(self) -> None: ...
         async def run_web_restores(self) -> None: ...
@@ -2598,6 +2602,10 @@ class RecapFeatures:
             except Exception as exc:
                 log.warning("The website Guide me failed: %s", type(exc).__name__)
             try:
+                await self.run_web_adventure_matches()
+            except Exception as exc:
+                log.warning("The website Match to files failed: %s", type(exc).__name__)
+            try:
                 await self.run_web_recap_style()
             except Exception as exc:
                 log.warning("The website recap style choices failed: %s", type(exc).__name__)
@@ -2659,6 +2667,11 @@ class RecapFeatures:
                             await self.web_adventure_guides.sweep(guild.id)
                         except Exception as exc:
                             log.warning("The Guide me sweep failed: %s", type(exc).__name__)
+                    if self.web_adventure_matches is not None:
+                        try:  # its own try: ids and names of the book and the table, a day at most
+                            await self.web_adventure_matches.sweep(guild.id)
+                        except Exception as exc:
+                            log.warning("The Match to files sweep failed: %s", type(exc).__name__)
                     try:  # its own try: the DM-window feed is gone within a day (#3710)
                         if self.recaps is not None:
                             await ai_feed.sweep(self.recaps.db, guild.id)

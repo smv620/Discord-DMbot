@@ -8,10 +8,6 @@ import type {
   NameAnswer,
   NameAnswerResult,
   IconChoice,
-  AdventureGive,
-  AdventureList,
-  AdventureRead,
-  AdventureRemoval,
   ClarifyName,
   ConnectionSaidRead,
   NameCheckList,
@@ -201,14 +197,6 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     },
     nameChecks: async (ref) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
-    adventure: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/adventure`)) as AdventureList,
-    adventureRead: async (ref, offset) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/adventure/read?offset=${offset}`)) as AdventureRead,
-    // The file goes as it is, not as JSON (its name in the address): the API reads it with a running cap, as the lore PDF's does.
-    adventureGive: async (ref, file, name) =>
-      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/adventure/give?name=${encodeURIComponent(name)}`, undefined, false, new Blob([file], { type: "application/octet-stream" }))) as { give: string },
-    adventureGiving: async (ref, give) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/adventure/gives/${encodeURIComponent(give)}`)) as AdventureGive,
-    adventureRemove: async (ref, document) => (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/adventure/${encodeURIComponent(document)}/remove`)) as { removal: string },
-    adventureRemoval: async (ref, removal) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/adventure/removals/${encodeURIComponent(removal)}`)) as AdventureRemoval,
     saidSend: async (ref, input) => (await call("POST", saidPath(ref), input)) as { answer: string },
     saidRead: async (ref, answer) => (await call("GET", `${saidPath(ref)}/${encodeURIComponent(answer)}`)) as ConnectionSaidRead,
     saidUse: async (ref, answer, use) => {

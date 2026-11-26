@@ -86,7 +86,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { RevealProposal, WorldFeelingNote, PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion, PlotThreads, LeaveGroup } from "./api";
+import type { AdventureApi, RevealProposal, WorldFeelingNote, PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion, PlotThreads, LeaveGroup } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type LorePdf, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -1015,6 +1015,10 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let loreLooks = 0;
   const adventureRemovals = new Map<string, { document: string; looks: number }>(); // (removing a file of the adventure, #3694 slice C)
   const adventureGone = new Set<string>();
+  const adventureGuides = new Map<string, { ref: string; job: "read" | "pick" | "clear"; document: string; looks: number }>(); // (Guide me, #3694 slice F)
+  const adventurePick = new Map<string, string>();
+  const adventureStarts = new Map<string, { ref: string; document: string; looks: number }>(); // (starting a read, #3694 slice E)
+  const adventureReading = new Map<string, number>(); // (a started read's progress: it moves each time the list is read)
   const adventureGives = new Map<string, { ref: string; name: string; size: number; looks: number }>(); // (giving a file, #3694 slice D)
   const adventureGiven: { ref: string; name: string; size: number }[] = [];
   const saidJobs = new Map<string, { text: string; looks: number; job: "read" | "use" | "undo"; edit?: string | undefined; partly?: boolean }>(); // (say a connection in words, #5293)
@@ -1918,8 +1922,178 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         asked.setting === "retention" ? `Saved. Sessions older than ${asked.value} days are deleted every night.` : "";
       return { ...base, state: "done", note };
     };
+  // The Shared story adventure's calls (#3694), apart from the rest as in the real client: `adventureApi` hands them out.
+  const adventureMock: AdventureApi = {
+    // The Shared story adventure (#3694 slices A and B): made-up files and chapters only. A reference ending ".no-adventure" is a campaign with
+    // none, ".adventure-off" has Shared story off, ".player" is not a DM (404).
+    async adventure(ref) {
+      calls.push(`adventure:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const at = Math.floor(Date.now() / 1000);
+      const none = ref.includes(".no-adventure");
+      const built = {
+        mode: ref.includes(".adventure-off") ? "off" : ref.includes(".adventure-watch") ? "watch" : "guide",
+        documents: none
+          ? []
+          : [
+              { id: "d1", name: "The Glass Orchard.pdf", characters: 120000, restored: false, addedAt: at - 9000, read: { status: "done" as const, nextChunk: 40, totalChunks: 40, stopReason: "", skippedParts: 2, updatedAt: at - 8000 }, found: { chapters: 12, places: 1, people: 30, links: 4 } },
+              { id: "d2", name: "Second Book.docx", characters: 40000, restored: false, addedAt: at - 800, read: { status: "stopped" as const, nextChunk: 5, totalChunks: 20, stopReason: "month_cap", skippedParts: 0, updatedAt: at - 300 }, found: { chapters: 0, places: 0, people: 0, links: 0 } },
+              { id: "d3", name: "Notes.txt", characters: 3000, restored: true, addedAt: at - 100, read: null, found: { chapters: 0, places: 0, people: 0, links: 0 } },
+            ],
+        documentsMax: 20,
+        charactersMax: 2000000,
+        charactersHeld: none ? 0 : 163000,
+      };
+      const added = adventureGiven.filter((g) => g.ref === ref).map((g, i) => ({ id: `g${i + 1}`, name: g.name, characters: 5000, restored: false, addedAt: Math.floor(Date.now() / 1000), read: null, found: { chapters: 0, places: 0, people: 0, links: 0 } }));
+      const sentence = "Reading this file costs about 12 AI credits. You have 480 left this month.";
+      const docs = [...built.documents, ...added].map((d) => {
+        const step = adventureReading.get(`${ref}:${d.id}`);
+        if (step === undefined) return { ...d, estimate: d.read === null && !d.restored ? sentence : d.read?.status === "stopped" ? sentence : null };
+        adventureReading.set(`${ref}:${d.id}`, step + 1);
+        const done = step >= 3;
+        return {
+          ...d,
+          estimate: null,
+          read: { status: done ? ("done" as const) : ("reading" as const), nextChunk: done ? 20 : 5 + step * 5, totalChunks: 20, stopReason: "", skippedParts: 0, updatedAt: Math.floor(Date.now() / 1000) },
+          found: done ? { chapters: 3, places: 2, people: 9, links: 1 } : d.found,
+        };
+      });
+      return { ...built, documents: docs.filter((d) => !adventureGone.has(`${ref}:${d.id}`)) };
+    },
+    // Guide me (#3694 slice F): a made-up answer; the DM's pick is kept per campaign until cleared.
+    async adventureGuide(ref, document, job, chapter) {
+      calls.push(`adventureGuide:${ref}:${document}:${job}:${chapter ?? "-"}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (ref.includes(".not-guide")) throw new ApiError("not-on");
+      const id = `guide-${adventureGuides.size + 1}`;
+      if (job === "pick" && chapter) adventurePick.set(ref, chapter);
+      if (job === "clear") adventurePick.delete(ref);
+      adventureGuides.set(id, { ref, job, document, looks: 0 });
+      return { guide: id };
+    },
+    async adventureGuiding(ref, guide) {
+      calls.push(`adventureGuiding:${ref}:${guide}`);
+      await reachable();
+      signedIn();
+      const got = adventureGuides.get(guide);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { error: "", job: got.job, documentId: got.document, createdAt: at - got.looks, updatedAt: at, serverNow: at };
+      if (got.looks < 2) return { ...base, state: "working" as const, answer: null };
+      const chapters = [
+        { id: "c1", name: "Made-up chapter one" },
+        { id: "c2", name: "Made-up chapter two" },
+        { id: "c3", name: "Made-up chapter three" },
+      ];
+      const picked = adventurePick.get(ref);
+      const chosen = chapters.find((c) => c.id === picked) ?? null;
+      return {
+        ...base,
+        state: "done" as const,
+        answer: {
+          text: chosen ? `The table is in ${chosen.name} (you said so).\nAhead: a made-up place.` : "The table seems to be in Made-up chapter two.\nAhead: a made-up place.",
+          picked: chosen !== null,
+          chapter: chosen,
+          chapters,
+        },
+      };
+    },
+    async adventureStartRead(ref, document) {
+      calls.push(`adventureStartRead:${ref}:${document}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (document === "d1") throw new ApiError("not-readable");
+      if (document === "d3") throw new ApiError("not-readable");
+      const id = `read-${adventureStarts.size + 1}`;
+      adventureStarts.set(id, { ref, document, looks: 0 });
+      return { read: id };
+    },
+    async adventureStarting(ref, read) {
+      calls.push(`adventureStarting:${ref}:${read}`);
+      await reachable();
+      signedIn();
+      const got = adventureStarts.get(read);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { error: "", documentId: got.document, createdAt: at - got.looks, updatedAt: at, serverNow: at };
+      if (got.looks < 2) return { ...base, state: "working" as const };
+      adventureReading.set(`${ref}:${got.document}`, 0); // (the read has started: its progress is in the list from now)
+      return { ...base, state: "done" as const };
+    },
+    async adventureGive(ref, file, name) {
+      calls.push(`adventureGive:${ref}:${name}:${file.size}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (name.includes("badfile")) throw new ApiError("bad-file");
+      if (name.includes("busyfile")) throw new ApiError("slow-down");
+      const id = `give-${adventureGives.size + 1}`;
+      adventureGives.set(id, { ref, name, size: file.size, looks: 0 });
+      return { give: id };
+    },
+    async adventureGiving(ref, give) {
+      calls.push(`adventureGiving:${ref}:${give}`);
+      await reachable();
+      signedIn();
+      const got = adventureGives.get(give);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { error: "", name: got.name, sizeBytes: got.size, characters: 0, chunks: 0, createdAt: at - got.looks, updatedAt: at, serverNow: at };
+      if (got.looks === 1) return { ...base, state: "waiting" as const, stage: "waiting" as const };
+      if (got.looks === 2) return { ...base, state: "working" as const, stage: "reading" as const };
+      if (got.name.includes("dupfile")) return { ...base, state: "failed" as const, stage: "failed" as const, error: "already" };
+      if (got.name.includes("emptyfile")) return { ...base, state: "failed" as const, stage: "failed" as const, error: "no_text" };
+      adventureGiven.push({ ref, name: got.name, size: got.size });
+      return { ...base, state: "done" as const, stage: "done" as const, characters: 5000, chunks: 3 };
+    },
+    async adventureRemove(ref, document) {
+      calls.push(`adventureRemove:${ref}:${document}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (!["d1", "d2", "d3"].includes(document)) throw new ApiError("not-found");
+      const id = `rm-${adventureRemovals.size + 1}`;
+      adventureRemovals.set(id, { document, looks: 0 });
+      return { removal: id };
+    },
+    async adventureRemoval(ref, removal) {
+      calls.push(`adventureRemoval:${ref}:${removal}`);
+      await reachable();
+      signedIn();
+      const got = adventureRemovals.get(removal);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      if (got.looks < 2) return { id: removal, state: "working" as const, error: "", updatedAt: at };
+      if (got.document === "d2") return { id: removal, state: "failed" as const, error: "failed", updatedAt: at }; // (the second file always fails: the failure words)
+      adventureGone.add(`${ref}:${got.document}`);
+      return { id: removal, state: "done" as const, error: "", updatedAt: at };
+    },
+    async adventureRead(ref, offset) {
+      calls.push(`adventureRead:${ref}:${offset}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const total = ref.includes(".nothing-read") ? 0 : 120;
+      const items = Array.from({ length: Math.max(0, Math.min(50, total - offset)) }, (_, i) => {
+        const n = offset + i + 1;
+        const kind = (["chapter", "place", "person", "link"] as const)[n % 4]!;
+        return { kind, name: kind === "link" ? `Gate ${n} → Key ${n}` : `Made-up ${kind} ${n}`, summary: `A made-up line about number ${n}.`, quote: n % 3 === 0 ? `“A made-up quote ${n}.”` : "" };
+      });
+      return { total, offset, items };
+    },
+  };
   return {
     calls,
+    adventureApi: async () => adventureMock,
     async recaps() {
       calls.push("recaps");
       await reachable();
@@ -3200,94 +3374,6 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         loreNow = { ...loreNow, state: "done", stage: "done", namesFound: 4, linksFound: 3, updatedAt: at, waiting: { place: 5, character: 7, group: 2 } };
       loreNow = { ...loreNow, serverNow: at };
       return loreNow;
-    },
-    // The Shared story adventure (#3694 slices A and B): made-up files and chapters only. A reference ending ".no-adventure" is a campaign with
-    // none, ".adventure-off" has Shared story off, ".player" is not a DM (404).
-    async adventure(ref) {
-      calls.push(`adventure:${ref}`);
-      await reachable();
-      signedIn();
-      if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const at = Math.floor(Date.now() / 1000);
-      const none = ref.includes(".no-adventure");
-      const built = {
-        mode: ref.includes(".adventure-off") ? "off" : "guide",
-        documents: none
-          ? []
-          : [
-              { id: "d1", name: "The Glass Orchard.pdf", characters: 120000, restored: false, addedAt: at - 9000, read: { status: "done" as const, nextChunk: 40, totalChunks: 40, stopReason: "", skippedParts: 2, updatedAt: at - 8000 }, found: { chapters: 12, places: 1, people: 30, links: 4 } },
-              { id: "d2", name: "Second Book.docx", characters: 40000, restored: false, addedAt: at - 800, read: { status: "stopped" as const, nextChunk: 5, totalChunks: 20, stopReason: "month_cap", skippedParts: 0, updatedAt: at - 300 }, found: { chapters: 0, places: 0, people: 0, links: 0 } },
-              { id: "d3", name: "Notes.txt", characters: 3000, restored: true, addedAt: at - 100, read: null, found: { chapters: 0, places: 0, people: 0, links: 0 } },
-            ],
-        documentsMax: 20,
-        charactersMax: 2000000,
-        charactersHeld: none ? 0 : 163000,
-      };
-      const added = adventureGiven.filter((g) => g.ref === ref).map((g, i) => ({ id: `g${i + 1}`, name: g.name, characters: 5000, restored: false, addedAt: Math.floor(Date.now() / 1000), read: null, found: { chapters: 0, places: 0, people: 0, links: 0 } }));
-      return { ...built, documents: [...built.documents, ...added].filter((d) => !adventureGone.has(`${ref}:${d.id}`)) };
-    },
-    async adventureGive(ref, file, name) {
-      calls.push(`adventureGive:${ref}:${name}:${file.size}`);
-      await reachable();
-      signedIn();
-      if (webView(ref) !== "dm") throw new ApiError("not-found");
-      if (name.includes("badfile")) throw new ApiError("bad-file");
-      if (name.includes("busyfile")) throw new ApiError("slow-down");
-      const id = `give-${adventureGives.size + 1}`;
-      adventureGives.set(id, { ref, name, size: file.size, looks: 0 });
-      return { give: id };
-    },
-    async adventureGiving(ref, give) {
-      calls.push(`adventureGiving:${ref}:${give}`);
-      await reachable();
-      signedIn();
-      const got = adventureGives.get(give);
-      if (!got) throw new ApiError("not-found");
-      got.looks += 1;
-      const at = Math.floor(Date.now() / 1000);
-      const base = { error: "", name: got.name, sizeBytes: got.size, characters: 0, chunks: 0, createdAt: at - got.looks, updatedAt: at, serverNow: at };
-      if (got.looks === 1) return { ...base, state: "waiting" as const, stage: "waiting" as const };
-      if (got.looks === 2) return { ...base, state: "working" as const, stage: "reading" as const };
-      if (got.name.includes("dupfile")) return { ...base, state: "failed" as const, stage: "failed" as const, error: "already" };
-      if (got.name.includes("emptyfile")) return { ...base, state: "failed" as const, stage: "failed" as const, error: "no_text" };
-      adventureGiven.push({ ref, name: got.name, size: got.size });
-      return { ...base, state: "done" as const, stage: "done" as const, characters: 5000, chunks: 3 };
-    },
-    async adventureRemove(ref, document) {
-      calls.push(`adventureRemove:${ref}:${document}`);
-      await reachable();
-      signedIn();
-      if (webView(ref) !== "dm") throw new ApiError("not-found");
-      if (!["d1", "d2", "d3"].includes(document)) throw new ApiError("not-found");
-      const id = `rm-${adventureRemovals.size + 1}`;
-      adventureRemovals.set(id, { document, looks: 0 });
-      return { removal: id };
-    },
-    async adventureRemoval(ref, removal) {
-      calls.push(`adventureRemoval:${ref}:${removal}`);
-      await reachable();
-      signedIn();
-      const got = adventureRemovals.get(removal);
-      if (!got) throw new ApiError("not-found");
-      got.looks += 1;
-      const at = Math.floor(Date.now() / 1000);
-      if (got.looks < 2) return { id: removal, state: "working" as const, error: "", updatedAt: at };
-      if (got.document === "d2") return { id: removal, state: "failed" as const, error: "failed", updatedAt: at }; // (the second file always fails: the failure words)
-      adventureGone.add(`${ref}:${got.document}`);
-      return { id: removal, state: "done" as const, error: "", updatedAt: at };
-    },
-    async adventureRead(ref, offset) {
-      calls.push(`adventureRead:${ref}:${offset}`);
-      await reachable();
-      signedIn();
-      if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const total = ref.includes(".nothing-read") ? 0 : 120;
-      const items = Array.from({ length: Math.max(0, Math.min(50, total - offset)) }, (_, i) => {
-        const n = offset + i + 1;
-        const kind = (["chapter", "place", "person", "link"] as const)[n % 4]!;
-        return { kind, name: kind === "link" ? `Gate ${n} → Key ${n}` : `Made-up ${kind} ${n}`, summary: `A made-up line about number ${n}.`, quote: n % 3 === 0 ? `“A made-up quote ${n}.”` : "" };
-      });
-      return { total, offset, items };
     },
     // Say a connection in words (#5293; core #5298): a read waits one look, reads one, then is ready. Words with "nothing" are read as no
     // connection, "unreadable" fail, "secret" ask who knows from the start, and every ready read has two things DMbot understood.

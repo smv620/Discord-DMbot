@@ -55,7 +55,7 @@ describe("the panel", () => {
     expect(await screen.findByText("The Glass Orchard.pdf", {}, slow)).toBeTruthy();
     expect(screen.getByText(/about 60 pages, read: 12 chapters, 1 place, 30 people, 4 "this needs that" notes, 2 parts couldn't be read/)).toBeTruthy();
     expect(screen.getByText(/stopped at 25%\. DMbot has used up its reading for this month/)).toBeTruthy();
-    expect(screen.getByText(/give this file again in Discord to use it/)).toBeTruthy();
+    expect(screen.getByText(/give this file again to use it/)).toBeTruthy();
     expect(screen.getByText(w.using(163000, 2000000))).toBeTruthy();
   });
 
@@ -77,10 +77,11 @@ describe("the panel", () => {
   it("says a failed look failed and offers another try", async () => {
     const api = mockApi("table");
     let tries = 0;
-    api.adventure = async () => {
+    const adv = await api.adventureApi!();
+    adv.adventure = async () => {
       tries += 1;
       if (tries === 1) throw new ApiError("network");
-      return mockApi("table").adventure!("100.cmp1");
+      return (await mockApi("table").adventureApi!()).adventure("100.cmp1");
     };
     render(<Adventure api={api} refId="100.cmp1" />);
     expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.down);
@@ -150,7 +151,7 @@ describe("the panel", () => {
 
   it("offers no Remove when the API cannot remove", async () => {
     const api = mockApi("table");
-    delete (api as { adventureRemoval?: unknown }).adventureRemoval;
+    delete ((await api.adventureApi!()) as { adventureRemoval?: unknown }).adventureRemoval;
     render(<Adventure api={api} refId="100.cmp1" />);
     await screen.findByText("The Glass Orchard.pdf", {}, slow);
     expect(screen.queryAllByRole("button", { name: /^Remove / })).toHaveLength(0);
@@ -167,10 +168,11 @@ describe("the panel", () => {
 
   it("drops a late answer after Hide, so See again starts clean, and a failed Show more keeps what is on screen", async () => {
     const api = mockApi("table");
-    const real = api.adventureRead!.bind(api);
+    const adv = await api.adventureApi!();
+    const real = adv.adventureRead.bind(adv);
     let n = 0;
     let release: () => void = () => {};
-    api.adventureRead = async (ref, offset) => {
+    adv.adventureRead = async (ref, offset) => {
       n += 1;
       if (n === 2) await new Promise<void>((ok) => (release = ok)); // (the second ask is slow)
       if (n === 4) throw new ApiError("network");
@@ -325,9 +327,144 @@ describe("giving a file (#3694 slice D)", () => {
 
   it("offers no Give a file when the API cannot take one", async () => {
     const api = mockApi("table");
-    delete (api as { adventureGiving?: unknown }).adventureGiving;
+    delete ((await api.adventureApi!()) as { adventureGiving?: unknown }).adventureGiving;
     render(<Adventure api={api} refId="100.cmp1" />);
     await screen.findByText("The Glass Orchard.pdf", {}, slow);
     expect(screen.queryByRole("button", { name: w.give })).toBeNull();
+  });
+});
+
+describe("reading a file now (#3694 slice E)", () => {
+  const open = async () => {
+    const api = mockApi("table");
+    render(<Adventure api={api} refId="100.cmp1" />);
+    await screen.findByText("Second Book.docx", {}, slow);
+    return api;
+  };
+  const readButtons = () => screen.queryAllByRole("button", { name: /^Read it now / });
+
+  it("offers Read it now only on a file that has a cost sentence, and shows the cost before anything is sent", async () => {
+    const api = await open();
+    expect(readButtons()).toHaveLength(1); // (the finished and the restored file have none)
+    fireEvent.click(readButtons()[0] as HTMLElement);
+    expect(screen.getByText(/Reading this file costs about 12 AI credits/)).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("adventureStartRead"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: w.readNo }));
+    expect(screen.queryByText(/Reading this file costs/)).toBeNull();
+    expect(api.calls.some((c) => c.startsWith("adventureStartRead"))).toBe(false);
+  });
+
+  it("starts the read after the yes, and the page then shows how far it is by itself until it is read", async () => {
+    const api = await open();
+    fireEvent.click(readButtons()[0] as HTMLElement);
+    const yes = screen.getByRole("button", { name: w.readYes });
+    fireEvent.click(yes);
+    fireEvent.click(yes); // (a double press sends once)
+    expect(await screen.findByText(w.started, {}, slow)).toBeTruthy();
+    expect(await screen.findByText(w.readingStage, {}, slow)).toBeTruthy(); // (stage, how far, how long: the shared wait)
+    await vi.waitFor(() => expect(screen.queryByText(w.readingStage)).toBeNull(), { timeout: 20_000 });
+    expect(screen.getByText(/read: 3 chapters, 2 places, 9 people/)).toBeTruthy();
+    expect(api.calls.filter((c) => c.startsWith("adventureStartRead"))).toEqual(["adventureStartRead:100.cmp1:d2"]);
+  }, 40_000);
+
+  it("stops re-reading the list once nothing is reading", async () => {
+    const api = await open();
+    fireEvent.click(readButtons()[0] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: w.readYes }));
+    await screen.findByText(w.started, {}, slow);
+    await vi.waitFor(() => expect(screen.queryByText(w.readingStage)).toBeNull(), { timeout: 20_000 });
+    await vi.waitFor(() => expect(screen.getByText(/read: 3 chapters/)).toBeTruthy(), { timeout: 25_000 });
+    const seen = api.calls.filter((c) => c === "adventure:100.cmp1").length;
+    await new Promise((ok) => setTimeout(ok, 3500));
+    // (the 30-second just-started window may still re-read once or twice; it must not run on without end)
+    expect(api.calls.filter((c) => c === "adventure:100.cmp1").length).toBeLessThanOrEqual(seen + 2);
+  }, 60_000);
+
+  it("offers no Read it now when the API cannot start a read", async () => {
+    const api = mockApi("table");
+    delete ((await api.adventureApi!()) as { adventureStarting?: unknown }).adventureStarting;
+    render(<Adventure api={api} refId="100.cmp1" />);
+    await screen.findByText("Second Book.docx", {}, slow);
+    expect(readButtons()).toHaveLength(0);
+  });
+});
+
+describe("Guide me: where is the table (#3694 slice F)", () => {
+  const open = async (ref = "100.cmp1") => {
+    const api = mockApi("table");
+    render(<Adventure api={api} refId={ref} />);
+    await screen.findByText("The Glass Orchard.pdf", {}, slow);
+    return api;
+  };
+
+  it("shows Discord's message as it is, and nothing before the DM asks", async () => {
+    const api = await open();
+    expect(api.calls.some((c) => c.startsWith("adventureGuide:"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: w.guide }));
+    expect(await screen.findByText(/The table seems to be in Made-up chapter two\./, {}, slow)).toBeTruthy();
+    expect(api.calls.filter((c) => c.startsWith("adventureGuide:"))).toEqual(["adventureGuide:100.cmp1:d1:read:-"]); // (the first file that has been read)
+  }, 30_000);
+
+  it("picks another chapter, offers the way back to DMbot's guess and to the chapter it was on, and hides again", async () => {
+    const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: w.guide }));
+    await screen.findByText(/seems to be in Made-up chapter two/, {}, slow);
+    fireEvent.change(screen.getByLabelText(w.guideAnother), { target: { value: "c1" } });
+    fireEvent.click(screen.getByRole("button", { name: w.guideUse }));
+    expect(await screen.findByText(/The table is in Made-up chapter one \(you said so\)/, {}, slow)).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.guideBackGuess })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.guideBackTo("Made-up chapter one") })).toBeNull(); // (it was DMbot's guess before, so only the guess to go back to)
+    fireEvent.change(screen.getByLabelText(w.guideAnother), { target: { value: "c3" } });
+    fireEvent.click(screen.getByRole("button", { name: w.guideUse }));
+    expect(await screen.findByText(/The table is in Made-up chapter three/, {}, slow)).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.guideBackTo("Made-up chapter one") })).toBeTruthy(); // (the chapter it was on)
+    fireEvent.click(screen.getByRole("button", { name: w.guideBackTo("Made-up chapter one") }));
+    expect(await screen.findByText(/The table is in Made-up chapter one/, {}, slow)).toBeTruthy(); // (back to the chapter it was on)
+    fireEvent.click(screen.getByRole("button", { name: w.guideBackGuess }));
+    expect(await screen.findByText(/seems to be in Made-up chapter two/, {}, slow)).toBeTruthy();
+    expect(api.calls.filter((c) => c.startsWith("adventureGuide:")).map((c) => c.split(":").slice(3).join(":"))).toEqual(["read:-", "pick:c1", "pick:c3", "pick:c1", "clear:-"]);
+    fireEvent.click(screen.getByRole("button", { name: w.guideHide }));
+    expect(screen.queryByText(/seems to be in/)).toBeNull();
+  }, 60_000);
+
+  it("sends one ask for a double press, and never puts the book's words in a call", async () => {
+    const api = await open();
+    const ask = screen.getByRole("button", { name: w.guide });
+    fireEvent.click(ask);
+    fireEvent.click(ask);
+    await screen.findByText(/seems to be in Made-up chapter two/, {}, slow);
+    expect(api.calls.filter((c) => c.startsWith("adventureGuide:"))).toHaveLength(1);
+    expect(api.calls.join("\n")).not.toContain("Made-up place");
+  }, 30_000);
+
+  it("says plainly when Guide me is not switched on, and offers no button while Shared story only watches", async () => {
+    await open("100.cmp1.not-guide");
+    fireEvent.click(screen.getByRole("button", { name: w.guide }));
+    expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.guideRefused["not-on"]);
+    expect(screen.getByRole("button", { name: w.guide })).toBeTruthy(); // (it can be asked again)
+    cleanup();
+    await open("100.cmp1.adventure-watch");
+    expect(screen.queryByRole("button", { name: w.guide })).toBeNull();
+  });
+});
+
+describe("the real client's adventure calls (their names are not in the first download)", () => {
+  it("loads on first use, sends the file as it is with its name in the address, and reads the adventure's own refusals", async () => {
+    const { httpApi } = await import("../src/account/api");
+    const seen: { url: string; method: string; body: unknown }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      seen.push({ url, method: String(init.method), body: init.body });
+      if (url.includes("/give")) return new Response(JSON.stringify({ detail: "not_on" }), { status: 409, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ detail: "not_readable" }), { status: 409, headers: { "content-type": "application/json" } });
+    });
+    const api = httpApi("/api");
+    expect((api as { adventure?: unknown }).adventure).toBeUndefined(); // (no adventure names on the main API)
+    const adv = await api.adventureApi!();
+    await expect(adv.adventureGive("100.cmp1", new Blob(["x"]), "Book one.pdf")).rejects.toMatchObject({ kind: "not-on" });
+    expect(seen[0]!.url).toBe("/api/me/campaigns/100.cmp1/adventure/give?name=Book%20one.pdf");
+    await expect(adv.adventureStartRead("100.cmp1", "d1")).rejects.toMatchObject({ kind: "not-readable" });
+    expect(seen[1]!.url).toBe("/api/me/campaigns/100.cmp1/adventure/d1/read");
+    expect(await api.adventureApi!()).toBe(adv); // (loaded once)
+    vi.unstubAllGlobals();
   });
 });

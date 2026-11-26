@@ -8,7 +8,9 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { adventureWords as w } from "../content/adventure-words";
 import AdventureGive from "./AdventureGive";
-import { type AccountApi, type AdventureDocument, type AdventureItem, type AdventureList, ApiError } from "./api";
+import AdventureGuide from "./AdventureGuide";
+import AdventureReadNow, { ReadingWait } from "./AdventureReadNow";
+import { type AccountApi, type AdventureApi, type AdventureDocument, type AdventureItem, type AdventureList, ApiError } from "./api";
 
 /** Where a file's reading stands, in Discord's words ("not read yet" when it has not been). A count of nothing is left out. */
 export function readLine(d: AdventureDocument): string {
@@ -31,11 +33,26 @@ export function readLine(d: AdventureDocument): string {
   return w.stopped(percent, w.why[read.stopReason] ?? w.carryOn);
 }
 
+const READING_EVERY_MS = 3000;
+const JUST_STARTED_MS = 30_000;
 const REMOVE_FIRST_MS = 400;
 const REMOVE_EVERY_MS = 1500;
 const REMOVE_LOOKS = 40; // about a minute: a removal is quick
 
-export default function Adventure({ api, refId }: { api: AccountApi; refId: string }) {
+/** The section's calls come from their own file, loaded here the first time the section is drawn (their names are not in the first download). */
+export default function Adventure({ api: site, refId }: { api: AccountApi; refId: string }) {
+  const [api, setApi] = useState<AdventureApi | null>(null);
+  useEffect(() => {
+    let live = true;
+    site.adventureApi?.().then((got) => live && setApi(got), () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [site]);
+  return api ? <AdventureSection key={refId} api={api} refId={refId} /> : null;
+}
+
+function AdventureSection({ api, refId }: { api: AdventureApi; refId: string }) {
   const [list, setList] = useState<AdventureList | null>(null);
   const [gone, setGone] = useState(false); // (not a DM, or the switch is off: nothing is shown at all)
   const [failed, setFailed] = useState(false);
@@ -91,6 +108,16 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
     const timer = setInterval(() => setSeconds((n) => n + 1), 1000);
     return () => clearInterval(timer);
   }, [job?.phase]);
+
+  // While any file is being read the list is read again by itself (the card does the same), so the wait shows how far it is.
+  // A read that has only just been told to start may not show as reading yet, so the list keeps being read for a little while too.
+  const reading = (list?.documents ?? []).some((d) => d.read?.status === "reading");
+  const watchUntil = useRef(0);
+  useEffect(() => {
+    if (!reading && Date.now() > watchUntil.current) return;
+    const timer = setTimeout(() => setTries((n) => n + 1), READING_EVERY_MS);
+    return () => clearTimeout(timer);
+  }, [reading, list, failed]); // (a failed re-read re-arms it too: the wait never freezes)
 
   async function look(offset: number): Promise<void> {
     if (!api.adventureRead || busy.current) return;
@@ -180,6 +207,8 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
 
   seeingNow.current = seeing;
   if (!api.adventure || gone) return null;
+  // Guide me needs a finished read: its route names one of the files (the guide covers the whole campaign), so the first such file is used.
+  const doneDoc = [...(list?.documents ?? [])].filter((d) => d.read?.status === "done").sort((x, y) => x.addedAt - y.addedAt)[0]; // (the oldest, so the choice stays put as later reads finish)
   const anyRead = (list?.documents ?? []).some((d) => d.read !== null);
   const left = Math.min(50, total - items.length);
   return (
@@ -216,7 +245,12 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
                       {w.pages(d.characters)}
                       {d.restored ? `, ${w.giveAgain}` : `, ${readLine(d)}`}
                     </span>
-                    {api.adventureRemove && api.adventureRemoval && confirming !== d.id && job?.phase !== "working" && (
+                    <ReadingWait doc={d} />
+                    <AdventureReadNow key={`${refId}:${d.id}`} api={api} refId={refId} doc={d} disabled={job?.phase === "working"} onStarted={() => {
+                      watchUntil.current = Date.now() + JUST_STARTED_MS;
+                      setTries((n) => n + 1);
+                    }} />
+                    {typeof api.adventureRemove === "function" && typeof api.adventureRemoval === "function" && confirming !== d.id && job?.phase !== "working" && (
                       <button type="button" class="button secondary" aria-label={`${w.remove} ${d.name}`} onClick={() => setConfirming(d.id)}>
                         {w.remove}
                       </button>
@@ -246,6 +280,7 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
               <p class="small muted">{w.using(list.charactersHeld, list.charactersMax)}</p>
             </>
           )}
+          {list.mode === "guide" && doneDoc && <AdventureGuide key={refId} api={api} refId={refId} document={doneDoc.id} />}
           <AdventureGive key={refId} api={api} refId={refId} onKept={() => setTries((n) => n + 1)} />
           <p class="small">{w.inDiscord}</p>
           <div class="row">
