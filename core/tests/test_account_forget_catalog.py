@@ -114,6 +114,7 @@ NAME_TRANSCRIPTS: Rules = {  # speakers' names: the owner's call with the transc
 NAME_NOT_A_PERSON: Rules = {  # a name of something else, with the reason
     "web_connection_reads": ("who_kind", "use_who"),  # fixed words: everyone, dm, some, keep
     "adventure_documents": ("file_name",),  # an uploaded file's name
+    "web_adventure_gives": ("file_name",),  # the same file's name, while it waits (a day at most)
     "campaigns": ("name", "name_key"),  # the campaign's own name
     "homebrew_entries": ("name", "name_key"),  # the rule's name
     "house_rules": ("source_name",),  # where a rule comes from (a book)

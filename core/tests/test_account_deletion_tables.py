@@ -200,8 +200,8 @@ ROWS: dict[str, str] = {
     ),
     "web_adventure_gives": (
         "INSERT INTO web_adventure_gives (guild_id, campaign_id, id, user_id, object_key,"
-        " file_name, size_bytes, created_at, updated_at) VALUES (%(g)s, %(c)s, %(k)s, %(u)s,"
-        " '', 'Book.pdf', 1, 1, 1)"
+        " file_name, size_bytes, state, stage, error, created_at, updated_at)"
+        " VALUES (%(g)s, %(c)s, %(k)s, %(u)s, '', 'Book.pdf', 1, 'failed', 'failed', 'x', 1, 1)"
     ),
     "web_adventure_removals": (
         "INSERT INTO web_adventure_removals (guild_id, campaign_id, id, user_id, document_id,"
