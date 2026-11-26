@@ -19,6 +19,7 @@ import { campaignBackupWords } from "../content/campaign-backup";
 import { CAMPAIGN_DELETE_LIVE } from "../content/campaign-delete";
 import { rememberDeleted } from "./deleted-notice";
 import LazyPanel from "./LazyPanel";
+import { RULE_LOOKUP_LIVE } from "../content/rule-lookup-switch";
 
 /** The campaign in the address: `/account/campaigns/<server>.<campaign>`. */
 export function campaignRefFromPath(path: string): string | null {
@@ -138,6 +139,9 @@ export default function CampaignPageView({ api, path }: { api: AccountApi; path:
         <LazyPanel load={() => import("./Sheets")} what="the character sheets" props={{ api, campaignRef: ref }} />
       )}
       {isDm && <CampaignSettings key={ref} api={api} campaignRef={ref} page={page} />}
+      {isDm && RULE_LOOKUP_LIVE && ref && api.ruleLookup && (
+        <LazyPanel key={ref} load={() => import("./RuleLookup")} what="look up a rule" props={{ api, campaignRef: ref }} />
+      )}
       {/* A backup of its own (#3148): before this, the only way to one on the website was inside Delete.
           A game master's waits for /me to say the plan is not Try It; a player's /me plan is their own, not the
           campaign's, so DMbot answers for them ("This campaign's plan can't make a backup."). */}
