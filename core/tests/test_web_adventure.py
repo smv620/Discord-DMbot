@@ -689,3 +689,47 @@ class Matching(Holding):
                         headers=HEADERS,
                     )
                     self.assertEqual(polled.json()["state"], "waiting")
+
+    async def test_a_dm_asks_for_the_options_of_one_entry_a_page_at_a_time(self) -> None:
+        await self.switch_on()
+        mid = await web.match_entry(self.web, self.session, self.cref, "options", "b" * 32, "", 25)
+        got = await web.matching(self.web, self.session, self.cref, mid)
+        self.assertEqual((got["state"], got["job"], got["answer"]), ("waiting", "options", {}))
+        rows = await self.rows()
+        self.assertEqual(rows[0]["job"], "options")
+
+    async def test_a_pick_and_an_unpick_need_a_book_entry_and_an_options_does_not_take_one(
+        self,
+    ) -> None:
+        await self.switch_on()
+        for job, plan, skip in (
+            ("pick", "", 0), ("unpick", "", 0), ("options", "a" * 32, 0),
+            ("pick", "a" * 32, 25), ("options", "", -1), ("dance", "", 0),
+        ):  # fmt: skip
+            with self.assertRaises(RecapError) as caught:
+                await web.match_entry(self.web, self.session, self.cref, job, "b" * 32, plan, skip)
+            self.assertEqual(caught.exception.code, "bad_job", (job, plan, skip))
+        await web.match_entry(self.web, self.session, self.cref, "pick", "b" * 32, "a" * 32)
+
+    async def test_it_needs_the_switch_a_dm_and_well_formed_ids(self) -> None:
+        with self.assertRaises(RecapError) as off:
+            await web.match_entry(self.web, self.session, self.cref, "options", "b" * 32)
+        self.assertEqual(off.exception.code, "not_on")
+        await self.switch_on()
+        with self.assertRaises(RecapError) as player:
+            await web.match_entry(self.web, await self.bob(), self.cref, "options", "b" * 32)
+        self.assertEqual(player.exception.code, "not_found")
+        with self.assertRaises(RecapError) as bad:
+            await web.match_entry(self.web, self.session, self.cref, "options", "nope")
+        self.assertEqual(bad.exception.code, "not_found")
+
+    async def test_a_pick_that_wrote_can_be_undone_through_the_g1_undo(self) -> None:
+        await self.switch_on()
+        mid = await web.match_entry(self.web, self.session, self.cref, "pick", "b" * 32, "a" * 32)
+        await self.sql(
+            "UPDATE web_adventure_matches SET state = 'done', batches = %s WHERE id = %s",
+            [9], mid,
+        )  # fmt: skip
+        self.assertTrue((await web.matching(self.web, self.session, self.cref, mid))["canUndo"])
+        await web.match(self.web, self.session, self.cref, "undo", source=mid)
+        self.assertEqual((await self.rows())[-1]["batches"], [9])
