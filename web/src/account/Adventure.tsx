@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { adventureWords as w } from "../content/adventure-words";
+import AdventureGive from "./AdventureGive";
 import { type AccountApi, type AdventureDocument, type AdventureItem, type AdventureList, ApiError } from "./api";
 
 /** Where a file's reading stands, in Discord's words ("not read yet" when it has not been). A count of nothing is left out. */
@@ -245,6 +246,7 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
               <p class="small muted">{w.using(list.charactersHeld, list.charactersMax)}</p>
             </>
           )}
+          <AdventureGive api={api} refId={refId} onKept={() => setTries((n) => n + 1)} />
           <p class="small">{w.inDiscord}</p>
           <div class="row">
             <button type="button" class="button secondary" onClick={() => setTries((n) => n + 1)}>
