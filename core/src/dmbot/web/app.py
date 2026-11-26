@@ -2406,6 +2406,22 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/know-line")
+    async def me_campaign_know_line(ref: str, request: Request, signed: Signed) -> dict[str, Any]:
+        """The one line of who knows it, for a pick not yet made (#5332): `{"characters": [ids],
+        "common": false}` gives `{"line": "✅ The whole party knows"}`, worded by core's own
+        `party_icons.line` against the party now. DM of the campaign only (404 otherwise)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="bad_target") from None
+        try:
+            return await relationships.know_line_of(db, session, ref, body)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/campaigns/{ref}/route-length", status_code=202)
     async def me_campaign_route_length(
         ref: str, request: Request, signed: Signed

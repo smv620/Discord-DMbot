@@ -43,9 +43,14 @@ class WhoKnowsOnTheWeb(Web):
         got = await self.graph(hops=2)
         some = self.link_of(got, "mira-heir")
         self.assertEqual(some["who"], "some")
+        # (both are in the party, so Discord's order is the party list's, which breaks a tie of
+        # joining times by id: the ids are random here, so the test compares them as a set)
         self.assertEqual(
-            some["knownBy"],
-            [{"id": self.rook, "name": "Rook"}, {"id": self.tavin, "name": "Tavin"}],
+            sorted(some["knownBy"], key=lambda h: h["name"]),
+            [
+                {"id": self.rook, "name": "Rook", "status": "party"},
+                {"id": self.tavin, "name": "Tavin", "status": "party"},
+            ],
         )
         self.assertEqual(
             (self.link_of(got, "mira-keep")["who"], self.link_of(got, "mira-keep")["knownBy"]),
@@ -79,6 +84,30 @@ class WhoKnowsOnTheWeb(Web):
         await link_edits.set_who_knows(self.memory, self.g, self.one.id, relation, "everyone")
         done = self.link_of(await self.graph(hops=2), "mira-heir")
         self.assertEqual((done["who"], done["knownBy"]), ("all", []))
+
+    async def test_the_one_line_of_a_pick_not_yet_made_is_worded_by_the_party_now(self) -> None:
+        both = {"characters": [self.rook, self.tavin]}
+        got = await relationships.know_line_of(self.web, self.session, self.cref, both)
+        self.assertEqual(got, {"line": "✅ The whole party knows"})
+        one = await relationships.know_line_of(
+            self.web, self.session, self.cref, {"characters": [self.rook]}
+        )
+        self.assertEqual(one, {"line": "👤 Known to: Rook"})
+        common = await relationships.know_line_of(
+            self.web, self.session, self.cref, {"characters": [], "common": True}
+        )
+        self.assertEqual(common, {"line": "🌍 Everyone knows"})
+
+    async def test_the_one_line_is_for_the_dm_alone_and_refuses_a_bad_body(self) -> None:
+        with self.assertRaises(RecapError) as player:
+            await relationships.know_line_of(
+                self.web, self.player, self.cref, {"characters": [self.rook]}
+            )
+        self.assertEqual(player.exception.code, "not_found")
+        for body in ("no", {"characters": "x"}, {"characters": ["nope"]}, {"common": "yes"}):
+            with self.assertRaises(RecapError) as bad:
+                await relationships.know_line_of(self.web, self.session, self.cref, body)
+            self.assertEqual(bad.exception.code, "bad_target")
 
     async def test_a_player_learns_nothing_of_it_not_even_that_there_is_something(self) -> None:
         await self.knowers(self.secret_link, self.rook)
@@ -144,7 +173,7 @@ class AfterTheCharacterChanges(WhoKnowsOnTheWeb):
         await self.knowers(self.secret_link, self.rook, self.tavin)
         await self.sql("UPDATE memory_entities SET role = 'npc' WHERE id = %s", self.tavin)
         some = self.link_of(await self.graph(hops=2), "mira-heir")
-        self.assertEqual([k["name"] for k in some["knownBy"]], ["Rook", "Tavin"])
+        self.assertEqual(sorted(k["name"] for k in some["knownBy"]), ["Rook", "Tavin"])
 
     async def test_a_connection_only_an_npc_knows_is_held_by_some_not_the_dm(self) -> None:
         await self.knowers(self.secret_link, self.tavin)
