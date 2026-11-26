@@ -142,6 +142,28 @@ describe("the name check that was given up", () => {
   });
 });
 
+describe("names a limit left out (#5072)", () => {
+  it("adds the sessions' counts into one line, with the count first", async () => {
+    await importing({
+      sessions: [
+        { file: "a.txt", date: "2026-09-14", state: "done", reason: null, stage: "done", namesCut: 3 },
+        { file: "b.txt", date: "2026-09-21", state: "done", reason: null, stage: "done", namesCut: 4 },
+      ],
+    });
+    expect(screen.getAllByText(w.namesCut(7))).toHaveLength(1);
+    expect(w.namesCut(7).startsWith("As many as 7 more names were left out.")).toBe(true);
+  });
+
+  it("says one name in the singular", () => {
+    expect(w.namesCut(1)).toContain("As many as 1 more name was left out.");
+  });
+
+  it("shows nothing when no session left names out", async () => {
+    await importing(one({ state: "done", stage: "done", namesCut: 0 }));
+    expect(screen.queryByText(/left out/)).toBeNull();
+  });
+});
+
 describe("when the page asks again", () => {
   const delays = delaysOf;
 
@@ -187,6 +209,37 @@ describe("when the page asks again", () => {
     await importing(one({ state: "done", stage: "waiting_for_names", namesToAnswer: 1 }));
     expect(screen.queryByText(w.allDone, { exact: false })).toBeNull();
     expect(screen.getByText(w.doneCount(0, 1))).toBeTruthy();
+  });
+
+  it("asks again while a session's names are being read", async () => {
+    // (a read session whose names are still being read is asked again; the stop once they are done is pinned in the next test)
+    const reading = {
+      sessions: [
+        {
+          file: "a.txt",
+          date: "2026-09-14",
+          state: "done" as const,
+          reason: null,
+          names: { stage: "reading_names" as const, done: 3, total: 8, unit: "parts" as const, startedAt: 1, updatedAt: 1, serverNow: 1, state: "running" as const, reason: null },
+        },
+      ],
+    };
+    expect(await delays(reading)).toContain(3000);
+  });
+
+  it("stops asking once a session's names are read and done", async () => {
+    const read = {
+      sessions: [
+        {
+          file: "a.txt",
+          date: "2026-09-14",
+          state: "done" as const,
+          reason: null,
+          names: { stage: "names_read" as const, done: 8, total: 8, unit: "parts" as const, startedAt: 1, updatedAt: 1, serverNow: 1, state: "done" as const, reason: null },
+        },
+      ],
+    };
+    expect(await delays(read)).toEqual([]);
   });
 
   it("falls back to the old rule without a stage: stops when done", async () => {

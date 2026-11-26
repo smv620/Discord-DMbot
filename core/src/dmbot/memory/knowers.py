@@ -564,7 +564,12 @@ async def statement_knowers(
 
 
 async def set_connection_knowers(
-    w: Changes, relation_id: str, character_ids: Sequence[str], *, players_only: bool = False
+    w: Changes,
+    relation_id: str,
+    character_ids: Sequence[str],
+    *,
+    players_only: bool = False,
+    listed: Collection[str] | None = None,
 ) -> list[str]:
     """Exactly these characters know this hidden connection (none: only the DM). A character not
     listed who knew it stops knowing (a 0.0 belief, so the history stays). The connection must be
@@ -572,7 +577,11 @@ async def set_connection_knowers(
     to choose. Returns the characters now knowing.
 
     `players_only`: the caller's list holds player characters only (the Discord menu), so only the
-    player characters' rows are replaced and an NPC who knows it keeps knowing (#3197)."""
+    player characters' rows are replaced and an NPC who knows it keeps knowing (#3197).
+
+    `listed`: the characters the caller's list showed (the website's, #4968). A character it didn't
+    show (DMbot guessed them after the page was read) is left as they are, and DMbot's guess of an
+    NPC it showed and the DM kept becomes the DM's word (see `_follow_player_list`)."""
     if w.source != DM:
         raise MemoryRuleError(ONLY_THE_DM)
     relation = await w.get(RELATIONS, relation_id)
@@ -594,10 +603,12 @@ async def set_connection_knowers(
                 w, await _view_of(w, entity_id), relation_id, KNOWN, REVEALED_FACT
             )
     for entity_id in current - set(chosen):
+        if listed is not None and entity_id not in listed:
+            continue  # (the list never showed them: nothing the DM said is about them, #4968)
         await beliefs.add_belief(w, await _view_of(w, entity_id), relation_id, 0.0, SECRET_PLOT)
     # The same list in the one table the gate reads (#2995, slice 2b); the old beliefs stay what
     # the old readers read until slice 3.
-    await _follow_player_list(w, "connection", relation_id, known, players_only)
+    await _follow_player_list(w, "connection", relation_id, known, players_only, listed)
     return chosen
 
 
@@ -684,11 +695,20 @@ async def _follow_player_list(
     statement_id: str,
     chosen: Mapping[str, bool],
     players_only: bool = False,
+    listed: Collection[str] | None = None,
 ) -> None:
     """The old "Who knows this?" writers (`chosen`: each character, with whether it is a player's):
     make the characters in the new list exactly those (players and NPCs, #3197: one not picked
     stops knowing), keep every other view's rows and the certainty of a character who stays
-    (#2995, slice 2b)."""
+    (#2995, slice 2b).
+
+    `listed`: the characters the DM's list showed (the website's, which shows NPCs and marks
+    DMbot's guesses; #4968, Supervisor's ruling). When it is given:
+    - DMbot's guess of an NPC the DM keeps (a row below 1.0, `add_guessed`) becomes the DM's word,
+      1.0: the DM picked them on a list that showed the guess;
+    - a character the list didn't show (a guess added after the page was read) is left as it is.
+    Without it (Discord, every other caller), everything is as before. A row a hide put to sleep
+    still goes whatever the list showed (`_drop_asleep`: the DM's list replaces those)."""
     column, _ = _COLUMNS[kind]
     views = {i: await _view_for(w, i, player) for i, player in chosen.items()}
     marks = await _drop_asleep(w, column, statement_id)
@@ -697,14 +717,31 @@ async def _follow_player_list(
         r["perspective_id"]: r
         for r in await w.select(KNOWERS, f" AND {column} = %s", [statement_id])
     }
+    npcs: set[str] = set()
+    owner: dict[str, str] = {}
+    if listed is not None:
+        npcs = {str(r["id"]) for r in await w.select(PERSPECTIVES, " AND kind = %s", [NPC_VIEW])}
+        owner = {
+            str(r["id"]): str(r["entity_id"])
+            for r in await w.select(PERSPECTIVES, " AND id = ANY(%s)", [sorted(have)])
+        }
     for view_id in views.values():
         if view_id not in have:
             await w.insert(
                 KNOWERS,
                 _row(column, statement_id, view_id, w.now) | {"backstory_of": marks.get(view_id)},
             )
+        elif (
+            listed is not None
+            and not players_only
+            and view_id in npcs
+            and float(have[view_id]["confidence"]) < KNOWN
+        ):
+            await w.update(KNOWERS, have[view_id]["id"], {"confidence": KNOWN})
     for view_id, row in have.items():
         if view_id in pcs and view_id not in views.values():
+            if listed is not None and owner.get(view_id) not in listed:
+                continue  # (the list never showed them: nothing the DM said is about them)
             await w.delete(KNOWERS, row["id"])
 
 

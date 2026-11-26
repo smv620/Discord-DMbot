@@ -4,6 +4,7 @@
 // oldest first, and for each kind either the page that answers it or how to answer it in Discord, never a dead
 // button. Counts and campaign names only: the cards come from each kind's own page. The counts are the bot's
 // (`question_counts`); older than five minutes, the page says it is catching up.
+import { DEED_QUESTIONS_LIVE } from "../content/deed-questions-switch";
 import { matchWords } from "../content/name-matches-words";
 import { NAME_MATCHES_LIVE } from "../content/name-matches-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
@@ -18,17 +19,24 @@ import { campaignHref } from "./campaignLinks";
 import { TRAIT_QUESTIONS_LIVE } from "../content/trait-questions-switch";
 import { SECRET_QUESTIONS_LIVE } from "../content/secret-questions-switch";
 import { PARTY_JOIN_LIVE } from "../content/party-join-switch";
+import { PARTY_LEAVES_LIVE } from "../content/party-leaves-switch";
+import { REVEALS_LIVE } from "../content/reveals-switch";
+import { HEARD_LIVE } from "../content/heard-switch";
 import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
 import { THREADS_LIVE } from "../content/threads-switch";
 import { MAPS_LIVE } from "../content/maps-switch";
 import { RULE_UPDATES_LIVE } from "../content/rule-updates-switch";
+import { MORE_NAMES_LIVE } from "../content/more-names-switch";
+import { LOOKALIKES_LIVE } from "../content/lookalikes-switch";
+import MoreNames from "./MoreNames";
 import QuestionsHere, { groupOf, type HereGroup } from "./QuestionsHere";
 
 /** The bot counts every minute or so: five minutes without a count and the numbers are said to be old. */
 export const CATCHING_UP_SECONDS = 300;
 
-function href(ref: string, to: "recaps" | "graph" | "names" | "maps" | "houserules"): string {
+function href(ref: string, to: "recaps" | "graph" | "names" | "maps" | "houserules" | "sharing"): string {
   const e = encodeURIComponent(ref);
+  if (to === "sharing") return "/account/sharing"; // lists every campaign the person runs, so it takes no ref (#4875)
   return to === "recaps"
     ? `/account/recaps?campaign=${e}`
     : to === "graph"
@@ -74,6 +82,16 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
   if (kind === "secrets") return SECRET_QUESTIONS_LIVE && api.secretQuestions !== undefined ? "here" : "discord";
   // The join question (#4778 part b): answered here once its switch is on, else in Discord.
   if (kind === "party_joins") return PARTY_JOIN_LIVE && api.joinQuestions !== undefined ? "here" : "discord";
+  // The "Still in the party?" question (#4895): answered here once its switch is on, else in Discord.
+  if (kind === "party_leaves") return PARTY_LEAVES_LIVE && api.leaveQuestions !== undefined ? "here" : "discord";
+  // The "Deeds to record" card (#3591): answered here once its switch is on, else in Discord.
+  if (kind === "deeds") return DEED_QUESTIONS_LIVE && api.deedQuestions !== undefined ? "here" : "discord";
+  // What the characters learned (#3863 step 2): answered here once its switch is on, else in Discord.
+  if (kind === "reveals") return REVEALS_LIVE && api.revealQuestions !== undefined ? "here" : "discord";
+  // Names that look alike (#5259): answered here once its switch is on, else Discord's own panel (never a link to a page that cannot answer).
+  if (kind === "lookalikes") return LOOKALIKES_LIVE && api.lookAlikes !== undefined ? "here" : "discord";
+  // The "Did they mean…?" question (#4841 B1): answered here once its switch is on, else in Discord.
+  if (kind === "heard") return HEARD_LIVE && api.heardQuestions !== undefined ? "here" : "discord";
   // The three kinds answered on another page (#4841 A): a link to it while that page's switch is on, else in Discord.
   if (kind === "world_notes") return WORLD_NOTES_LIVE ? "link" : "discord";
   if (kind === "threads") return THREADS_LIVE ? "link" : "discord";
@@ -91,7 +109,8 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
         : group === "readings"
           ? WEB_READINGS_LIVE && api.webReadings !== undefined
           : false;
-  return can ? "here" : "link";
+  // Never a link to a page whose panel is off (#5225: the Story Graph's waiting list sent a DM to an empty page): say where it can be answered.
+  return can ? "here" : "discord";
 }
 
 function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; serverNow: number; api: AccountApi }) {
@@ -200,6 +219,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                     campaignRef={campaign.ref}
                     group={walking.group}
                     id={`q-${campaign.ref}-walk`}
+                    waiting={walking.count}
                     onLeft={setLeft}
                   />
                   <div class="row">
@@ -231,7 +251,9 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
               return (
                 <li key={k.kind} class="stack">
                   <strong>{words.kindLine(w.label, k.count)}</strong>
-                  {howFor(k.kind, api) === "here" && lead.get(groupOf(k.kind) ?? "") !== k.kind ? (
+                  {k.kind === "more_names" && MORE_NAMES_LIVE && api.moreNames !== undefined ? (
+                    <MoreNames api={api} campaignRef={campaign.ref} />
+                  ) : howFor(k.kind, api) === "here" && lead.get(groupOf(k.kind) ?? "") !== k.kind ? (
                     <span class="small muted">{words.answeredWith(kindWords(lead.get(groupOf(k.kind) ?? "") ?? "").label)}</span>
                   ) : howFor(k.kind, api) === "here" ? (
                     <>
@@ -252,15 +274,22 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                         {open.has(k.kind) ? words.hideHere : words.showHere}
                       </button>
                       {open.has(k.kind) && walking?.group !== groupOf(k.kind) && (
-                        <QuestionsHere api={api} campaignRef={campaign.ref} group={groupOf(k.kind) ?? "names"} id={`q-${campaign.ref}-${k.kind}`} />
+                        <QuestionsHere api={api} campaignRef={campaign.ref} group={groupOf(k.kind) ?? "names"} id={`q-${campaign.ref}-${k.kind}`} waiting={k.count} />
                       )}
                     </>
                   ) : howFor(k.kind, api) === "link" && w.to ? (
-                    <a class="button secondary" href={href(campaign.ref, w.to)}>
-                      {w.link}
-                    </a>
+                    <>
+                      <a class="button secondary" href={href(campaign.ref, w.to)}>
+                        {w.link}
+                      </a>
+                      {w.also && (
+                        <a class="button secondary" href={href(campaign.ref, w.also.to)}>
+                          {w.also.link}
+                        </a>
+                      )}
+                    </>
                   ) : (
-                    <span class="small muted">{words.discord}</span>
+                    <span class="small muted">{w.where ? words.discordAt(w.where) : words.discord}</span>
                   )}
                 </li>
               );

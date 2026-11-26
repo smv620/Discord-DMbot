@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from dmbot.db import Database
 
@@ -24,8 +24,9 @@ class MemberDirectory:
     async def remember(
         self, guild_id: int, user_id: int, display_name: str | None, username: str | None
     ) -> None:
-        """Add or refresh one member who has agreed to be recorded (nothing is kept for anyone
-        without a consent row, whatever the caller thinks)."""
+        """Add or refresh one member who has agreed to be recorded, or who is a DM of a campaign
+        here (a DM's name is no story name either, and the import search still shows a row only
+        while consent is current). Nothing is kept for anyone else, whatever the caller says."""
         shown = " ".join((display_name or "").split())[:NAME_MAX]
         handle = " ".join((username or "").split())[:NAME_MAX]
         if not (shown or handle):
@@ -36,11 +37,12 @@ class MemberDirectory:
             await conn.execute(
                 "INSERT INTO member_directory (guild_id, user_id, display_name, username,"
                 " updated_at) SELECT %s, %s, %s, %s, %s WHERE EXISTS (SELECT 1 FROM consent"
+                " WHERE guild_id = %s AND user_id = %s) OR EXISTS (SELECT 1 FROM campaign_dms"
                 " WHERE guild_id = %s AND user_id = %s)"
                 " ON CONFLICT (guild_id, user_id) DO UPDATE SET"
                 " display_name = EXCLUDED.display_name, username = EXCLUDED.username,"
                 " updated_at = EXCLUDED.updated_at",
-                (guild_id, user_id, shown, handle, int(self._now()), guild_id, user_id),
+                (guild_id, user_id, shown, handle, int(self._now()), *(guild_id, user_id) * 2),
             )
 
     async def set_avatar(self, guild_id: int, user_id: int, avatar: str | None) -> None:
@@ -68,6 +70,41 @@ class MemberDirectory:
             )
             return [int(r["played_by"]) for r in await cur.fetchall()]
 
+    async def names(self, guild_id: int, user_ids: Sequence[int]) -> dict[int, list[str]]:
+        """The display name and username kept for each of these people, for the worker, which has
+        no Discord member cache to ask (#4904 3b-4c): who is at the table is not a story name.
+        Only someone with a consent row now, or a DM here, whatever a stale row says."""
+        if not user_ids:
+            return {}
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT d.user_id, d.display_name, d.username FROM member_directory d"
+                " WHERE d.guild_id = %s AND d.user_id = ANY(%s) AND (EXISTS ("
+                "   SELECT 1 FROM consent x WHERE x.guild_id = d.guild_id"
+                "   AND x.user_id = d.user_id) OR EXISTS ("
+                "   SELECT 1 FROM campaign_dms m WHERE m.guild_id = d.guild_id"
+                "   AND m.user_id = d.user_id))",
+                (guild_id, list(user_ids)),
+            )
+            return {
+                int(r["user_id"]): [n for n in (r["display_name"], r["username"]) if n]
+                for r in await cur.fetchall()
+            }
+
+    async def sweep(self, guild_id: int, older_than_s: float) -> int:
+        """Drop rows not written for this long (a name is kept fresh while the person is seen, so
+        what is left is someone who has gone quiet), except a player of a confirmed character: their
+        avatar and their name in a late import still need the row. Returns how many went."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM member_directory d WHERE d.guild_id = %s AND d.updated_at < %s"
+                " AND NOT EXISTS (SELECT 1 FROM memory_entities e WHERE e.guild_id = d.guild_id"
+                " AND e.played_by = d.user_id AND e.role = 'player_character'"
+                " AND e.status = 'confirmed' AND e.merged_into IS NULL)",
+                (guild_id, int(self._now() - older_than_s)),
+            )
+            return int(cur.rowcount)
+
     async def forget(self, guild_id: int, user_id: int) -> None:
         """Drop one member: they stopped being recorded. Also drops any row in this server whose
         person has no consent row any more (a stop made on the website while the bot was down),
@@ -75,7 +112,8 @@ class MemberDirectory:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "DELETE FROM member_directory d WHERE d.guild_id = %s AND (d.user_id = %s OR"
-                " NOT EXISTS (SELECT 1 FROM consent x WHERE x.guild_id = d.guild_id"
-                " AND x.user_id = d.user_id))",
+                " (NOT EXISTS (SELECT 1 FROM consent x WHERE x.guild_id = d.guild_id"
+                " AND x.user_id = d.user_id) AND NOT EXISTS (SELECT 1 FROM campaign_dms m"
+                " WHERE m.guild_id = d.guild_id AND m.user_id = d.user_id)))",
                 (guild_id, user_id),
             )

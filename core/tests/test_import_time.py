@@ -131,12 +131,14 @@ class Importing(sp.Party):
                 store=SimpleNamespace(scan_lines=AsyncMock(side_effect=self.scan_lines))
             ),
             consent=SimpleNamespace(consenting=AsyncMock(side_effect=self.consenting)),
-            settings=SimpleNamespace(time_suggestions=True),
+            settings=SimpleNamespace(time_suggestions=True, worker_on=False),
+            outbox=None,
             import_time_ai=self.ai,
             plan_allows=AsyncMock(return_value=True),
             post=post,
             import_clock_offers=self.offers,
         )
+        self.me._say_import_time = lambda *a: DMBot._say_import_time(cast(Any, self.me), *a)
         self.me._keep_import_clock_offer = lambda *a, **k: DMBot._keep_import_clock_offer(
             cast(Any, self.me), *a, **k
         )
@@ -173,6 +175,40 @@ class Importing(sp.Party):
 
     def labels(self, view: Any) -> list[str]:
         return [str(getattr(c, "item", c).label) for c in view.children]
+
+    async def test_with_the_worker_on_the_offer_is_an_outbox_row_and_the_bot_says_it(self) -> None:
+        rows: list[tuple[int, str, str, dict[str, Any], bool]] = []
+
+        class Box:
+            async def add_now(
+                self, gid: int, cid: str, kind: str, payload: Any, *, unique: bool = False
+            ) -> int:
+                rows.append((gid, cid, kind, dict(payload), unique))
+                return 1
+
+        self.me.settings = SimpleNamespace(time_suggestions=True, worker_on=True)
+        self.me.outbox = Box()
+        await self.run_step()
+        self.assertEqual(self.posts, [])  # (the worker says nothing in Discord)
+        ((gid, cid, kind, payload, unique),) = rows
+        self.assertEqual((gid, cid, kind, unique), (GUILD_A, self.a.id, "import_clock_offer", True))
+        self.assertEqual(set(payload), {"minute", "split"})  # (a game minute and a flag: no words)
+        # the bot's delivery says the very line the scan says itself with the worker off
+        self.me.campaigns = self.campaigns
+        await DMBot.deliver_import_clock_offer(cast(Any, self.me), gid, cid, payload)
+        (_channel, text, view) = self.posts[0]
+        self.assertIn("Day", text)
+        self.assertTrue(self.labels(view))
+
+    async def test_an_offer_that_cannot_be_posted_raises_so_the_row_is_tried_again(self) -> None:
+        async def refuse(*_a: Any, **_k: Any) -> bool:
+            return False
+
+        self.me.post = refuse
+        with self.assertRaises(RuntimeError):
+            await DMBot.deliver_import_clock_offer(
+                cast(Any, self.me), GUILD_A, self.a.id, {"minute": 5000, "split": False}
+            )
 
     async def test_the_next_morning_offers_day_5_with_two_buttons_and_no_ai_call(self) -> None:
         await self.run_step()

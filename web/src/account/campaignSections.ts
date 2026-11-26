@@ -2,11 +2,11 @@
 // website"). One list, used by the tabs on every campaign page and by the campaign's own Overview page, so the
 // two never disagree. The parts are named for what a DM is doing: read the story, add to it, set the rules.
 import { campaignPage as words } from "../content/campaign-page";
-import { IMPORT_LIVE } from "../content/import-words";
+import { IMPORT_LIVE } from "../content/import-switch";
 import { MAPS_LIVE } from "../content/maps-switch";
 import { PICTURES_LIVE } from "../content/pictures-switch";
-import { LORE_LIVE } from "../content/lore-words";
-import { RECAP_STYLE_LIVE } from "../content/recap-style-words";
+import { LORE_LIVE } from "../content/lore-switch";
+import { RECAP_STYLE_LIVE } from "../content/recap-style-switch";
 import { RECAPS_LIVE } from "../content/recap-words";
 
 export type CampaignGroup = "overview" | "story" | "add" | "rules" | "settings";
@@ -25,7 +25,8 @@ export type CampaignPageKey =
   | "pictures"
   | "maps"
   | "houseRules"
-  | "homebrew";
+  | "homebrew"
+  | "sharedRules";
 
 export const GROUP_OF: Record<CampaignPageKey, CampaignGroup> = {
   campaign: "overview",
@@ -41,6 +42,7 @@ export const GROUP_OF: Record<CampaignPageKey, CampaignGroup> = {
   maps: "story",
   houseRules: "rules",
   homebrew: "rules",
+  sharedRules: "rules",
 };
 
 export interface SectionPage {
@@ -72,6 +74,7 @@ export function sectionPages(ref: string, o: { isDm: boolean; importsOn?: boolea
     { key: "houseRules", href: `/account/house-rules/${e}`, label: words.pages.houseRules, note: words.pageNotes.houseRules },
     { key: "homebrew", href: `/account/homebrew/${e}`, label: words.pages.homebrew, note: words.pageNotes.homebrew },
   ];
-  if (o.isDm) rules.push({ key: "sharedRules", href: "/account/sharing", label: words.sharedRules, note: words.sharedRulesNote });
+  // A campaign's Shared rules is a page of that campaign (#5039): it keeps the campaign's navigation.
+  if (o.isDm) rules.push({ key: "sharedRules", href: `/account/sharing/${e}`, label: words.sharedRules, note: words.sharedRulesNote });
   return { story, add, rules };
 }

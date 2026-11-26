@@ -204,7 +204,9 @@ class Isolation(MemoryTest):
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
         known = await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
         # and the upload a kept connection came from (#2946)
-        await self.memory.record_link_source(GUILD_A, self.c, known.value[0].id, "Upload, 1 Jan")
+        await self.memory.record_link_source(
+            GUILD_A, self.c, known.value[0].id, "Upload, 1 Jan", kind="own_writing"
+        )
         clue = await self.add("A map", type="clue")
         async with self.memory._write(GUILD_A, self.c, "dm") as w:  # and what it stands on (#2662)
             await evidence.add_in(
@@ -300,6 +302,13 @@ class Isolation(MemoryTest):
             await conn.execute(
                 "INSERT INTO memory_name_sessions (guild_id, campaign_id, entity_id,"
                 " session_started_at) VALUES (%s, %s, %s, 77)",
+                (GUILD_A, self.c, a),
+            )
+        # and a character's card sentence and first mention (#5050): DMbot's words, ids and times
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_card_summaries (guild_id, campaign_id, entity_id, who)"
+                " VALUES (%s, %s, %s, 'A halfling innkeeper.')",
                 (GUILD_A, self.c, a),
             )
         # and a being met in play that nobody named yet (#3172 slice 5), on its session
@@ -1243,8 +1252,9 @@ class Undo(MemoryTest):
         # 63 before a place's land, climate and ruler moved with it, #4256: one read; 64 before a
         # thread's parts moved with it, #4471: one read; 65 before a merge read the kept entry to
         # refuse a secret main name before the #4524 guard could hold it, #4524: one read; 66
-        # before a place's pins on maps moved with it, #4670: one read)
-        self.assertLess(merge_statements, 67)
+        # before a place's pins on maps moved with it, #4670: one read; 67 before a kept
+        # hand-over's "from whom" moved with it, #4170: one read)
+        self.assertLess(merge_statements, 68)
         self.assertLess(undo_statements, 60)
         self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
         # Still one log row per changed row, so undo and redo work as before.
@@ -1374,9 +1384,9 @@ class Undo(MemoryTest):
             assert merged.batch is not None
             await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
         self.assertLess(
-            merge_statements, 64
+            merge_statements, 65
         )  # (60 with #2790: one statement for the people who hang off a merge; 61 with #4229; 62
-        # with #4256's places; 63 with #4670's pins on maps)
+        # with #4256's places; 63 with #4670's pins on maps; 64 with #4170's hand-overs)
         self.assertLess(statements, 60)
         self.assertEqual(await self.snapshot(), before)
 

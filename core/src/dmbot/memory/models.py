@@ -25,6 +25,13 @@ FIX, KEEP = "fix", "keep"  # correction actions
 
 # Where a fact came from. "dm" is the DM's own word; everything else needs confirming.
 BACKGROUND_SOURCE = "background"  # a suggestion read from the DM's own story (#2167)
+# What kind of upload a kept connection came from (#3742, `memory_link_sources.upload_kind`): the
+# DM's own lore or backstory (the 📜 read, confirmed as own writing), or unknown (a row from before,
+# or a reader that never said). The graph-improvement poster posts a lore quote only from the DM's
+# own writing, so anything else stays generic.
+UPLOAD_OWN_WRITING = "own_writing"
+UPLOAD_UNKNOWN = "unknown"
+UPLOAD_KINDS = frozenset({UPLOAD_OWN_WRITING, UPLOAD_UNKNOWN})
 PARTY_SOURCE = "party"  # the faction "The party", made by the rule that links the players (#3036)
 # A family link worked out from two stated ones (#2959, #2960): proposed for the DM, never stated
 WORKED_OUT_SOURCE = "worked_out"
@@ -400,6 +407,11 @@ class Entity:
     length_unit: str | None = None
     length_approx: bool = False
     length_from: str | None = None
+    # A description, not a name (#5173): a thing or a place the story singles out and keeps coming
+    # back to. None for a name; otherwise the words exactly as the story said them, without an
+    # article ("gemstone mine", "Easthaven ferry"), written into a sentence as "the gemstone mine"
+    # (`entity_words.in_sentence`). Back to None when the DM gives it a name.
+    described: str | None = None
 
     @property
     def setting_guessed(self) -> bool:
@@ -582,6 +594,11 @@ class Relation:
     length_unit: str | None = None
     length_approx: bool = False
     length_from: str | None = None
+    # A kept hand-over (#4170): how the item came to this holder (one of END_REASONS, "" for any
+    # other connection) and from whom (an entry id, ""): a tie of theirs kept after it is kept
+    # already ended (`backstory_keep.handed_away`). Only on an `owns` or `carries`.
+    hand_over: str = ""
+    hand_over_from: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -692,6 +709,8 @@ class Written[T]:
     # tell the DM; "" otherwise. (`confirm_kinds` counts both in `split_counts`.)
     split: str = ""
     split_counts: tuple[int, int] = (0, 0)
+    # The heard spellings a yes turned into "change to" rules (#5133 slice 3c-2b), for the reply.
+    rules: tuple[str, ...] = ()
 
 
 # Names one merge takes: the bot, the website and the database door agree (#2426).

@@ -90,6 +90,9 @@ UNIT_WORDS: dict[str, str] = {
 }
 # Below this the DM is not asked (a few credits is not worth a question).
 ESTIMATE_BAR = 20
+# A high guess at the words in an adventure file, from its characters: five a word, so the figure is
+# never below the charge (the website and Discord's card show the same sentence, #5316).
+ADVENTURE_CHARS_PER_WORD = 5
 # The monthly allowance, in credits, by plan id (`plans.PlanId`). HIGH ON PURPOSE until the owner
 # sets the numbers (#4005, "Owner, what this needs from you"): nothing is refused yet, and a
 # number that is too small would be a refusal.
@@ -185,6 +188,15 @@ def estimate_words(job_kind: str, est: Estimate, *, what: str | None = None) -> 
     if ALLOWANCES_SET:
         words += f" You have {est.left:,} left this month."
     return words
+
+
+def adventure_estimate_words(characters: int) -> str:
+    """The card's sentence for reading an adventure file of `characters` characters: "About 12 AI
+    credits for the adventure.". The website's list and Discord's "Read it now?" both show it, from
+    this one function, so they can never disagree (#5316)."""
+    words = max(0, characters) // ADVENTURE_CHARS_PER_WORD
+    units = units_of("adventure", words=words)
+    return estimate_words("adventure", estimate("adventure", units, allowance=0, used=0))
 
 
 def of_micro(micro_usd: int) -> int:

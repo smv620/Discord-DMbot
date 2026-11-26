@@ -290,7 +290,7 @@ class TheCardRows(unittest.TestCase):
         from dmbot.ui.name_card import _rows
 
         def entity(eid: str, name: str, kind: str) -> Any:
-            return SimpleNamespace(id=eid, name=name, type=kind, status=CONFIRMED)
+            return SimpleNamespace(id=eid, name=name, type=kind, status=CONFIRMED, described=None)
 
         lookup: Any = SimpleNamespace(
             entities={

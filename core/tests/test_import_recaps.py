@@ -14,7 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
-from dmbot.campaigns import CampaignStore
+from dmbot.campaigns import Campaign, CampaignStore
 from dmbot.consent import ConsentStore
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.models import DM as DM_SOURCE
@@ -22,6 +22,7 @@ from dmbot.memory.store import MemoryStore
 from dmbot.transcript.import_job import STALE_SCAN_S, ImportStore
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
+from tests.fake_import_state import FakeImportState
 from tests.pg import DatabaseTest
 
 GUILD, DM, MIRA = 77, 5, 7001
@@ -40,9 +41,16 @@ class WithImports(DatabaseTest):
         self.store = ImportStore(self.db)
 
     async def imported(
-        self, day: int, *, state: str = "done", recap: bool = False, said: str = "Kazeth rides."
+        self,
+        day: int,
+        *,
+        state: str = "done",
+        recap: bool = False,
+        said: str = "Kazeth rides.",
+        campaign: Campaign | None = None,
     ) -> str:
-        sid = await self.transcripts.open_session(GUILD, self.campaign.id, START + day * DAY)
+        cid = (campaign if campaign is not None else self.campaign).id
+        sid = await self.transcripts.open_session(GUILD, cid, START + day * DAY)
         await self.transcripts.add_lines(
             GUILD, sid, [Line((START + day * DAY) * 1000, MIRA, said, said)]
         )
@@ -51,7 +59,7 @@ class WithImports(DatabaseTest):
                 "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
                 " file_name, imported_by, imported_at, state, write_recap)"
                 " VALUES (%s, %s, %s, %s, 'a.txt', %s, 1, %s, %s)",
-                (GUILD, self.campaign.id, sid, "a" * 32, DM, state, recap),
+                (GUILD, cid, sid, "a" * 32, DM, state, recap),
             )
         return sid
 
@@ -111,6 +119,39 @@ class TheStore(WithImports):
         await self.store.finish_scan(GUILD, other, int(time.time()))
         self.assertEqual(await self.store.ready_for_recap(GUILD), [])
 
+    async def test_another_campaigns_waiting_recaps_never_hide_this_ones(self) -> None:
+        # (`ready_for_recap` lists the oldest few for the whole server: asked of one campaign, a
+        # recap that is still to start must still count, #4904 3b-4c)
+        other = await self.campaigns.create(GUILD, "Two", DM)
+        for day in (1, 2, 3, 4):  # (more than `ready_for_recap` lists at once)
+            sid = await self.transcripts.open_session(GUILD, other.id, START + day * DAY)
+            async with self.db.guild(GUILD) as conn:
+                await conn.execute(
+                    "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
+                    " file_name, imported_by, imported_at, state, write_recap, scan_finished)"
+                    " VALUES (%s, %s, %s, %s, 'b.txt', %s, 1, 'done', TRUE, TRUE)",
+                    (GUILD, other.id, sid, "b" * 32, DM),
+                )
+        mine = await self.imported(9, recap=True)  # (a later date than all four of the other's)
+        await self.store.claim_scan(GUILD, mine, int(time.time()))
+        await self.store.finish_scan(GUILD, mine, int(time.time()))
+        self.assertTrue(await self.store.recap_waiting(GUILD, self.campaign.id))
+        self.assertTrue(await self.store.recap_waiting(GUILD, other.id))
+        await self.store.mark_recap_started(GUILD, mine)
+        self.assertFalse(await self.store.recap_waiting(GUILD, self.campaign.id))
+        self.assertTrue(await self.store.recap_waiting(GUILD, other.id))
+
+    async def test_an_import_whose_session_was_deleted_is_not_waited_for(self) -> None:
+        # (as `ready_for_recap` leaves it out: nothing is left to write a recap of)
+        sid = await self.imported(1, recap=True)
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.finish_scan(GUILD, sid, int(time.time()))
+        self.assertTrue(await self.store.recap_waiting(GUILD, self.campaign.id))
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM transcript_sessions WHERE id = %s", (sid,))
+        self.assertEqual(await self.store.ready_for_recap(GUILD), [])
+        self.assertFalse(await self.store.recap_waiting(GUILD, self.campaign.id))
+
     async def test_the_choice_travels_with_the_session(self) -> None:
         await self.imported(1, recap=True)
         (ready,) = await self.store.ready_for_scan(GUILD)
@@ -130,6 +171,56 @@ class TheStore(WithImports):
         self.assertEqual(await self.store.scan_lines(GUILD, sid), [(MIRA, "we meet Kazeth")])
 
 
+class TheImportOpen(WithImports):
+    """The news at the end of an import waits while a session still needs its scan or its recap
+    (#4904 3b-4c): an import is open until both are done, and never because of another campaign."""
+
+    async def test_an_import_is_open_while_a_scan_waits_and_while_its_recap_is_to_start(
+        self,
+    ) -> None:
+        bot, _campaign = fake_bot(self.store)
+        sid = await self.imported(1, recap=True)
+        self.assertTrue(await bot._import_open(GUILD, self.store, self.campaign.id))  # scan waits
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.finish_scan(GUILD, sid, int(time.time()))
+        self.assertTrue(
+            await bot._import_open(GUILD, self.store, self.campaign.id)
+        )  # recap to start
+        await self.store.mark_recap_started(GUILD, sid)
+        self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
+
+    async def test_a_session_whose_recap_was_not_asked_for_is_over_once_scanned(self) -> None:
+        bot, _campaign = fake_bot(self.store)
+        sid = await self.imported(1)
+        self.assertTrue(await bot._import_open(GUILD, self.store, self.campaign.id))
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.finish_scan(GUILD, sid, int(time.time()))
+        self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
+
+    async def test_another_campaigns_recap_does_not_hold_this_one_open(self) -> None:
+        bot, _campaign = fake_bot(self.store)
+        other = await self.campaigns.create(GUILD, "Two", DM)
+        other_session = await self.imported(1, recap=True, campaign=other)  # its recap is asked
+        mine = await self.imported(2)  # this campaign's own session, no recap
+        await self.store.claim_scan(GUILD, mine, int(time.time()))
+        await self.store.finish_scan(GUILD, mine, int(time.time()))
+        self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
+        # the other campaign's session is scanned too, so only its recap (to start) holds it open
+        await self.store.claim_scan(GUILD, other_session, int(time.time()))
+        await self.store.finish_scan(GUILD, other_session, int(time.time()))
+        self.assertTrue(await bot._import_open(GUILD, self.store, other.id))
+
+    async def test_a_gave_up_scan_still_has_its_recap_to_start(self) -> None:
+        # (a gave-up scan skips the name questions only: its recap is still written)
+        bot, _campaign = fake_bot(self.store)
+        sid = await self.imported(1, recap=True)
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.give_up_scan(GUILD, sid)
+        self.assertTrue(await bot._import_open(GUILD, self.store, self.campaign.id))
+        await self.store.mark_recap_started(GUILD, sid)
+        self.assertFalse(await bot._import_open(GUILD, self.store, self.campaign.id))
+
+
 def fake_bot(store: ImportStore, **kw: Any) -> Any:
     campaign = SimpleNamespace(
         guild_id=GUILD, id="", recaps_text=True, recaps_email=True, owner_user_id=DM,
@@ -137,7 +228,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         dm_bot_channel_id=None, ask_before_adding=True,
     )  # fmt: skip
     bot = SimpleNamespace(
-        settings=SimpleNamespace(recaps_on=True),
+        settings=SimpleNamespace(recaps_on=True, worker_on=False),
         import_job=SimpleNamespace(store=store),
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         **{"memory": SimpleNamespace(entities=AsyncMock(return_value=[])), **kw},
@@ -153,18 +244,10 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         plan_allows=AsyncMock(return_value=True),
         recap_holds=None,
         post=AsyncMock(return_value=True),
-        _import_names={},
-        _import_speakers={},
-        _import_entries={},
-        _import_batches={},
-        _import_starts={},
-        _import_reports={},
-        _import_unhonoured={},
-        _import_party={},
-        _import_queued={},
-        _import_unchecked={},
+        import_state=FakeImportState(),
         _propose_new_names=AsyncMock(return_value=["Kazeth"]),
         repair_names=AsyncMock(return_value=0),  # PlotBot's name pass (#2628): its own tests
+        _read_before_pass=AsyncMock(return_value=None),  # (slice 4, #5133: its own tests)
         _hold_or_queue=AsyncMock(return_value="held"),
         _link_import_party=AsyncMock(),  # the party link after a scan (#3036): its own tests
         _offer_import_time=AsyncMock(),  # the game-time offer (#2979): its own tests
@@ -176,10 +259,13 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
     for name in (
         "run_import_followups",
         "_scan_import",
+        "_keep_import_reports",
         "_import_recap",
         "_start_import_recap",
         "_apply_import_plays",
         "_tell_import_news",
+        "_import_news",
+        "_import_open",
         "_upkeep_channel",
         "_say_group_writing",
         "_say_writing",
@@ -498,7 +584,7 @@ class TheCrashAndTheNews(WithImports):
         text = bot.post.await_args.args[1]
         self.assertIn("2 recaps you asked for from your imported sessions weren't written", text)
         one = fake_bot(self.store)[0]
-        one._import_unhonoured["x"] = ["recaps are switched off"]
+        await one.import_state.add_each(GUILD, "x", "unhonoured", ["recaps are switched off"])
         one.campaigns.get = AsyncMock(return_value=campaign)
         await one._tell_import_news(GUILD, self.store)
         self.assertIn("1 recap you asked for", one.post.await_args.args[1])
@@ -512,7 +598,9 @@ class TheCrashAndTheNews(WithImports):
             bot, campaign = fake_bot(self.store)
             campaign.id = self.campaign.id
             campaign.dm_bot_channel_id = bot_channel
-            bot._import_names[self.campaign.id] = ["Bryn Shander", "Kazeth"]
+            await bot.import_state.add_strings(
+                GUILD, self.campaign.id, "names", ["Bryn Shander", "Kazeth"]
+            )
             await bot._tell_import_news(GUILD, self.store)
             channel, text = bot.post.await_args.args[:2]
             self.assertEqual(channel, expect_channel)
@@ -530,12 +618,51 @@ class TheCrashAndTheNews(WithImports):
         bot, campaign = fake_bot(self.store)
         campaign.id = self.campaign.id
         campaign.dm_bot_channel_id = 88
-        bot._import_unchecked[self.campaign.id] = 2
+        await bot.import_state.bump(GUILD, self.campaign.id, "unchecked", 2)
         await bot._tell_import_news(GUILD, self.store)
         channel, text = bot.post.await_args.args[:2]
         self.assertEqual(channel, 88)
         self.assertIn("2 imported sessions", text)
         self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
+
+    async def test_names_a_cap_left_out_are_told_as_a_count_once(self) -> None:
+        # (#5055 A) the scan's and the story reader's limits are counted, never silent: one line in
+        # the import's notice, a count only (the DM Bot channel is read by the campaign's people)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        campaign.dm_bot_channel_id = 88
+        await bot.import_state.bump(GUILD, self.campaign.id, "names_cut", 12)
+        await bot._tell_import_news(GUILD, self.store)
+        channel, text = bot.post.await_args.args[:2]
+        self.assertEqual(channel, 88)
+        self.assertIn("As many as 12 more names are waiting", text)
+        self.assertIn("📝 More names", text)
+        self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
+        bot.post.reset_mock()
+        await bot._tell_import_news(GUILD, self.store)  # (taken: told once)
+        bot.post.assert_not_awaited()
+
+    async def test_a_scan_given_back_and_run_again_tells_its_cut_once(self) -> None:
+        # (#5055 A) the cut is counted on the scan's success, so a retried scan is not counted twice
+        sid = await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        tries = [0]
+
+        async def scan(gid: int, ready: Any) -> list[str]:
+            await self.store.set_scan_cut(gid, ready.session_id, 12)
+            tries[0] += 1
+            if tries[0] == 1:
+                raise RuntimeError("down")  # given back after the cut was kept
+            return []
+
+        bot._scan_import = scan
+        await rounds(bot, 5)
+        told = [c.args[1] for c in bot.post.await_args_list if "more names are" in c.args[1]]
+        self.assertEqual(tries[0], 2)
+        self.assertEqual(len(told), 1)
+        self.assertIn("As many as 12 more names", told[0])
+        self.assertEqual(await self.store.scan_cut(GUILD, sid), 12)
 
     async def test_the_dm_is_told_once_when_a_name_check_was_given_up(self) -> None:
         await self.imported(1)
@@ -579,6 +706,23 @@ class TheCrashAndTheNews(WithImports):
 
         bot._link_import_party.assert_awaited_once()
 
+    async def test_the_workers_scan_tells_nothing_and_the_bots_news_scans_nothing(self) -> None:
+        # (#4904 3b-4c: the worker has no Discord, so its half only works; the bot's only tells)
+        await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        bot._scan_import = AsyncMock(return_value=["Kazeth"])
+        bot.extractor_ai = None  # (no story read here: its own tests)
+        self.assertEqual(await DMBot.run_import_followups(bot, GUILD, news=False), 1)
+        bot._scan_import.assert_awaited_once()
+        bot._tell_finished_imports.assert_not_awaited()
+        bot._tell_imports_left.assert_not_awaited()
+        self.assertEqual(bot.post.await_args_list, [])  # not a word to Discord from the scan
+        bot._scan_import.reset_mock()
+        self.assertEqual(await DMBot.run_import_followups(bot, GUILD, scan=False), 0)
+        bot._scan_import.assert_not_awaited()
+        bot._tell_finished_imports.assert_awaited_once()  # the news is the bot's
+
     async def test_a_failed_party_link_after_a_scan_changes_nothing_else(self) -> None:
         # The link runs after the scan is finished: when it raises, the scan still counts as done,
         # its names are still posted, and nothing is given up or retried (#3036).
@@ -594,16 +738,18 @@ class TheCrashAndTheNews(WithImports):
         self.assertEqual(done, 1)
         posted = " ".join(c.args[1] for c in bot.post.await_args_list)
         self.assertIn("Kazeth", posted)  # the new names still reach the DM
-        self.assertEqual(bot._import_unchecked, {})
+        self.assertEqual(await bot.import_state.counted(GUILD, "unchecked"), {})
         self.assertTrue(any("couldn't link the party" in line for line in logs.output))
 
     async def test_different_reasons_all_appear(self) -> None:
         bot, campaign = fake_bot(self.store)
         campaign.id = self.campaign.id
-        bot._import_unhonoured[campaign.id] = [
-            "recaps are switched off",
-            "your plan doesn't include recaps",
-        ]
+        await bot.import_state.add_each(
+            GUILD,
+            campaign.id,
+            "unhonoured",
+            ["recaps are switched off", "your plan doesn't include recaps"],
+        )
         await bot._tell_import_news(GUILD, self.store)
         text = bot.post.await_args.args[1]
         self.assertIn("recaps are switched off", text)
@@ -612,8 +758,10 @@ class TheCrashAndTheNews(WithImports):
     async def test_recaps_written_and_not_written_are_one_line(self) -> None:
         bot, campaign = fake_bot(self.store)
         campaign.id = self.campaign.id
-        bot._import_queued[campaign.id] = [100, 200, 300]
-        bot._import_unhonoured[campaign.id] = ["your plan doesn't include recaps"]
+        await bot.import_state.add_each(GUILD, campaign.id, "queued", ["100", "200", "300"])
+        await bot.import_state.add_each(
+            GUILD, campaign.id, "unhonoured", ["your plan doesn't include recaps"]
+        )
         await bot._tell_import_news(GUILD, self.store)
         told = [c.args[1] for c in bot.post.await_args_list if "📜" in c.args[1]]
         self.assertEqual(len(told), 1)
@@ -624,7 +772,9 @@ class TheCrashAndTheNews(WithImports):
     async def test_none_written_gives_the_reasons_alone_and_nothing_gives_nothing(self) -> None:
         bot, campaign = fake_bot(self.store)
         campaign.id = self.campaign.id
-        bot._import_unhonoured[campaign.id] = ["recaps are switched off"]
+        await bot.import_state.add_each(
+            GUILD, campaign.id, "unhonoured", ["recaps are switched off"]
+        )
         await bot._tell_import_news(GUILD, self.store)
         self.assertNotIn("Writing", bot.post.await_args.args[1])
         self.assertIn("wasn't written", bot.post.await_args.args[1])
@@ -635,8 +785,10 @@ class TheCrashAndTheNews(WithImports):
     async def test_one_written_and_one_not_never_reads_1_recaps(self) -> None:
         bot, campaign = fake_bot(self.store)
         campaign.id = self.campaign.id
-        bot._import_queued[campaign.id] = [100]
-        bot._import_unhonoured[campaign.id] = ["recaps are switched off"]
+        await bot.import_state.add_each(GUILD, campaign.id, "queued", ["100"])
+        await bot.import_state.add_each(
+            GUILD, campaign.id, "unhonoured", ["recaps are switched off"]
+        )
         await bot._tell_import_news(GUILD, self.store)
         text = bot.post.await_args.args[1]
         self.assertIn("Writing 1 recap from", text)

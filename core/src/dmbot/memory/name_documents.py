@@ -189,9 +189,9 @@ def decode_text(raw: bytes) -> str:
         return raw.decode("cp1252", errors="replace")
 
 
-def _pdf_text(
-    raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS, pictures_to: str | None = None
-) -> ReadText:
+def open_pdf(raw: bytes) -> Any:
+    """The PDF opened as an upload opens it: unlocked when it only restricts printing, refused in
+    plain words when it needs a password or has too many pages (also `devtools.lore_shape`)."""
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(raw))
@@ -204,15 +204,18 @@ def _pdf_text(
             f"That PDF has more than {MAX_PDF_PAGES} pages. Split it into parts and add them "
             "one at a time."
         )
+    return reader
+
+
+def _pdf_text(
+    raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS, pictures_to: str | None = None
+) -> ReadText:
+    reader = open_pdf(raw)
     parts: list[str] = []
     size = 0
     pictures = 0
     for page in reader.pages:
-        text = page.extract_text() or ""
-        if words_come_apart(text):
-            text = _by_layout(page, text)
-        if not words_come_apart(text):  # (a page still a word a line keeps its plain reading)
-            text = reflow(text)
+        text = page_text(page)
         parts.append(text)
         size += len(text)
         if len("".join(text.split())) < PICTURE_PAGE_CHARS:
@@ -229,6 +232,21 @@ def _pdf_text(
     taken = _pictures(reader, pictures_to) if pictures_to and size <= max_chars else None
     found, over = (taken.found, taken.over) if taken is not None else (0, 0)
     return ReadText(text, len(reader.pages), pictures, found, over)
+
+
+def page_text(page: Any, why: list[str] | None = None) -> str:
+    """One PDF page's text as an upload reads it: the plain reading, by layout when its words came
+    apart, and its wrapped lines joined (`reflow`). Its own function so `devtools.lore_shape`
+    measures exactly what the readers get, page by page (#4307); `why` gets the reason each line
+    ends (`reflow`), or `not_joined` for each line of a page left a word a line."""
+    text = page.extract_text() or ""
+    if words_come_apart(text):
+        text = _by_layout(page, text)
+    if not words_come_apart(text):  # (a page still a word a line keeps its plain reading)
+        return reflow(text, why)
+    if why is not None:
+        why.extend(["not_joined"] * len(text.split("\n")))
+    return str(text)  # (pypdf's reading is typed Any; the readers get a str)
 
 
 def _pictures(reader: Any, out_dir: str) -> pdf_pictures.Taken | None:
@@ -314,27 +332,51 @@ _PAGE_NUMBER = re.compile(r"^\d+$")
 _WORD_HYPHEN = re.compile(r"\w-$")
 
 
-def reflow(text: str) -> str:
-    """One page's text with its wrapped lines joined into paragraphs (see above)."""
+def _stops(last: str, body: str, widest: int) -> str:
+    """Why the line so far (`last`, ending with the page's line `body`) does not run on to the next
+    line: "" when it may (the next line still decides: a list item or a page number never joins)."""
+    if not last:
+        return "blank"
+    if len(body) < RUNS_ON * widest:
+        return "short_line"
+    if len(body.split()) < PROSE_WORDS:
+        return "few_words"
+    if last.endswith(_ENDS):
+        return "sentence_end"
+    return ""
+
+
+def _not_joined(body: str) -> str:
+    """Why a line that ran on was still not joined to this next one (the only causes left)."""
+    if not body:
+        return "blank"
+    return "next_is_item" if _ITEM.match(body) else "page_number"
+
+
+def reflow(text: str, why: list[str] | None = None) -> str:
+    """One page's text with its wrapped lines joined into paragraphs (see above). `why`, when
+    given, gets the reason each line of the result ends where it does (`_stops`, `next_is_item`,
+    `page_number`, and `page_end` for the last), for `devtools.lore_shape` (#4307)."""
     lines = text.split("\n")
     widest = max((len(line.strip()) for line in lines), default=0)
     out: list[str] = []
-    joining = False
+    ends: list[str] = []
+    stop = "start"
     for line in lines:
         body = line.strip()
-        if joining and body and not _ITEM.match(body) and not _PAGE_NUMBER.match(body):
+        if not stop and body and not _ITEM.match(body) and not _PAGE_NUMBER.match(body):
             # (a hyphen after a letter at the edge keeps its word whole, "Caer-" + "Konig", and
             # keeps the hyphen, since dropping it would break real compounds; a dash gets a space)
             out[-1] += ("" if _WORD_HYPHEN.search(out[-1]) else " ") + body
         else:
+            if out:
+                ends.append(stop or _not_joined(body))
             out.append(body)
-        last = out[-1]
-        joining = (
-            bool(last)
-            and len(body) >= RUNS_ON * widest
-            and len(body.split()) >= PROSE_WORDS
-            and not last.endswith(_ENDS)
-        )
+        stop = _stops(out[-1], body, widest)
+    if out:
+        ends.append("page_end")
+    if why is not None:
+        why.extend(ends)
     return "\n".join(out)
 
 

@@ -109,7 +109,7 @@ jobs:
     needs: changes
     if: ${{ always() && needs.changes.outputs.done != 'true' && (needs.changes.result != 'success' || needs.changes.outputs.web != 'false') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
-    timeout-minutes: 10
+    timeout-minutes: 20  # was 10: the suite grew to 8 to 9 minutes and a slow runner cancelled #5315's run (#5320)
     defaults:
       run:
         working-directory: web
@@ -144,21 +144,55 @@ jobs:
         env:
           PHONE_SKIP_BUILD: "1"  # reuses the build check:smoke just made (dist-smoke/)
 
+  # Lint, types and feature boundaries look at the code, not the tests' split. They used to run in
+  # part 1 beside its tests, which made part 1 the slowest part and the whole run wait for it
+  # (#5228); now they run side by side with the parts, in a job of their own that `core (Python)`
+  # waits for.
+  core-lint:
+    name: core lint and types
+    needs: changes
+    if: ${{ always() && needs.changes.outputs.done != 'true' && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
+    runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: core/pyproject.toml
+      - run: pip install -e ".[dev]"
+      - run: ruff check --output-format=github .
+      - run: ruff format --check .
+      - name: mypy
+        run: |
+          set -o pipefail
+          mypy --no-pretty --no-error-summary 2>&1 | tee mypy.log || {
+            sed -nE 's/^([^:]+):([0-9]+): error: (.*)$/::error file=core\/\1,line=\2::\3/p' mypy.log | head -50
+            exit 1
+          }
+      - name: feature boundaries (import-linter)
+        run: lint-imports
+
   # The core tests ran as one 15-minute job on a 4-core runner (#1984; `-n auto` finds the same 4
-  # cores, so more workers would not help). They now run as four parts side by side (three finished in 8.2 minutes, the slowest part 6:40 of tests, so a fourth brings the whole job under 8), each on its
+  # cores, so more workers would not help). They run as twelve parts side by side (four brought the job under 8 minutes in 2026-10; by 2026-11 the
+  # suite had grown and each part took 25 to 43 minutes, #5228), each on its
   # own runner and database, split by test file (core/tests/shard.py; a test in the wrong place
   # can't be skipped, the parts add up to the whole run, proven in tests/test_shard.py).
   # The job named "core (Python)" below is the one result to watch (and to require): it passes only
   # when every part did, so the name branch rules see has not changed.
   core-tests:
-    name: core tests (part ${{ matrix.part }} of 4)
+    name: core tests (part ${{ matrix.part }} of 12)
     needs: changes
     if: ${{ always() && needs.changes.outputs.done != 'true' && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
     runs-on: ubuntu-22.04  # 24.04 runners were queueing for hours (2026-10-05); see #29
     strategy:
       fail-fast: false  # a red part must not hide what the others found
       matrix:
-        part: [1, 2, 3, 4]
+        part: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     defaults:
       run:
         working-directory: core
@@ -182,7 +216,7 @@ jobs:
       DMBOT_TEST_DATABASE_URL: postgresql://dmbot:dmbot@localhost:5432/dmbot_test
       DMBOT_TEST_SUPERUSER_URL: postgresql://postgres:postgres@localhost:5432/dmbot_test
       DMBOT_REQUIRE_DB_TESTS: "1"
-      DMBOT_TEST_SHARD: ${{ matrix.part }}/4
+      DMBOT_TEST_SHARD: ${{ matrix.part }}/12
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -191,22 +225,6 @@ jobs:
           cache: pip
           cache-dependency-path: core/pyproject.toml
       - run: pip install -e ".[dev]"
-      # Lint and types look at the code, not the tests' split, so one part does them.
-      - if: ${{ matrix.part == 1 }}
-        run: ruff check --output-format=github .
-      - if: ${{ matrix.part == 1 }}
-        run: ruff format --check .
-      - name: mypy
-        if: ${{ matrix.part == 1 }}
-        run: |
-          set -o pipefail
-          mypy --no-pretty --no-error-summary 2>&1 | tee mypy.log || {
-            sed -nE 's/^([^:]+):([0-9]+): error: (.*)$/::error file=core\/\1,line=\2::\3/p' mypy.log | head -50
-            exit 1
-          }
-      - name: feature boundaries (import-linter)
-        if: ${{ matrix.part == 1 }}
-        run: lint-imports
       - name: more locks per transaction
         # A migrated test schema holds hundreds of tables, functions and policies, and dropping one
         # with CASCADE locks them all in one transaction: four drops at once ran the service
@@ -247,29 +265,32 @@ jobs:
         # -n 4: one worker per core of the 4-core runner (measured). Each database test builds its
         # own schema (core/tests/pg.py, random name) and migrations lock per schema, so workers
         # never share state.
-        # --durations shows where the time goes. Nothing is skipped, deselected or xfailed.
-        # Coverage (#1858) is printed (only the files with lines no test runs) and kept as
-        # coverage.xml. It is a report, not a gate: no threshold until the baseline is known.
+        # --durations lists every test that took 50 ms or more, kept as an artifact per part: the
+        # many quick ones add up, and a split measured only on the slow ones left the parts unequal
+        # (10 to 18 minutes on development's run of 2026-11-24, #5228), so the split can be balanced
+        # by measured time. Nothing is skipped, deselected or xfailed. No coverage here: it is a
+        # report, not a gate (#1858), and measuring it added 5 to 6 minutes to every part on
+        # development. `coverage.yml` runs the same parts with it every night.
         run: |
           set -o pipefail
-          pytest -q --tb=short -rfE -n 4 --durations=25 \
-            --cov=dmbot --cov-report=term-missing:skip-covered --cov-report=xml 2>&1 | tee pytest.log || {
+          pytest -q --tb=short -rfE -n 4 --durations=0 --durations-min=0.05 2>&1 | tee pytest.log || {
             # One multi-line annotation, so failures are readable without the raw log.
             summary=$(grep -E "^(FAILED|ERROR) |^E  |^[^ ].*\.py:[0-9]+: " pytest.log | head -80 | sed -e 's/%/%25/g' | sed ':a;N;$!ba;s/\n/%0A/g')
             echo "::error title=pytest failures::${summary}"
             exit 1
           }
-      - name: keep the coverage report
+      - name: keep the slow tests' times
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: core-coverage-part-${{ matrix.part }}
-          path: core/coverage.xml
+          name: core-durations-part-${{ matrix.part }}
+          path: core/pytest.log
           if-no-files-found: ignore
+          retention-days: 14
 
   core:
     name: core (Python)
-    needs: [changes, core-tests]
+    needs: [changes, core-tests, core-lint]
     # always(): a skipped part list (core untouched, or this commit already passed) is a pass, and
     # a failed or cancelled part must fail this job rather than skip it.
     if: ${{ always() && needs.changes.outputs.done != 'true' && (needs.changes.result != 'success' || needs.changes.outputs.core != 'false') }}
@@ -277,8 +298,9 @@ jobs:
     timeout-minutes: 5
     steps:
       - run: |
-          echo "core tests: ${{ needs.core-tests.result }}"
+          echo "core tests: ${{ needs.core-tests.result }}, lint and types: ${{ needs.core-lint.result }}"
           test "${{ needs.core-tests.result }}" = "success"
+          test "${{ needs.core-lint.result }}" = "success"
 
   scripts:
     name: scripts (server helpers)

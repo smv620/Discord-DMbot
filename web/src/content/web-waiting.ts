@@ -5,7 +5,7 @@
 // answers only a DM of the campaign. WEB_WAITING_LIVE moves with the What's new entry "What is waiting
 // for you, on the Story Graph"; it needs CloudDev's #2638 and #2654 deployed and dev1 to have seen one fact
 // confirmed and one "Which Mara?" answered from the site.
-export const WEB_WAITING_LIVE = false;
+export const WEB_WAITING_LIVE = true;
 
 /** Where "Proposed" differs from "Now" (#4429, the owner, 2026-11-15): the connection phrases are compared word by word, from the front and
  * from the back; what is left in the middle of the proposed one is bold. A wholly new phrase ("ally of" for "knows") is bold whole. The names
@@ -50,7 +50,10 @@ export const waitingWords = {
   proposedLine: (subject: string, how: string, object: string, hand: string): string => `Proposed: ${subject} ${how} ${object}${hand}`,
   proposedLabel: "Proposed: ",
   nowLabel: "Now: ",
-  guessLine: (guess: string): string => `🤔 DMbot's guess (your text doesn't say it outright): ${guess}.`,
+  guessLine: (guess: string): string => `🤔 DMbot's guess: ${guess} (your lore only hints at it)`,
+  // After a Keep all that leaves DMbot's guesses (#3928): Keep all never keeps a guess, so the DM is told how many still wait.
+  guessesLeft: (n: number): string =>
+    n === 1 ? "1 of DMbot's guesses still needs your yes." : `${n} of DMbot's guesses still need your yes.`,
   fromText: (quote: string): string => `From your text: “${quote}”`,
   // The Players line: how it is now and how it will be after (an update), or how it will be (a new one).
   playersNew: (hidden: boolean): string => (hidden ? "🤫 Hidden from players." : "👁️ Players will see it."),

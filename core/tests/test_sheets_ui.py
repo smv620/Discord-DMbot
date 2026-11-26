@@ -126,7 +126,9 @@ class Words(unittest.TestCase):
         from tests.test_memory_scene import CERRIC, lookup
 
         line = ui.card_line(sheet(), link=False)
-        text = card_text(lookup(), CERRIC, [], secrets=False, player="Mia", sheet=line)
+        text = card_text(
+            lookup(), CERRIC, [], secrets=False, player="Mia", sheet=line, seen={CERRIC}
+        )
         assert text is not None
         self.assertIn("**📜 Sheet:** linked to D&D Beyond, read", text)
         self.assertNotIn("dndbeyond.com", text)

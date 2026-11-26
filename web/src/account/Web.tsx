@@ -28,6 +28,7 @@ import {
   type WebOverview,
   type WebRevealTarget,
   type WebView,
+  type WebViewer,
 } from "./api";
 import { currentItem, pairFromItem } from "./itemLink";
 import WebMap from "./WebMap";
@@ -125,7 +126,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   const [look, setLookState] = useState<GraphLook>(readLook);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // The last icon change, so one Undo can post the old choice back (#3622).
-  const [iconBack, setIconBack] = useState<{ id: string; previous: IconChoice; now: IconChoice } | null>(null);
+  const [iconBack, setIconBack] = useState<{ id: string; previous: IconChoice; now: IconChoice; previousPicture?: number | null } | null>(null);
   const setLook = (next: GraphLook): void => {
     setLookState(next);
     saveLook(next);
@@ -501,18 +502,18 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
   }, [api, ref]);
 
   /** A player character's icon (#3622): instant, then the web is read again so the circle shows it. Returns a plain-words problem. */
-  async function chooseIcon(id: string, choice: IconChoice): Promise<string | null> {
+  async function chooseIcon(id: string, choice: IconChoice, picture?: number): Promise<string | null> {
     if (!ref || !api.setPcIcon) return words.errorFallback;
-    let got: { previous: IconChoice; now: IconChoice };
+    let got: { previous: IconChoice; now: IconChoice; previousPicture?: number | null };
     try {
-      got = await api.setPcIcon(ref, id, choice);
+      got = await api.setPcIcon(ref, id, choice, picture);
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "network";
       if (kind === "unavailable" || kind === "not-found") void load(center, hops, true); // (the picture or character went away: show what is left)
       return pcIconWords.problems[kind] ?? pcIconWords.problems.server ?? words.errorFallback;
     }
     // Undo only while the icon is still what this change made it: a change by someone else since must not be undone over.
-    setIconBack(got.previous === got.now ? null : { id, previous: got.previous, now: got.now });
+    setIconBack(got.previous === got.now && picture === undefined ? null : { id, previous: got.previous, now: got.now, previousPicture: got.previousPicture ?? null });
     void load(center, hops, true).catch(() => undefined); // (the change is saved: a failed re-read is not a failed save)
     return null;
   }
@@ -858,7 +859,8 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
               onIcon={seeing ? undefined : chooseIcon}
               iconUndo={iconBack ? { id: iconBack.id, now: iconBack.now, undo: async () => {
                 const back = iconBack;
-                const refused = await chooseIcon(back.id, back.previous);
+                // (a picture that is gone cannot be put back: the usual order is the nearest thing)
+                const refused = back.previous === "custom" && back.previousPicture == null ? await chooseIcon(back.id, "default") : await chooseIcon(back.id, back.previous, back.previous === "custom" ? back.previousPicture ?? undefined : undefined);
                 if (!refused) setIconBack(null);
                 return refused;
               } } : null}
@@ -869,7 +871,7 @@ export default function Web({ api, path }: { api: AccountApi; path: string }) {
                   key={`${chosen.a}|${chosen.b}|${line?.open ?? ''}`}
                   load={() => (CONNECTION_PANEL_LIVE ? import("./WebConnectionPanel") : import("./WebLinePanel"))}
                   what="the connections"
-                  props={{ edge: chosen, nameOf, kindOf, canEdit, act, reveal, revealing, api, refId: ref, onClose: () => setLine(null), guard: leaveGuard, open: line?.open ?? null }}
+                  props={{ edge: chosen, nameOf, kindOf, canEdit, act, reveal, revealing, api, refId: ref, onClose: () => setLine(null), guard: leaveGuard, open: line?.open ?? null, reload: () => void refreshNow.current() }}
                 />
               )}
             </WebMap>
@@ -1100,7 +1102,7 @@ function SeeAsPicker({
   onBack: () => void;
 }) {
   const [q, setQ] = useState("");
-  const [list, setList] = useState<{ id: string; name: string }[]>([]);
+  const [list, setList] = useState<WebViewer[]>([]);
   const [total, setTotal] = useState(0);
   const [failed, setFailed] = useState(false);
   const latest = useRef(0);
@@ -1184,6 +1186,7 @@ function SeeAsPicker({
               onClick={() => onPick(v.id)}
             >
               {v.name}
+              {v.note && <span class="small muted"> ({v.note})</span>}
             </button>
           </li>
         ))}

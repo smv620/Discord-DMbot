@@ -1,0 +1,27 @@
+{
+  "about": "Invented session lines for the goodbye reader's checks (#4537 slice 6, memory/goodbye_reading.py `parse_leaves`; #4991). The reader is AI; these are the goodbyes an AI might propose, each with the quote it copied, so the score is what the code's own checks keep. `goodbyes` must be kept; `must_not` must be refused. Behind DMBOT_PARTY_LEAVES: a wrong goodbye is costly, so the must-not set matters most.",
+  "goodbyes": [
+    {"who": "Okthandom", "quote": "Okthandom says goodbye to everyone", "line": "1"},
+    {"who": "Mira", "quote": "I say goodbye to the party", "line": "2"},
+    {"who": "Brannick", "quote": "Brannick leaves the party", "line": "3"},
+    {"who": "Selka", "quote": "Selka parts ways with the company", "line": "4"},
+    {"who": "Tavin", "quote": "Tavin retires from adventuring", "line": "5"},
+    {"who": "Ulric", "quote": "Ulric stays behind in Brindle for good", "line": "6"},
+    {"who": "Jessa", "quote": "Jessa heads home to her family", "line": "7"},
+    {"who": "Corvin", "quote": "he bids farewell to the group", "line": "8"},
+    {"who": "Dorran", "quote": "Dorran leaves the group", "line": "9"},
+    {"who": "Halric", "quote": "Halric quits the party", "line": "10"}
+  ],
+  "must_not": [
+    {"who": "Okthandom", "quote": "Okthandom says goodbye to the innkeeper", "line": "11", "why": "a goodbye to someone else"},
+    {"who": "Mira", "quote": "Mira stays behind to guard the door", "line": "12", "why": "a trip"},
+    {"who": "Brannick", "quote": "Brannick will leave the party at dawn", "line": "13", "why": "a plan"},
+    {"who": "Selka", "quote": "Selka wants to go home", "line": "14", "why": "a wish"},
+    {"who": "Tavin", "quote": "Are you leaving the party, Tavin", "line": "15", "why": "a question"},
+    {"who": "Ulric", "quote": "If Ulric leaves the party", "line": "16", "why": "an if"},
+    {"who": "Jessa", "quote": "Jessa nearly left the party", "line": "17", "why": "nearly"},
+    {"who": "Dorran", "quote": "I'm going home for the night", "line": "18", "why": "a figure of speech and a trip"},
+    {"who": "Corvin", "quote": "Corvin heads home for the night", "line": "19", "why": "a trip"},
+    {"who": "Halric", "quote": "Halric does not leave the party", "line": "20", "why": "a negation"}
+  ]
+}

@@ -34,6 +34,7 @@ EVERY_ACTION = (
     "place-form",  # land, water or a road (#4173 slice 6a)
     "maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-undo",  # the Maps page (#4347)
     "map-terrain", "map-climate", "map-control", "map-show",  # a place's land, climate, ruler
+    "map-culture", "map-population",  # its culture and who lives there (#4412)
     "world-keep", "world-not", "world-undo",  # World notes (#4285)
     "backstory-keep-show",  # "Let players see it" on the website's waiting card (#4432)
     "maps-add",  # a map sent from the website (#4347, slice B)
@@ -60,6 +61,27 @@ EVERY_ACTION = (
     "heard-pick",  # "Did they mean…?" from the page (#4841)
     "heard-keep",
     "heard-type",  # "Type it…" from the page (#4841)
+    "rules-update-undo-last",  # the Undo of an update DMbot took (#4841)
+    "pack-update-undo-last",  # the same for a followed pack (#4841)
+    "pack-update-pick",  # Pick changes on a followed pack, and its Undo (#4841)
+    "pack-update-undo",
+    "join-choices",  # "Let me choose" for the join question (#4799)
+    "join-choose",
+    "leave-yes",  # "Still in the party?" for a death or a goodbye (#4895)
+    "leave-no",
+    "thread-state",  # a plot thread's state from the Plot threads panel (#3696 slice 2a)
+    "thread-check",
+    "thread-involve",  # "Add who's involved" (#3696 slice 2b)
+    "world-bias",  # ✏️ Change on a feeling DMbot read (#4932)
+    "route-length", "route-length-keep", "route-undo",  # a route's stated length (#4392)
+    "road-condition", "road-condition-keep", "road-condition-show",  # a road's condition (#4451)
+    "thread-new", "thread-due", "thread-party",  # a new thread or promise, due note, parties (2c)
+    "thread-link", "thread-led-to",  # an event on a thread, what led to what (2d)
+    "reveals-ask", "reveals-keep", "reveals-not",  # what the characters learned (#3863)
+    "deed-record", "deed-not", "deed-undo",  # deeds the party did (#3591)
+    "continuity-ask", "continuity-answer",  # the continuity heads-ups (#3695 half 1)
+    "names-more",  # 📝 More names from the Questions page (#5081)
+    "lookalike-merge", "lookalike-apart", "lookalike-undo",  # Names that look alike (#5259)
 )  # fmt: skip
 
 

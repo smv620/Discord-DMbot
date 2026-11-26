@@ -81,7 +81,7 @@ export function mockWizard(): WizardApi & { calls: string[] } {
       const draft = mine(guild);
       draft.answers.pageTextUsed = true;
       if (!text.includes("Brannoc")) return { name: "", characters: [] };
-      return { name: "The Frostmaiden's Winter", characters: [{ full: "Brannoc Stonebelt", partyName: "Brannoc" }, { full: "Ivy Quickfoot", partyName: "Ivy" }] };
+      return { name: "The Frostmaiden's Winter", characters: [{ full: "Brannoc Stonebelt", partyNames: ["Brannoc"] }, { full: "Ivy Quickfoot", partyNames: ["Ivy"] }] };
     },
     async docAdd(guild, slot, input) {
       calls.push(`docAdd:${guild}:${slot}`);
@@ -142,7 +142,7 @@ export function mockWizard(): WizardApi & { calls: string[] } {
       if (guild.endsWith(".nokey") && at >= 5) return { ...base, state: "failed", stage: "lore", error: "no-key", campaignRef: `${guild}.cmp-new`, dmBotChannel: channel };
       if (at >= STAGES.length) {
         drafts.delete(guild);
-        return { ...base, state: "done", stage: "clean", error: "", notes: guild.endsWith(".notes") ? "house_unreadable:2 homebrew_link_failed:1" : "", campaignRef: `${guild}.cmp-new`, dmBotChannel: channel };
+        return { ...base, state: "done", stage: "clean", error: "", notes: guild.endsWith(".notes") ? "house_unreadable:2 homebrew_link_failed:1 names_cut:7" : "", campaignRef: `${guild}.cmp-new`, dmBotChannel: channel };
       }
       const stage = STAGES[at]!;
       const docs = stage === "lore" || stage === "secrets" ? (drafts.get(guild)?.documents.filter((d) => d.slot === stage).length ?? 0) : 0;

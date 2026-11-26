@@ -197,6 +197,11 @@ def said(ref: str, text: str, speaker: int, at: int = 1, **kw: Any) -> Line:
 class Recalling(MemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        # (the players' audience is the party's view, slice 5a: a party of one, made first, so
+        # every entry shown to the table after it is written as known to it)
+        self.hero = await self.add(
+            "Pcwyn Testhand", type="character", role="player_character", played_by=900_001
+        )
         self.mira = await self.add("Mira", type="character", role="npc", description="Hides a vow")
         self.cult = await self.add("Ash Cult", type="faction")
         self.ulfgar = await self.add("Ulfgar", type="character", role="npc")
@@ -339,6 +344,22 @@ class Recalling(MemoryTest):
         await self.memory.set_direction(GUILD_A, self.c, made.value[0].id, None, source="dm")
         after = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
         self.assertIn("Mira and Ulfgar are connected (“works for”)", after)
+
+    async def test_a_described_entry_reads_as_the_story_said_it(self) -> None:
+        """#5179: a thing or a place with no name of its own (#5173) is given to the AI as "the
+        gemstone mine", in its own entry and in a fact, for the DM screen and the players alike,
+        never as "Gemstone mine" like a name."""
+        mine = await self.add("Gemstone mine", type="place", described="gemstone mine")
+        held = await self.fact(self.cerric, "located_in", mine, from_session_at=S1)
+        near = await self.fact(mine, "located_in", self.far, from_session_at=S1)
+        for audience in (DM_SCREEN, PLAYERS):
+            got = await self.recall(audience, "Cerric", hops=2)
+            text = {i.id: i.text for i in got.items}
+            self.assertTrue(text[mine].startswith("the gemstone mine ("), audience)  # (its entry)
+            self.assertTrue(text[held].startswith("Cerric "), audience)  # (the object of a fact)
+            self.assertTrue(text[held].endswith(" the gemstone mine"), audience)
+            self.assertTrue(text[near].startswith("the gemstone mine "), audience)  # (its subject)
+            self.assertNotIn("Gemstone mine", self.texts(got), audience)
 
     async def test_a_campaigns_own_two_way_kind_keeps_its_label(self) -> None:
         """#4388: its rows carry the two-way mark now; the AI still reads the kind's own words."""
@@ -870,9 +891,30 @@ class Speed(MemoryTest):
                 " FROM generate_series(0, %s - 1) AS n",
                 (GUILD_A, self.c, self.ENTRIES),
             )
+            # (a party of one who knows every entry, as 0316's backfill leaves a campaign: the
+            # players' audience asks the gate, slice 5a, so its read is timed too)
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at, role, played_by) VALUES (%s, %s, md5('hero'),"
+                " 'character', 'Pcwyn Testhand', '', 'confirmed', 'dm', 1, 'player_character',"
+                " 900001)",
+                (GUILD_A, self.c),
+            )
+            await conn.execute(
+                "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
+                " created_at) VALUES (%s, %s, md5('hero view'), 'pc', md5('hero'), 1)",
+                (GUILD_A, self.c),
+            )
+            await conn.execute(
+                "INSERT INTO memory_knowers (guild_id, campaign_id, id, perspective_id,"
+                " about_entity_id, created_at) SELECT %s, %s, md5('k' || n), md5('hero view'),"
+                " md5('e' || n), 1 FROM generate_series(0, %s - 1) AS n",
+                (GUILD_A, self.c, self.ENTRIES),
+            )
             for table in (
                 "memory_entities", "memory_aliases", "memory_relations", "memory_mentions",
                 "memory_claims", "memory_heard", "memory_beliefs", "memory_perspectives",
+                "memory_knowers",
             ):  # fmt: skip
                 await conn.execute(f"ANALYZE {table}")
 

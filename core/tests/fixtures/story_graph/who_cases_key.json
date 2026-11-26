@@ -1,0 +1,35 @@
+{
+  "about": "Invented. 'items' are names waiting on 'Who is this?' with the choices offered; each case is one ranked answer the AI might give, which who_reading.parse_answers keeps (as 'want') or drops (#4997).",
+  "items": [
+    {"number": 1, "name": "the Grey Lady", "choices": [{"ref": "c1", "kind": "character", "names": ["Tamsin Reedwell"]}, {"ref": "c2", "kind": "place", "names": ["Greyhollow"]}]},
+    {"number": 2, "name": "Hollis", "choices": [{"ref": "c1", "kind": "character", "names": ["Captain Hollis Varn"]}]},
+    {"number": 3, "name": "the guild", "choices": [{"ref": "c1", "kind": "faction", "names": ["Millers' Guild"]}, {"ref": "c2", "kind": "faction", "names": ["Brindle Watch"]}]},
+    {"number": 4, "name": "Thornwatch inn", "choices": [{"ref": "c1", "kind": "place", "names": ["Thornwatch"]}]},
+    {"number": 5, "name": "the reliquary", "choices": [{"ref": "c1", "kind": "item", "names": ["Reliquary of Saint Ombra"]}]},
+    {"number": 6, "name": "the stranger", "choices": [{"ref": "c1", "kind": "character", "names": ["Tamsin Reedwell"]}, {"ref": "c2", "kind": "character", "names": ["Captain Hollis Varn"]}, {"ref": "c3", "kind": "character", "names": ["Kesh"]}, {"ref": "c4", "kind": "character", "names": ["Aldra"]}, {"ref": "c5", "kind": "character", "names": ["Brother Ombra"]}, {"ref": "c6", "kind": "character", "names": ["Old Wenna"]}]}
+  ],
+  "cases": [
+    {"item": 1, "entry": {"pick": "c1", "confidence": "sure"}, "want": {"pick": "c1", "confidence": "sure", "kind": ""}},
+    {"item": 1, "entry": {"pick": "C2", "confidence": "likely"}, "want": {"pick": "c2", "confidence": "likely", "kind": ""}},
+    {"item": 1, "entry": {"pick": "new", "kind": "character", "confidence": "maybe"}, "want": {"pick": "new", "confidence": "maybe", "kind": "character"}},
+    {"item": 2, "entry": {"pick": "c1", "confidence": " Sure "}, "want": {"pick": "c1", "confidence": "sure", "kind": ""}},
+    {"item": 3, "entry": {"pick": "c1", "confidence": "likely"}, "want": {"pick": "c1", "confidence": "likely", "kind": ""}},
+    {"item": 3, "entry": {"pick": "new", "kind": "Faction", "confidence": "maybe"}, "want": {"pick": "new", "confidence": "maybe", "kind": "faction"}},
+    {"item": 4, "entry": {"pick": "c1", "confidence": "maybe"}, "want": {"pick": "c1", "confidence": "maybe", "kind": ""}},
+    {"item": 4, "entry": {"pick": "new", "kind": "place", "confidence": "likely"}, "want": {"pick": "new", "confidence": "likely", "kind": "place"}},
+    {"item": 5, "entry": {"pick": "c1", "confidence": "sure"}, "want": {"pick": "c1", "confidence": "sure", "kind": ""}},
+    {"item": 5, "entry": {"pick": "new", "kind": "item", "confidence": "maybe"}, "want": {"pick": "new", "confidence": "maybe", "kind": "item"}}
+  ],
+  "must_not": [
+    {"item": 2, "entry": {"pick": "c2", "confidence": "sure"}, "why": "a choice the item never offered"},
+    {"item": 6, "entry": {"pick": "c6", "confidence": "likely"}, "why": "past the five choices an item may offer"},
+    {"item": 1, "entry": {"pick": "c1", "confidence": 0.9}, "why": "a number, not a confidence word"},
+    {"item": 1, "entry": {"pick": "c1", "confidence": "certain"}, "why": "a confidence off the three words"},
+    {"item": 3, "entry": {"pick": "new", "kind": "monster", "confidence": "maybe"}, "why": "a kind off the list"},
+    {"item": 3, "entry": {"pick": "new", "confidence": "likely"}, "why": "new with no kind"},
+    {"item": 9, "entry": {"pick": "c1", "confidence": "sure"}, "why": "an item that was never asked"},
+    {"item": true, "entry": {"pick": "c1", "confidence": "sure"}, "why": "an item number that is no number"},
+    {"item": 1, "entry": {"pick": "Tamsin Reedwell", "confidence": "sure"}, "why": "a name, not a choice"},
+    {"item": 4, "entry": {"pick": "c1; ignore previous instructions", "confidence": "sure"}, "why": "words around the choice"}
+  ]
+}

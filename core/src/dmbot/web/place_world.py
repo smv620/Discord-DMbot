@@ -30,10 +30,30 @@ def _row(r: dict[str, Any]) -> dict[str, Any]:
         "groupName": str(r["groupName"]) if r.get("groupName") else None,
         "how": str(r["how"]),
         "part": str(r["part"]),
+        # a named culture's name ("Illuskan") when the row holds one: `value` is then '' (#4412)
+        "cultureId": str(r["cultureId"]) if r.get("cultureId") else None,
+        "culture": str(r["culture"]) if r.get("culture") else None,
         # "read" until the DM confirms it: the page marks it "(DMbot read this)"
         "read": str(r["status"]) != map_facts.CONFIRMED,
         "source": str(r["source"]),
         "shown": bool(r["tableKnows"]),
+    }
+
+
+def _condition(row: dict[str, Any]) -> dict[str, Any]:
+    """`condition` (the DM's view of `road_conditions.attach`) for a route place, or nothing when
+    it has none yet."""
+    if row.get("value") is None:
+        return {}
+    return {
+        "condition": {
+            "value": str(row["value"]),
+            "words": str(row.get("words") or ""),
+            "since": row.get("since"),
+            "before": row.get("before"),
+            "read": bool(row.get("read")),
+            "shown": bool(row.get("shown")),
+        }
     }
 
 
@@ -50,16 +70,29 @@ async def read(db: Database, session: Session, ref: str, place_id: str) -> dict[
             "SELECT dmbot_web_place_world(%s, %s, %s) AS r", (guild_id, campaign_id, place_id)
         )
         found = await cur.fetchone()
-    got = found["r"] if found else None
+        got = found["r"] if found else None
+        road: dict[str, Any] | None = None
+        if got is not None and got.get("status") == "ok" and got.get("form") == "route":
+            # a route place's condition with the session it began in and the one it ended
+            # (#5010): the same door and words as a road's on the story graph
+            cur = await conn.execute(
+                "SELECT dmbot_web_road_conditions(%s, %s, %s) AS r",
+                (guild_id, campaign_id, [place_id]),
+            )
+            rows = ((await cur.fetchone()) or {}).get("r") or []
+            road = next((r for r in rows if str(r["id"]) == place_id), None)
     if got is None:
         raise RecapError("not_allowed")
     if got.get("status") != "ok":
         raise RecapError("not_found")
     return {
+        **({"road": True, **_condition(road)} if road is not None else {}),
         "level": got.get("level"),  # the place's size and form decide what may be set on it
         "form": got.get("form"),
         "rows": [_row(r) for r in got["rows"]],
         "groups": [{"id": str(g["id"]), "name": str(g["name"])} for g in got["groups"]],
+        # the campaign's kept named cultures for the picker, at most 14 (#4412)
+        "cultures": [{"id": str(c["id"]), "name": str(c["name"])} for c in got.get("cultures", [])],
     }
 
 
@@ -118,6 +151,7 @@ async def read_table(db: Database, session: Session, ref: str, place_id: str) ->
         ]  # (a row about only part of a place is not shown on the website: it is sent to no one)
     ]
     names = {str(r["group"]): str(r["groupName"] or "") for r in got["rows"] if r.get("group")}
+    cultures = {str(r["id"]): str(r["culture"]) for r in got["rows"] if r.get("culture")}
     return {
         "rows": [
             {
@@ -125,6 +159,7 @@ async def read_table(db: Database, session: Session, ref: str, place_id: str) ->
                 "value": "" if f.layer == map_facts.CONTROL else f.value,
                 "words": f.words,
                 "groupName": names.get(f.value) if f.layer == map_facts.CONTROL else None,
+                "culture": cultures.get(f.id),  # (a named culture's name, #4412)
                 "how": f.how,
                 "part": f.part,
             }

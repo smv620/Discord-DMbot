@@ -11,6 +11,8 @@ import { PARTY_RECORD_LIVE } from "../content/party-record-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
+import { SINGLED_OUT_LIVE } from "../content/singled-out-switch";
+import { nameFoundWords as foundWords } from "../content/name-found-words";
 import { NAME_LIMIT, NAMES_PAGE_SIZE, NAMES_PAGE_SIZES, NAMES_SMART_LIVE, namesPage as words } from "../content/names-words";
 import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
 import { NAME_SOURCES_LIVE } from "../content/name-sources-switch";
@@ -20,7 +22,10 @@ import { PRIVATE_SCENES_LIVE } from "../content/private-scenes-switch";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { PLACE_SPELLING_LIVE } from "../content/place-spelling-switch";
 import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
+import { CONTINUITY_LIVE } from "../content/continuity-switch";
+import { PLOT_THREADS_LIVE } from "../content/plot-threads-switch";
 import { THREADS_LIVE } from "../content/threads-switch";
+import { LOOKALIKES_LIVE } from "../content/lookalikes-switch";
 import { PLACE_ROUTES_LIVE } from "../content/place-routes-switch";
 import { PLACE_WORLD_LIVE } from "../content/place-world-switch";
 import { LANGUAGES_LIVE } from "../content/languages-switch";
@@ -44,6 +49,7 @@ import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 import SayIt from "./SayIt";
 import LazyPanel from "./LazyPanel";
+import { CARD_SUMMARY_LIVE } from "../content/card-summary-switch";
 
 /** The campaign's address, read from `/account/names/<server>.<campaign>`. */
 export function namesRefFromPath(path: string): string | null {
@@ -415,9 +421,8 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
   const everything = kindList.reduce((sum, k) => sum + k.count, 0);
   return (
     <div class="stack names-page">
-      <section class="stack" aria-labelledby="names-campaign">
+      <section class="stack" aria-label={data.campaign}>
         <CampaignNav api={api} campaignRef={ref} page="names" name={data.campaign} />
-        <h2 id="names-campaign">{data.campaign}</h2>
         <p class="muted small">{words.lead}</p>
         <a class="button secondary" href={`/account/web/${encodeURIComponent(ref)}`}>
           {words.webLink}
@@ -433,11 +438,20 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         )}
       </section>
 
+      {LOOKALIKES_LIVE && data.canEdit && api.lookAlikes !== undefined && (
+        <LazyPanel load={() => import("./LookAlikes")} what="the look-alike names" props={{ api, campaignRef: ref, id: "names-lookalikes" }} />
+      )}
       {WORLD_NOTES_LIVE && data.canEdit && api.worldNotes !== undefined && (
         <LazyPanel load={() => import("./WorldNotes")} what="DMbot's guesses about your world" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
       )}
+      {CONTINUITY_LIVE && data.canEdit && api.continuityHits !== undefined && (
+        <LazyPanel load={() => import("./Continuity")} what="the heads-ups from this session" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
+      )}
       {THREADS_LIVE && data.canEdit && api.storyThreads !== undefined && (
         <LazyPanel load={() => import("./StoryThreads")} what="the story threads DMbot found" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
+      )}
+      {PLOT_THREADS_LIVE && data.canEdit && api.plotThreads !== undefined && (
+        <LazyPanel load={() => import("./PlotThreads")} what="the open plot threads" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
       )}
       {THREADS_LIVE && data.canEdit && api.threadProgress !== undefined && (
         <LazyPanel load={() => import("./ThreadProgress")} what="the progress DMbot heard on your story threads" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
@@ -818,6 +832,7 @@ function NameItem({ row, kinds, canEdit, ticked, onTick, open, focusSaid, onTogg
           )}
         </span>
       </div>
+      {SINGLED_OUT_LIVE && row.described === true && <p class="small muted">{foundWords.singled.described}</p>}
       {!canEdit && PLACE_WORLD_LIVE && row.kind === "place" && api.placeWorldTable && (
         <LazyPanel load={() => import("./PlaceWorldLines")} what="the place's land, climate and ruler" props={{ api, refId, row }} />
       )}
@@ -1096,6 +1111,7 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
         </form>
       )}
 
+      {CARD_SUMMARY_LIVE && <LazyPanel load={() => import("./CardSummary")} what="the card summary" props={{ card: row }} />}
       <form
         class="name-form"
         onSubmit={(e) => {

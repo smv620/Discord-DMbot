@@ -1,7 +1,7 @@
 """Moving a campaign to the new owner's other server (#2532 slice C2): the campaign's row changes
 server in one transaction and every row that hangs off it follows (migration 0215), so nothing is
-lost, a failure leaves it where it was, and a session, a changed offer, a shared rule set or a
-lapsed plan stops the move. The notices never tell the old owner why."""
+lost, a failure leaves it where it was, a session, a changed offer or a lapsed plan stops it, and
+a rule set the campaign published moves with it. The notices never tell the old owner why."""
 
 from __future__ import annotations
 
@@ -18,13 +18,13 @@ from dmbot.campaigns.moves import (
     CHANGED_HANDS,
     NO_PAID_ROOM,
     SESSION_RUNNING,
-    SHARES_RULES,
     HandoverMover,
     Moved,
 )
 from dmbot.dm_screen.handover import MOVE_FAILED, MOVE_FAILED_NEW_OWNER
 from dmbot.memory.models import new_id
 from dmbot.recaps.audio.files import AudioFiles
+from dmbot.rules.rule_sets import RuleSetStore
 from tests.test_campaign_handover import BUYER, CO_DM, GUILD, NOW, OTHER_GUILD, OWNER, HandoverTest
 
 HEARD_OK, HEARD_NOT = 31, 32  # one speaker who agreed in the new server, one who did not
@@ -315,9 +315,12 @@ class Moving(HandoverTest):
             "npcs_channel_messages",
             "game_clocks",
             "memory_heard",
+            "rule_sets",  # (the new owner becomes the publisher: only created_by differs, below)
         }
         for table in set(before) - different:
             self.assertEqual(after[table], before[table], table)
+        published = [{**json.loads(r), "created_by": BUYER} for r in before["rule_sets"]]
+        self.assertEqual([json.loads(r) for r in after["rule_sets"]], published)
         self.assertEqual(after["npcs_channel_messages"], [])
         self.assertEqual(after["campaign_handover_offers"], [])
 
@@ -435,15 +438,104 @@ class Moving(HandoverTest):
         self.assertEqual(await self.move(), "reopened")
         await self.assertWhole(NO_PAID_ROOM)
 
-    async def test_a_campaign_with_a_shared_rule_set_does_not_move_yet(self) -> None:
+    SET_ID, CODE = "c" * 32, "ABCDEFGHIJ"
+
+    async def publish_a_set(self) -> None:
+        """A shared set of the campaign, with a code, an editor and a follower in the target
+        server (the follower keeps its own copy and the set's id)."""
+        g, c = GUILD, self.campaign.id
         await self.sql(
-            GUILD,
+            g,
             "INSERT INTO rule_sets (guild_id, campaign_id, id, kind, name, status, created_by,"
             " created_at) VALUES (%s, %s, %s, 'house_rules', 'Ours', 'shared', %s, %s)",
-            GUILD, self.campaign.id, "c" * 32, OWNER, NOW,
+            g, c, self.SET_ID, OWNER, NOW,
         )  # fmt: skip
-        self.assertEqual(await self.move(), "reopened")
-        await self.assertWhole(SHARES_RULES)
+        await self.sql(
+            g,
+            "INSERT INTO rule_set_versions (guild_id, campaign_id, set_id, version, content,"
+            " created_by, created_at) VALUES (%s, %s, %s, 1, '{\"rules\": []}', %s, %s)",
+            g, c, self.SET_ID, OWNER, NOW,
+        )  # fmt: skip
+        await self.sql(
+            g,
+            "INSERT INTO rule_set_codes (guild_id, campaign_id, code, set_id, active, created_at)"
+            " VALUES (%s, %s, %s, %s, true, %s)",
+            g, c, self.CODE, self.SET_ID, NOW,
+        )  # fmt: skip
+        await self.sql(
+            g,
+            "INSERT INTO rule_set_editors (guild_id, campaign_id, set_id, user_id, added_by,"
+            " added_at) VALUES (%s, %s, %s, %s, %s, %s)",
+            g, c, self.SET_ID, CO_DM, OWNER, NOW,
+        )  # fmt: skip
+        follower = await self.store.create(OTHER_GUILD, "Follower", 4040)  # (not the buyer: a slot)
+        self.follower_id = follower.id
+        await self.sql(
+            OTHER_GUILD,
+            "INSERT INTO rule_set_follows (guild_id, campaign_id, set_id, kind, set_name,"
+            " publisher, version, content, position, updating, followed_by, followed_at)"
+            " VALUES (%s, %s, %s, 'house_rules', 'Ours', 'Frostmaiden', 1, '{\"rules\": []}', 0,"
+            " true, %s, %s)",
+            OTHER_GUILD, follower.id, self.SET_ID, 4040, NOW,
+        )  # fmt: skip
+
+    async def set_rows(self, guild: int) -> dict[str, list[Any]]:
+        out: dict[str, list[Any]] = {}
+        async with self.db.guild(guild) as conn:
+            for table in ("rule_sets", "rule_set_versions", "rule_set_codes", "rule_set_editors"):
+                cur = await conn.execute(f"SELECT * FROM {table}")
+                out[table] = list(await cur.fetchall())
+        return out
+
+    async def test_a_published_set_moves_with_its_campaign_and_its_followers_keep_following(
+        self,
+    ) -> None:
+        await self.publish_a_set()
+        result = await self.move()
+        offer = await self.row_of_offer()
+        self.assertEqual(result, "moved", msg=str(offer and offer["move_failed_reason"]))
+        old, new = await self.set_rows(GUILD), await self.set_rows(OTHER_GUILD)
+        # one copy only: nothing is left behind on the old server
+        self.assertEqual([len(rows) for rows in old.values()], [0, 0, 0, 0])
+        [moved] = new["rule_sets"]
+        self.assertEqual(
+            (moved["id"], moved["name"], moved["status"]), (self.SET_ID, "Ours", "shared")
+        )
+        self.assertEqual([r["code"] for r in new["rule_set_codes"]], [self.CODE])  # same code
+        self.assertEqual(len(new["rule_set_versions"]), 1)
+        # the new owner is the publisher; the old publisher's editors are dropped
+        self.assertEqual(moved["created_by"], BUYER)  # (BUYER's login is its account)
+        self.assertEqual(new["rule_set_editors"], [])
+        # the follower still has its copy and the set's id, and the code still opens the set
+        async with self.db.guild(OTHER_GUILD) as conn:
+            cur = await conn.execute("SELECT set_id, set_name FROM rule_set_follows")
+            self.assertEqual(
+                [tuple(r.values()) for r in await cur.fetchall()], [(self.SET_ID, "Ours")]
+            )
+        found = await RuleSetStore(self.db).by_code(OTHER_GUILD, BUYER, self.CODE)
+        self.assertEqual(found.set_id, self.SET_ID)
+
+    async def test_a_failed_move_leaves_the_published_set_where_it_was(self) -> None:
+        await self.publish_a_set()
+        before = await self.set_rows(GUILD)
+        with patch.object(CampaignStore, "move_in", side_effect=RuntimeError("boom")):
+            self.assertEqual(await self.move(), "reopened")
+        self.assertEqual(await self.set_rows(GUILD), before)
+        self.assertEqual(
+            [len(r) for r in (await self.set_rows(OTHER_GUILD)).values()], [0, 0, 0, 0]
+        )
+
+    async def test_a_move_that_stops_after_the_set_was_touched_puts_everything_back(self) -> None:
+        # The publisher change and the move are one transaction: a failure of the campaign's own
+        # update rolls the new publisher and the dropped editors back too.
+        await self.publish_a_set()
+        before = await self.set_rows(GUILD)
+        with patch(
+            "dmbot.campaigns.store.join_questions.keep_recorded",
+            side_effect=RuntimeError("fails at the very end"),
+        ):
+            self.assertEqual(await self.move(), "reopened")
+        self.assertEqual(await self.set_rows(GUILD), before)
 
     async def test_a_rule_set_that_is_not_shared_does_not_stop_it(self) -> None:
         await self.sql(

@@ -8,6 +8,9 @@
 import NamePlaces from "./NamePlaces";
 import { campaignRefOf } from "./RecapNames";
 import PlayersKnow from "./PlayersKnow";
+import { NAME_FOUND_LIVE } from "../content/name-found-switch";
+import { SINGLED_OUT_LIVE } from "../content/singled-out-switch";
+import { nameFoundWords as fw } from "../content/name-found-words";
 import SceneLine from "./SceneLine";
 import { useEffect, useRef, useState } from "preact/hooks";
 
@@ -57,6 +60,13 @@ export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountAp
   // Split, group and Undo (#3406): the bot's word on the last such answer, followed until it is done. The name
   // leaves the list once it is applied, so the line with Undo sits under the list, not on the card.
   const splitOn = NAME_SPLIT_LIVE && api.nameAnswerResult !== undefined;
+  // The new name card's yes (#5144 slice B) also has its note and Undo, followed the same way (core's #5196 answers with a batch).
+  const followOn = splitOn || (NAME_FOUND_LIVE && api.nameAnswerResult !== undefined);
+  const followed = (name: NameCheck, answer: NameCheckAnswer): boolean =>
+    SPLIT_ACTIONS.has(answer.action) || (followOn && NAME_FOUND_LIVE && answer.action === "confirm" && name.found !== undefined);
+  // "✏️ Spelled another way…" is the DM's yes (Discord's `apply_words keep=True`, #5144 slice B): the words typed on a card the reader
+  // found, by card, so that once the rename shows the page keeps it as DMbot's guess, and so a refusal can say the name typed.
+  const spelledAs = useRef(new Map<string, string>());
   const [follow, setFollow] = useState<{ id: string; undo: boolean; batch: number } | null>(null);
   const [last, setLast] = useState<{ id: string; note: string; batch: number } | null>(null);
   const [lastProblem, setLastProblem] = useState("");
@@ -113,6 +123,9 @@ export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountAp
         if ([...before.keys()].some((id) => !now.has(id))) {
           setSaid(words.done);
           keepFocus(() => heading.current);
+        } else if (renamedCard && NAME_FOUND_LIVE && renamedCard.found !== undefined && spelledAs.current.delete(renamedCard.id) && renamedCard.found.guess && got.kinds.some((k) => k.key === renamedCard.found?.guess)) {
+          // Spelled another way… is the yes: kept at once as DMbot's guess, with the rules, the fix and the one Undo that follow.
+          void send(renamedCard, { action: "confirm", kind: renamedCard.found.guess });
         } else if (renamedCard) {
           // The card goes on under its new words: say so, and put the focus where the next answer is made.
           setSaid(words.changed(renamedCard.name));
@@ -193,7 +206,7 @@ export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountAp
       {taken && (
         <p class="small muted">{gw.undone}</p>
       )}
-      {splitOn && last && (
+      {followOn && last && (
         <div class="stack small" role="status">
           <span>{last.note}</span>
           <span>
@@ -243,20 +256,35 @@ export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountAp
     );
   }
 
+  /** Discord's words for a refused Spelled another way… (the three refusals it has), or "" for any other. */
+  function spelledRefusal(n: NameCheck, code: string | undefined): string {
+    if (!NAME_FOUND_LIVE || n.found === undefined || !changing.current.has(n.id)) return "";
+    const typed = spelledAs.current.get(n.id) ?? "";
+    if (code === "empty") return fw.refusal.empty;
+    if (code === "too_long") return fw.refusal.tooLong(typed, NAME_MAX_LETTERS);
+    if (code === "already_known") return fw.refusal.alreadyKnown(typed);
+    return "";
+  }
+
   async function send(name: NameCheck, answer: NameCheckAnswer) {
-    if (answer.action === "change_words") changing.current.add(name.id);
-    else changing.current.delete(name.id);
+    if (answer.action === "change_words") {
+      changing.current.add(name.id);
+      if (NAME_FOUND_LIVE && name.found !== undefined) spelledAs.current.set(name.id, answer.words);
+    } else {
+      changing.current.delete(name.id);
+      spelledAs.current.delete(name.id);
+    }
     setProblems((was) => ({ ...was, [name.id]: "" }));
     setLast(null); // (Undo is offered until the next answer)
     setTaken(false);
-    if (!SPLIT_ACTIONS.has(answer.action)) setFollow(null); // a plain answer ends any follow: its Undo would be stale
+    if (!followed(name, answer)) setFollow(null); // a plain answer ends any follow: its Undo would be stale
     setLastProblem("");
     setBusy((was) => new Set(was).add(name.id));
     setSlow(false);
     looks.current = 0;
     try {
       await api.answerNameCheck!(refId, name.id, answer);
-      if (SPLIT_ACTIONS.has(answer.action)) setFollow({ id: name.id, undo: false, batch: 0 });
+      if (followed(name, answer)) setFollow({ id: name.id, undo: false, batch: 0 });
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "server";
       setProblems((was) => ({ ...was, [name.id]: words.problem[kind] ?? words.problem.server ?? "" }));
@@ -288,7 +316,7 @@ export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountAp
             campaignRef={campaignRefOf(refId)}
             busy={busy.has(n.id) || n.answering}
             splitOn={splitOn}
-            problem={problems[n.id] || (n.error ? words.problem[n.error.replaceAll("_", "-")] ?? ((splitOn ? splitReason(n.error) : "") || (changing.current.has(n.id) ? words.changeFailed : words.failedHint)) : "")}
+            problem={problems[n.id] || spelledRefusal(n, n.error) || (n.error ? words.problem[n.error.replaceAll("_", "-")] ?? ((splitOn ? splitReason(n.error) : "") || (changing.current.has(n.id) ? words.changeFailed : words.failedHint)) : "")}
             onSend={(answer) => void send(n, answer)}
           />
         ))}
@@ -335,7 +363,9 @@ function NameRow({
 }) {
   const id = `name-check-${name.id}`;
   // No kind is chosen for the DM: a tap on Yes with a kind nobody picked would be a wrong answer.
-  const [kind, setKind] = useState("");
+  // The menu starts on DMbot's best guess when it is one of the kinds (#5218): the DM's own tap on Yes is still the answer, and
+  // choosing the guess sends nothing by itself. No guess (or a kind this list doesn't know) leaves it on "Pick what it is".
+  const [kind, setKind] = useState(() => (name.guess && list.kinds.some((k) => k.key === name.guess) ? name.guess : ""));
   const [known, setKnown] = useState("");
   const [spelling, setSpelling] = useState("");
   const [note, setNote] = useState("");
@@ -348,6 +378,19 @@ function NameRow({
   const [asking, setAsking] = useState(false);
   const [groupName, setGroupName] = useState("");
   const longer = (name.longerNames ?? []).slice(0, 3);
+  // The one known name this sounds like (#5215): "It's X" joins them, as "It's the same as…" does; "new" is answering the card as usual.
+  const like = name.soundsLike ?? null;
+  const likeLine = like ? (like.spelled ? words.soundsLikeSpelled(like.name, name.name) : words.soundsLike(like.name)) : "";
+  // A person the story never named shows as their description with a quiet "(no name yet)" (#5218), never as "unnamed - …".
+  const unnamed = name.name.startsWith(words.unnamedPrefix) && name.name.length > words.unnamedPrefix.length;
+  // How the session-names reader found this name (#5144): its guess is only offered when the list knows that kind.
+  const found = name.found;
+  const foundOn = NAME_FOUND_LIVE && found !== undefined;
+  // A thing the story keeps coming back to (#5175): the same card, with its own three answers.
+  const singled = foundOn && SINGLED_OUT_LIVE && found?.how === "singled_out";
+  const guessLabel = found?.guess ? (list.kinds.find((k) => k.key === found.guess)?.label ?? "") : "";
+  // With no guess to offer as Keep it, the kind picker's yes says it instead (never two Keep its).
+  const keepFallback = singled && guessLabel === "";
   // The card keeps its id when its words change (here or in Discord), so the box follows the stored name.
   const shownName = useRef(name.name);
   useEffect(() => {
@@ -359,7 +402,44 @@ function NameRow({
   return (
     <li>
       <div class="panel stack" role="group" aria-labelledby={`${id}-name`} id={itemDomId(name.id)} tabIndex={-1}>
-        <strong id={`${id}-name`}>{name.name}</strong>
+        <strong id={`${id}-name`}>
+          {unnamed ? name.name.slice(words.unnamedPrefix.length) : name.name}
+          {unnamed && <span class="muted small"> {words.noNameYet}</span>}
+        </strong>
+        {foundOn && found && (
+          <>
+            {name.rulesWord === true && <p class="small">{fw.rulesWord}</p>}
+            <p class="small">{found.heard}</p>
+            {guessLabel !== "" && <p class="small">{fw.guess(guessLabel)}</p>}
+            {found.line && (
+              <p class="small">
+                <strong>{fw.lineLabel}</strong> {fw.line(found.line.speaker, found.line.text)}
+              </p>
+            )}
+            {/* DMbot's own guess is one tap; the kind list below stays for "something else" until slice B (#5144) reshapes the row. */}
+            {guessLabel !== "" && (
+              <div class="row">
+                <button type="button" class="button" disabled={busy} aria-label={singled ? fw.singled.keepItFor(name.name) : fw.yesSpelledFor(name.name)} onClick={() => onSend({ action: "confirm", kind: found.guess ?? "" })}>
+                  {singled ? fw.singled.keepIt : name.name.length > fw.longName ? fw.yesSpelling : fw.yesSpelled(name.name)}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+        {like && (
+          <div class="stack" role="group" aria-label={likeLine}>
+            <p class="small">
+              {likeLine.slice(0, likeLine.indexOf(like.name))}
+              <strong>{like.name}</strong>
+              {likeLine.slice(likeLine.indexOf(like.name) + like.name.length)}
+            </p>
+            <div class="row">
+              <button type="button" class="button" disabled={busy} aria-label={words.itsThatFor(like.name, name.name)} onClick={() => onSend({ action: "same", known: like.id })}>
+                {words.itsThat(like.name)}
+              </button>
+            </div>
+          </div>
+        )}
         {name.note && (
           <p class="small muted">
             {noteSaysWhere(name.note) ? "" : `${words.noteFrom} `}
@@ -379,11 +459,11 @@ function NameRow({
               </option>
             ))}
           </select>
-          <button type="button" class="button" disabled={busy || kind === ""} aria-label={words.yesWith(name.name)} onClick={() => onSend({ action: "confirm", kind })}>
-            {words.yes}
+          <button type="button" class="button" disabled={busy || kind === ""} aria-label={keepFallback ? fw.singled.keepItFor(name.name) : words.yesWith(name.name)} onClick={() => onSend({ action: "confirm", kind })}>
+            {keepFallback ? fw.singled.keepIt : words.yes}
           </button>
-          <button type="button" class="button secondary" disabled={busy} aria-label={words.notANameFor(name.name)} onClick={() => onSend({ action: "not_a_name" })}>
-            {words.notAName}
+          <button type="button" class="button secondary" disabled={busy} aria-label={singled ? fw.singled.notWorthFor(name.name) : words.notANameFor(name.name)} onClick={() => onSend({ action: "not_a_name" })}>
+            {singled ? fw.singled.notWorth : words.notAName}
           </button>
         </div>
         {NAME_CHANGE_WORDS_LIVE && (
@@ -399,23 +479,23 @@ function NameRow({
               </div>
             )}
             <details open={changing} onToggle={(e) => setChanging((e.target as HTMLDetailsElement).open)}>
-              <summary>{words.changeUse}</summary>
+              <summary>{singled ? fw.singled.giveName : foundOn ? fw.spelledOther : words.changeUse}</summary>
               <fieldset class="stack" disabled={busy}>
-                <legend>{words.changeLabel}</legend>
-                <p class="small muted">{words.changeHint}</p>
+                <legend>{singled ? fw.singled.giveNameLabel : foundOn ? fw.spelledLabel : words.changeLabel}</legend>
+                {!singled && !foundOn && <p class="small muted">{words.changeHint}</p>}
                 <div class="row">
                   <label for={`${id}-words`} class="visually-hidden">
-                    {words.changeLabel}
+                    {singled ? fw.singled.giveNameLabel : foundOn ? fw.spelledLabel : words.changeLabel}
                   </label>
-                  <input id={`${id}-words`} type="text" maxLength={NAME_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={wholeName} onInput={(e) => { const typed = (e.target as HTMLInputElement).value; setWholeName(typed); if (typed.trim() === "") setHeard(""); }} />
+                  <input id={`${id}-words`} type="text" placeholder={singled ? fw.singled.giveNamePlaceholder : undefined} maxLength={NAME_MAX_LETTERS} autocomplete="off" autocapitalize="words" spellcheck={false} value={wholeName} onInput={(e) => { const typed = (e.target as HTMLInputElement).value; setWholeName(typed); if (typed.trim() === "") setHeard(""); }} />
                   <button
                     type="button"
                     class="button secondary"
                     disabled={wholeName.trim() === "" || wholeName.trim() === name.name}
-                    aria-label={words.changeFor(name.name)}
+                    aria-label={singled ? fw.singled.giveNameFor(name.name) : words.changeFor(name.name)}
                     onClick={() => onSend({ action: "change_words", words: wholeName.trim(), ...(heard !== "" ? { heard } : {}) })}
                   >
-                    {words.changeUse}
+                    {singled ? fw.singled.giveNameUse : words.changeUse}
                   </button>
                 </div>
               </fieldset>

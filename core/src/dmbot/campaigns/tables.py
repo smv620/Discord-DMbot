@@ -115,6 +115,11 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "import_state": "what an import's scans leave for its one end-of-import report (#4904): "
+    "counts, ids, the names they added and the name-pass reports (spellings as heard, short bits "
+    "of lines), taken when the report is made. A restored campaign has no import under way",
+    "outbox": "what a worker wants the bot to say in Discord (#3843): ids and counts, delivered "
+    "within seconds and swept after a few days. A restored campaign has nothing waiting to say",
     "sheet_waits": "a D&D Beyond sheet link the DM gave in the wizard for a character with no "
     "player yet, waiting for the player (#4205): the address and a time, no sheet and no person. "
     "A request still waiting, like the wizard's own draft; the link is read when the character "
@@ -125,6 +130,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "memory_hand_over_both": 'the DM\'s "Yes, both have it" answers about a one-of-a-kind '
     "item (#4115): ids and a time, so DMbot doesn't ask about the same two holders again. An "
     "answer to a question, like name_not_same: a restored campaign may ask it once more",
+    "import_more_names": "names an imported session's name scan heard past its first 10, waiting "
+    "for the DM's 📝 More names (#5055 B): each row hangs off its session, which a restore makes "
+    "again under a new id. A restored campaign starts with none, as with any request still waiting",
     "memory_met": "beings the party met in play and nobody named yet, waiting for the DM to name "
     "one (#3172 slice 5): each row hangs off its session, which a restore makes again under a new "
     "id, and holds the DM's words and line numbers from it. A restored campaign starts with none, "
@@ -145,14 +153,25 @@ NOT_IN_BACKUP: dict[str, str] = {
     "memory_link_sources": "the upload label a kept connection came from, for the line panel: "
     "provenance of working data: the upload's label and, for the DM's Why, the reader's quote "
     "of up to 240 characters (kept only for an upload the DM confirmed the right to use, shown to "
-    "the DM alone); a restored campaign's connections read as added by hand (#2946, #3606)",
+    "the DM alone; a quote from an upload known to be the DM's own writing may also go to the "
+    "owner's private repository, in a graph improvement report, #3742); a restored campaign's "
+    "connections read as added by hand (#2946, #3606)",
+    "after_session_jobs": "a live session's slow after-session reads handed to the worker: ids, "
+    "times, a lease and a state, never a word of the session; a working queue made again for "
+    "each session (#4905)",
+    "memory_card_summaries": "a character's one sentence and where and when they were first met "
+    "and last mentioned (#5050): made by a background job from the entry's player-safe facts and "
+    "the transcripts, DMbot's own words and ids only, never a quote; a restored campaign's cards "
+    "read 'still writing' until the job has run again",
     "memory_name_sessions": "which session a waiting name was made in, by the session's start "
     "(#4043): a time and an id only, for the split-party check, kept only while a name waits; a "
     "restored campaign's waiting names fall back to the check's older guess by time, which may "
     "pick the wrong session (the DM can still choose who knows a name)",
     "memory_name_sources": "which upload a name was read from, for the Names page's filter: "
-    "provenance of working data (an upload id or label and a time, never a word of it), made again "
-    "by the next read; a restored campaign's names read as not known yet (#3675)",
+    "provenance of working data (an upload id or label, a time, and the heading of the section "
+    "the name was read under: at most 60 characters of the DM's document, shown to the DM alone, "
+    "#5050), made again by the next read; a restored campaign's names read as not known yet "
+    "(#3675)",
     "memory_trait_offers": "a lore upload's lineage or class for a character the campaign already "
     "has, waiting for the DM's Keep it or Not this (#3926): the trait, the reader's quote of the "
     "DM's own text (up to 240 characters, DM-only) and the upload's label; a question is made "
@@ -189,6 +208,17 @@ NOT_IN_BACKUP: dict[str, str] = {
     "lore_pdf_staged": "a lore PDF sent from the website while it waits to be counted and "
     "read (ids and numbers only, no file name or word; one for each campaign): a file in transit, "
     "gone within a day, never in a backup (#4762)",
+    "web_join_choices": 'what DMbot worked out for a DM\'s "Let me choose" page (ids, counts and '
+    "story thread names), gone within an hour and worked out again from the graph (#4799)",
+    "web_reveals": 'what DMbot worked out for a DM\'s "Things the characters learned" page (names '
+    "and the statements in words), gone within an hour and worked out again from the graph "
+    "(#3863)",
+    "continuity_hits": "the continuity heads-ups DMbot worked out for the website on the DM's "
+    "ask (pointers only, no words), gone within a day and worked out again on the next ask "
+    "(#3695)",
+    "name_found": "how the after-session step found a waiting name and a pointer to the line "
+    "that made it a name (no words), gone once the name is answered; a restored campaign's cards "
+    "show no quote (#5133)",
     "web_rule_takes": "a day-long undo handle for a website pick of a followed set's changes; "
     "a restored campaign has nothing to undo (#4841)",
     "upload_notices": _RUNTIME,  # each lore upload's notice and the changes it made (#3878)
@@ -251,6 +281,12 @@ NOT_IN_BACKUP: dict[str, str] = {
     "web_house_file_actions": _WAIT,
     "web_sheet_actions": _WAIT,
     "web_line_fixes": _WAIT,
+    "web_connection_reads": _WAIT,
+    "web_adventure_gives": _WAIT,
+    "web_adventure_matches": _WAIT,
+    "web_adventure_guides": _WAIT,
+    "web_adventure_reads": _WAIT,
+    "web_adventure_removals": _WAIT,
     "rule_set_codes": "a share code is a bearer secret; a restored publisher gets a new one "
     "(Supervisor, #2553; PLAN:947)",
     "memory_mentions": "where each name was said, made again as lines are read (PLAN:164)",

@@ -33,7 +33,9 @@ export const storyThreadsWords = {
   kept: (name: string): string => `✅ Kept: ${name} is on your 🧵 Threads list.`,
   turnedDown: (name: string): string => `🚫 Turned down: ${name}. DMbot won't suggest it again.`,
   undone: (name: string): string => `↩ Undone: ${name} is waiting again.`,
-  gone: "Someone already answered that one. Here's the list as it is now.",
+  // (#4908: answered, or removed when its speaker stopped being recorded or its transcript was
+  // deleted; true of both)
+  gone: "This question isn't waiting any more. Here's the list as it is now.",
   tooLate: "Too late to undo. Open the thread on your 🧵 Threads list to change it.",
   wrong: "Something went wrong. Nothing was changed. Press the button again.",
 } as const;

@@ -1,0 +1,28 @@
+The Vale of Ashmere
+
+Mithral Keep distrusts elves. Its gates close at dusk, and the wardens say so plainly.
+The Silver League openly welcomes halflings and gnomes, and its caravans hire them gladly.
+Redhollow fears orcs; the burned palisade still stands at the edge of town.
+Brightwater reveres the Varnish folk, whose lamps light its harbour every spring.
+The Lantern Guild dislikes dwarven folk, though it buys their iron all the same.
+The Copper Moot is wary of tieflings.
+Thornwick hates the Ashborn.
+The people of Greyfen honour humans who keep the old roads.
+
+Travelers to Redhollow fear the marsh at night.
+Brin distrusts elves, but Brin is only one guard and speaks for no one else.
+Mithral Keep likes dwarven ale more than any other.
+Does the Silver League trust orcs?
+If Thornwick welcomes elves, the feud will end.
+Nobody believes the Lantern Guild hates gnomes.
+Mithral Keep trusts human traders who pay the toll.
+The Copper Moot distrusts Captain Vell.
+Redhollow does not trust dragonborn.
+
+Fresh sentences (#4982), added before any reader change:
+Most folk in Stonebridge distrust gnomes.
+The Iron Brotherhood has long despised elves.
+Willowmere treats halflings as kin.
+Ashford is friendly toward dwarves.
+The Gilded Hand mistrusts the Varnish folk.
+Ashford sells elven bows at the autumn fair.

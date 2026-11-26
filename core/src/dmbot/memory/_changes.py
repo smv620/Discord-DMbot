@@ -105,6 +105,7 @@ ENTITIES = Table(
         "length_unit",
         "length_approx",
         "length_from",
+        "described",
     ),
     # a clue's switch (#1649), the party, "players don't know this one yet" (#2321); a row written
     # now is after the pronoun gate (#2358)
@@ -116,6 +117,7 @@ ENTITIES = Table(
         "manipulated_by": None,  # the evidence this one faked (#2409)
         # a person the story describes but never names (#2790); a row written now is a named one
         "unnamed": False,
+        "described": None,  # a description, not a name (#5173): set only where it is made
         "unnamed_anchor": None,
         "unnamed_role": None,
         "unnamed_what": None,
@@ -247,7 +249,8 @@ RELATIONS = Table(
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
      "secret", "created_at", "definition_version", "unrevealed", "directional", "decided",
      "via_alias_id", "knows_how", "end_reason", "both_ways", "assumed", "route_state",
-     "length_words", "length_amount", "length_unit", "length_approx", "length_from"),
+     "length_words", "length_amount", "length_unit", "length_approx", "length_from",
+     "hand_over", "hand_over_from"),
     # unrevealed: held back from the players until said at the table (#2404). directional: an
     # older row's role has no direction (#2457). knows_how: the story didn't say (#3881).
     # end_reason: an end from before #4115 has none. both_ways: its kind's default (#4154).
@@ -257,6 +260,7 @@ RELATIONS = Table(
         "knows_how": "", "end_reason": None, "both_ways": None, "assumed": False,
         "route_state": "", "length_words": None, "length_amount": None, "length_unit": None,
         "length_approx": False, "length_from": None,  # (no length before #4255)
+        "hand_over": "", "hand_over_from": "",  # (no kept hand-over said how before #4170)
     },
 )  # fmt: skip
 CORRECTIONS = Table(
@@ -281,7 +285,9 @@ ATTITUDES = Table(
     "memory_attitudes",
     "id",
     ("id", "holder_id", "toward_id", "score", "weight", "source", "from_session_at",
-     "created_at", "closed_at"),
+     "created_at", "closed_at", "toward_lineage", "toward_culture_id", "status"),
+    # (#4229 slice 4: toward a lineage or a named culture instead of an entry; DMbot's reads wait)
+    defaults={"toward_lineage": None, "toward_culture_id": None, "status": "confirmed"},
 )  # fmt: skip
 # Who holds beliefs (The truth, The party, a character) and what each believes of a connection
 # (#2409). A belief is never edited: a new row is the new belief, the highest `seq` wins.
@@ -466,7 +472,10 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
     ),
     # (a logged delete of a culture is refused while a row points at it: the database's cascade
     # would delete those rows outside the log)
-    "memory_cultures": (("memory_map_facts", "culture_id", False),),
+    "memory_cultures": (
+        ("memory_map_facts", "culture_id", False),
+        ("memory_attitudes", "toward_culture_id", False),  # (a bias toward it, #4229)
+    ),
     "memory_map_facts": (("map_features", "fact_id", False),),  # an area on a map (#4670)
     # (the database would set these to NULL outside the log: #4346)
     "campaign_maps": (
@@ -1141,6 +1150,8 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
     "campaign_maps": {"grid_from": None},  # (0530: nobody had set a grid before)
     # (a row logged before #4259 rested on no map: nothing wrote `map_id` before slice 8)
     "memory_map_facts": {"map_id": None},
+    # (before #4229 slice 4 every attitude was the DM's, toward an entry)
+    "memory_attitudes": {"toward_lineage": None, "toward_culture_id": None, "status": "confirmed"},
     "memory_relations": {
         "definition_version": 1,
         "unrevealed": False,
@@ -1157,6 +1168,8 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "length_unit": None,
         "length_approx": False,
         "length_from": None,
+        "hand_over": "",  # no kept hand-over said how before #4170
+        "hand_over_from": "",
     },
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)

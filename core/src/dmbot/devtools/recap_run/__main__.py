@@ -103,23 +103,33 @@ class SpendCap(AIOutOfFunds):
     fails the job at once and cleanly (no retry, no waiting) instead of trying again."""
 
 
+EXPECTED_OUT = 4000  # tokens a call is expected to write before this run has seen what one writes
+
+
 @dataclass(slots=True)
 class Budget:
-    """A dollar cap shared by every client of one run (`--max-usd`, #4859). Before each call the
-    worst it could cost (its text at about 3 characters a token in, `max_tokens` out, at that
-    model's price) is added to what was spent; a call that would pass the cap is not made."""
+    """A dollar cap shared by every client of one run (`--max-usd`, #4859). Before each call, what
+    it is expected to cost (its text at about 3 characters a token in, and the output it is
+    expected to write, at that model's price) is added to what was spent; a call that would pass the
+    cap is not made. The output is not the call's `max_tokens`: background calls send the tier's
+    floor of about 16,000 (the service charges for what is written, not the limit), so counting the
+    limit stopped a run at about $0.03 of real spend against a $1 cap (#4879). It is the larger of
+    `EXPECTED_OUT` and twice the most this model has written so far in the run, never above the
+    limit. What was really spent is added exactly after each call."""
 
     limit: float
     prices: dict[str, tuple[float, float]]
     spent: float = 0.0
     stopped: bool = False
+    most_out: dict[str, int] = field(default_factory=dict)  # per model: the longest answer so far
 
     def before(self, model: str, system: str, text: str, max_tokens: int) -> None:
         price = self.prices.get(model)
         if price is None:  # (the run refuses to start without every price, but never guess)
             raise SpendCap("no price on file for a model")
-        worst = ((len(system) + len(text)) / 3 * price[0] + max_tokens * price[1]) / 1_000_000
-        if self.spent + worst > self.limit:
+        expected_out = min(max_tokens, max(EXPECTED_OUT, 2 * self.most_out.get(model, 0)))
+        expected = ((len(system) + len(text)) / 3 * price[0] + expected_out * price[1]) / 1_000_000
+        if self.spent + expected > self.limit:
             self.stopped = True
             raise SpendCap("the dollar cap would be passed")
 
@@ -127,6 +137,7 @@ class Budget:
         price = self.prices.get(model)
         if price is not None:
             self.spent += (tokens_in * price[0] + tokens_out * price[1]) / 1_000_000
+        self.most_out[model] = max(self.most_out.get(model, 0), tokens_out)
 
 
 @dataclass(slots=True)
@@ -452,6 +463,54 @@ def explain_failures(out: Outcome) -> list[str]:
                 "  problem: " + ("(it names something the DM keeps secret)" if held else problem)
             )
     return rows
+
+
+# A check's problem sentence -> a short code. The golden table must hold no words of a session, and
+# a problem can carry names, so only the fixed wording of each kind is matched (#4879).
+PROBLEM_CODES = (
+    ("names that are not allowed", "names-not-allowed"),
+    ("names that are not in the beat sheet", "names-not-in-beats"),
+    ("it copies the table word for word", "copies-table"),
+    ("it copies a style example", "copies-example"),
+    ("no quotation marks", "quotation-marks"),
+    ("it must open with an emotion cue", "no-emotion-cue"),
+    ("it names something the DM keeps secret", "names-secret"),
+    ("a name is too like one the DM keeps", "name-like-secret"),
+    ("the recap is empty", "empty"),
+    ("it must end exactly where", "ends-early"),
+    ("every housekeeping bullet", "housekeeping"),
+    ("give exactly one music prompt", "music-count"),
+    ("was not there in one of the scenes", "absent-name"),
+    ("a sentence says more than the sheet", "sheet-line-overreach"),
+    ("a sentence says which names are the same", "same-person-tie"),
+    ("a sentence names", "present-too"),
+)
+
+
+def problem_code(problem: str) -> str:
+    """A check's problem as a code, never its words ("other" when it is not a known kind)."""
+    low = problem.casefold()
+    for start, code in PROBLEM_CODES:
+        if low.startswith(start.casefold()) or f": {start.casefold()}" in low:
+            return code
+    return "other"
+
+
+def failure_codes(out: Outcome) -> str:
+    """Why a golden session stopped, as counts and codes only: the state, the calls, and for each
+    failed try the stage and how many problems of each kind. Nothing from the session's words."""
+    job = out.job
+    parts = [f"state {job.state}", f"calls {out.fast.calls + out.careful.calls}"]
+    for stage, attempt, problems in out.failures:
+        kinds: dict[str, int] = {}
+        for problem in problems:
+            code = problem_code(problem)
+            kinds[code] = kinds.get(code, 0) + 1
+        said = ",".join(f"{code}x{n}" for code, n in sorted(kinds.items())) or "none"
+        parts.append(f"{STAGE_WORDS.get(stage, stage)} try {attempt}: {said}")
+    if not out.failures:
+        parts.append("no check failed")
+    return "; ".join(parts)
 
 
 def names_a_secret_anywhere(job: Job, inputs: pl.Inputs) -> bool:
@@ -903,9 +962,9 @@ async def run_golden(
             rows.append(f"{session.name:<18} STOPPED: the dollar cap was reached")
             clean = False
             rows.append(
-                f"stopped before a call that would pass ${budget.limit:.2f}: {done} of "
-                f"{len(sessions)} sessions finished, {out.fast.calls + out.careful.calls} calls "
-                "in the last"
+                f"stopped before a call that would pass ${budget.limit:.2f} (about "
+                f"${budget.spent:.2f} spent): {done} of {len(sessions)} sessions finished, "
+                f"{out.fast.calls + out.careful.calls} calls in the last"
             )
             break
         if names_a_secret_anywhere(job, inputs):
@@ -922,6 +981,8 @@ async def run_golden(
             f"{session.name:<18} {job.state:<8} {out.fast.calls + out.careful.calls:>5}"
             f"  {found}/{len(session.reference):<4} {leak:>5}  {grade}"
         )
+        if job.state != "ready":
+            rows.append(f"  why: {failure_codes(out)}")
         clean = clean and job.state == "ready" and not leak
     spend = dollars(prices.get(models[0]), total_in, total_out)
     rows.append(f"tokens in {total_in}, out {total_out}; spend about {spend} (fast-tier price)")
@@ -1112,6 +1173,7 @@ async def inputs_for(db: Any, gid: int, cid: str, at: int, *, by_rank: bool = Fa
         styles=StyleStore(db),
         musts=MustStore(db),
         importance=ImportanceCache(memory, ranks_on=by_rank),
+        memory=memory,  # (the party at that session, #4537 slice 3b)
     )
 
 

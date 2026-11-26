@@ -39,6 +39,9 @@ READERS = {
     "item, for the DM's private question (#4115); ends a tie only on the DM's answer",
     "memory/story_chain_store.py": DM_ONLY + ": which places have a parent already, so where the "
     "story is never guesses twice (#4173 slice 4); shows nothing",
+    "memory/web_connection_reads.py": DM_ONLY
+    + ": the confirmed connection a DM is correcting, read "
+    "only to compare it with what the DM saw (#2940); shows nothing",
     "memory/worked_out.py": "proposes links; players see only confirmed ones, and a link from a "
     "secret, unrevealed or hidden source starts secret",
     "memory/exposures.py": DM_ONLY + ": secret connections said aloud (confirmed ones)",
@@ -141,6 +144,10 @@ STORE = {
     "shows players nothing",
     "_make_secret": "writes: the DM's own Make it secret or End the old one on a 🤫 question "
     "(#4524), through the store's own rules; shows players nothing",
+    "_merge_in": "writes: a kept hand-over's 'from whom' moves to the entry kept (#4170); "
+    "never shows anything",
+    "_reopen_after_hand_over_undo": "writes: an Undo of a kept sale reopens the seller's tie it "
+    "ended (#4170); never shows anything",
     "_met_back": "writes: moves the other's own knows up to met (#3881); never shows anything",
     "_has_parent": DM_ONLY + ": whether a place may be given an assumed parent (#4173 slice 3)",
     "_replace_assumed": "writes: a stated parent rejects the place's assumed one (#4173 slice 3)",
@@ -253,6 +260,9 @@ CHECKS_ONLY = {
 DM_ONLY_UNPROVED = {
     "dmbot_web_thread_guesses": "0539: the guesses on a story thread's card (#4665), for a DM "
     "only; a guess's connection is proposed, never confirmed, and a turned-down one is left out",
+    "dmbot_web_world_notes": "0593: World notes lists a known road's condition DMbot read (#5003), "
+    "for a DM only, as Discord's list does (`world_notes.read`): a proposed road is listed, a "
+    "rejected or ended one is left out, and nothing here reaches a player",
 }
 
 

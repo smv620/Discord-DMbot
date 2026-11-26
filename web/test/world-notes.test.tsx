@@ -2,7 +2,7 @@
 // @vitest-environment happy-dom
 // World notes on the Names page (#4285): DMbot's guesses for the DM to keep or turn down, in Discord's words, one Undo for each press,
 // a line checked meanwhile says so, and nothing at all while the switch is off or for a player.
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/account/api";
@@ -11,7 +11,13 @@ import Names from "../src/account/Names";
 import { namesPage } from "../src/content/names-words";
 import { worldNotesWords as w } from "../src/content/world-notes-words";
 
-const live = vi.hoisted(() => ({ on: true, roads: false }));
+const live = vi.hoisted(() => ({ on: true, roads: false, feelings: false }));
+// The Feelings group (#4959) is behind its own switch, off unless a test turns it on.
+vi.mock("../src/content/world-feelings-switch", () => ({
+  get WORLD_FEELINGS_LIVE() {
+    return live.feelings;
+  },
+}));
 vi.mock("../src/content/world-notes-switch", () => ({
   get WORLD_NOTES_LIVE() {
     return live.on;
@@ -28,6 +34,7 @@ afterEach(() => {
   cleanup();
   live.on = true;
   live.roads = false;
+  live.feelings = false;
 });
 
 const DM = "/account/names/100.cmp1";
@@ -60,6 +67,14 @@ describe("the list", () => {
     expect(w.place({ ...base, layer: "climate", value: "other", words: "Always misty", how: "wet" })).toBe("Saltmarsh: Always misty and wet");
     expect(w.place({ ...base, layer: "climate", value: "cold", how: "dry" })).toBe("Saltmarsh: Cold and dry");
   });
+  it("says a road's condition by its road, with the table's own words for an \"other\" value (#5003)", () => {
+    const base = { name: "the road between Targos and Bryn Shander", words: "", how: null, ruler: null, layer: "condition" };
+    expect(w.place({ ...base, value: "closed" })).toBe("the road between Targos and Bryn Shander: Closed");
+    expect(w.place({ ...base, value: "hard" })).toBe("the road between Targos and Bryn Shander: Hard going");
+    expect(w.place({ ...base, value: "other", words: "Half washed out" })).toBe("the road between Targos and Bryn Shander: Half washed out");
+    expect(w.kindHint.condition).toBe("Road condition");
+  });
+
   it("is not there while the switch is off", async () => {
     live.on = false;
     const api = mockApi("table");
@@ -197,5 +212,69 @@ describe("the Roads group", () => {
     live.roads = true;
     const api = mockApi("table");
     await expect(api.changeWorldNotes!("100.cmp1", { action: "not", id: R1 })).rejects.toMatchObject({ kind: "bad-action" });
+  });
+});
+
+// The Feelings group (#4959): DMbot's guesses of how a people feels toward another, kept, changed or turned down, one Undo for each press.
+describe("the Feelings group (#4959)", () => {
+  const MITHRAL = `bias:${"d1".repeat(16)}`;
+  const LINE = "Mithral Keep is unfriendly toward elves";
+
+  it("the Feelings group is drawn only behind the switch", async () => {
+    await open();
+    expect(screen.queryByRole("heading", { name: w.feelings })).toBeNull();
+  });
+
+  it("a feeling reads with its step and target, and its keep id is the bias id", async () => {
+    live.feelings = true;
+    await open();
+    expect(await screen.findByText(LINE)).toBeTruthy();
+    expect(screen.getByText(`Unfriendly · ${w.fromLore}`)).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.keepLabel(LINE) })).toBeTruthy();
+  });
+
+  it("Keep, Not right and Keep all take the bias ids", async () => {
+    live.feelings = true;
+    const api = await open();
+    fireEvent.click(await screen.findByRole("button", { name: w.keepLabel(LINE) }));
+    await waitFor(() => expect(calls(api, `"ids":["${MITHRAL}"]`)).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByText(LINE)).toBeNull());
+  });
+
+  it("Change shows the five steps, the current one first, and saves the picked one with an Undo", async () => {
+    live.feelings = true;
+    const api = await open();
+    // Two feelings are listed: the first one is Mithral Keep.
+    fireEvent.click((await screen.findAllByRole("button", { name: w.changeFeeling }))[0]!);
+    const group = screen.getByRole("group", { name: w.feelingQuestion("Mithral Keep", "elves") });
+    const labels = within(group).getAllByRole("button").map((b) => b.textContent);
+    expect(labels.slice(0, 5)).toEqual(["Unfriendly", "Hostile", "Wary", "Friendly", "Devoted"]);
+    fireEvent.click(within(group).getByRole("button", { name: "Friendly" }));
+    await waitFor(() => expect(calls(api, `"action":"bias","id":"${MITHRAL}","step":"Friendly"`)).toHaveLength(1));
+    expect(await screen.findByText(w.kept(w.feelingLine("Mithral Keep", "Friendly", "elves")))).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.undo })).toBeTruthy();
+  });
+
+  it("Back closes Change and writes nothing", async () => {
+    live.feelings = true;
+    const api = await open();
+    // Two feelings are listed: the first one is Mithral Keep.
+    fireEvent.click((await screen.findAllByRole("button", { name: w.changeFeeling }))[0]!);
+    fireEvent.click(screen.getByRole("button", { name: w.feelingBack }));
+    expect(screen.queryByRole("group", { name: w.feelingQuestion("Mithral Keep", "elves") })).toBeNull();
+    expect(calls(api, "bias")).toHaveLength(0);
+  });
+
+  it("a gone feeling says so and re-reads the list", async () => {
+    live.feelings = true;
+    const api = await open();
+    api.changeWorldNotes = async () => {
+      throw new ApiError("gone");
+    };
+    // Two feelings are listed: the first one is Mithral Keep.
+    fireEvent.click((await screen.findAllByRole("button", { name: w.changeFeeling }))[0]!);
+    const group = screen.getByRole("group", { name: w.feelingQuestion("Mithral Keep", "elves") });
+    fireEvent.click(within(group).getByRole("button", { name: "Friendly" }));
+    expect(await screen.findByText(w.gone)).toBeTruthy();
   });
 });

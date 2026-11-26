@@ -49,6 +49,12 @@ class Sources:
     agreed: Callable[[int], Awaitable[Collection[int]]] | None = None  # who agreed to be recorded
     # who counts as recorded in one campaign's stored sessions (`ConsentStore.recorded_in`)
     recorded: Callable[[int, str], Awaitable[Collection[int]]] | None = None
+    # the story-deeds switch and the plan's story memory, for one campaign (#5105): a lapsed plan
+    # is offered no deeds, as the deed card and the after-session question already say
+    reveals_on: Callable[[int, str], Awaitable[bool]] | None = None  # the same, for reveals (#5109)
+    deeds_on: Callable[[int, str], Awaitable[bool]] | None = None
+    # how many continuity heads-ups wait for one campaign's DM (the bot's `heads_up_count`, #5147)
+    heads_ups: Callable[[int, str], Awaitable[int]] | None = None
 
 
 async def count_kinds(
@@ -181,6 +187,16 @@ async def _rules(src: Sources, g: int, c: str) -> Counted:
     return Counted(n)
 
 
+async def _more_names(src: Sources, g: int, c: str) -> Counted:
+    """The names an imported session's scan held past its 10, waiting behind 📝 More names
+    (#5055 B: `MoreNames.count`)."""
+    from dmbot.memory.more_names import MoreNames
+
+    if src.memory is None:
+        return Counted(0)
+    return Counted(await MoreNames(src.db).count(g, c))
+
+
 async def _traits(src: Sources, g: int, c: str) -> Counted:
     """A lineage or class the lore gives a character the campaign has (#3926): the rows the
     🧬 card shows (`TraitOfferStore.waiting`)."""
@@ -234,6 +250,53 @@ async def _joins(src: Sources, g: int, c: str) -> Counted:
     return Counted(n, oldest)
 
 
+async def _leaves(src: Sources, g: int, c: str) -> Counted:
+    """A goodbye or a death, waiting for the DM's "still in the party?" (#4537 slice 6)."""
+    if src.memory is None:
+        return Counted(0)
+    n, oldest = await src.memory.staying_questions_waiting(g, c)
+    return Counted(n, oldest)
+
+
+async def _reveals(src: Sources, g: int, c: str) -> Counted:
+    """What the characters learned that waits for the DM's Keep or Not this (#3863): what the
+    reveal card counts (`RevealProposals.count_waiting`), leaving out a proposal whose speaker is
+    no longer recorded. With nobody known to be recorded it counts nothing, never everything."""
+    from dmbot.memory.reveal_proposals import RevealProposals
+
+    if src.memory is None or src.recorded is None or src.reveals_on is None:
+        return Counted(0)
+    if not await src.reveals_on(g, c):
+        return Counted(0)  # the switch is off, or the plan has no story memory (#5109)
+    opted_in = await src.recorded(g, c)
+    return Counted(await RevealProposals(src.memory).count_waiting(g, c, opted_in=opted_in))
+
+
+async def _deeds(src: Sources, g: int, c: str) -> Counted:
+    """Deeds the party did that mattered to someone, waiting for the DM to record them (#3591):
+    what the deed card counts (`DeedProposals.count_waiting`), leaving out a proposal whose
+    speaker is no longer recorded. The speakers are the guild-wide `agreed` set, as the deed card's
+    `consenting(guild_id)` uses (not the campaign's `recorded`, which reveals use).
+    """
+    from dmbot.memory.deed_proposals import DeedProposals
+
+    if src.memory is None or src.agreed is None or src.deeds_on is None:
+        return Counted(0)
+    if not await src.deeds_on(g, c):
+        return Counted(0)  # the switch is off, or the plan has no story memory
+    return Counted(
+        int(await DeedProposals(src.memory).count_waiting(g, c, opted_in=await src.agreed(g)))
+    )
+
+
+async def _heads_ups(src: Sources, g: int, c: str) -> Counted:
+    """Continuity heads-ups waiting for the DM (#5147): the bot's own count, which is zero while
+    the story extractor is off or the plan has no story memory."""
+    if src.heads_ups is None:
+        return Counted(0)
+    return Counted(max(0, int(await src.heads_ups(g, c))))
+
+
 async def _maps(src: Sources, g: int, c: str) -> Counted:
     """Maps a player kept that no DM has answered yet (`MapStore.waiting_for_a_dm`)."""
     if src.maps is None:
@@ -244,6 +307,7 @@ async def _maps(src: Sources, g: int, c: str) -> Counted:
 
 _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.NAMES: _names,
+    kinds.MORE_NAMES: _more_names,
     kinds.HEARD: _heard,
     kinds.LOOKALIKES: _lookalikes,
     kinds.CONNECTIONS: _connections,
@@ -254,9 +318,13 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.THREADS: _threads,
     kinds.SECRETS: _secrets,
     kinds.JOINS: _joins,
+    kinds.LEAVES: _leaves,
+    kinds.REVEALS: _reveals,
     kinds.MAPS: _maps,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,
+    kinds.DEEDS: _deeds,
+    kinds.HEADS_UPS: _heads_ups,
     kinds.PLOT: _plot,
     kinds.RECAP_APPROVE: _recap_approve,
     kinds.RULES: _rules,

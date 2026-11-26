@@ -80,7 +80,7 @@ from dmbot.campaigns.parts import (
 from dmbot.campaigns.snowflakes import read_sections, unsafe_keys, write_sections
 from dmbot.db import Conn, Database, row_int
 from dmbot.logs import log_context
-from dmbot.memory import graph_review, private_scene_store, trait_offers
+from dmbot.memory import graph_review, join_questions, private_scene_store, trait_offers
 
 log = logging.getLogger(__name__)
 
@@ -1210,6 +1210,18 @@ class CampaignStore:
             "UPDATE campaign_pictures SET message_id = 0 WHERE guild_id = %s AND campaign_id = %s",
             (guild_id, campaign_id),
         )
+        # A rule set the campaign published moves with it (#2551): its rows follow the campaign
+        # (migration 0215's cascade) with the same id and share codes, so every follower keeps
+        # following. Only the publisher changes a set, so the new owner becomes the publisher and
+        # the editors the old publisher named are dropped (the new one names their own).
+        await conn.execute(
+            "UPDATE rule_sets SET created_by = %s WHERE guild_id = %s AND campaign_id = %s",
+            (new_owner, guild_id, campaign_id),  # the account, as authorship is kept (0432)
+        )
+        await conn.execute(
+            "DELETE FROM rule_set_editors WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
         await conn.execute("SELECT set_config('dmbot.moving_campaign', %s, true)", (campaign_id,))
         await conn.execute("SELECT set_config('dmbot.moving_to', %s, true)", (str(target),))
         cur = await conn.execute(
@@ -1248,6 +1260,8 @@ class CampaignStore:
         await private_scene_store.keep_recorded(conn, target, campaign_id, consenting)
         # and the language questions heard in their lines (#4745)
         await trait_offers.keep_recorded(conn, target, campaign_id, consenting)
+        # and the goodbye questions heard in their lines (#4537 slice 6b, 0574)
+        await join_questions.keep_recorded(conn, target, campaign_id, consenting)
         return name
 
     async def delete_in(self, conn: Conn, guild_id: int, campaign_id: str) -> bool:

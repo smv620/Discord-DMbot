@@ -14,6 +14,7 @@ from dmbot.bot import DMBot
 from dmbot.ui import continuity as continuity_ui
 from dmbot.ui import private_scenes_list
 from dmbot.ui import threads as threads_ui
+from tests.fake_import_state import FakeImportState
 
 GUILD, SCREEN, UPKEEP = 1, 50, 60
 
@@ -173,25 +174,30 @@ class TheImportNamesReport(unittest.IsolatedAsyncioTestCase):
         from functools import partial
         from unittest.mock import patch
 
-        report = SimpleNamespace(fixed=[], unsure=[1], new=[2, 3])
+        from dmbot.transcript.name_pass import Candidate, Report, report_to_json
+
+        cand = Candidate("Vane", (), 1, (), ())
+        report = Report(unsure=(cand,), new=(cand, cand))
+        state = FakeImportState()
+        await state.add_strings(
+            GUILD,
+            "c" * 32,
+            "reports",
+            ["damaged-row-with-no-colon", "k:{not json", f"k:{report_to_json(report)}"],
+        )  # (two damaged rows: each costs only itself, the good one is still reported)
         campaign = SimpleNamespace(
             id="c" * 32, guild_id=GUILD, dm_bot_channel_id=UPKEEP, dm_screen_channel_id=SCREEN
         )
-        store = SimpleNamespace(pending_scans=AsyncMock(return_value=[]))
+        store = SimpleNamespace(
+            pending_scans=AsyncMock(return_value=[]), recap_waiting=AsyncMock(return_value=False)
+        )
         fake: Any = SimpleNamespace(
-            _import_reports={(GUILD, "c" * 32): [report]},
-            _import_party={},
-            _import_names={},
-            _import_unchecked={},
-            _import_speakers={},
-            _import_entries={},
-            _import_batches={},
-            _import_queued={},
-            _import_unhonoured={},
+            import_state=state,
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             post=AsyncMock(),
             ask_privately=AsyncMock(return_value=True),
         )
+        fake._import_open = partial(DMBot._import_open, fake)
         send = AsyncMock(return_value=True)
         with (
             patch("dmbot.bot.pointer_note.send", send),
@@ -217,20 +223,17 @@ class TheUnhonouredRecapsLine(unittest.IsolatedAsyncioTestCase):
         campaign = SimpleNamespace(
             id="c" * 32, guild_id=GUILD, dm_bot_channel_id=bot_channel, dm_screen_channel_id=SCREEN
         )
+        state = FakeImportState()
+        await state.add_each(GUILD, "c" * 32, "unhonoured", ["recaps are switched off"])
         fake: Any = SimpleNamespace(
-            _import_reports={},
-            _import_party={},
-            _import_names={},
-            _import_unchecked={},
-            _import_speakers={},
-            _import_entries={},
-            _import_batches={},
-            _import_queued={},
-            _import_unhonoured={"c" * 32: ["recaps are switched off"]},
+            import_state=state,
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             post=AsyncMock(),
         )
-        store = SimpleNamespace(pending_scans=AsyncMock(return_value=[]))
+        fake._import_open = partial(DMBot._import_open, fake)
+        store = SimpleNamespace(
+            pending_scans=AsyncMock(return_value=[]), recap_waiting=AsyncMock(return_value=False)
+        )
         await partial(DMBot._tell_import_news, fake)(GUILD, store)  # type: ignore[arg-type]
         return fake
 
@@ -242,3 +245,35 @@ class TheUnhonouredRecapsLine(unittest.IsolatedAsyncioTestCase):
     async def test_with_no_dm_bot_channel_it_stays_on_the_dm_screen(self) -> None:
         fake = await self.go(None)
         self.assertEqual(fake.post.await_args.args[0], SCREEN)
+
+
+class TheNameAsks(unittest.IsolatedAsyncioTestCase):
+    """The words PlotBot was not sure of are kept for the name scan that follows (#4904 3b): per
+    session, replaced by a newer set, taken once, other sessions' left alone."""
+
+    def bot(self, *, with_state: bool) -> Any:
+        bot: Any = SimpleNamespace(
+            import_state=FakeImportState() if with_state else None, _name_pass_asks={}
+        )
+        bot._take_name_asks = lambda *a: DMBot._take_name_asks(bot, *a)
+        return bot
+
+    async def test_in_the_database_per_session_replaced_and_taken_once(self) -> None:
+        bot = self.bot(with_state=True)
+        keep = DMBot._keep_name_asks
+        take = DMBot._take_name_asks
+        await keep(bot, GUILD, "c" * 32, "s1", [("Keirandal", 3), ("Vane Oskar", 1)])
+        await keep(bot, GUILD, "c" * 32, "s2", [("Fenwick", 2)])
+        await keep(bot, GUILD, "c" * 32, "s1", [("Keirandal", 4)])  # (replaces the first set)
+        self.assertEqual(await take(bot, GUILD, "c" * 32, "s1"), [("Keirandal", 4)])
+        self.assertEqual(await take(bot, GUILD, "c" * 32, "s1"), [])  # (once)
+        self.assertEqual(await take(bot, GUILD, "c" * 32, "s2"), [("Fenwick", 2)])  # (kept)
+
+    async def test_without_the_state_it_is_the_old_dict(self) -> None:
+        bot = self.bot(with_state=False)
+        await DMBot._keep_name_asks(bot, GUILD, "c" * 32, "s1", [("Keirandal", 3)])
+        self.assertEqual(bot._name_pass_asks, {"s1": [("Keirandal", 3)]})
+        self.assertEqual(
+            await DMBot._take_name_asks(bot, GUILD, "c" * 32, "s1"), [("Keirandal", 3)]
+        )
+        self.assertEqual(bot._name_pass_asks, {})

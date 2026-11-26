@@ -54,8 +54,19 @@ class TheTableSees(Web):
             (rows["control"]["groupName"], rows["control"]["how"]), ("Order of the Keep", "claims")
         )
         self.assertEqual(
-            set(rows["terrain"]), {"layer", "value", "words", "groupName", "how", "part"}
+            set(rows["terrain"]),
+            {"layer", "value", "words", "groupName", "culture", "how", "part"},
         )
+
+    async def test_a_named_cultures_name_is_given_once_the_dm_showed_it(self) -> None:
+        await self.memory.set_map_fact(
+            self.g, self.one.id, self.keep, "culture", "other", how="strong", words="Illuskan",
+            source=DM_SOURCE,
+        )  # fmt: skip
+        self.assertEqual(await self.bob_reads(), [])
+        await self.dm_shows()
+        (row,) = await self.bob_reads()
+        self.assertEqual((row["layer"], row["value"], row["culture"]), ("culture", "", "Illuskan"))
 
     async def test_nothing_until_the_dm_shows_it(self) -> None:
         await self.dm_sets("terrain", "hill")

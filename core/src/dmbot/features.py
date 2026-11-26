@@ -36,6 +36,22 @@ class Feature:
 
 FEATURES: tuple[Feature, ...] = (
     Feature(
+        "worker",
+        "Background work away from Discord",
+        "",
+        lambda s: s.worker_on,
+        ("worker_on",),
+        for_dms=False,  # for whoever runs DMbot: on only while dev1 tests the worker (#2128)
+    ),
+    Feature(
+        "worker names",
+        "The name step of a session's end, away from Discord",
+        "",
+        lambda s: s.worker_names_on,
+        ("worker_names_on",),
+        for_dms=False,  # (only while dev1 scores the sample against the in-bot step, #4905 4c)
+    ),
+    Feature(
         "party join question",
         "Catching up a new party member",
         "When a character joins the party, DMbot asks you what they know about what came before.",
@@ -185,6 +201,8 @@ FEATURES: tuple[Feature, ...] = (
             "story_threads_on",
             "met_unnamed_on",
             "session_languages_on",
+            "session_names_on",
+            "party_leaves_on",
             "private_scenes_on",
             "picture_names_on",
             "picture_reading_on",
@@ -238,6 +256,14 @@ FEATURES: tuple[Feature, ...] = (
         lambda s: s.imports_on or bool(s.imports_servers),  # (on for all, or for chosen servers)
         ("imports_on", "imports_servers"),
         for_dms=False,
+    ),
+    Feature(
+        "character card lines",
+        "Who a character is",
+        "",
+        lambda s: s.card_summary_on,
+        ("card_summary_on",),
+        for_dms=False,  # off until dev1 reads ten cards on the sample campaign (#5050)
     ),
     Feature(
         "ai helpers",
@@ -348,6 +374,9 @@ FEATURES: tuple[Feature, ...] = (
 # Settings that are not switches (a name, a number, a place), each with the reason. A setting
 # that is neither here nor in FEATURES fails the test, so a new switch cannot be forgotten.
 NOT_A_SWITCH: dict[str, str] = {
+    "ai_monthly_budget_usd": "a number of dollars, not a switch: it only warns the admins (#5270)",
+    "name_trace_dir": "a dev tool's folder on the test server, for the sample campaign only",
+    "name_trace_guild": "the test server the dev tool's trace is written for",
     "discord_token": "a secret, always needed",
     "ears_secret": "a secret, always needed",
     "ears_host": "where the voice service is",
@@ -368,6 +397,8 @@ NOT_A_SWITCH: dict[str, str] = {
     "cleaner_rank_max": "a number: the most ranking calls a session makes (0 is off)",
     "log_level": "how much is logged",
     "memory_keep_days": "a number of days",
+    "improvements_repo": "an address: with it or its secret key empty, nothing is posted (#3742)",
+    "improvements_token": "a secret key, never printed (#3742)",
     "free_users": "the owner's own accounts: never listed",
     "free_guilds": "the owner's own test server: never listed",
     "disk_warn_pct": "a percentage: where the disk check starts to warn (#4075)",

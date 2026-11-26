@@ -1,8 +1,9 @@
 {
  "campaign": "test of the frostmaiden (sample)",
  "source": "the public sample lore, https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing (the plain-text export; each connection names its line)",
- "version": 5,
+ "version": 6,
  "how_to_read": {
+  "attitudes": "#4229 slice 4: a place's, group's or people's feeling toward a lineage or a named culture that the lore states, {holder, toward}. The sample lore states none, so every one read is extra",
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact; one exception, #4636 part 3: a place the text lists as one of a region's, 'in', sure, with no other parent, is kept by an upload's sure step, and the key's row for it is stated); by_rule = made by a rule, not read",
   "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place)",
   "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads b), member (a belongs to b), in (a place is inside place b); sibling, spouse and rival_of read the same both ways",
@@ -229,7 +230,9 @@
   {
    "name": "Cerric's paternal grandfather",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Cerric Vanya'elen's paternal grandfather"
+   ],
    "note": "Unnamed. Died in a storm."
   },
   {
@@ -244,7 +247,8 @@
    "name": "Brewner's daughter",
    "kind": "person",
    "aliases": [
-    "Brewner's daughter (name unknown)"
+    "Brewner's daughter (name unknown)",
+    "Brewner's daughter, who led her father home"
    ],
    "note": "Unnamed. Leads Brewner home."
   },
@@ -261,7 +265,8 @@
    "name": "The beggar woman",
    "kind": "person",
    "aliases": [
-    "beggar woman"
+    "beggar woman",
+    "beggar woman at the docks"
    ],
    "note": "Unnamed. Gives a prophecy."
   },
@@ -339,7 +344,9 @@
   {
    "name": "Explorer's League",
    "kind": "group",
-   "aliases": [],
+   "aliases": [
+    "Explorer League"
+   ],
    "note": "guild of explorers"
   },
   {
@@ -511,7 +518,9 @@
   {
    "name": "Kelvin's Cairn",
    "kind": "place",
-   "aliases": [],
+   "aliases": [
+    "Kelvin Cairn"
+   ],
    "note": ""
   },
   {
@@ -575,7 +584,9 @@
   {
    "name": "Aurora's Wind",
    "kind": "item",
-   "aliases": [],
+   "aliases": [
+    "Aurora"
+   ],
    "note": "Fizzlebomb's ship"
   },
   {
@@ -1996,5 +2007,6 @@
  "must_not_clues": [
   {"thread": "lq04", "note": "Hlin's contract has no clue in this passage"},
   {"thread": "lq06", "note": "the route map and the sleds are Find Garret's help, never its clues"}
- ]
+ ],
+ "attitudes": []
 }

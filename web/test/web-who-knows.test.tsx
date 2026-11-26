@@ -12,7 +12,12 @@ import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
 import { webPage as w } from "../src/content/web-words";
 
-const live = vi.hoisted(() => ({ on: true }));
+const live = vi.hoisted(() => ({ on: true, line: false }));
+vi.mock("../src/content/know-line-switch", () => ({
+  get KNOW_LINE_LIVE() {
+    return live.line;
+  },
+}));
 vi.mock("../src/content/who-knows-switch", () => ({
   get WHO_KNOWS_LIVE() {
     return live.on;
@@ -22,6 +27,7 @@ vi.mock("../src/content/who-knows-switch", () => ({
 afterEach(() => {
   cleanup();
   live.on = true;
+  live.line = false;
 });
 
 /** One connection between Mira and Aldric, with the given links. */
@@ -213,9 +219,51 @@ describe("who knows this, on a held connection", () => {
     fireEvent.click(await within(panel).findByRole("checkbox", { name: "Cerric" }));
     fireEvent.click(within(panel).getByRole("checkbox", { name: "Mira" }));
     fireEvent.click(within(panel).getByRole("button", { name: w.whoSave }));
-    await waitFor(() =>
-      expect(changes).toEqual([{ action: "who", id: "l1", who: "some", characters: ["pc-cerric", "pc-mira"] }]),
+    await waitFor(() => expect(changes).toHaveLength(1));
+    // The save also says which characters the picker's list showed (#4970, core #4976): the ticked two are among them.
+    expect(changes[0]).toMatchObject({ action: "who", id: "l1", who: "some", characters: ["pc-cerric", "pc-mira"] });
+    expect(changes[0]).toHaveProperty("shown");
+    expect((changes[0] as { shown: string[] }).shown).toEqual(expect.arrayContaining(["pc-cerric", "pc-mira"]));
+  });
+
+  it("with the know-line switch on, the state line groups the party, those who left and the others (#5332)", async () => {
+    live.line = true;
+    const holders = [
+      { id: "a", name: "Mara", status: "party" as const },
+      { id: "b", name: "Tavin", status: "party" as const },
+      { id: "c", name: "Oda", status: "left" as const },
+      { id: "d", name: "Brann", status: "npc" as const },
+    ];
+    const panel = await openPanel(pageWith(graph([held({ who: "some", knownBy: holders })])));
+    expect(within(panel).getByText(w.whoStateSomeGrouped(["Mara", "Tavin"], ["Oda"], ["Brann"]))).toBeTruthy();
+    expect(w.whoStateSomeGrouped(["Mara", "Tavin"], ["Oda"], ["Brann"])).toBe(
+      "Not everyone knows it. In the party: Mara and Tavin. Left the party: Oda. Others: Brann.",
     );
+  });
+
+  it("a status the page does not know keeps the plain list, so no name is dropped", async () => {
+    live.line = true;
+    const odd = [
+      { id: "a", name: "Mara", status: "party" as const },
+      { id: "b", name: "Tavin", status: "visitor" as unknown as "party" },
+    ];
+    const panel = await openPanel(pageWith(graph([held({ who: "some", knownBy: odd })])));
+    expect(within(panel).getByText(w.whoStateSome("Mara and Tavin"))).toBeTruthy();
+  });
+
+  it("an older server (no status) or the switch off keeps the plain list", async () => {
+    const two = [
+      { id: "a", name: "Mara", status: "party" as const },
+      { id: "b", name: "Tavin" },
+    ];
+    live.line = true;
+    const mixed = await openPanel(pageWith(graph([held({ who: "some", knownBy: two })])));
+    expect(within(mixed).getByText(w.whoStateSome("Mara and Tavin"))).toBeTruthy();
+    cleanup();
+    live.line = false;
+    const withStatus = [{ id: "a", name: "Mara", status: "left" as const }];
+    const off = await openPanel(pageWith(graph([held({ who: "some", knownBy: withStatus })])));
+    expect(within(off).getByText(w.whoStateSome("Mara"))).toBeTruthy();
   });
 
   it("the state line names the characters, and \"and n more\" past five", async () => {
@@ -246,3 +294,24 @@ describe("who knows this, on a held connection", () => {
     expect(within(panel).getByText(w.whoStateSome("Mara, Tavin, Brann, Lio and 2 more"))).toBeTruthy();
   });
 });
+
+// The "Who knows this?" character list uses the same order and leaver's note as See as… (#4888).
+describe("who knows this: the character list is in the API's order, with a leaver's note (#4888)", () => {
+  it("the character list lists in the order it is given and shows a leaver's note", async () => {
+    const panel = await openPanel(pageWith(graph([held()])));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoSome }));
+    await within(panel).findByRole("checkbox", { name: "Tavin (Retired)" });
+    const labels = within(within(panel).getByRole("list", { name: w.whoSomeLabel }))
+      .getAllByRole("checkbox")
+      .map((c) => c.closest("label")?.textContent);
+    expect(labels.slice(0, 4)).toEqual(["Cerric", "Mira", "Tavin (Retired)", "Guard 1"]);
+  });
+
+  it("a name with no note shows no brackets", async () => {
+    const panel = await openPanel(pageWith(graph([held()])));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoSome }));
+    const mira = await within(panel).findByRole("checkbox", { name: "Mira" });
+    expect(mira.closest("label")?.textContent).toBe("Mira");
+  });
+});
+

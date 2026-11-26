@@ -13,14 +13,18 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
+from dmbot.memory import name_words
 from dmbot.memory.models import NAME_MAX, MemoryRuleError, lookup_key
 from dmbot.memory.name_longer import MAX_OFFERED, longer_names
+from dmbot.memory.name_words import SPELLED_OUT
 from dmbot.memory.places import LINE_CHARS, cut, find_in, trimmed
+from dmbot.memory.scan import card_sound_keys, near_match_in
 from dmbot.names import not_names
 from dmbot.recaps import name_answers
-from dmbot.recaps.notify import job_ref
-from dmbot.web import name_groups, players_lines, recaps, scenes
+from dmbot.recaps.notify import job_ref, parse_ref
+from dmbot.web import name_found, name_groups, players_lines, recaps, relationships, scenes
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
@@ -45,6 +49,20 @@ def _entity_id(value: object) -> str:
     return value
 
 
+async def _recap_or_other(conn: Any, ref: str, session: Session) -> tuple[int, str, int]:
+    """(server, campaign, session time) of a recap's names list, or of the campaign's "other new
+    names" (#5186): the names no recap linked, kept at session 0, which has no recap row to find.
+    The doors that follow check the DM and the link; anyone outside the server gets "not found"."""
+    parsed = parse_ref(ref)
+    if parsed is not None and parsed[2] == 0:
+        gid, cid, _zero = parsed
+        recaps._guild_of(session, gid)
+        await recaps._scoped(conn, gid)
+        return gid, cid, 0
+    gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
+    return gid, cid, at
+
+
 async def read_campaign_checks(db: Database, session: Session, ref: str) -> dict[str, Any]:
     """The recaps of one campaign with names waiting to be checked (#3438), oldest session first:
     `{recaps: [{ref, at, count}]}`, ids, session times and counts only (the count is an upper bound:
@@ -61,23 +79,26 @@ async def read_campaign_checks(db: Database, session: Session, ref: str) -> dict
         found = (await cur.fetchone() or {}).get("r")
     if found is None:
         raise RecapError("not_found")
-    return {
-        "recaps": [
-            {
-                "ref": job_ref(guild_id, campaign_id, int(r["at"])),
-                "at": int(r["at"]),
-                "count": int(r["count"]),
-            }
-            for r in found
-        ]
-    }
+    listed = [
+        {
+            "ref": job_ref(guild_id, campaign_id, int(r["at"])),
+            "at": int(r["at"]),
+            "count": int(r["count"]),
+            "other": int(r["at"]) == 0,  # the names no recap linked (#5186)
+        }
+        for r in found
+    ]
+    listed.sort(key=lambda r: (r["other"], r["at"]))  # (the recaps in order, "other" last)
+    return {"recaps": listed}
 
 
-async def read_checks(db: Database, session: Session, ref: str) -> dict[str, Any]:
+async def read_checks(
+    db: Database, session: Session, ref: str, *, outside_engine: str | None = None
+) -> dict[str, Any]:
     """The recap's names to check, the known names to pick from, and the kinds. Only a DM of the
     campaign; anyone else gets "not found"."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
+        gid, cid, at = await _recap_or_other(conn, ref, session)
         cur = await conn.execute("SELECT dmbot_recap_names_read(%s, %s, %s) AS r", (gid, cid, at))
         got = (await cur.fetchone() or {}).get("r")
         if got is not None:
@@ -100,11 +121,52 @@ async def read_checks(db: Database, session: Session, ref: str) -> dict[str, Any
         ]
         for card in waiting:  # (in this same read, so every door answers from one moment)
             await _with_groups(conn, gid, cid, card)
+            await _with_sounds_like(conn, gid, cid, card)
+        # What made each name a name (#5144): how it was heard, DMbot's guess, the line.
+        cur = await conn.execute(
+            "SELECT dmbot_recap_name_found(%s, %s, %s, %s, %s) AS r",
+            (gid, cid, at, TERMS_VERSION, outside_engine),
+        )
+        name_found.attach(waiting, (await cur.fetchone() or {}).get("r") or {})
         # The scene kept for each waiting name (#3644): the DM's alone, through the DM-only door.
         await scenes.attach(conn, gid, cid, waiting)
         # The players' line a shared lore upload filled in (#3833): the DM's alone, as above.
         await players_lines.attach(conn, gid, cid, waiting)
     return {"names": waiting, "known": got["known"], "kinds": name_answers.kinds()}
+
+
+async def _with_sounds_like(conn: Any, gid: int, cid: str, card: dict[str, Any]) -> None:
+    """The known name this waiting one sounds like, as Discord's card says it ("Sounds like X. The
+    same, or new?", #5215): worked out now, with the card's own code (`card_sound_keys`, then the
+    door's rows, then `near_match_in`), never stored, so a known name renamed, made secret or merged
+    since is read as it is. `spelled`: someone spelled it out at the table, which Discord words as
+    "Same name, spelled …". `soundsLike` is null when there is no one clear match. The DM only (the
+    door answers nobody else); a name that cannot be read just has none."""
+    name = str(card.get("name", ""))
+    card["soundsLike"] = None
+    codes = list(card_sound_keys(name))
+    if not codes:
+        return
+    try:
+        cur = await conn.execute(
+            "SELECT dmbot_web_sound_alikes(%s, %s, %s) AS r", (gid, cid, codes)
+        )
+        rows = (await cur.fetchone() or {}).get("r")
+    except Exception:
+        return  # (a card without it is today's card)
+    if not isinstance(rows, list):
+        return
+    own = str(card.get("id"))
+    found = near_match_in(
+        name,
+        ((r["id"], r["text"], r["name"]) for r in rows if isinstance(r, dict) and r["id"] != own),
+    )
+    if found is not None:
+        card["soundsLike"] = {
+            "id": found.entity_id,
+            "name": found.name,
+            "spelled": str(card.get("note", "")).startswith(SPELLED_OUT),
+        }
 
 
 async def _with_groups(conn: Any, gid: int, cid: str, card: dict[str, Any]) -> None:
@@ -236,7 +298,7 @@ async def answer(
             raise RecapError("bad_text")
         target = str(batch)
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
+        gid, cid, at = await _recap_or_other(conn, ref, session)
         cur = await conn.execute(
             "SELECT dmbot_name_answer_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
             (gid, cid, at, ent, action, kind, target, text),
@@ -275,16 +337,37 @@ async def read_answer(
     an answer that finished is deleted, and so is one that was undone."""
     ent = _entity_id(entity_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        gid, cid, at, _row = await recaps._one(conn, ref, session, marks=False)
+        gid, cid, at = await _recap_or_other(conn, ref, session)
         cur = await conn.execute(
             "SELECT dmbot_name_answer_read(%s, %s, %s, %s) AS r", (gid, cid, at, ent)
         )
         got = (await cur.fetchone() or {}).get("r")
     if got is None:
         raise RecapError("not_found")
-    return {
+    out = {
         "state": str(got["state"]),
         "note": str(got["note"]),
         "error": str(got["error"]) or None,
         "batch": got["batch"],
     }
+    kept = name_answers.read_yes_note(out["note"])
+    if kept is not None:
+        # A yes that made rules (#5144): Discord's reply as plain text, which heard spellings now
+        # read as the name, and whether this session's transcript was fixed ("fixed", "later" or
+        # "failed"); the batch is what the page's Undo sends.
+        fixed, kind, name, rules = kept
+        out.update(
+            note=name_words.rules_note(name, kind, rules, fixed),
+            rules=rules,
+            fixed=fixed,
+        )
+    return out
+
+
+async def queue_more_names(db: Database, session: Session, ref: str) -> str:
+    """📝 More names (#5081): the id of the answer the page polls at `.../web/answers/{id}`. The
+    queue door checks the caller is a DM of the campaign; the bot checks again and makes the names
+    to check as Discord's button does."""
+    return await relationships._queue(
+        db, session, ref, entity=None, action="names-more", target="", text="", flag=False
+    )

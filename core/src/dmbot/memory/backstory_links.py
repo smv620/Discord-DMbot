@@ -22,9 +22,10 @@ from psycopg.types.json import Jsonb
 
 from dmbot.db import Database
 from dmbot.memory import reputation_words, route_words
+from dmbot.memory.models import BACKGROUND_SOURCE, is_id
 from dmbot.memory.models import END_REASONS as HAND_OVERS
-from dmbot.memory.models import is_id
 from dmbot.memory.pronouns import is_pronoun
+from dmbot.memory.store import TRAVELS_WITH, companion_order
 
 MAX_WAITING = 300  # per campaign: a hostile text cannot grow the table
 MAX_WHICH = 50  # "Which Mara?" questions waiting per campaign
@@ -169,6 +170,15 @@ class Waiting:
     hand_over: str = ""
     assumed: bool = False  # DMbot assumed it (#4173 slice 3): never one of the DM's questions
     inferred_sure: bool = False  # as on `NewLink` (#4636 part 3)
+    # `secret` only because an end is a clue only some people know: the DM's own "only some know
+    # this" carried to the card (its 👥 Some know, hand-over and secret-name rules), never into the
+    # kept row, whose view is the gate's (Supervisor's ruling (a) on #4823)
+    clue_end: bool = False
+
+    @property
+    def own_secret(self) -> bool:
+        """The connection's own secret, as the upload or the DM made it: what a kept row stores."""
+        return self.secret and not self.clue_end
 
 
 def _hand_over(link: NewLink) -> tuple[str, str]:
@@ -459,7 +469,7 @@ class BackstoryLinks:
                 return GONE
             if entity_id is not None:
                 entities = await self._entities(
-                    conn, guild_id, campaign_id, {entity_id, *row["candidates"]}
+                    conn, guild_id, campaign_id, {entity_id, row["other_id"], *row["candidates"]}
                 )
                 ends = {self._end(entities, c) for c in row["candidates"]}
                 end = self._end(entities, entity_id)
@@ -488,6 +498,21 @@ class BackstoryLinks:
                         if row["other_is_subject"]
                         else (end, row["other_id"])
                     )
+                    if row["predicate"] == TRAVELS_WITH:
+                        # The DM picked one end; the link is still DMbot's offer, so it goes
+                        # through the store's one check (#5164): turned when named the wrong way
+                        # round, dropped (the question answered) when it can never be kept.
+                        x, y = self._end(entities, a), self._end(entities, b)
+                        order = (
+                            companion_order(entities[x], entities[y], BACKGROUND_SOURCE)
+                            if x is not None and y is not None
+                            else None
+                        )
+                        if order is None:
+                            a = b = ""
+                        elif order:
+                            a, b = b, a
+                if end != row["other_id"] and a:
                     # The note says who decided now: after the DM's pick, "DMbot wasn't sure" would
                     # read as if it were still open (only a connection DMbot checked has a note).
                     decided = (DECIDED_ELSE if outside else DECIDED_BY_DM) if row["decided"] else ""
@@ -580,9 +605,10 @@ class BackstoryLinks:
                     prev = None
                 if prev is not None:  # (asked once that one is a confirmed name too)
                     ready = ready and entities[prev]["status"] == "confirmed"
-                # A clue only some people know makes it secret. A name merely not shown to the
-                # players yet (#2321; every new name starts so, #2404) does not: a backstory
-                # connection is kept unrevealed instead, and cannot be shown before both names are.
+                # A clue only some people know makes it secret on the DM's card: the DM's own
+                # "only some know this" switch (Supervisor's ruling (a) on #4823). The kept row's
+                # view is the gate's (`own_secret`, `backstory_keep.shown_entry_ids`). A name merely
+                # not shown to the players yet (#2321, #2404) does not: kept unrevealed instead.
                 hidden = any(entities[x]["audience_limited"] for x in (a, b))
                 out.append(
                     Waiting(
@@ -594,7 +620,7 @@ class BackstoryLinks:
                         _guesses(r["npc_guesses"]), prev or "",
                         str(entities[prev]["name"]) if prev else "",
                         str(r["hand_over"]) if prev else "", bool(r["assumed"]),
-                        bool(r["inferred_sure"]),
+                        bool(r["inferred_sure"]), hidden and not r["secret"],
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -787,8 +813,8 @@ class BackstoryLinks:
             if not want:
                 break
             cur = await conn.execute(
-                "SELECT id, name, status, merged_into, hidden_from_players, audience_limited"
-                " FROM memory_entities"
+                "SELECT id, name, status, merged_into, hidden_from_players, audience_limited,"
+                " type, role, party FROM memory_entities"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)",
                 (guild_id, campaign_id, list(want)),
             )

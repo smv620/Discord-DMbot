@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 from dmbot.bot import DMBot
 from dmbot.transcript.import_job import STALE_SCAN_S
+from tests.fake_import_state import FakeImportState
 from tests.test_import_recaps import DAY, GUILD, START, WithImports
 
 BOT: Any = DMBot  # (the methods are called on stand-ins)
@@ -54,6 +55,24 @@ class TheStore(WithImports):
             GUILD, early, through_ms=(START + DAY) * 1000, calls=1, now=1
         )
         self.assertEqual([r.session_id for r in await self.store.unextracted(GUILD)], [late])
+
+    async def test_the_scan_cut_is_set_not_added_and_held_names_add_up(self) -> None:
+        # (#5055 A) counts the sample run reads after the notice is gone: a retried scan counts
+        # once; the story reader's held names add up part by part; a live session keeps none
+        sid = await self.imported(1)
+        await self.store.set_scan_cut(GUILD, sid, 3)
+        await self.store.set_scan_cut(GUILD, sid, 3)  # (the same scan, run again)
+        self.assertEqual(await self.store.scan_cut(GUILD, sid), 3)
+        await self.store.add_story_held(GUILD, sid, 2)
+        await self.store.add_story_held(GUILD, sid, 1)
+        await self.store.add_story_held(GUILD, "live-session", 4)  # (no import row: nothing)
+        self.assertEqual(await self.store.scan_cut(GUILD, "live-session"), 0)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT story_held FROM session_imports WHERE session_id = %s", (sid,)
+            )
+            r: Any = await cur.fetchone()
+        self.assertEqual(r["story_held"], 3)
 
     async def test_renewing_keeps_the_window_start_where_the_scan_began(self) -> None:
         sid = await self.imported(1)
@@ -125,7 +144,7 @@ def bot_for(store: Any, outcomes: list[str], **kw: Any) -> Any:
         extractor_ai=object(),
         settings=SimpleNamespace(story_extractor_on=True),
         _import_reading=set(),
-        _import_left_told={},
+        import_state=FakeImportState(),
         _extract_import=extract,
         campaigns=SimpleNamespace(
             get=AsyncMock(
@@ -138,6 +157,7 @@ def bot_for(store: Any, outcomes: list[str], **kw: Any) -> Any:
     )
     me._extract_imports_left = partial(BOT._extract_imports_left, me)
     me._tell_imports_left = partial(BOT._tell_imports_left, me)
+    me._import_open = partial(BOT._import_open, me)
     me._upkeep_channel = partial(BOT._upkeep_channel, me)
     return me
 
@@ -181,7 +201,7 @@ class TheSweep(WithImports):
         self.assertEqual(me.post.await_count, 2)
         await me._tell_imports_left(GUILD, self.store, {})  # (all read: no word)
         self.assertEqual(me.post.await_count, 2)
-        self.assertEqual(me._import_left_told, {})
+        self.assertEqual(await me.import_state.counted(GUILD, "left_told"), {})
 
     async def test_the_word_goes_to_the_dm_bot_channel_when_there_is_one(self) -> None:
         me = bot_for(self.store, [])

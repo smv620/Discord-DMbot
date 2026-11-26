@@ -17,8 +17,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+
+from psycopg.types.json import Jsonb
 
 from dmbot import ai_feed, credits
 from dmbot.db import Database
@@ -328,6 +330,35 @@ class ImportStore:
                 (now, state, part, now, part, parts, state, guild_id, session_id),
             )
 
+    async def set_names(
+        self,
+        guild_id: int,
+        session_id: str,
+        state: str,
+        now: int,
+        *,
+        part: int | None = None,
+        parts: int | None = None,
+        unread: int | None = None,
+    ) -> None:
+        """Where the name reader of this import is (#5091, as `set_story` is for the story read):
+        'reading' (stretch `part` of `parts`), 'read' (with how many stretches could not be read,
+        `unread`, which the card says plainly, never as "no names") or 'stopped' (the reader failed
+        after it started). Counts and times only. It started when it first went to 'reading', or
+        when the first stretch is read again (a new read after a restart, even one that died in
+        its first stretch); every call is a move."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET names_moved_at = %s,"
+                " names_started_at = CASE WHEN %s = 'reading' AND (names_state <> 'reading'"
+                " OR coalesce(%s, 0) < names_part OR coalesce(%s, 0) = 1)"
+                " THEN %s ELSE names_started_at END,"
+                " names_part = coalesce(%s, names_part), names_parts = coalesce(%s, names_parts),"
+                " names_unread = coalesce(%s, names_unread),"
+                " names_state = %s WHERE guild_id = %s AND session_id = %s",
+                (now, state, part, part, now, part, parts, unread, state, guild_id, session_id),
+            )
+
     async def finish_scan(self, guild_id: int, session_id: str, ended: int) -> None:
         """The scan ran to `ended` (seconds): its window is closed."""
         async with self._db.guild(guild_id) as conn:
@@ -335,6 +366,50 @@ class ImportStore:
                 "UPDATE session_imports SET scan_to = %s, scan_finished = TRUE"
                 " WHERE session_id = %s",
                 (ended, session_id),
+            )
+
+    async def keep_found(
+        self, guild_id: int, session_id: str, found: Mapping[str, Sequence[str]]
+    ) -> None:
+        """The ids of the names this session's name scan proposed, kind by kind, for the website's
+        "Add all" (#5276), as a lore upload keeps its own. Set, not added: a scan given back and
+        run again keeps the last one. Capped like the upload's; ids only."""
+        from dmbot.memory.lore_queue import _capped  # (the one cap, shared with the upload's)
+
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET found = %s WHERE session_id = %s",
+                (Jsonb(_capped(found)), session_id),
+            )
+
+    async def set_scan_cut(self, guild_id: int, session_id: str, n: int) -> None:
+        """How many names the name scan of this imported session left out past its limit (#5055
+        A). Set, not added: a scan given back and run again counts once. A count only."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET scan_cut = %s WHERE session_id = %s",
+                (max(n, 0), session_id),
+            )
+
+    async def scan_cut(self, guild_id: int, session_id: str) -> int:
+        """The count `set_scan_cut` kept (0 for none)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT scan_cut FROM session_imports WHERE session_id = %s", (session_id,)
+            )
+            row = await cur.fetchone()
+        return int(row["scan_cut"]) if row is not None else 0
+
+    async def add_story_held(self, guild_id: int, session_id: str, n: int) -> None:
+        """Count `n` new names the story reader held for a later session past its limit (#5055 A),
+        for the sample run. Added: a read stopped by its limit goes on from where it got to, so
+        each part counts its own. A live session has no row, so nothing is kept. A count only."""
+        if n <= 0:
+            return
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE session_imports SET story_held = story_held + %s WHERE session_id = %s",
+                (n, session_id),
             )
 
     async def release_scan(self, guild_id: int, session_id: str) -> int:
@@ -357,6 +432,23 @@ class ImportStore:
                 " scan_from = 0, scan_to = 0, scan_gave_up = TRUE WHERE session_id = %s",
                 (session_id,),
             )
+
+    async def recap_waiting(self, guild_id: int, campaign_id: str) -> bool:
+        """Whether this campaign has a scanned import whose recap the DM asked for and that has not
+        started: the end-of-import news waits for it. The session must still be there, as in
+        `ready_for_recap` (an import whose session was deleted has no recap to wait for, and must
+        not hold the news back for ever). Asked of one campaign, so another campaign's
+        waiting recaps (`ready_for_recap` lists a few, oldest first, for the whole server) can
+        never hide this one."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM session_imports i JOIN transcript_sessions t"
+                " ON t.id = i.session_id AND t.guild_id = i.guild_id"
+                " WHERE i.campaign_id = %s AND i.scan_finished AND i.write_recap"
+                " AND NOT i.recap_started LIMIT 1",
+                (campaign_id,),
+            )
+            return await cur.fetchone() is not None
 
     async def ready_for_recap(self, guild_id: int, limit: int = PER_ROUND) -> list[Ready]:
         """Scanned imports whose recap the DM asked for and that has not been dealt with, in date

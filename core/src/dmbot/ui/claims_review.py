@@ -23,9 +23,10 @@ from dmbot.memory.claims import (
     STOPPED_NOW,
     Claim,
     ClaimStore,
-    Extracted,
-    condition_of,
+    is_condition,
+    says_travels_with,
 )
+from dmbot.memory.link_words import TRAVELS_WITH_MEANS
 from dmbot.memory.models import (
     CONFIRMED,
     DM,
@@ -35,6 +36,7 @@ from dmbot.memory.models import (
     TooLateToUndo,
     name_key,
 )
+from dmbot.memory.store import companion_refusal
 from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.name_card import FLAG_WHY
@@ -113,16 +115,7 @@ ALL_TRUE, ALL_SECRET = (
 _FINAL = (GONE, STOPPED_NOW, ODD_NOW)  # answers that end a question without a yes or a no
 
 
-def _is_condition(claim: Claim) -> bool:
-    return (
-        condition_of(
-            Extracted(
-                claim.subject, claim.relationship, claim.object, claim.details, claim.lines,
-                claim.how,
-            )
-        )
-        is not None
-    )  # fmt: skip
+_is_condition = is_condition  # (moved to the store module, #4229 slice 4b)
 
 
 def waiting_text(count: int, *, private: bool = False) -> str:
@@ -151,9 +144,15 @@ def statement(claim: Claim) -> str:
 
 
 def question_text(claim: Claim) -> str:
-    """The statement as a question, and who said it."""
+    """The statement as a question, and who said it; a companion link also says what it means
+    (#5164), since "travels with" alone leaves the DM guessing."""
     by = "you said" if claim.how == HOW_DM else "a player said"
-    return f"{statement(claim)}? _({by})_"
+    means = (
+        f"\n   _{TRAVELS_WITH_MEANS[0].upper()}{TRAVELS_WITH_MEANS[1:]}._"
+        if says_travels_with(claim.relationship)
+        else ""
+    )
+    return f"{statement(claim)}? _({by})_{means}"
 
 
 def knows(count: int) -> str:
@@ -328,6 +327,8 @@ class ClaimsReview(_Menu):
         # batch). Kept when the next page comes, so the Undo is still there to press (#3624).
         self.last_bulk: list[tuple[str, int]] = []
         self.busy = False  # a bulk press is writing: a second one waits (#3624)
+        # A first meeting's "Starting feeling?" line, worked out with each page (#4229 slice 4b)
+        self.feelings: dict[str, str] = {}
 
     async def current_text(self, interaction: discord.Interaction) -> str | None:
         """A fresh page (the oldest waiting questions), or None when none are left."""
@@ -337,6 +338,14 @@ class ClaimsReview(_Menu):
         agreed = await _bot(interaction).consent.consenting(self.guild_id)
         waiting = await ClaimStore(memory).waiting(self.guild_id, self.campaign_id, opted_in=agreed)
         self.page, self.total, self.answered = waiting[:PAGE], len(waiting), {}
+        self.feelings = {}
+        try:  # (only a reminder: a failed read leaves the questions as they were)
+            if self.page:
+                self.feelings = await ClaimStore(memory).starting_feelings(
+                    self.guild_id, self.campaign_id, self.page
+                )
+        except Exception:
+            log.exception("starting feelings: read failed")
         # (the current party, in the party list's order: #4537 rule 13.1)
         group = await memory.party_and_others(self.guild_id, self.campaign_id)
         members = [i for i, _ in group.party]
@@ -391,11 +400,16 @@ class ClaimsReview(_Menu):
         for claim in self.page:
             if claim.id in self.answered or _is_condition(claim):
                 continue
+            said: list[str] = []
             guessed = guess_for(claim, self.party)
             if guessed:
                 who = party_names(self.party, guessed)
                 icon = knower_icon(len(guessed))
-                out[claim.id] = f"{icon} DMbot thinks only {who} {knows(len(guessed))} this."
+                said.append(f"{icon} DMbot thinks only {who} {knows(len(guessed))} this.")
+            if claim.id in self.feelings:
+                said.append(self.feelings[claim.id])
+            if said:
+                out[claim.id] = "\n   ".join(said)
         return out
 
     def _render(self) -> str:
@@ -584,7 +598,10 @@ class ClaimsReview(_Menu):
                 await claims.reject(self.guild_id, self.campaign_id, claim_id)
                 done = f"{NO} Not remembered: {saying}. DMbot won't ask again."
         except MemoryRuleError as exc:
-            message = str(exc) or GONE
+            rule = companion_refusal(str(exc))  # (and what to press, #5164)
+            message = (
+                f"{rule} Press {NO} with its number to leave it out." if rule else str(exc) or GONE
+            )
             if message not in _FINAL:
                 await _tell(interaction, message)  # the question stays; nothing changed
                 return

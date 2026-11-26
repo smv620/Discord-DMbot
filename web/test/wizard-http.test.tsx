@@ -83,7 +83,7 @@ describe("the routes", () => {
     });
     await api.docRemove(G, "d1");
     await api.rights(G, "shared");
-    expect(await api.pageText(G, "Characters:\nBrannoc Stonebelt")).toEqual({ name: "Winter", characters: [{ full: "Brannoc Stonebelt", partyName: "Brannoc" }] });
+    expect(await api.pageText(G, "Characters:\nBrannoc Stonebelt")).toEqual({ name: "Winter", characters: [{ full: "Brannoc Stonebelt", partyNames: ["Brannoc"] }] });
     expect(await api.finish(G)).toBe("f1");
     expect(await api.finishState(G)).toBeNull(); // ({} is "not started")
     expect(await api.finishState(G)).toMatchObject({ state: "working", stage: "lore", part: 1, ofParts: 2, campaignRef: `${G}.c9`, dmBotChannel: "400000000000000009", createdAt: 10, movedAt: 20, serverNow: 30 });

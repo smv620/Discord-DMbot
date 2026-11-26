@@ -11,7 +11,7 @@ import { type AccountApi } from "./api";
 import LazyPanel from "./LazyPanel";
 import QuestionsNames from "./QuestionsNames";
 
-export type HereGroup = "names" | "waiting" | "readings" | "traits" | "secrets" | "joins";
+export type HereGroup = "names" | "waiting" | "readings" | "traits" | "secrets" | "joins" | "leaves" | "reveals" | "heard" | "deeds" | "lookalikes";
 
 /** The panel a kind opens, or null when it is not answered on this page. Kinds in one group share one panel. */
 export function groupOf(kind: string): HereGroup | null {
@@ -21,6 +21,11 @@ export function groupOf(kind: string): HereGroup | null {
   if (kind === "traits") return "traits";
   if (kind === "secrets") return "secrets";
   if (kind === "party_joins") return "joins";
+  if (kind === "party_leaves") return "leaves";
+  if (kind === "deeds") return "deeds";
+  if (kind === "reveals") return "reveals";
+  if (kind === "heard") return "heard";
+  if (kind === "lookalikes") return "lookalikes";
   return null;
 }
 
@@ -30,12 +35,14 @@ export default function QuestionsHere({
   group,
   id,
   onLeft,
+  waiting,
 }: {
   api: AccountApi;
   campaignRef: string;
   group: HereGroup;
   id: string;
   onLeft?: (left: number) => void;
+  waiting?: number;
 }) {
   // The waiting group has two panels; each reports apart, and the group tells the sum once both mounted panels have (#4740).
   const [waitingLeft, setWaitingLeft] = useState<number | null>(null);
@@ -48,13 +55,23 @@ export default function QuestionsHere({
     onLeft(waitingLeft + (handMounted ? (handLeft ?? 0) : 0));
   }, [group, waitingLeft, handLeft, handMounted]);
 
-  if (group === "names") return <QuestionsNames api={api} campaignRef={campaignRef} id={id} onLeft={report} />;
+  if (group === "names") return <QuestionsNames api={api} campaignRef={campaignRef} id={id} onLeft={report} waiting={waiting ?? 0} />;
   if (group === "traits")
     return (
       <LazyPanel load={() => import("./TraitQuestions")} what="the lineage and class questions" props={{ api, campaignRef, id, onLeft: report }} />
     );
   if (group === "joins")
     return <LazyPanel load={() => import("./JoinQuestions")} what="the join question" props={{ api, campaignRef, id, onLeft: report }} />;
+  if (group === "reveals")
+    return <LazyPanel load={() => import("./RevealQuestions")} what="things the characters learned" props={{ api, campaignRef, id, onLeft: report }} />;
+  if (group === "deeds")
+    return <LazyPanel load={() => import("./DeedQuestions")} what="the deeds to record" props={{ api, campaignRef, id, onLeft: report }} />;
+  if (group === "leaves")
+    return <LazyPanel load={() => import("./LeaveQuestions")} what="the still in the party questions" props={{ api, campaignRef, id, onLeft: report }} />;
+  if (group === "heard")
+    return <LazyPanel load={() => import("./HeardQuestions")} what="the Did they mean questions" props={{ api, campaignRef, id, onLeft: report }} />;
+  if (group === "lookalikes")
+    return <LazyPanel load={() => import("./LookAlikes")} what="the look-alike names" props={{ api, campaignRef, id, onLeft: report, heading: false }} />;
   if (group === "secrets")
     return (
       <LazyPanel load={() => import("./SecretQuestions")} what="the known or secret questions" props={{ api, campaignRef, id, onLeft: report }} />

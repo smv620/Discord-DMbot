@@ -7,6 +7,11 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { joinWords as w } from "../content/join-questions-words";
 import { ApiError, type AccountApi, type JoinGroup } from "./api";
 import SavingWait from "./SavingWait";
+import LazyPanel from "./LazyPanel";
+import { joinChooseWords as cw } from "../content/join-choose-words";
+
+// The "Let me choose" page is loaded only once the DM opens it (#4891).
+const loadJoinChoose = () => import("./JoinChoose");
 
 /** The plain line for an answer that did not go through, by the bot's error word. */
 function sayFailure(error: unknown, undoing: boolean): string {
@@ -35,6 +40,9 @@ export default function JoinQuestions({
   // The last "What the party knows" with its change number, and the names it was for (the card may show another message by then).
   const [undo, setUndo] = useState<{ batch: number; names: string[]; back: boolean } | null>(null);
   const flight = useRef(false);
+  // "Let me choose" (#4891): the open page and its question. Held here, so it survives the question leaving the list after a pick.
+  const [choosing, setChoosing] = useState<{ group: string; names: string[]; back: boolean } | null>(null);
+  const chooseButton = useRef<HTMLButtonElement | null>(null);
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
@@ -141,9 +149,39 @@ export default function JoinQuestions({
               </button>
             </div>
           )}
+          {api.joinChoices && (
+            <button
+              ref={chooseButton}
+              type="button"
+              class="button secondary"
+              aria-expanded={choosing?.group === g.group}
+              onClick={() => setChoosing(choosing?.group === g.group ? null : { group: g.group, names: g.names, back: g.kind === "back" })}
+            >
+              {cw.button}
+            </button>
+          )}
           <SavingWait active={busy} stage={w.saving} />
         </>
       ) : null}
+      {choosing && api.joinChoices && (
+        <LazyPanel
+          key={choosing.group}
+          load={loadJoinChoose}
+          what="the Let me choose page"
+          props={{
+            api,
+            campaignRef,
+            group: choosing.group,
+            names: choosing.names,
+            back: choosing.back,
+            onClose: () => {
+              setChoosing(null);
+              chooseButton.current?.focus();
+              void read();
+            },
+          }}
+        />
+      )}
     </section>
   );
 }

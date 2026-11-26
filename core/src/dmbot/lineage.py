@@ -72,7 +72,7 @@ STAMPED_MEMORY = (
     "memory_hand_over_both",
     "memory_story_languages", "memory_map_facts", "memory_cultures", "memory_thread_parts",
     "memory_thread_guesses", "map_features", "memory_weather_notes", "memory_party_spans",
-    "memory_join_questions",
+    "memory_join_questions", "memory_card_summaries",
 )  # fmt: skip
 # Part 2: recaps and the theatre script (migration 0380).
 STAMPED_RECAPS = (
@@ -116,6 +116,23 @@ NOT_STAMPED: dict[str, str] = {
     "lore_pdf_staged": "a file in transit, gone within a day; what its read finds is stamped",
     "secret_questions": "a question waiting for the DM; what an answer changes is stamped",
     # (#4841: a day-long undo handle for a website pick of a followed set's rules; no story)
+    # (#4799: the choices worked out for a DM's page, gone within an hour; ids and counts)
+    "web_join_choices": "answers worked out for a page and kept an hour, not story",
+    "web_reveals": "what the characters learned, in words for a page and kept an hour, not story",
+    # (#3695: the continuity heads-ups worked out on the DM's ask; pointers only, kept a day)
+    "continuity_hits": "heads-ups worked out for a page and kept a day, pointers only, not story",
+    # (#5133: what made a waiting name a name, how and one line's pointer; goes when answered)
+    "name_found": "how a waiting name was found and a pointer to its line, not story",
+    # (#4905: the queue that hands a live session's slow reads to the worker: ids, a lease and a
+    # state; what the reads make carries the stamp)
+    "after_session_jobs": "a working queue of ids and a lease; what the reads make is stamped",
+    # (#3843: what a worker wants the bot to say in Discord; ids and counts, swept in days)
+    # (#4904: what an import's scans leave for the report at its end; counts, ids and names)
+    # (#5055 B: an import's names past the scan's 10, waiting for the DM's 📝 More names)
+    "import_more_names": "a name waiting for the DM's press; the name it becomes is stamped",
+    "import_state": "a holding place for an import's report (names, spellings as heard), taken "
+    "when the report is made; the names it leads to are stamped as entries",
+    "outbox": "a message waiting to be said in Discord, ids and counts only, not story",
     "web_rule_takes": "a day-long undo handle for a pick of a followed set's rules, not story",
     # (#4448: which time-limit messages were said; the limit itself is a stamped part)
     "time_limit_told": "a record of a private message said, not story; the limit is stamped",
@@ -191,6 +208,12 @@ NOT_STAMPED: dict[str, str] = {
             "web_backup_parts",
             "web_backups",
             "web_house_file_actions",
+            "web_connection_reads",
+            "web_adventure_gives",
+            "web_adventure_matches",
+            "web_adventure_guides",
+            "web_adventure_reads",
+            "web_adventure_removals",
             "web_line_fixes",
             "web_peeks",
             "web_recap_style_actions",

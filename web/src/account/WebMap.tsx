@@ -14,6 +14,8 @@ import { mapReadLine } from "./webReading";
 import { kindWords, webPage as words } from "../content/web-words";
 import { kindStyle } from "./webKinds";
 import NodeSummary from "./NodeSummary";
+import NodeTraits from "./NodeTraits";
+import { NODE_TRAITS_LIVE } from "../content/node-traits-switch";
 import type { AccountApi, IconChoice, WebEdge, WebNode } from "./api";
 import {
   MAX_SIM_NAMES,
@@ -32,6 +34,7 @@ import {
   type LayoutMode,
   type SimNode,
 } from "./webForce";
+import { ADVENTURE_LIVE } from "../content/adventure-switch";
 import { PC_ICONS_LIVE } from "../content/pc-icons-switch";
 import { QUEST_SHEET_LIVE } from "../content/quest-sheet-switch";
 import { pcIconWords } from "../content/pc-icon-words";
@@ -219,7 +222,7 @@ export default function WebMap({
   /** A connection in a name's panel was pressed: open its pair with that connection open. */
   onJump?: ((a: string, b: string, linkId: string) => void) | undefined;
   /** Choose a player character's icon (#3622): a plain-words problem, or null when it was saved. */
-  onIcon?: ((id: string, choice: IconChoice) => Promise<string | null>) | undefined;
+  onIcon?: ((id: string, choice: IconChoice, picture?: number) => Promise<string | null>) | undefined;
   /** The id of the character whose last icon change can be taken back, and the Undo itself. */
   iconUndo?: { id: string; now: IconChoice; undo: () => Promise<string | null> } | null;
   /** How the viewer likes the map drawn (#3620): spacing, sizes and line width. Today's look when missing. */
@@ -862,10 +865,18 @@ export default function WebMap({
               key={detail.id}
               load={() => import("./PcIconRow")}
               what="the icon choices"
-              props={{ node: detail, onChoose: (choice: IconChoice) => onIcon(detail.id, choice), undo: iconUndo?.id === detail.id && iconUndo.now === (detail.iconChoice ?? "default"), onUndo: iconUndo?.undo ?? (async () => null) }}
+              props={{ node: detail, api, refId, onChoose: (choice: IconChoice, picture?: number) => onIcon(detail.id, choice, picture), undo: iconUndo?.id === detail.id && iconUndo.now === (detail.iconChoice ?? "default"), onUndo: iconUndo?.undo ?? (async () => null) }}
             />
           )}
+          {/* The DM says which entry of their adventure this name is (#3694 slice G2): the adventure's calls load only when it is opened. */}
+          {ADVENTURE_LIVE && canEdit && api?.adventureApi && (
+            <LazyPanel key={`adv-${detail.id}`} load={() => import("./AdventureLink")} what="the adventure link" props={{ api, refId, entity: { id: detail.id, name: detail.name } }} />
+          )}
           {api && <NodeSummary key={detail.id} api={api} refId={refId} id={detail.id} />}
+          {/* The lineage and class of a character (#3925): the DM's view only, and only for a character's own node. */}
+          {canEdit && NODE_TRAITS_LIVE && api?.nodeTraits && (detail.kind === "npc" || detail.kind === "player_character") && (
+            <NodeTraits key={detail.id} api={api} refId={refId} id={detail.id} />
+          )}
           {(detail.quests?.length ?? 0) > 1 && <p class="small">{words.alsoIn(detail.quests!.slice(1).map((q) => q.name).join(", "))}</p>}
           {sideLines.length === 0 ? (
             <p class="small">{words.sideNone}</p>

@@ -36,7 +36,7 @@ from typing import Any, Protocol
 
 import aiohttp
 
-from dmbot import ai_feed, credits
+from dmbot import ai_feed, credits, service_spend
 from dmbot.alerts import Problem, raise_alert
 
 log = logging.getLogger(__name__)
@@ -141,6 +141,9 @@ class Feature(enum.StrEnum):
     # Who "he", "the king" or "his sister" is in a lore or story read (#2790): scored candidates
     # for a pronoun, then a few samples to check the top pick holds.
     WHO_IS_IT = "who_is_it"
+    # A connection said in the DM's own words, read into proposals the DM confirms (#2940): one
+    # short answer on the fast model, tagged apart so its spend shows on its own.
+    CONNECTION_SAID = "connection_said"
 
 
 # How much a background call may write at least (#2596, the owner 2026-10-24: "the cutoffs are
@@ -213,6 +216,7 @@ FEATURE_TIERS = {
     # Short local passage, small answers, and the code only accepts a sure answer or asks the DM;
     # the calibration set (#2790) decides whether the careful model is worth the cost.
     Feature.WHO_IS_IT: AIModelTier.FAST,
+    Feature.CONNECTION_SAID: AIModelTier.FAST,  # the DM reads and confirms every proposal (#2940)
 }
 
 # The setting that picks each tier's model (named in the log when one isn't available).
@@ -797,11 +801,14 @@ class AnthropicClient:
                 if isinstance(exc, asyncio.CancelledError)
                 else FAILED,
             )
+            if isinstance(exc, AIOutOfFunds):  # refused for limits or billing: counted (#3672)
+                service_spend.record_refused(feature, tier.value)
             raise
         ai_feed.done(entry, reply.text)
         # Charged for what the service reported, even when the answer was cut: it billed DMbot for
         # those tokens. Free outside a job that prepares material (#4005).
         await credits.record(reply, feature)
+        service_spend.record_ai(reply, feature)  # (business totals for the Costs page, #3672)
         return reply
 
     async def _complete(

@@ -189,7 +189,30 @@ export interface CostsView {
   income: CostIncome[];
 }
 
+/** One sum of what DMbot recorded (#3671): by service, model, feature, plan and whether it was real use or a sample run. */
+export interface RecordedRow {
+  service: string;
+  model: string;
+  feature: string;
+  plan: string;
+  source: "play" | "sample";
+  calls: number;
+  units_in: number;
+  units_out: number;
+  /** Millionths of a dollar, an estimate at list price; 0 for a service that is never priced. */
+  micro_usd: number;
+  refused: number;
+  unpriced: number;
+}
+
+export interface RecordedView {
+  month: string;
+  rows: RecordedRow[];
+}
+
 export interface AdminApi {
+  /** DMbot's own record of its paid calls for a month, YYYY-MM (default: this one), #3671. */
+  costsRecorded?(month?: string): Promise<RecordedView>;
   /** What each paid service has charged in a month, YYYY-MM (default: this one), #3671. */
   costs?(month?: string): Promise<CostsView>;
   /** Who is signed in, or null. */
@@ -334,6 +357,11 @@ export function httpAdminApi(base: string, fetcher: typeof fetch = fetch): Admin
       if (!response.ok) throw new AdminApiError(await grantProblem(response));
       return (await response.json()) as CostsView;
     },
+    async costsRecorded(month) {
+      const response = await call(`/admin/costs/recorded${month ? `?month=${encodeURIComponent(month)}` : ""}`);
+      if (!response.ok) throw new AdminApiError(await grantProblem(response));
+      return (await response.json()) as RecordedView;
+    },
     async tickets(filter = "all", page = 1) {
       const response = await call(
         `/admin/support?status=${encodeURIComponent(filter)}&page=${encodeURIComponent(String(page))}`,
@@ -451,6 +479,33 @@ export function pretendAdminApi(): AdminApi {
     },
   ];
   return {
+    costsRecorded: async (month) => {
+      await new Promise((ok) => setTimeout(ok, 300));
+      const row = (r: Partial<RecordedRow> & Pick<RecordedRow, "service" | "feature">): RecordedRow => ({
+        model: "claude-sonnet-5-5",
+        plan: "table",
+        source: "play",
+        calls: 12,
+        units_in: 48000,
+        units_out: 3100,
+        micro_usd: 214000,
+        refused: 0,
+        unpriced: 0,
+        ...r,
+      });
+      return {
+        month: month ?? "2026-11",
+        rows: [
+          row({ service: "anthropic", feature: "recap", micro_usd: 1_840_000, calls: 40 }),
+          row({ service: "anthropic", feature: "names", plan: "guild", micro_usd: 530_000 }),
+          row({ service: "deepgram", model: "nova", feature: "transcribe", calls: 9, units_in: 5400, units_out: 0, micro_usd: 410_000 }),
+          row({ service: "elevenlabs", model: "voice", feature: "recap_audio", calls: 3, units_in: 9000, units_out: 0, micro_usd: 0, unpriced: 3 }),
+          row({ service: "voyage", model: "embed", feature: "search", plan: "unknown", calls: 30, units_in: 120000, units_out: 0, micro_usd: 0, unpriced: 30 }),
+          row({ service: "anthropic", feature: "sidebar", plan: "free", calls: 0, micro_usd: 0, refused: 4 }),
+          row({ service: "anthropic", feature: "recap", source: "sample", micro_usd: 700_000, calls: 25 }),
+        ],
+      };
+    },
     costs: async (month) => {
       await new Promise((ok) => setTimeout(ok, 400));
       const at = now();

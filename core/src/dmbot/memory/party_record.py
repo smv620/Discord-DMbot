@@ -115,14 +115,64 @@ async def current_members(scope: Scope) -> list[str]:
     return [c for c in pcs if c not in held or any(s.open for s in held[c])]
 
 
-async def members_at(scope: Scope, at: int) -> list[str]:
+NEVER = 2**62  # (a session row of unknown making: every stretch counts as begun before it)
+
+
+async def session_members(scope: Scope, started_at: int) -> list[str]:
+    """The party at the session that started at `started_at` (Supervisor's ruling E on #4537): a
+    stretch counts when it began by the session's start, or after it but before the session's row
+    was made (imported history: the character existed before the import). A row from before that
+    was recorded counts every stretch begun at all; no such session, `members_at` alone."""
+    cur = await scope.conn.execute(
+        "SELECT created_at FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
+        " AND started_at = %s",
+        (*scope.ids, started_at),
+    )
+    row = await cur.fetchone()
+    if row is None:
+        return await members_at(scope, started_at)
+    created = NEVER if row["created_at"] is None else int(row["created_at"])
+    return await members_at(scope, started_at, made=created)
+
+
+async def members_at(scope: Scope, at: int, *, made: int | None = None) -> list[str]:
     """The party at `at` (a session's start, for "the party as it was at that session", §2.5):
     every confirmed player character with a stretch covering it, or with none at all."""
     pcs = await player_characters(scope)
     if not pcs:
         return []
     held = await _by_char(scope, pcs)
-    return [c for c in pcs if c not in held or any(s.covers(at) for s in held[c])]
+    return [c for c in pcs if c not in held or any(_covers(s, at, made) for s in held[c])]
+
+
+def _covers(span: Span, at: int, made: int | None) -> bool:
+    """`span.covers(at)`, or (`made`: the session row's making) a stretch begun after the start
+    but before the row was made, and not ended by the start."""
+    if span.covers(at):
+        return True
+    return made is not None and at < span.from_at < made and (span.to_at is None or at < span.to_at)
+
+
+async def table_members(scope: Scope, live_at: int | None) -> list[str] | None:
+    """Who a player's answer at the table is for now (#4537 slice 3b, §8; Supervisor's ruling F:
+    `live_at` is the start of this campaign's live table, from the bot): everyone in the party at
+    that start AND everyone in it now, when that differs from today's party; None when it is
+    today's party (no live table, whatever a stale session row says, or nobody joined or left).
+
+    The union is the careful side (ruling E's rule: never less careful than the real table). The
+    gate shows the table only what EVERY listed character knows, so a shorter list shows more.
+    One who joined during the session sits at the table, and so does one who left during it, so
+    neither is ever dropped. It also keeps the answer the same whether a join was dated to the
+    session's start (its row already made) or to the moment (before the first transcript save)."""
+    if live_at is None:
+        return None
+    pcs = await player_characters(scope)
+    held = await _by_char(scope, pcs) if pcs else {}
+    then = {c for c in pcs if c not in held or any(s.covers(live_at) for s in held[c])}
+    now = {c for c in pcs if c not in held or any(s.open for s in held[c])}
+    if then <= now:
+        return None  # (only joins: today's party already holds everyone at the table)
+    return [c for c in pcs if c in then or c in now]
 
 
 async def running_session_start(scope: Scope) -> int | None:
@@ -227,5 +277,7 @@ __all__ = [
     "open_span",
     "player_characters",
     "running_session_start",
+    "session_members",
     "spans",
+    "table_members",
 ]

@@ -9,6 +9,15 @@ export const BIG_WEB = 300;
 /** The Graph settings kind for people the story never named (#3732): not a kind of name, a way to filter. */
 export const UNNAMED_KIND = "~unnamed";
 
+/** Names in a list: "Mara, Tavin and Brann"; past five, the first four and how many more. */
+function namesList(names: string[]): string {
+  if (names.length <= 5) {
+    if (names.length <= 1) return names[0] ?? "";
+    return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  }
+  return `${names.slice(0, 4).join(", ")} and ${names.length - 4} more`;
+}
+
 export const webPage = {
   heading: "Story Graph",
   lead: "How the names in this campaign are connected. Tap a name to see what is known about it. Double tap it, or use the button in its panel, to put it in the middle. Tap a line to read its connections.",
@@ -286,6 +295,20 @@ export const webPage = {
   whoSomeLabel: "Characters who know it",
   whoPickOne: "Pick at least one character.",
   whoSave: "Save",
+  // DMbot's guess of an NPC who knows it (#3940): marked in the state line and the picker, and the save says what it keeps.
+  guessMark: (g: "sure" | "likely"): string => `DMbot's guess (${g})`,
+  // A connection's knowers by who they are (#5332): the party first, then those who left, then the others (an NPC, or a player
+  // character who was never in the party). The API sends them in that order.
+  whoStateSomeGrouped: (party: string[], left: string[], others: string[]): string =>
+    `Not everyone knows it. ${[
+      party.length > 0 ? `In the party: ${namesList(party)}.` : "",
+      left.length > 0 ? `Left the party: ${namesList(left)}.` : "",
+      others.length > 0 ? `Others: ${namesList(others)}.` : "",
+    ]
+      .filter((x) => x !== "")
+      .join(" ")}`,
+  guessNamed: (name: string, g: "sure" | "likely"): string => `${name} (DMbot's guess, ${g})`,
+  whoKeepsGuesses: "Saving keeps DMbot's guesses you leave ticked as yours.",
   whoDoneDm: "Now only you know this.",
   whoDoneSome: (names: string): string => `Now only ${names} know this.`,
   whoDoneAll: "Now everyone at the table can see this.",
@@ -298,13 +321,7 @@ export const webPage = {
   whoNoLongerCommon: "No longer common knowledge.",
   whoCannotShow: "Show the names to the players first: common knowledge is something they see.",
   // Names in a list: "Mara, Tavin and Brann"; past five, the first four and how many more.
-  whoNames: (names: string[]): string => {
-    if (names.length <= 5) {
-      if (names.length <= 1) return names[0] ?? "";
-      return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
-    }
-    return `${names.slice(0, 4).join(", ")} and ${names.length - 4} more`;
-  },
+  whoNames: namesList,
   legendPinned: "📌: pinned as 100% truth (only you see this)",
   believesFalse: "⚠️ The party believes this; it's false",
   reveal: "👁️ Reveal to players",

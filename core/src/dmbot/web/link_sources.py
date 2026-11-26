@@ -1,7 +1,9 @@
 """Where a connection came from, for the graph's line panel (#2946). The shape is the one posted on
 #2934: `{type: "session", n}`, `{type: "upload", label}`, `{type: "dm"}` or `{type: "unknown"}`.
 
-The DM also gets `quote` on the connection (the reader's own words for it, an upload's only).
+The DM also gets `quote` on the connection (the reader's own words for it, an upload's only) or,
+for a connection DMbot inferred from the lore, `inferred` (DMbot's own reason, at most 80
+characters, #3928): never both, and neither to anyone else.
 The DM gets the full value. A player gets the session number, which they were at the table for,
 and `unknown` for everything else: an upload's label is the DM's own name for it and can name a
 private backstory, and "added by hand" tells a player how the DM works. Never a word of a transcript
@@ -47,8 +49,14 @@ def attach(page: dict[str, Any], rows: Mapping[str, Mapping[str, Any]], full: bo
             # the words an upload connection was read from: the DM's alone, and only when stored
             # (the door sends none to anyone else; this is the second lock, #3606)
             quote = str((row or {}).get("quote") or "")
-            if full and quote:
+            reason = str((row or {}).get("inferred") or "")
+            if full and quote and not reason:  # (a kept inference carries a reason, never a quote)
                 link["quote"] = quote
+            # DMbot's reason for a connection it inferred from the lore (#3928, 0403): the DM's
+            # alone, like the quote, and a kept inference never carries a quote (the door sends one
+            # or the other). Words about the DM's text, never the text.
+            if full and reason:
+                link["inferred"] = reason
 
 
 async def with_link_sources(

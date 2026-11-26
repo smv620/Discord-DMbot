@@ -22,7 +22,9 @@ from dmbot.db import Database, row_int
 from dmbot.memory import (
     evidence,
     forget_readings,
+    join_questions,
     met_store,
+    more_names,
     private_scene_store,
     secret_questions,
     thread_progress,
@@ -146,6 +148,26 @@ class TranscriptStore:
             assert row is not None
             return str(row["id"])
 
+    async def import_for_goodbyes(
+        self, guild_id: int, campaign_id: str, session_id: str, started_at: int
+    ) -> tuple[int | None, bool]:
+        """For a goodbye's question (#4537, ruling V): when this session was imported (None: it
+        was played live) and whether it is the campaign's newest session (none started after
+        it)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT imported_at FROM session_imports WHERE guild_id = %s AND session_id = %s",
+                (guild_id, session_id),
+            )
+            row = await cur.fetchone()
+            cur = await conn.execute(
+                "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
+                " AND started_at > %s LIMIT 1",
+                (guild_id, campaign_id, started_at),
+            )
+            newest = await cur.fetchone() is None
+        return (None if row is None else int(row["imported_at"])), newest
+
     async def is_import(self, guild_id: int, session_id: str) -> bool:
         """Was this session loaded from a file? Its lines carry the dates the DM chose, not the
         moments they were spoken at (#3091)."""
@@ -212,6 +234,25 @@ class TranscriptStore:
                 (json.dumps(dict(split)), session_id),
             )
             return cur.rowcount > 0
+
+    async def claim_recap_note(self, guild_id: int, session_id: str, now: int) -> bool:
+        """Take the one turn to say the note about last time's recap for this session (#5232): True
+        for the first caller only, so a session that is read again says it once."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE transcript_sessions SET recap_lines_noted_at = %s"
+                " WHERE id = %s AND recap_lines_noted_at IS NULL",
+                (now, session_id),
+            )
+            return cur.rowcount > 0
+
+    async def release_recap_note(self, guild_id: int, session_id: str) -> None:
+        """The note could not be posted: give the turn back, so the next read tries again."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET recap_lines_noted_at = NULL WHERE id = %s",
+                (session_id,),
+            )
 
     async def save_split_and_queue(
         self, guild_id: int, session_id: str, split: Mapping[str, Any], numbers: Collection[int]
@@ -1316,7 +1357,9 @@ class TranscriptStore:
             await theatre_store.forget_session(conn, guild_id, session_id)
             await rel_store.forget_session(conn, guild_id, session_id)
             await met_store.forget_session(conn, guild_id, session_id)  # (the DM's words, #3172)
+            await more_names.forget_session(conn, guild_id, session_id)  # (heard there, #5055)
             await trait_offers.forget_session(conn, guild_id, session_id)  # (heard there, #4745)
+            await join_questions.forget_session(conn, guild_id, session_id)  # (a goodbye, 0574)
             # (the private scenes found in its lines, #2996 rule 5: the DM's marks stay)
             await private_scene_store.forget_session(conn, guild_id, session_id)
             # (the story threads read from its lines that still wait, #4522)
@@ -1440,6 +1483,13 @@ async def _forget_mentions(
         for mention in await cur.fetchall():
             mentions.setdefault(str(mention["campaign_id"]), []).append(str(mention["id"]))
     await _drop_log_rows(conn, guild_id, "memory_mentions", mentions)
+    # what made a waiting name a name points at its line too (#5133): the line is gone, so its
+    # pointer goes, even while the name still waits (the card then simply has no quote)
+    for batch in (refs[i : i + 1000] for i in range(0, len(refs), 1000)):
+        await conn.execute(
+            "DELETE FROM name_found WHERE guild_id = %s AND line_ref = ANY(%s)",
+            (guild_id, list(batch)),
+        )
     # and every evidence link to one of these lines keeps its kind and session and loses the line
     # (its reference names the speaker): "a line from session 12, no longer available" (#2662)
     await evidence.placeholder_lines(conn, guild_id, refs)
@@ -1470,6 +1520,13 @@ async def _forget_memory_traces(
     await _drop_log_rows(conn, guild_id, "memory_claims", claims)
     await evidence.placeholder_claims(conn, guild_id, [i for ids in claims.values() for i in ids])
     await _forget_mentions(conn, guild_id, refs)
+    # what made a waiting name a name, by speaker too (#5133): a pointer whose line is already gone
+    # (taken back, cut while saving) still names this person, so it goes with them
+    await conn.execute(
+        "DELETE FROM name_found WHERE guild_id = %s AND split_part(line_ref, ':', 3) = %s::text"
+        " AND (%s::text IS NULL OR campaign_id = %s)",
+        (guild_id, user_id, campaign_id, campaign_id),
+    )
     # whatever else names them (a reference to a line that was not in the list): by speaker; the
     # claims the DM confirmed stay, without their line references and their id (#2676, #2679)
     await evidence.scrub_claim_lines(conn, guild_id, user_id=user_id, campaign_id=campaign_id)
@@ -1482,6 +1539,8 @@ async def _forget_memory_traces(
     await met_store.forget_speaker(conn, guild_id, user_id, campaign_id)
     # the language questions heard in their lines (#4745)
     await trait_offers.forget_speaker(conn, guild_id, user_id, campaign_id)
+    # the goodbye questions heard in their lines (#4537 slice 6b, 0574)
+    await join_questions.forget_speaker(conn, guild_id, user_id, campaign_id)
     # the private scenes they spoke in (#2996 rule 5)
     await private_scene_store.forget_speaker(conn, guild_id, user_id, campaign_id)
     # the 🤫 questions that quote them (#4524)

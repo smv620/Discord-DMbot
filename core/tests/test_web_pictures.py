@@ -414,6 +414,18 @@ class TheGallery(Kept):
         self.assertEqual(sorted(seen), sorted(made))
         self.assertFalse(rest["more"])
 
+    async def test_each_picture_carries_its_own_id_the_cursors_second_part(self) -> None:
+        for _ in range(3):
+            await self.keep(at=START + 600)
+        got = (await self.gallery())["pictures"]
+        ids = [p["id"] for p in got]
+        self.assertTrue(all(type(i) is int and i > 0 for i in ids))
+        self.assertEqual(len(set(ids)), 3)
+        self.assertEqual(ids, [int(p["cursor"].partition(":")[2]) for p in got])
+        async with self.db.guild(THURSDAY.id) as conn:  # (the id of the row a character may use)
+            cur = await conn.execute("SELECT id FROM campaign_pictures ORDER BY id")
+            self.assertEqual(sorted(ids), [int(r["id"]) for r in await cur.fetchall()])
+
     async def test_a_cursor_that_is_not_one_starts_from_the_top(self) -> None:
         self.assertEqual(pictures._cursor("99999999999999999999"), (0, 0))
         self.assertEqual(pictures._cursor("1:99999999999999999999"), (0, 0))
@@ -592,6 +604,62 @@ class TheActions(Kept):
                 got = await cur.fetchone()
                 assert got is not None
                 self.assertEqual(got["r"] is not None, expect)
+
+    async def test_a_click_the_bot_has_not_answered_gives_an_id_to_follow(self) -> None:
+        link = await self.keep()
+        waiting = await self.act(self.session, link, "private")
+        self.assertEqual((waiting["state"], waiting["note"]), ("waiting", ""))
+        got = await pictures.read_action(self.web, self.session, self.cref, waiting["id"])
+        self.assertEqual((got["id"], got["action"]), (waiting["id"], "private"))
+        self.assertEqual(
+            (got["state"], got["stage"], got["stalled"]), ("waiting", "waiting", False)
+        )
+        self.assertEqual(got["updatedAt"], got["startedAt"])  # (nothing has moved it yet)
+        self.assertGreaterEqual(got["serverNow"], got["startedAt"])
+        self.assertEqual(
+            set(got),
+            {
+                "id",
+                "action",
+                "state",
+                "stage",
+                "note",
+                "startedAt",
+                "updatedAt",
+                "serverNow",
+                "stalled",
+            },
+        )  # fmt: skip  (times and words only)
+
+    async def test_a_choice_that_has_not_moved_for_five_minutes_has_stalled_and_an_end_has_not(
+        self,
+    ) -> None:
+        link = await self.keep()
+        waiting = await self.act(self.session, link, "private")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE picture_actions SET created_at = created_at - 900, updated_at = 0"
+                " WHERE id = %s",
+                (waiting["id"],),
+            )
+        stuck = await pictures.read_action(self.web, self.session, self.cref, waiting["id"])
+        self.assertTrue(stuck["stalled"])
+        await self.answer("done")
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE picture_actions SET updated_at = created_at WHERE id = %s",
+                (waiting["id"],),
+            )
+        ended = await pictures.read_action(self.web, self.session, self.cref, waiting["id"])
+        self.assertEqual((ended["state"], ended["stalled"]), ("done", False))
+
+    async def test_only_the_person_who_asked_can_follow_an_action(self) -> None:
+        link = await self.keep()
+        waiting = await self.act(self.session, link, "private")
+        bob = await self.signed_in(BOB)
+        for who, ident in ((bob, waiting["id"]), (self.session, "0" * 32), (self.session, "nope")):
+            with self.assertRaises(RecapError):
+                await pictures.read_action(self.web, who, self.cref, ident)
 
     async def test_the_website_role_cannot_read_the_queue_table(self) -> None:
         async with self.web.user(ALICE.id, session="x") as conn:

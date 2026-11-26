@@ -966,13 +966,14 @@ class MapStore:
         *,
         dm: bool,
         rules: tuple[str, str] = ("2024", "none"),
+        live_at: int | None = None,
     ) -> str | NotShown | None:
         """The words of a "how far" or "which way" answer (#4670 4b, `measure.answer`), or None
         when the usual answer should go on instead: the two names are not both kept places the
         asker may know, or (for "how far") the story or the DM has stated a length between them,
         which beats a measured one (§9). `dm`: every map DMbot may use; otherwise only the table's
         maps, and places the players have been shown, worked out as every list does (the knowledge
-        gate; with no party, `gate.public_entries`), so a DM-only map's pins, scale and distances
+        gate; with no party, common knowledge only), so a DM-only map's pins, scale and distances
         never reach a player (Supervisor's condition). `NOT_SHOWN` (#4692): not `dm`, and both
         names are kept places to the DM, but one is not shown to the players (hidden, limited,
         not yet known, or named by a secret other name): a DM's question then goes privately.
@@ -997,17 +998,12 @@ class MapStore:
             )
             names = positions.place_names(entities, aliases, lambda kind: onto.is_a(kind, "place"))
             shown: set[str] | None = None
+            # (`live_at`: the start of this campaign's live table, if the bot is at one: #4537 3b)
+            # (the table: the party at the live table's session, else today's party, else common
+            # knowledge only, failing closed: Supervisor's ruling M on #4537, slice 5c)
+            table = await gate.table_viewer(scope, live_at) if not dm else gate.Viewer.the_party()
             if not dm:
-                seen = await gate.party_entries(scope)
-                if seen is None:  # (no player character, or a list held by a group)
-                    statements = await gate.load(scope)
-                    if statements.player_characters:
-                        full = gate.visible(gate.Viewer.the_party(), statements)
-                        seen = frozenset(i for (k, i) in full.sureness if k == gate.ENTRY)
-                if seen is None:  # (no party yet: the names every player may read)
-                    every_name = await scope.select(ALIASES, " AND status = 'confirmed'")
-                    seen = gate.public_entries(entities, every_name)
-                shown = set(seen)
+                shown = set(await gate.entries_for(scope, table))
 
             def place(said: str) -> str | None:
                 for key in (name_key(said), name_key(measure_phrase.without_article(said))):
@@ -1055,11 +1051,11 @@ class MapStore:
                 known: set[str] | None = None
                 if not dm:
                     statements = await gate.load(scope)
-                    if statements.player_characters and shown is not None:
-                        full = gate.visible(gate.Viewer.the_party(), statements)
+                    if (statements.player_characters or table.characters) and shown is not None:
+                        full = gate.visible(table, statements)
                         known = shown | {i for (k, i) in full.sureness if k == gate.CONNECTION}
                 if dm or known is not None:
-                    viewer = gate.Viewer(dm=True) if dm else gate.Viewer.the_party()
+                    viewer = gate.Viewer(dm=True) if dm else table
                     route = await _road_route(scope, a, b, viewer, (asked.a, asked.b), known=known)
                     if route is not None and any(leg.road.length_words for leg in route[0].legs):
                         return legs_words.route(route[0], route[2], route[1])

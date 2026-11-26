@@ -126,6 +126,7 @@ class Steps(DatabaseTest):
         self.campaigns = steps.campaign_store(self.db)
         self.transcripts = TranscriptStore(self.db)
         self.said: list[str] = []
+        steps.MADE_HERE.clear()  # (each test is its own invocation of the tool)
 
     def say(self, line: str) -> None:
         self.said.append(line)
@@ -163,6 +164,16 @@ class Steps(DatabaseTest):
         self.assertNotIn(NAME, line)
         self.assertFalse(any(ch.isdigit() for ch in line))
 
+    async def test_a_run_for_40b_leaves_the_campaigns_of_40_alone(self) -> None:
+        # #5057: the label 40b is its own deploy; a re-run of 40b must not touch 40's campaign.
+        of_40 = await self.made(name=sample_name.name_for(sample_name.Label(40)))
+        await steps.fresh_campaign(
+            self.db, self.campaigns, GUILD, DM, deploy=sample_name.Label(40, "b"), say=self.say
+        )
+        self.assertIsNotNone(await self.campaigns.get(GUILD, of_40.id))
+        names = {c.name for c in await self.campaigns.list_campaigns(GUILD)}
+        self.assertIn(sample_name.name_for(sample_name.Label(40, "b")), names)
+
     async def test_the_newest_three_are_kept_and_the_older_ones_go(self) -> None:
         ids = {n: (await self.made(name=sample_name.name_for(n))).id for n in (27, 28, 29, 30)}
         await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
@@ -183,6 +194,9 @@ class Steps(DatabaseTest):
         first = await steps.fresh_campaign(
             self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say
         )
+        steps.MADE_HERE.discard(
+            first.id
+        )  # (its run has ended, as `run` does: --repeat replaces it)
         again = await steps.fresh_campaign(
             self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say
         )
@@ -274,7 +288,7 @@ class Steps(DatabaseTest):
         self.assertIsNone(await self.campaigns.get(GUILD, old.id))
         self.assertFalse(any("background work" in line for line in self.said))
 
-    async def test_work_that_never_settles_is_said_and_the_campaign_is_deleted_anyway(self) -> None:
+    async def test_work_that_never_settles_is_said_and_the_campaign_is_kept(self) -> None:
         from unittest import mock
 
         old = await self.made(name=sample_name.name_for(5))
@@ -292,11 +306,49 @@ class Steps(DatabaseTest):
                 self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say, sleep=sleep,
                 settle_s=0.0,
             )  # fmt: skip
-        self.assertIsNone(await self.campaigns.get(GUILD, old.id))
+        # (#5247: a busy campaign may be another run's, still going: never deleted mid-work)
+        self.assertIsNotNone(await self.campaigns.get(GUILD, old.id))
         self.assertIn(
-            "1 old sample campaign(s) still had background work after the wait: deleted",
+            "1 old sample campaign(s) still had background work after the wait: kept, not deleted "
+            "(a run may still be using it)",
             self.said,
         )
+
+    async def test_two_runs_planned_at_once_never_delete_each_others_campaigns(self) -> None:
+        """#5247: two invocations with one deploy label. This one's own campaign is never deleted
+        by its own room-making; the other's, still busy, is kept; an older one past the keep rule
+        is still deleted, once."""
+        from unittest import mock
+
+        stale = await self.made(name=sample_name.name_for(5))
+        for n in (6, 7):
+            await self.made(name=sample_name.name_for(n))
+        mine = await steps.make_campaign(self.campaigns, GUILD, DM, deploy=31, run=1, say=self.say)
+        theirs = await self.made(name=sample_name.name_for(31, 2))
+
+        async def busy(db: Any, guild: int, campaign_id: str) -> int:
+            return 1 if campaign_id == theirs.id else 0
+
+        async def sleep(_s: float) -> None:
+            return None
+
+        with mock.patch.object(steps, "busy_count", busy):
+            await steps.clear_for_deploy(
+                self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say, sleep=sleep,
+                settle_s=0.0,
+            )  # fmt: skip
+        self.assertIsNotNone(await self.campaigns.get(GUILD, mine.id))
+        self.assertIsNotNone(await self.campaigns.get(GUILD, theirs.id))
+        self.assertIsNone(await self.campaigns.get(GUILD, stale.id))
+        self.assertIn("1 campaign(s) of runs still going were kept", self.said)
+        # (once its run has ended, a later run of the same deploy may replace it, as --repeat does)
+        steps.MADE_HERE.discard(mine.id)
+        with mock.patch.object(steps, "busy_count", busy):
+            await steps.clear_for_deploy(
+                self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say, sleep=sleep,
+                settle_s=0.0,
+            )  # fmt: skip
+        self.assertIsNone(await self.campaigns.get(GUILD, mine.id))
 
     async def test_an_idle_campaign_has_no_background_work(self) -> None:
         old = await self.made(name=sample_name.name_for(5))
@@ -377,10 +429,12 @@ class Steps(DatabaseTest):
         )
         sleep = await self.sleep_then(
             "UPDATE lore_uploads SET state = 'done', stage = 'done', names_found = 40,"
-            " links_found = 55, words_done = 900, calls_made = 7"
+            " links_found = 55, words_done = 900, calls_made = 7, names_cut = 3"
         )
         got = await steps.wait_lore(self.db, GUILD, up, say=self.say, sleep=sleep, poll_s=0)
-        self.assertEqual(got, {"names": 40, "connections": 55, "words": 900, "calls": 7})
+        self.assertEqual(
+            got, {"names": 40, "connections": 55, "words": 900, "calls": 7, "names cut": 3}
+        )
         self.assertTrue(any("lore waiting" in line for line in self.said))
         self.assertNotIn("Ashen", "".join(self.said))  # counts only
 
@@ -578,10 +632,12 @@ class Steps(DatabaseTest):
         _camp, sid = await self.stored()
         sleep = await self.sleep_then(
             "UPDATE session_imports SET state = 'done', scan_finished = TRUE,"
-            " story_state = 'read', step_total = 2, step_done = 2, words_done = 11, calls_made = 1"
+            " story_state = 'read', step_total = 2, step_done = 2, words_done = 11, calls_made = 1,"
+            " scan_cut = 4, story_held = 2"
         )
         got = await steps.wait_import(self.db, GUILD, sid, say=self.say, sleep=sleep, poll_s=0)
-        self.assertEqual(got, {"lines": 2, "words": 11, "calls": 1, "story": "read"})
+        want = {"lines": 2, "words": 11, "calls": 1, "story": "read"}
+        self.assertEqual(got, {**want, "scan cut": 4, "reader held": 2})
 
     async def done_scan(self, story: str) -> None:
         async with self.db.guild(GUILD) as conn:

@@ -35,7 +35,9 @@ class TheDoorsWordsMatchTheStores(unittest.TestCase):
         from dmbot.memory.web_actions import MAP_ACTIONS
         from dmbot.web.all_names import ACTIONS
 
-        self.assertEqual(set(_module().ACTIONS), set(MAP_ACTIONS))
+        # (#4412: 0590 adds `map-culture` and `map-population` to the same family)
+        culture = importlib.import_module("dmbot.migrations.0590_web_place_culture")
+        self.assertEqual({*_module().ACTIONS, *culture.ACTIONS}, set(MAP_ACTIONS))
         self.assertTrue(set(MAP_ACTIONS) <= set(ACTIONS))
 
 
@@ -45,4 +47,6 @@ class TheWorldNotesActionsMatch(unittest.TestCase):
         from dmbot.memory.web_actions import WORLD_ACTIONS
 
         door = importlib.import_module("dmbot.migrations.0481_world_notes_door")
-        self.assertEqual(set(door.ACTIONS), set(WORLD_ACTIONS))
+        # (#4932: 0585 adds ✏️ Change on a feeling, `world-bias`, to the same list)
+        biases = importlib.import_module("dmbot.migrations.0585_web_world_biases")
+        self.assertEqual({*door.ACTIONS, *biases.ACTIONS}, set(WORLD_ACTIONS))

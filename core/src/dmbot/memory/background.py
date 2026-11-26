@@ -22,10 +22,19 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from dmbot.memory import kin, next_words, place_words, quote_kind, route_words, unique_item
+from dmbot.memory import (
+    kin,
+    next_words,
+    place_words,
+    quote_kind,
+    route_words,
+    trace_note,
+    unique_item,
+)
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
+from dmbot.memory.hand_over import SALES
 from dmbot.memory.list_names import split_list
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
@@ -35,6 +44,10 @@ from dmbot.names import not_names
 from dmbot.word_end import at_word_end
 
 MAX_NAMES = 200  # suggestions from one document
+# The `dropped` word for names past `MAX_NAMES` (#5055 A, #5056 point 2): counted, never silent.
+NAMES_OVER_CAP = "names_over_cap"
+# The `dropped` word for the names of a shaping slice that failed or stayed cut (#5056 point 3).
+NAMES_UNREAD = "names_unread"
 NAME_WORDS = 8
 NAME_CHARS = 80
 QUOTE_WORDS = 20
@@ -147,8 +160,8 @@ INFERRED_CHARS = 80  # why DMbot inferred a connection (#2959 item 5): one short
 
 # How an item changed hands (#4115; Supervisor's ruling, 2026-11-10): the `change` a connection
 # may carry, with `from` the one who had it before. A sale, a gift or a trade moves the owning
-# (and the holding); a theft or a loss moves only the holding, so its owner still owns it.
-SALES = ("sold", "gave", "traded")
+# (and the holding); a theft or a loss moves only the holding, so its owner still owns it. The
+# sales are `hand_over.SALES` (one list, #4170).
 TAKEN = ("stolen", "lost")
 HAND_OVERS = (*SALES, *TAKEN)
 
@@ -644,7 +657,16 @@ def _spellings(
         ):
             skip.add(key)
             out.append(other)
+        elif other and key not in skip and key != name_key(name):
+            # (the trace, #5106: a name given only as this one's spelling, and not kept)
+            trace_note.note(other, trace_note.SPELLING_NOT_KEPT, name)
     return out
+
+
+def has_name_list(reply: str) -> bool:
+    """Whether a shaping answer holds a list of names at all (an unreadable one does not)."""
+    data = _json(reply)
+    return isinstance(data, dict) and isinstance(data.get("names"), list)
 
 
 def read_answer(reply: str, piece: str) -> list[Found]:
@@ -663,18 +685,26 @@ def read_answer(reply: str, piece: str) -> list[Found]:
         name = item.get("name")
         kind = KINDS.get(str(item.get("kind", "")).strip().lower())
         if not isinstance(name, str) or kind is None:
+            if isinstance(name, str):
+                trace_note.note(" ".join(name.split()), trace_note.UNKNOWN_KIND)
             continue
         # A name is never shortened (#2607): over the limits it is a sentence, not a name.
         name = " ".join(name.split())
-        if (
-            not name
-            or len(name) > NAME_CHARS
-            or len(name.split()) > NAME_WORDS
-            or "|" in name
-            or not _in_text(haystack, name, piece)
-            or not not_names.allowed(name, cued)
-            or not_names.shape_of(name) is not None  # a number, time or address: no name (#3394)
-        ):
+        if not name:
+            continue
+        refused = (
+            trace_note.TOO_LONG
+            if len(name) > NAME_CHARS or len(name.split()) > NAME_WORDS or "|" in name
+            else trace_note.NOT_IN_TEXT
+            if not _in_text(haystack, name, piece)
+            else trace_note.ORDINARY
+            if not not_names.allowed(name, cued)
+            else trace_note.SHAPE  # a number, time or address: no name (#3394)
+            if not_names.shape_of(name) is not None
+            else ""
+        )
+        if refused:
+            trace_note.note(name, refused)  # (the per-name trace, #5106: off unless collecting)
             continue
         # A disguise is read first, so the same spelling is never also a public one.
         seen: set[str] = set()
@@ -690,6 +720,8 @@ def read_answer(reply: str, piece: str) -> list[Found]:
         about = " ".join(about.split()) if isinstance(about, str) else ""
         if not about.isprintable():  # (as the website's own box refuses one, all_names.py)
             about = ""
+        for other in (*also[MAX_ALSO:], *secret[MAX_ALSO:]):  # (past the spellings' limit)
+            trace_note.note(other, trace_note.SPELLING_NOT_KEPT, name)
         out.append(Found(name, kind, tuple(also[:MAX_ALSO]), tuple(secret[:MAX_ALSO]), kept, about))
     return out
 
@@ -734,7 +766,9 @@ def _split_lists(answers: Iterable[list[Found]], held: Collection[str]) -> list[
             parts = split_list(item.name, known=held, offered=alone - {name_key(item.name)})
             if len(parts) == 1:
                 kept.append(item)
-            elif _led_by_a_group(item, parts, named) is not None:
+                continue
+            trace_note.note(item.name, trace_note.SPLIT)  # (its parts are traced on their own)
+            if _led_by_a_group(item, parts, named) is not None:
                 kept.extend(Found(p, "npc", (), (), item.quote) for p in parts[1:])
             else:
                 kept.extend(Found(p, item.kind, (), (), item.quote) for p in parts)
@@ -761,6 +795,34 @@ def group_connections(
     return out
 
 
+def passes(
+    item: Found,
+    skip_keys: Collection[str] = (),
+    *,
+    rules: tuple[str, str] | None = None,
+    dropped: Counter[str] | None = None,
+) -> bool:
+    """`merge`'s filters for one name taken as it is, never split as a list or folded (#5056 point
+    4, the held picture names): not a name DMbot already has, an ordinary word or a game term; not a
+    kind of creature or spell the rules hold; and, for an item, one particular thing (the unique
+    item judge; a generic one is counted in `dropped` as `item_not_unique`, as `merge` does)."""
+    key = name_key(item.name)
+    if not key or key in {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS:
+        if key:  # (an empty key, "The", is no name to trace)
+            common = key in COMMON | GAME_TERMS
+            trace_note.note(item.name, trace_note.COMMON if common else trace_note.KNOWN)
+        return False
+    if rules is not None and in_the_rules(item.name, item.kind, *rules):
+        trace_note.note(item.name, trace_note.RULES)
+        return False
+    if item.kind == "item" and not unique_item.keeps(item.name, item.quote):
+        if dropped is not None:
+            dropped["item_not_unique"] += 1  # (a count of names, never the names)
+        trace_note.note(item.name, trace_note.ITEM)
+        return False
+    return True
+
+
 def merge(
     answers: Iterable[list[Found]],
     skip_keys: Collection[str] = (),
@@ -775,24 +837,28 @@ def merge(
     entry's secret spellings. `rules`
     (target, fallback ruleset): names the rules hold as a monster or spell are left out too. An
     item that is not one particular thing (a dagger, arrows) is left out and counted in `dropped`
-    as `item_not_unique` (#3373)."""
+    as `item_not_unique` (#3373), and the names past `cap` as `NAMES_OVER_CAP` (#5055 A)."""
     skip = {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS
     answers = _split_lists(answers, skip_keys)
     order: list[str] = []
     merged: dict[str, Found] = {}
-    generic: set[str] = set()
+    generic: dict[str, str] = {}  # key -> the name, for the trace
     for found in answers:
         for item in found:
             key = name_key(item.name)
             if not key or key in skip:
+                if key:  # (an empty key, "The", is no name to trace)
+                    common = key in COMMON | GAME_TERMS
+                    trace_note.note(item.name, trace_note.COMMON if common else trace_note.KNOWN)
                 continue
             if rules is not None and in_the_rules(item.name, item.kind, *rules):
+                trace_note.note(item.name, trace_note.RULES)
                 continue
             if item.kind == "item" and not any(
                 unique_item.keeps(spelling, item.quote)
                 for spelling in (item.name, *item.also, *item.secret)
             ):
-                generic.add(key)  # (not one particular thing under any of its spellings)
+                generic.setdefault(key, item.name)  # (not one particular thing, any spelling)
                 continue
             item = Found(  # a spelling DMbot already holds (a secret one too) is not offered again
                 item.name,
@@ -818,8 +884,11 @@ def merge(
                 old.quote or item.quote,
                 old.about or item.about,
             )
-    if dropped is not None and (left_out := generic - merged.keys()):
+    left_out = generic.keys() - merged.keys()
+    if dropped is not None and left_out:
         dropped["item_not_unique"] += len(left_out)  # (a count of names, never the names)
+    for key in sorted(left_out):
+        trace_note.note(generic[key], trace_note.ITEM)
     out = [merged[k] for k in order]
     # A disguise is a secret spelling of the real one. When the AI also lists the disguise as a
     # name of its own (as it is told to), that entry folds into the real one's secret spelling:
@@ -859,7 +928,15 @@ def merge(
     # The cap counts the kept entries only: a folded disguise takes no slot, so it can never
     # cost its holder one. A holder that is cut takes its folded disguise's spellings with it.
     folded = [f for f in out if not kept_keys[name_key(f.name)]]
-    out = [f for f in out if kept_keys[name_key(f.name)]][:cap]
+    kept = [f for f in out if kept_keys[name_key(f.name)]]
+    if dropped is not None and len(kept) > cap:
+        dropped[NAMES_OVER_CAP] += len(kept) - cap  # (a count of names, never the names)
+    by_key = {name_key(f.name): f.name for f in out}
+    for f in folded:
+        trace_note.note(f.name, trace_note.FOLDED, by_key.get(holder.get(name_key(f.name), ""), ""))
+    for f in kept[cap:]:
+        trace_note.note(f.name, trace_note.OVER_CAP)
+    out = kept[:cap]
     # A folded entry's other spellings (its secret ones too) name the same disguise, so they join
     # its holder as secret spellings, never public ones and never another entry's own name:
     # "Brother Aldric also [Aldric]" folded into Vecnor leaves Vecnor holding "Aldric" in secret.
@@ -1310,6 +1387,7 @@ def keep_connections(
     speaker: str | None = None,
     picks: list[Pick] | None = None,
     secret_keys: Collection[str] = (),
+    whole_only: Collection[str] = (),
 ) -> list[Connection]:
     """The pieces' connections as one list, each once, whose two ends are names DMbot will have:
     one of this reading's names (or its other spelling, public or secret) or `known` (a name key
@@ -1327,7 +1405,8 @@ def keep_connections(
 
     `speaker`: the character whose backstory this is, as the DM said (#2650). "I", "my" and "me"
     are that character, and so are a bare "his" or "her"; with no speaker, a connection that
-    needs "I" is left out as `whose` (counted, never guessed)."""
+    needs "I" is left out as `whose` (counted, never guessed). `whole_only` (#4923): names of
+    `known` matched only whole, in the end and in the quote."""
     lost = dropped if dropped is not None else Counter()
     names = list(names)
     ends: dict[str, str] = dict(known)
@@ -1351,7 +1430,12 @@ def keep_connections(
     spellings = {
         sp: f.name for f in names for sp in f.also if len(claimed.get(name_key(sp), ())) == 1
     }
-    reader = Ends(ends, {*ends.values()}, spellings)
+    # `whole_only` (#4923): a kept item's or place's name in small letters ("wolf figurine") is an
+    # end only by its whole name, never by one of its words ("wolf", "the mill"): a lower-case word
+    # is not a name as a capitalised one is (#3431), so it stays out of the by-its-words matching
+    # and its quote must hold it whole (below)
+    whole = {name_key(n) for n in whole_only}
+    reader = Ends(ends, {n for n in ends.values() if name_key(n) not in whole}, spellings)
     seen: set[tuple[str, str, str, tuple[str, bool] | None]] = set()
     # kin_of, by unordered pair: (its place in `out` or None, its role or "", the order it was said)
     kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
@@ -1377,7 +1461,8 @@ def keep_connections(
             if no_a or no_b:
                 lost["whose"] += 1
                 continue
-            first, second = reader.match(end_a), reader.match(end_b)
+            first = reader.match(end_a, small_whole_only=True)
+            second = reader.match(end_b, small_whole_only=True)
             if (c.variant_a or c.variant_b) and (first.ambiguous or second.ambiguous):
                 lost["spelling_clash"] += 1  # (a spelling is never a question: it is a guess)
                 continue
@@ -1450,6 +1535,11 @@ def keep_connections(
             if a is None or b is None or name_key(a) == name_key(b):
                 lost["name_not_found"] += 1
                 continue
+            if whole and any(
+                name_key(n) in whole and not _has(_squash(c.quote), n) for n in (a, b)
+            ):
+                lost["name_not_found"] += 1  # (a word of it in the quote is not the name, #4923)
+                continue
             # A spelling the text used for an end the AI wrote another way must not be another
             # name of the campaign (#2757): then it was that name, and the link is not this one's.
             if _clashes(reader, c.variant_a, a) or _clashes(reader, c.variant_b, b):
@@ -1481,7 +1571,7 @@ def keep_connections(
             )
             if c.change:  # (who it came from is a name DMbot has, and no end, or no hand-over)
                 prev_end, no_prev = speaker_end(c.from_holder, speaker)
-                prev = reader.match(prev_end)
+                prev = reader.match(prev_end, small_whole_only=True)
                 # (checked again here, whichever way the line came: one a pronoun check settled
                 # never went through `_handed`, so the kind and the quote are held to it now)
                 said_how, _, said_change = hand_over_of(c.how, c.from_holder, c.change)

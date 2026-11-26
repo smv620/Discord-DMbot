@@ -17,11 +17,11 @@ import re
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory import map_facts, place_levels
+from dmbot.memory import map_facts, place_levels, place_peoples
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.background import LABELS
 from dmbot.memory.models import MERGE_MANY_MAX, PLAYERS_TEXT_MAX, PRONOUNCED
-from dmbot.web import scenes
+from dmbot.web import card_lines, scenes
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -124,6 +124,7 @@ async def read_page(
     only: str | None = None,
     unnamed: bool = False,
     sources: list[str] | None = None,
+    cards: bool = False,
 ) -> dict[str, Any]:
     """One page of the campaign's confirmed names, `size` to a page (one of `PAGE_SIZES`); `kind` is
     one kind or several joined with commas. "not_found" for anyone who may not see the list (or
@@ -187,6 +188,10 @@ async def read_page(
     if got["canEdit"] and names:
         await _add_said_as(db, session, guild_id, campaign_id, names)
         await _add_scenes(db, session, guild_id, campaign_id, names)
+        if cards:  # a character's three lines, a DM's alone (#5050; DMBOT_CARD_SUMMARY)
+            async with db.user(session.user_id, session=session.id_hash) as conn:
+                await _scoped(conn, guild_id)
+                await card_lines.attach(conn, guild_id, campaign_id, names)
     return {
         "campaign": got["campaign"],
         "canEdit": bool(got["canEdit"]),
@@ -274,7 +279,7 @@ ACTIONS = (
     "name-join",
     "name-undo",
     "alias-who",  # who knows an other name (#2999): {alias, who, characters}
-    "confirm-kinds",  # "Add all" for what an upload found (#3207): {upload, kinds | "all"}
+    "confirm-kinds",  # "Add all" for an upload or import (#3207): {upload|import, kinds|all}
     "confirm-undo",  # takes back one press of it: {answer}
     "spelling-yes",  # "Is this the same place?" (#3533): confirm the proposed other name: {alias}
     "spelling-no",  # ... or turn it down for good: {alias}
@@ -288,6 +293,8 @@ ACTIONS = (
     "map-terrain",  # a place's land (#4287): {value, how}; null value is "Not sure"
     "map-climate",  # its climate (#4287): {value, how}
     "map-control",  # who rules it (#4287): {group, how}; null group is "Not sure"
+    "map-culture",  # its culture (#4412): {value, how, words?}; null value clears every lineage
+    "map-population",  # who lives there (#4412): {value, how?, words?}; null value clears
     "map-show",  # whether players who can see it see its land, climate and ruler: {shown}
 )
 
@@ -295,6 +302,7 @@ KIND_WORD = re.compile(
     r"^[a-z_]{2,20}$"
 )  # the stored kind keys ("place", "character"); never "concept" (an idea)
 KINDS_MAX = 8
+PEOPLE_WORDS_MAX = 60  # the DM's own words for a culture or who lives there (#4412)
 
 
 def _text(value: object) -> str:
@@ -383,7 +391,8 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             raise RecapError("not_found")
         text = who_text(body)
     elif action == "confirm-kinds":  # the upload is the target; the kinds, or all, are the text
-        target = str(body.get("upload") or "")
+        # (a lore upload's id, or an import's id as `import`, #5276: the door tells which it is)
+        target = str(body.get("upload") or body.get("import") or "")
         if not ID_PATTERN.match(target):
             raise RecapError("not_found")
         kinds = body.get("kinds")
@@ -455,6 +464,35 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             elif not isinstance(value, str) or value not in map_facts.VALUES[layer]:
                 raise RecapError("bad_name")
             text = f"{value} {how}".strip() if value else ""
+    elif action in ("map-culture", "map-population"):  # (#4412) a lineage, a named culture or words
+        layer = action[4:]
+        value = body.get("value")
+        how = body.get("how") or ""
+        words = body.get("words") or ""
+        hows = map_facts.HOWS[layer]
+        if not isinstance(how, str) or not isinstance(words, str):
+            raise RecapError("bad_name")
+        words = " ".join(words.split())  # (a blank is no words)
+        if value is None:  # "Not sure": the layer is cleared (every lineage)
+            if how or words:
+                raise RecapError("bad_name")
+            text = ""
+        else:
+            lineage = isinstance(value, str) and value in place_peoples.LINEAGES
+            named = layer == "culture" and isinstance(value, str) and bool(ID_PATTERN.match(value))
+            if not (lineage or named or value == place_peoples.OTHER):
+                raise RecapError("bad_name")
+            if (how and how not in hows) or (layer == "culture" and not how):
+                raise RecapError("bad_name")
+            if value == place_peoples.OTHER:
+                words = " ".join(words.split())
+                if not 1 <= len(words) <= PEOPLE_WORDS_MAX:
+                    raise RecapError("bad_name")
+                text = f"{value} {how or '-'} {words}"
+            else:
+                if words:
+                    raise RecapError("bad_name")
+                text = f"{value} {how or '-'}"
     elif action == "map-show":  # 🙈 / 👁️ (#4287)
         if not isinstance(body.get("shown"), bool):
             raise RecapError("bad_action")

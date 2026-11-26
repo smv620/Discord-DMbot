@@ -17,6 +17,7 @@ from typing import Any
 from unittest import mock
 from unittest.mock import AsyncMock, MagicMock
 
+from dmbot import credits
 from dmbot.ai import PRICE_PER_MILLION, AIOutOfFunds, Reply
 from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
@@ -602,7 +603,23 @@ class Stopping(Setup):
             GUILD_A, self.a.id, pad.id, sp.MONTH_CAP_MICRO - 400_000, 0, 0
         )  # room for one call's worst case, not two
         slow_a, slow_b = Canned(FIRST, SECOND, THIRD, delay=0.2), Canned(FIRST, delay=0.2)
-        first, second = await asyncio.gather(self.read(slow_a, one), self.read(slow_b, two))
+        # The first read reserves its worst case and is then held in its slow call; the second
+        # starts only once that reservation is in the ledger, so which one wins is not left to
+        # the order two tasks happen to reach the database in (#5079). The campaign row lock is
+        # what the second one meets: the reservation is already there, and it finds no room.
+        task = asyncio.ensure_future(self.read(slow_a, one))
+        for _ in range(500):
+            async with self.db.guild(GUILD_A) as conn:
+                cur = await conn.execute("SELECT sum(micro_usd) AS total FROM plan_spend")
+                row = await cur.fetchone()
+            if row is not None and int(row["total"] or 0) > sp.MONTH_CAP_MICRO - 400_000:
+                break
+            await asyncio.sleep(0.01)
+        else:
+            task.cancel()
+            self.fail("the first read never reserved its call")
+        second = await self.read(slow_b, two)
+        first = await task
         self.assertEqual((second.stopped, second.calls), (reader.STOP_MONTH_CAP, 0))
         self.assertEqual(first.calls, 3)  # settled to its real cost, so its own next calls fit
         async with self.db.guild(GUILD_A) as conn:
@@ -783,6 +800,18 @@ class Card(Setup):
         self.assertEqual(self.labels(ask), ["Yes, read it", "Not now"])
         self.assertEqual(await self.count("adventure_reads"), 0)  # asking starts nothing
         self.assertEqual(doc.chunks, 3)
+
+    async def test_the_read_confirmation_says_what_it_will_cost(self) -> None:
+        # (the same sentence the website's list shows, from the one function, #5316)
+        doc = await self.book()
+        await self.card()
+        ask = self.pressing()
+        await ui.ReadButton(self.a.id).callback(ask)
+        sentence = credits.adventure_estimate_words(doc.characters)
+        self.assertIn(
+            f"chapters, places and people.\n{sentence}\nIt can take a few minutes",
+            ask.sent["content"],
+        )
 
     async def test_yes_starts_one_read_and_the_card_shows_it(self) -> None:
         doc = await self.book()

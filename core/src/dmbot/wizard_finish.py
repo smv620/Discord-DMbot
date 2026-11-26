@@ -77,6 +77,10 @@ SHEET_WAITING = "sheet_waiting"
 SHEET_UNREADABLE = "sheet_unreadable"  # D&D Beyond answered, but not with a sheet DMbot can keep
 HOMEBREW_FAILED = "homebrew_failed"  # the stage itself broke; the run goes on
 DOC_LINK_FAILED = "doc_link_failed"  # a web link in a document step could not be read
+# Not a failure (#5095, web half of #5055 A): names past one document's limit that the reader left
+# out. The count goes in `notes` (summed over the run's documents) so the "Ready" page can say so,
+# and the run's `error` stays empty.
+NAMES_CUT = "names_cut"
 HOUSE_FAILED = "house_failed"  # the stage itself broke; the run goes on
 SHEETS_FAILED = "sheets_failed"  # the stage itself broke; the run goes on
 # Documents in a slot this run does not read yet (house rules, homebrew, an own ruleset): they are
@@ -347,6 +351,17 @@ class WizardFinishes:
         assert row is not None
         return str(row["id"])
 
+    async def lore_cut(self, guild_id: int, upload: str) -> int:
+        """How many names the reader left out past the document's limit (0 for none): a count
+        only, written when the read ends (`lore_uploads.names_cut`, #5055 A)."""
+        async with self._db.guild(guild_id, snapshot=True) as conn:
+            cur = await conn.execute(
+                "SELECT names_cut FROM lore_uploads WHERE guild_id = %s AND id = %s",
+                (guild_id, upload),
+            )
+            row = await cur.fetchone()
+        return int(row["names_cut"]) if row else 0
+
     async def lore_state(self, guild_id: int, upload: str) -> str:
         async with self._db.guild(guild_id, snapshot=True) as conn:
             cur = await conn.execute(
@@ -597,18 +612,30 @@ async def _make_characters(
             entity_id = written.value.id
             have[name_key(name)] = entity_id
             made += 1
-        short = str(c.get("party_name", "")).strip() or _first_name(name, characters)
-        if short and name_key(short) != name_key(name):
-            try:  # (already there is fine: the call returns the existing alias)
-                await memory.add_alias(
-                    guild_id, campaign_id, entity_id, short, kind="short", source=DM,
-                    status=CONFIRMED,
-                )  # fmt: skip
-            except (MemoryRuleError, ValueError) as exc:
-                log.info("A wizard short name was refused: %s", type(exc).__name__)
+        # What the party calls them (#4300): each name the DM added, else the old single name, else
+        # the first name of a full name typed with no short one (#4224)
+        shorts = _party_names(c) or [_first_name(name, characters)]
+        for short in shorts:
+            if short and name_key(short) != name_key(name):
+                try:  # (already there is fine: the call returns the existing alias)
+                    await memory.add_alias(
+                        guild_id, campaign_id, entity_id, short, kind="short", source=DM,
+                        status=CONFIRMED,
+                    )  # fmt: skip
+                except (MemoryRuleError, ValueError) as exc:
+                    log.info("A wizard short name was refused: %s", type(exc).__name__)
     await memory.party_on_assignment(guild_id, campaign_id)
     log.info("A wizard run made %d player character(s)", made)  # counts only
     return made
+
+
+def _party_names(c: dict[str, Any]) -> list[str]:
+    """The names the table calls one wizard character: the list the DM added (#4300), or the one
+    name an older draft holds. Each is the DM's own word, trimmed; empty ones are dropped."""
+    raw = c.get("party_names")
+    if not isinstance(raw, list):
+        raw = [c.get("party_name", "")]
+    return [str(n).strip() for n in raw if str(n).strip()]
 
 
 def _first_name(name: str, characters: list[dict[str, Any]]) -> str:
@@ -628,7 +655,7 @@ def _first_name(name: str, characters: list[dict[str, Any]]) -> str:
         full = str(other.get("full", "")).strip()
         if name_key(full) == name_key(name):
             continue  # (this character, or one written the same)
-        for text in (full, str(other.get("party_name", "")).strip()):
+        for text in (full, *_party_names(other)):
             if text and key in (name_key(text), name_key(short_names.first_word(text))):
                 return ""
     return first
@@ -1007,6 +1034,8 @@ async def _read_one(
         state = await runs.lore_state(guild_id, upload)
         if state in ("done", "failed", "gone"):
             await runs.progress(guild_id, run, _NO_COUNTS)  # (the next document starts at zero)
+            if state == "done" and (cut := await runs.lore_cut(guild_id, upload)):
+                run.notes = _add_pair(run.notes, NAMES_CUT, cut)
             return state
         await runs.progress(guild_id, run, await runs.lore_progress(guild_id, upload))
         if waited >= LORE_WAIT_S:

@@ -177,7 +177,7 @@ async def read_pictures(
     api_url: str,
 ) -> dict[str, Any]:
     """The gallery page: `{pictures, more, isDm, usage, sessions, posters}`, newest first. A
-    picture is `{code, at, sessionNumber, poster, description, previewUrl, permanent, isPublic,
+    picture is `{id, code, at, sessionNumber, poster, description, previewUrl, permanent, isPublic,
     mine}`. `usage` is for the campaign's DMs only. Any member of the server may ask; anyone else
     gets `not_allowed`. A member outside the campaign's people (#3891) gets only the pictures they
     posted, and no posters or sessions. The session filter is the transcripts page's number."""
@@ -225,6 +225,9 @@ async def read_pictures(
         "pictures": [
             {
                 "code": p["code"],
+                # the picture's own id, which a character's icon is set with (#3623); it is the
+                # second part of the cursor ("made-at:id"), given so the page need not parse it
+                "id": int(str(p["cursor"]).partition(":")[2]),
                 "at": int(p["at"]),
                 "cursor": str(p["cursor"]),
                 "sessionNumber": numbers.get(int(p["sessionAt"])) if p["sessionAt"] else None,
@@ -323,5 +326,47 @@ async def act_on_picture(
                 words,
             )
         if time.monotonic() - started >= wait:
-            return {"state": "waiting", "note": ""}
+            # the id is what the page follows (`read_action`): the change still happens
+            return {"state": "waiting", "note": "", "id": str(got["id"])}
         await (sleep or asyncio.sleep)(0.5)
+
+
+# A waiting or working choice that has not moved for this long has stalled: the bot re-claims one
+# it took and never finished after the same time (`pictures.actions.RECLAIM_S`), so silence past it
+# means nobody is picking it up.
+STALLED_AFTER_S = 300
+_ACTION_ID = re.compile(r"[0-9a-f]{32}")
+
+
+async def read_action(db: Database, session: Session, ref: str, action_id: str) -> dict[str, Any]:
+    """How a picture choice is going, for the person who made it: `{id, action, state: waiting|
+    working|done|refused|failed, stage, note, startedAt, updatedAt, serverNow, stalled}` (#3355).
+    `stage` is the row's own state; `startedAt` is when it was asked and `updatedAt` when it last
+    changed state (the bot claiming it, or ending it); `stalled` is true when a waiting or working
+    choice has not moved for `STALLED_AFTER_S`. `note` is the refusal's words, as the click's
+    answer has them. Times and words only. `not_found` for anyone else's choice or an unknown id."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    if not _ACTION_ID.fullmatch(action_id):
+        raise RecapError("not_found")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_picture_action(%s, %s, %s) AS r", (guild_id, campaign_id, action_id)
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if got is None:
+        raise RecapError("not_found")
+    state = str(got["state"])
+    updated, now = int(got["updatedAt"]), int(got["serverNow"])
+    return {
+        "id": action_id,
+        "action": str(got["action"]),
+        "state": state,
+        "stage": state,
+        "note": str(got["note"]),
+        "startedAt": int(got["startedAt"]),
+        "updatedAt": updated,
+        "serverNow": now,
+        "stalled": state in ("waiting", "working") and now - updated > STALLED_AFTER_S,
+    }

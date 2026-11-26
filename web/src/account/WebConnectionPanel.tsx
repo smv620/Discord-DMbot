@@ -5,6 +5,10 @@
 // heading while something waits, and leaving with changes pending asks first (closing, opening another line, picking another
 // name or line on the map, and leaving the page). A player gets the same list, read-only. Names are only ever text on the page.
 // Off (CONNECTION_PANEL_LIVE) the old panel, WebLinePanel, is shown as it was. Its own file, loaded when a line is chosen.
+import RoadCondition from "./RoadCondition";
+import RouteLength from "./RouteLength";
+import { ROUTE_LENGTH_LIVE } from "../content/route-length-switch";
+import { ROAD_CONDITION_LIVE } from "../content/road-condition-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { KNOWS_FEELING_LIVE } from "../content/knows-feeling-switch";
@@ -19,6 +23,8 @@ import LazyPanel from "./LazyPanel";
 import SavingWait from "./SavingWait";
 import { dimmedName, markSecret } from "./know";
 import { WhoKnows } from "./WebLinePanel";
+import { CONNECTION_SAID_LIVE } from "../content/connection-said-switch";
+import { saidWords } from "../content/connection-said-words";
 
 type Link = WebEdge["links"][number];
 /** What the DM has picked on one connection and not yet saved. */
@@ -68,6 +74,7 @@ function without(was: Record<string, Staged>, change: WebLinkChange): Record<str
 }
 
 export default function ConnectionPanel({
+  reload,
   edge,
   nameOf,
   kindOf,
@@ -81,6 +88,8 @@ export default function ConnectionPanel({
   guard,
   open: firstOpen = null,
 }: {
+  /** Reads the page's graph again after a change to a road or route (#5035); the line then comes from the API. */
+  reload?: () => void;
   edge: WebEdge;
   nameOf: (id: string) => string;
   kindOf: (id: string) => string;
@@ -101,6 +110,9 @@ export default function ConnectionPanel({
   const [openId, setOpenId] = useState<string | null>(firstOpen);
   const [staged, setStaged] = useState<Record<string, Staged>>({});
   const [adding, setAdding] = useState(false);
+  // Say it in words (#5293): `edit` is the connection being corrected, undefined for a new one.
+  const [saying, setSaying] = useState<{ edit?: string } | null>(null);
+  const sayable = CONNECTION_SAID_LIVE && canEdit && Boolean(api.saidSend);
   const [ask, setAsk] = useState<null | (() => void)>(null);
   const [saving, setSaving] = useState(false);
   const [step, setStep] = useState<{ done: number; of: number } | null>(null); // which change is with the bot
@@ -274,6 +286,23 @@ export default function ConnectionPanel({
           {adding && <LazyPanel key={`add-${edge.a}|${edge.b}`} load={() => import("./AddLink")} what="the form to add a connection" props={{ edge, kindOf, nameOf, act }} />}
         </div>
       )}
+      {sayable && (
+        <div class="stack">
+          {!saying && (
+            <button type="button" class="button secondary" onClick={() => setSaying({})}>
+              {saidWords.connect}
+            </button>
+          )}
+          {saying && (
+            <LazyPanel
+              key={`say-${edge.a}|${edge.b}|${saying.edit ?? ""}`}
+              load={() => import("./ConnectionSaid")}
+              what="the form to say it in words"
+              props={{ api, refId, a: edge.a, b: edge.b, edit: saying.edit, onClose: () => setSaying(null), onChanged: () => reload?.() }}
+            />
+          )}
+        </div>
+      )}
       {canEdit && undoable.length > 0 && !dirty && (
         <p class="row">
           <button type="button" class="button secondary" disabled={undoing || saving} aria-busy={undoing} onClick={() => void undo()}>
@@ -288,6 +317,7 @@ export default function ConnectionPanel({
           {edge.links.map((l, i) => (
             <Line
               key={l.id}
+              reload={reload}
               n={i + 1}
               link={l}
               a={a}
@@ -304,6 +334,7 @@ export default function ConnectionPanel({
               revealing={revealing}
               api={api}
               refId={refId}
+              onCorrect={sayable ? () => setSaying({ edit: l.id }) : undefined}
             />
           ))}
         </ol>
@@ -336,6 +367,7 @@ const NEXT: Record<Link["direction"], Link["direction"]> = { "a-b": "b-a", "b-a"
 
 /** One connection: its compact line, and (opened) its full options. */
 function Line({
+  reload,
   n,
   link,
   a,
@@ -352,7 +384,10 @@ function Line({
   revealing,
   api,
   refId,
+  onCorrect,
 }: {
+  /** Reads the page's graph again after a change to a road or route (#5035). */
+  reload?: (() => void) | undefined;
   n: number;
   link: Link;
   a: string;
@@ -369,6 +404,8 @@ function Line({
   revealing: Set<string>;
   api: AccountApi;
   refId: string;
+  /** Opens "say it in words" to correct this connection (#5293); absent while that is off. */
+  onCorrect?: (() => void) | undefined;
 }) {
   const [asking, setAsking] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -399,6 +436,41 @@ function Line({
       </button>
       {isOpen && (
         <div class="stack" id={`web-link-${link.id}`}>
+          {onCorrect && (
+            <p>
+              <button type="button" class="button secondary" onClick={onCorrect}>
+                {saidWords.correct}
+              </button>
+            </p>
+          )}
+          {/* A route's stated length (#4392): behind ROUTE_LENGTH_LIVE. The DM's view sets it; a player sees it once it is there. */}
+          {ROUTE_LENGTH_LIVE && (link.route || link.length) && (
+            <RouteLength
+              api={api}
+              refId={refId}
+              on="connection"
+              id={link.id}
+              length={link.length}
+              route={!!link.route}
+              canEdit={canEdit}
+              onChanged={() => reload?.()}
+            />
+          )}
+          {/* A road's condition (#4451): behind ROAD_CONDITION_LIVE. The road is named by its two ends, as the panel names them. */}
+          {ROAD_CONDITION_LIVE && (link.road || link.condition) && (
+            <RoadCondition
+              api={api}
+              refId={refId}
+              on="connection"
+              id={link.id}
+              name={`the road between ${a} and ${b}`}
+              condition={link.condition}
+              road={!!link.road}
+              canEdit={canEdit}
+              // A change is read again from the page's graph, so the line comes from the API (#5035).
+              onChanged={() => reload?.()}
+            />
+          )}
           {sourceWords && <p class="small muted">{sourceWords}</p>}
           {link.knowWord && words.knowWords[link.knowWord] && <p class="small muted">{(link.knowLine ?? words.knowWords[link.knowWord])}</p>}
           {link.belief && (

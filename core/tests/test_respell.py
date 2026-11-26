@@ -282,6 +282,13 @@ class ThePastTranscripts(NamesTest):
         await self.transcripts.add_lines(
             GUILD, self.session, [Line(MS + 8000, PLAYER, "x", "Brannoch's deed and Branok's deed")]
         )
+        everything = self.memory.entries_held
+
+        async def without_the_clue(*args: Any, **kwargs: Any) -> frozenset[str]:
+            # (the gate's answer for a clue only Mira knows: the table doesn't hold it)
+            return frozenset(await everything(*args, **kwargs)) - {clue.id}
+
+        self.memory.entries_held = without_the_clue  # type: ignore[method-assign]
         before = await self.texts()
         form = name_card.FixSpellingForm(self.campaign.id, clue.id, "Branok's deed")
         form.name = SimpleNamespace(value="Brannoch's deed")  # type: ignore[assignment]

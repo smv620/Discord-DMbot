@@ -119,7 +119,7 @@ class TraitOfferStore:
             for o in offers:
                 if o.session_id is not None:
                     if o.session_id not in present:
-                        present[o.session_id] = await _still_there(
+                        present[o.session_id] = await still_there(
                             conn, guild_id, campaign_id, o.session_id
                         )
                     there = present[o.session_id]
@@ -261,7 +261,7 @@ class TraitOfferStore:
             return int(cur.rowcount)
 
 
-async def _still_there(
+async def still_there(
     conn: Any, guild_id: int, campaign_id: str, session_id: str
 ) -> set[int] | None:
     """Who still has lines in this campaign's session and is still recorded, read under the

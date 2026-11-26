@@ -244,6 +244,7 @@ AUDIENCE: dict[str, str] = {
             "ui.check_everything.WalkButton",  # `begin` asks `_campaign_for` first (#4192)
             "ui.family_ties.FamilyTiesButton",  # `_campaign_for` before anything is shown
             "ui.trait_questions.TraitQuestionsButton",  # the same DM check (`_dm_campaign`)
+            "ui.more_names.MoreNamesButton",  # `_dm_campaign` first (#5055 B)
             "ui.world_notes.WorldNotesButton",  # the screen asks `sees_secrets` first (#4285)
             "ui.thread_questions.ThreadQuestionsButton",  # `_dm_campaign` first (#4453)
             "ui.secret_questions.SecretQuestionsButton",  # `_dm_campaign` first (#4524)
@@ -290,6 +291,7 @@ AUDIENCE: dict[str, str] = {
             "ui.recap_audio.MakeAudioAgainButton",
             "ui.name_pass_undo.UndoNamePassButton",
             "ui.recap_lines.RecapLinesUndoButton",  # `dm_user_ids` on every press (#3298)
+            "ui.recap_lines.RecapLinesShowButton",  # the same check, then the lines (#5232)
             "ui.recap_dm.RecapButton",
             "ui.recap_hold.WriteNowButton",
             "ui.recap_share.ShareButton",
@@ -318,6 +320,12 @@ AUDIENCE: dict[str, str] = {
             "ui.party_join.SinceButton",
             "ui.party_join.FirstUndoButton",
             "ui.party_join.JoinsOpenButton",
+            # A character who died or left: "Still in the party?" (#4537 slice 6a)
+            "ui.party_leave.LeftButton",
+            "ui.party_leave.StaysButton",
+            "ui.party_leave.LaterButton",
+            "ui.party_leave.StayingUndoButton",
+            "ui.party_leave.LeavesOpenButton",
         ],
         DM,
     ),

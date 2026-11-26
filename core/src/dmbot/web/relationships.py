@@ -15,6 +15,7 @@ A campaign is named by `<server>.<campaign>`, as for the recap and transcript pa
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from collections.abc import Callable, Collection, Mapping
 from typing import Any
@@ -22,10 +23,11 @@ from typing import Any
 from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
-from dmbot.memory import gate, kin, party_icons, reputation_words, web_actions
-from dmbot.memory.claims import Extracted, condition_of
+from dmbot.memory import gate, kin, knowers, party_icons, reputation_words, web_actions
+from dmbot.memory.claims import Extracted, condition_of, says_travels_with
 from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import (
+    TRAVELS_WITH_MEANS,
     back_after,
     back_words,
     for_reader,
@@ -39,11 +41,26 @@ from dmbot.memory.standing import dm_line_word
 from dmbot.memory.voice import split_effect_note
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
-from dmbot.web import all_names, graph_view, link_sources, pc_icons, which_choices
+from dmbot.web import (
+    all_names,
+    first_feelings,
+    graph_view,
+    link_sources,
+    pc_icons,
+    road_conditions,
+    route_lengths,
+    which_choices,
+)
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 from dmbot.web.who_knows import who_text
+
+log = logging.getLogger(__name__)
+# (what the door gives for no ids: nothing to remind of)
+_NO_FEELINGS: dict[str, list[object]] = {
+    k: [] for k in ("claims", "entities", "aliases", "relations", "homes", "species")
+}
 
 # The website's steps spinner goes 1 to 8 (owner, #2934); MAX_NODES still bounds the work.
 MAX_HOPS = 8
@@ -407,6 +424,11 @@ async def read_web(
     # where each connection came from (#2946): the DM's own view gets the full value, any other
     # look (a player's, or Players View) the player's
     await link_sources.with_link_sources(db, session, ref, page, full=bool(own_view))
+    # a route's stated length (#4392): a length DMbot only read is the DM's alone (the door
+    # leaves it out for anyone else), and only the DM's own view says it was read
+    await route_lengths.with_route_lengths(db, session, ref, page, full=bool(own_view))
+    # a road's condition (#4451): a player is told only of one the DM kept and showed (the door)
+    await road_conditions.with_road_conditions(db, session, ref, page, full=bool(own_view))
     # each player character's picture, for the nodes this person may see (#3621)
     # (the DM's Players view is what a player gets, so it carries no tools for the picture)
     await pc_icons.with_icons(db, session, ref, page, tools=view != "players")
@@ -491,6 +513,21 @@ def know_words(
     return entries, links
 
 
+def party_ids(known: dict[str, Any], current: set[str] | None = None) -> list[str]:
+    """The party now in Discord's order (`party_record.current_members`): the party list's order
+    (oldest character first), then any member the list has no place for by name, then id. The one
+    place this order is made, so the line of who knows it and the "Who knows this?" and See as…
+    pickers cannot disagree (#4778). Only characters the door lists (`viewers`) are named."""
+    now = {str(c) for c in known.get("playerCharacters", ())} if current is None else current
+    named = {str(v["id"]): str(v["name"]) for v in known["viewers"]}
+    order = [str(c) for c in known.get("partyOrder", ()) if str(c) in now and str(c) in named]
+    rest = sorted(
+        (c for c in now if c in named and c not in order),
+        key=lambda c: (named[c].casefold(), c),
+    )
+    return order + rest
+
+
 def know_lines(
     known: dict[str, Any],
     shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
@@ -505,14 +542,9 @@ def know_lines(
     Discord counts as known to every member (`who_knows.knows_line`, "everyone")."""
     data, who = shared or _knowers(known)
     viewers = {str(v["id"]): (str(v["name"]), str(v.get("kind", "npc"))) for v in known["viewers"]}
-    # (the party in Discord's order: oldest character first, as `party_record.current_members`)
-    order = [str(c) for c in known.get("partyOrder", ())]
-    current = set(data.player_characters)
-    members = [(c, viewers[c][0]) for c in order if c in current and c in viewers]
-    members += sorted(
-        ((c, viewers[c][0]) for c in current if c in viewers and c not in order),
-        key=lambda m: (m[1].casefold(), m[0]),
-    )
+    members = [
+        (c, viewers[c][0]) for c in party_ids(known, set(data.player_characters)) if c in viewers
+    ]
     everyone = [c for c, _ in members]
     common_rows = {(str(k), str(s)) for k, s, c, _ in known["knowers"] if c == gate.COMMON}
     shown_entries, shown_links = set(shown[0]), set(shown[1])
@@ -539,21 +571,101 @@ def know_lines(
     return entries, links
 
 
+def preview_line(
+    known: dict[str, Any], characters: Collection[str], *, common: bool = False
+) -> str:
+    """The one line `party_icons.line` gives for a statement these characters would know, against
+    the party as it is now: the preview of a pick before the DM presses (#5332), worded by the
+    same function as the line on every other surface, so the two cannot differ. Only characters
+    the door lists are counted (an id it does not know is ignored, never named)."""
+    data, _who = _knowers(known)
+    viewers = {str(v["id"]): (str(v["name"]), str(v.get("kind", "npc"))) for v in known["viewers"]}
+    members = [
+        (c, viewers[c][0]) for c in party_ids(known, set(data.player_characters)) if c in viewers
+    ]
+    why = {str(k): str(v) for k, v in dict(known.get("leftWhy", {})).items()}
+    left = {
+        str(c): (viewers[str(c)][0], why.get(str(c), "left"))
+        for c in known.get("leftParty", ())
+        if str(c) in viewers
+    }
+    npcs = {c: v[0] for c, v in viewers.items() if v[1] == "npc"}
+    outsiders = party_icons.ordered_outsiders(left, npcs)
+    holders = [str(c) for c in characters if str(c) in viewers]
+    return party_icons.line(holders, members, common=common, outsiders=outsiders)
+
+
+async def know_line_of(db: Database, session: Session, ref: str, body: object) -> dict[str, Any]:
+    """`{"characters": [ids], "common": bool}` in, `{"line": "✅ The whole party knows"}` out: what
+    the one line would say if exactly these characters knew a statement (or, with `common`,
+    everyone, 🌍). For a DM of the campaign only (`not_found` for anyone else), at most 50 ids.
+    Nothing is read but the party and the names, and nothing is stored or logged."""
+    characters = body.get("characters", []) if isinstance(body, dict) else None
+    common = body.get("common", False) if isinstance(body, dict) else None
+    if (
+        not isinstance(characters, list)
+        or len(characters) > 50
+        or not all(isinstance(c, str) and ID_PATTERN.fullmatch(c) for c in characters)
+        or not isinstance(common, bool)
+    ):
+        raise RecapError("bad_target")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_knowers_data(%s, %s) AS k", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    if found is None or found["k"] is None or not dict(found["k"])["isDm"]:
+        raise RecapError("not_found")
+    return {"line": preview_line(dict(found["k"]), characters, common=common)}
+
+
 def link_holders(
     known: dict[str, Any],
     shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     """For each connection, the characters who know it, player characters and NPCs alike, as
-    {id, name} by name (the DM's own view, so the campaign's own names): the "Who knows this?"
-    control's current answer (#2999). Only characters the door lists as confirmed are named."""
+    {id, name, status} (the DM's own view, so the campaign's own names): the "Who knows this?"
+    control's current answer (#2999). Only characters the door lists as confirmed are named. The
+    order is Discord's (`who_knows.pick_choices`, #5332): the party now first in the party list's
+    order, then characters who left (by name; `status` "left"), then everyone else (NPCs, by name;
+    "npc"); `status` is "party" for the first group."""
     data, who = shared or _knowers(known)
     names = {str(v["id"]): str(v["name"]) for v in known["viewers"]}
+    party = party_ids(known, set(data.player_characters))
+    in_party = {c: n for n, c in enumerate(party)}
+    gone = {str(c) for c in known.get("leftParty", ())} - set(in_party)
     out: dict[str, list[dict[str, str]]] = {}
     for link in data.connections:
-        holders = [
-            {"id": c, "name": names[c]} for c in who(gate.CONNECTION, str(link)) if c in names
-        ]
-        out[str(link)] = sorted(holders, key=lambda h: (h["name"].casefold(), h["id"]))
+        raw = data.knowers.get((gate.CONNECTION, str(link)), {})
+        own = raw if isinstance(raw, Mapping) else dict.fromkeys(raw, 1.0)  # (a plain list: sure)
+        holders = []
+        for c in who(gate.CONNECTION, str(link)):
+            if c not in names:
+                continue
+            holder = {
+                "id": c,
+                "name": names[c],
+                "status": "party" if c in in_party else "left" if c in gone else "npc",
+            }
+            # DMbot's guess (#3940, #4968): an NPC's own row below 1.0 (never a player character's,
+            # and never a character who knows only through a group's row), "sure" at the guess's
+            # top step and "likely" below it. A DM's save of the list that showed it keeps it.
+            sure = own.get(c)
+            if sure is not None and sure < 1.0 and c not in data.player_characters:
+                holder["guess"] = "sure" if sure >= knowers.GUESS_SURE else "likely"
+            holders.append(holder)
+        out[str(link)] = sorted(
+            holders,
+            key=lambda h: (
+                0 if h["status"] == "party" else 1 if h["status"] == "left" else 2,
+                in_party.get(h["id"], 0),  # (the party's own order; the rest by name below)
+                h["name"].casefold(),
+                h["id"],
+            ),
+        )
     return out
 
 
@@ -1209,6 +1321,21 @@ async def queue_reveal(db: Database, session: Session, ref: str, body: object) -
     )
 
 
+def _chose(counts: str) -> dict[str, Any] | None:
+    """`first:<0|1> chose:<id8>=<n>,…[;more=<k>]` (a "Let me choose" pick) as `{first, chose:
+    [{id, count}], more}`: `first` is whether the pick answered the question, `chose` who was given
+    how many things (the first 8 characters of the id; the page matches them to its list), `more`
+    how many further characters were given things and are not named."""
+    found = re.fullmatch(r"first:([01]) chose:((?:[0-9a-f]{8}=\d+,?)+)(?:;more=(\d+))?", counts)
+    if found is None:
+        return None
+    return {
+        "first": found[1] == "1",
+        "chose": [{"id": part[:8], "count": int(part[9:])} for part in found[2].split(",") if part],
+        "more": int(found[3] or 0),
+    }
+
+
 def _catch_choices(counts: str) -> tuple[list[dict[str, Any]], int] | None:
     """The members "Catch up" has something for and how many more there are that were left out,
     from the bot's `catch:<id>=<n>,…;more=<k>` answer."""
@@ -1248,6 +1375,8 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "reading-",
             "names-fixed-",
             "world-",
+            "route-",
+            "road-",
             "maps-",
             "thread-",
             "part-",
@@ -1257,23 +1386,49 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "progress-",
             "clue-",
             "join-",
+            "leave-",
             "party-",
             "rules-update-",
+            "pack-update-",
             "heard-",
+            "deed-",
+            "continuity-",
+            "names-more",
+            "lookalike-",
         )
     ):
         raise RecapError("not_found")
+    if got["action"] == "names-more":
+        # 📝 More names (#5081): how many names now wait in the name check and how many are still
+        # behind the button, as Discord says it; counts only, with the wait shown (the wait rule)
+        counts = str(got.get("counts") or "")
+        sized = re.fullmatch(r"made:(\d+) left:(\d+)", counts)
+        waited = _reading_answer(got)
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "made": int(sized[1]) if sized and got["state"] == "done" else None,
+            "left": int(sized[2]) if sized and got["state"] == "done" else None,
+            "waits": waited["waits"],
+            "progress": {
+                "done": int(got.get("progressDone") or 0),
+                "total": int(got.get("progressTotal") or 0),
+            },
+        }
     if str(got["action"]).startswith(
         ("thread-", "part-", "branch-", "lang-", "secret-", "progress-", "clue-")
     ):
         # a story thread's keep, or a change to its parts and branches (#4457, #4476): how it ended
         # and the change it made, for the page's Undo (none when it changed nothing)
         made = got.get("resultBatches") or []
-        return {
+        out_thread: dict[str, Any] = {
             "state": got["state"],
             "error": got["error"],
             "batch": int(made[0]) if got["state"] == "done" and made else None,
         }
+        if got["action"] == "thread-new":  # (a new thread: its id, for the page's next step)
+            out_thread["id"] = str(got.get("resultId") or "") if got["state"] == "done" else None
+        return out_thread
     if str(got["action"]).startswith("maps-"):
         # a Maps page press (#4347): how it ended, and the change it made for the page's Undo
         made = got.get("resultBatches") or []
@@ -1286,6 +1441,16 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         if got["action"] == "maps-add":  # (a sent map: the new map's id, for the page's list)
             out["mapId"] = str(got.get("resultId") or "") if done else None
         return out
+    if str(got["action"]).startswith(("route-", "road-", "lookalike-")):
+        # a route's length, a road's condition or a look-alike merge (#4392, #4451, #5259): how it
+        # ended and the change it made, for the page's Undo (none when it changed nothing); no
+        # edge to draw
+        made = got.get("resultBatches") or []
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "batch": int(made[0]) if got["state"] == "done" and made else None,
+        }
     if str(got["action"]).startswith("world-"):
         # a World notes ✅, 🚫 or ↩ Undo (#4285): how it ended, how many a Keep kept, and the change
         # it made for the page's Undo (none when it changed nothing)
@@ -1297,6 +1462,26 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "kept": int(counts.removeprefix("kept:")) if counts.startswith("kept:") else None,
             "batch": int(made[0]) if got["state"] == "done" and made else None,
         }
+    if str(got["action"]).startswith("deed-"):
+        # a deed answered (#3591): which case it was as a short code, never a word, and the change
+        # a recorded one made for the page's Undo
+        made = got.get("resultBatches") or []
+        counts = str(got.get("counts") or "")
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "code": counts.removeprefix("deed:") if counts.startswith("deed:") else None,
+            "batch": int(made[0]) if got["state"] == "done" and made else None,
+        }
+    if str(got["action"]).startswith("continuity-"):
+        # the heads-ups (#3695): an ask says how many it found (`n:<count>`), an answer how it ended
+        # (`gone` or `refused` as the error); counts only, never a word
+        counts = str(got.get("counts") or "")
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "count": int(counts.removeprefix("n:")) if re.fullmatch(r"n:\d+", counts) else None,
+        }
     if str(got["action"]).startswith("heard-"):
         # a waiting "Did they mean…?" answered (#4841 B1): which case it was, never a word
         counts = str(got.get("counts") or "")
@@ -1306,23 +1491,26 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "code": counts.removeprefix("heard:") if counts.startswith("heard:") else None,
             "reason": counts.removeprefix("reason:") if counts.startswith("reason:") else None,
         }
-    if str(got["action"]).startswith("rules-update-"):
+    if str(got["action"]).startswith(("rules-update-", "pack-update-")):
         # a pick of a followed set's changes (#4841 C2): how many were kept and left out, and the
         # id of the day-long undo handle
         counts = str(got.get("counts") or "")
-        sized = re.fullmatch(r"picked:(\d+) left:(\d+)", counts)
+        sized = re.fullmatch(r"picked:(\d+) left:(\d+)(?: skipped:(\d+))?", counts)
         undone = re.fullmatch(r"undone:(\d+)", counts)
+        back = re.fullmatch(r"back:(\d+)", counts)  # the version an update's Undo went back to
         return {
             "state": got["state"],
             "error": got["error"],
             "kept": int(sized[1]) if sized else None,
             "left": int(sized[2]) if sized else None,
+            "skipped": int(sized[3]) if sized and sized[3] else None,  # a pack's already-yours
             "take": int(got["resultId"])
             if got["state"] == "done" and str(got.get("resultId") or "").isdigit()
             else None,
             "mergedKept": int(undone[1]) if undone else None,
+            "back": int(back[1]) if back else None,
         }
-    if str(got["action"]).startswith(("join-", "party-")):
+    if str(got["action"]).startswith(("join-", "leave-", "party-")):
         # the DM's join answer (#4778): how it ended, how many things "What the party knows" gave
         # (Discord's "the N things the party knew"), and the change it made for the page's Undo
         made = got.get("resultBatches") or []
@@ -1334,6 +1522,11 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "given": int(counts.removeprefix("given:")) if counts.startswith("given:") else None,
             # a return: which question now waits for the character ("back", "join" or "none")
             "asked": counts.removeprefix("asked:") if counts.startswith("asked:") else None,
+            # "Let me choose" (#4799): how many things each character was given (`[{"id" (first
+            # 8 characters), "count"}]`) and whether this pick answered the question
+            "chose": None if (c := _chose(counts)) is None else c["chose"],
+            "first": None if c is None else c["first"],
+            "choseMore": None if c is None else c["more"],
             # "Catch up" (#4793): how many things the member was told, and who is missing what
             # (`[{"id", "count"}]`, ids and counts only: the page names them)
             "told": int(counts.removeprefix("told:")) if counts.startswith("told:") else None,
@@ -1559,6 +1752,16 @@ def _can_be_secret(row: dict[str, Any]) -> bool:
     return condition_of(said) is None
 
 
+def companion_means(*, predicate: str = "", relationship: str = "") -> dict[str, str]:
+    """`{"means": …}` for a connection or a claim that says a companion travels with someone, else
+    nothing (#5165, the website half of #5164). The words are the shared constant Discord's cards
+    use, never a copy, so the two places cannot drift. A waiting connection says its `predicate`
+    (the key); a waiting claim says its `relationship` (the session's own words)."""
+    if predicate == "travels_with" or (relationship and says_travels_with(relationship)):
+        return {"means": TRAVELS_WITH_MEANS}
+    return {}
+
+
 def _claim_statement(row: dict[str, Any]) -> str:
     """A claim as one plain line, "Mira Voss knows Far Hall" (the DM's page shows the line and the
     session's date; the words are the claim's own, as the DM screen shows them)."""
@@ -1618,6 +1821,7 @@ async def read_waiting(
         found = await cur.fetchone()
         got = found["r"] if found else None
         info = None
+        feelings: dict[str, str] = {}
         if got is not None and got.get("status") == "ok" and got["claims"]:
             # The claims kept for a "Which one?" answer (#3463): the choices come from the
             # store's own function, run on the facts this door sends for the ids the list showed.
@@ -1626,6 +1830,20 @@ async def read_waiting(
                 "SELECT dmbot_web_which_info(%s, %s, %s) AS r", (guild_id, campaign_id, ids)
             )
             info = (await cur.fetchone() or {}).get("r")
+            # The first meeting's feeling reminder (#4942): only a reminder, so a failed read (the
+            # door, or working the line out) leaves the questions as they were. A savepoint, so a
+            # failed statement does not abort the transaction the rest of the page reads in.
+            try:
+                async with conn.transaction():
+                    cur = await conn.execute(
+                        "SELECT dmbot_web_first_feeling_info(%s, %s, %s) AS r",
+                        (guild_id, campaign_id, ids),
+                    )
+                    feelings = first_feelings.lines_by_claim(
+                        (await cur.fetchone() or {}).get("r") or _NO_FEELINGS
+                    )
+            except Exception:
+                log.exception("first feelings: read failed")
     if got is None or got.get("status") != "ok":
         raise RecapError("not_found")
     choices = which_choices.choices_by_claim(info) if info else {}
@@ -1635,6 +1853,8 @@ async def read_waiting(
             "details": split_effect_note(str(c.get("details") or ""))[0],  # (never the note)
             "statement": _claim_statement(c),
             "canSecret": _can_be_secret(c),
+            **companion_means(relationship=str(c.get("relationship") or "")),
+            "startingFeeling": feelings.get(str(c["id"])),
             **({"choices": choices[str(c["id"])]} if str(c["id"]) in choices else {}),
         }
         for c in got["claims"]
@@ -1650,6 +1870,7 @@ async def read_waiting(
                 feeling=True,  # (the waiting page is the DM's alone)
             ),
             "check": check_words(b.get("decided")),
+            **companion_means(predicate=str(b["predicate"])),
             **_held_words(b),
         }
         for b in got["backstory"]

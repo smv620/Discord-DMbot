@@ -1,9 +1,10 @@
 """The website's World notes (#4285, slice 1c's door; the website half): DMbot's guesses about
-places and languages, for a DM of the campaign only. One database door (`dmbot_web_world_notes`,
-migration 0481) answers NULL to anyone else, so a player or a stranger gets "not allowed" and never
-a line. This module shapes the door's lines, and queues the three actions (`world-keep`,
-`world-not`, `world-undo`) through the one queue door as the connection edits do: the bot applies
-each in one write, so each is one Undo. Words, ids and counts only: no story text."""
+places, languages, roads and feelings, for a DM of the campaign only. One database door
+(`dmbot_web_world_notes`, migration 0481) answers NULL to anyone else, so a player or a stranger
+gets "not allowed" and never a line. This module shapes the door's lines, and queues the four
+actions (`world-keep`, `world-not`, `world-undo` and `world-bias`, the step pick of a feeling)
+through the one queue door as the connection edits do: the bot applies each in one write, so each
+is one Undo. Words, ids and counts only: no story text."""
 
 from __future__ import annotations
 
@@ -12,14 +13,16 @@ from typing import Any
 
 from dmbot.db import Database
 from dmbot.maps import disagree, measure, measure_words
+from dmbot.memory import place_peoples, standing
 from dmbot.web import relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
-LINE_ID = re.compile(r"^(place|language):[0-9a-f]{32}$")
+LINE_ID = re.compile(r"^(place|language|bias):[0-9a-f]{32}$")
 # ✅ Keep also takes a road's line (#4677): its length becomes the DM's own. A road has no 🚫.
-KEEP_LINE_ID = re.compile(r"^(place|language|road):[0-9a-f]{32}$")
+KEEP_LINE_ID = re.compile(r"^(place|language|road|bias):[0-9a-f]{32}$")
+BIAS_LINE = re.compile(r"^bias:[0-9a-f]{32}$")
 KEEP_AT_MOST = 25  # Discord's menu limit: Keep all only keeps lines the DM was shown
 _BATCH = re.compile(r"^[0-9]{1,15}$")
 
@@ -39,6 +42,8 @@ def _line(kind: str, r: dict[str, Any]) -> dict[str, Any]:
     out["layer"] = str(r["layer"])
     out["value"] = str(r["value"])
     out["words"] = str(r.get("words") or "")  # the DM's own words, when the value is "other"
+    # a culture line's named culture (#5062): its name, when the row holds one instead of a lineage
+    out["culture"] = str(r["culture"]) if r.get("culture") else None
     out["how"] = str(r["how"]) if r.get("how") else None
     out["rulerId"] = str(r["rulerId"]) if r.get("rulerId") else None
     out["ruler"] = str(r["ruler"]) if r.get("ruler") else None
@@ -64,7 +69,48 @@ async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
         "places": [_line("place", r) for r in by_kind.get("place", [])],
         "languages": [_line("language", r) for r in by_kind.get("language", [])],
         "roads": await _roads(db, session, guild_id, campaign_id),
+        "feelings": await _feelings(db, session, guild_id, campaign_id),
     }
+
+
+def _step_of(score: int) -> str:
+    """The step a stored score stands for (the nearest of the five, as `biases._step_of`)."""
+    return min(standing.SCORE_OF, key=lambda step: abs(standing.SCORE_OF[step] - score))
+
+
+async def _feelings(
+    db: Database, session: Session, guild_id: int, campaign_id: str
+) -> list[dict[str, Any]]:
+    """The feelings DMbot read from the lore and the DM has not answered (#4932; Discord's
+    "Feelings" group, `world_notes._biases`): the door gives the rows, and the step is worked out
+    from the score (the nearest of the five, as `memory/biases.py` does) and the target worded from
+    the lineage's plural or the culture's name, the words Discord uses. A feeling
+    is `bias:<row id>`; ✅ Keep and 🚫 Not right take it as any line, ✏️ Change picks another
+    step."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_world_biases(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    out: list[dict[str, Any]] = []
+    for r in got:
+        target = str(r["culture"]) or place_peoples.LINEAGES.get(str(r["lineage"]), ("", ""))[1]
+        if not target:
+            continue
+        out.append(
+            {
+                "id": f"bias:{r['id']}",
+                "entityId": str(r["holderId"]),
+                "name": str(r["holder"]),
+                "target": target,
+                "step": _step_of(int(r["score"])),
+            }
+        )
+    return out
 
 
 async def _roads(
@@ -157,3 +203,16 @@ async def queue_undo(db: Database, session: Session, ref: str, batch: str) -> st
     return await relationships._queue(
         db, session, ref, entity=None, action="world-undo", target="", text=batch, flag=False
     )
+
+
+async def queue_bias(db: Database, session: Session, ref: str, body: object) -> str:
+    """✏️ Change on a feeling (#4932): `{"id": "bias:<32 hex>", "step": <one of the five>}`; the bot
+    keeps it at that step as the DM's own (`change_read_bias`, one change, so one Undo)."""
+    line = body.get("id") if isinstance(body, dict) else None
+    step = body.get("step") if isinstance(body, dict) else None
+    if not isinstance(line, str) or not BIAS_LINE.fullmatch(line) or step not in standing.STEPS:
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="world-bias", target="", text=f"{line} {step}",
+        flag=False,
+    )  # fmt: skip

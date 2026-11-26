@@ -19,10 +19,12 @@ import asyncio
 import contextlib
 import dataclasses
 import logging
+import sys
 import time
 from collections import defaultdict
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Iterable
 from dataclasses import dataclass, field
+from pathlib import PurePath
 from typing import Protocol
 
 from dmbot.memory import notify
@@ -218,20 +220,38 @@ class CampaignLookup:
 
     @property
     def hidden(self) -> frozenset[str]:
-        """What the campaign's DMs alone may see: the clues only some people know (#1649), the
-        entries the DM marked "Players don't know yet" (#2321), and the story threads (#1662)
-        and deeds (#1732), which are the DM's plot notes."""
+        """The DM's "shown to the table now" switch, as the flags say (the clues only some people
+        know, the entries marked "Players don't know yet") and the DM-only kinds. For the DM's own
+        "who is it" ranking only (`who_step.candidates_from`), whose output only the DM gets: never
+        to decide what anyone else may read, which is the gate's (`for_viewer`'s `seen`, the name
+        pass's table view, #4802)."""
         return frozenset(
             e.id for e in self.entities.values() if e.unseen_by_players or e.type in DM_ONLY_TYPES
         )
 
-    def for_viewer(self, secrets: bool) -> CampaignLookup:
-        """What a person who may not see secrets (a server manager who is not a DM) gets to
-        read: the same names without the DM-only entries (`hidden`), in every list, search,
-        card and file. The campaign's DMs, and the Cleaner, get the whole thing."""
+    def for_viewer(self, secrets: bool, seen: Collection[str] | None = None) -> CampaignLookup:
+        """What a person who may not see secrets gets to read, in every list, search, card and
+        file: the names of the entries they hold (`seen`, from `MemoryStore.entries_seen_by`: what
+        their own characters know, or common knowledge for someone with no character; party
+        knowledge slice 5b, #4537), never the DM-only types. The campaign's DMs, and the Cleaner,
+        get the whole thing. The names of people at the table are not story entries and stay.
+
+        Anyone but a DM must give `seen`: the old rule by the flags is gone (#4802, Supervisor's
+        ruling P on #4537), so a read without it is a caller's mistake and raises at once, naming
+        the caller and counts only, never reading the flags in its place."""
         if secrets:
             return self
-        gone = self.hidden
+        if seen is None:
+            caller = sys._getframe(1).f_code  # (which caller forgot `seen`: its name, no data)
+            raise ValueError(
+                f"for_viewer: a read for someone who isn't a DM gave no `seen` "
+                f"({PurePath(caller.co_filename).name}:{caller.co_name}, "
+                f"{len(self.entities)} entries)"
+            )
+        held = frozenset(seen)
+        gone = frozenset(
+            e.id for e in self.entities.values() if e.id not in held or e.type in DM_ONLY_TYPES
+        )
         if not gone and not self.secret_neighbours:
             secret_spellings = frozenset(e.text for e in self.names if e.secret)
             return dataclasses.replace(self, guarded=secret_spellings) if secret_spellings else self

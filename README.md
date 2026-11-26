@@ -181,3 +181,12 @@ under the same licence (see
 > <https://dnd.wizards.com/resources/systems-reference-document>. The SRD 5.1 is licensed
 > under the Creative Commons Attribution 4.0 International License available at
 > <https://creativecommons.org/licenses/by/4.0/legalcode>.
+
+### Third-party data
+
+- **English word list:** built from SCOWL (Spell Checker Oriented Word Lists) by Kevin Atkinson,
+  release 2020.12.07, <http://wordlist.aspell.net/>. It is used under SCOWL's permission notice,
+  kept word for word in
+  [`core/src/dmbot/names/data/SCOWL-Copyright.txt`](core/src/dmbot/names/data/SCOWL-Copyright.txt).
+  [`core/src/dmbot/names/data/ATTRIBUTION.md`](core/src/dmbot/names/data/ATTRIBUTION.md) says what
+  was taken and how. DMbot uses it only to tell an ordinary word from a name.

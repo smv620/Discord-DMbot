@@ -5,7 +5,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { type AccountApi, type PictureItem } from "../src/account/api";
+import { type AccountApi, type PictureActionLook, type PictureItem } from "../src/account/api";
 import { keepDmOnlyMarks } from "../src/account/api-campaign";
 import { mockApi } from "../src/account/mock";
 import Pictures, { WAITING_RECHECK_MS } from "../src/account/Pictures";
@@ -420,5 +420,109 @@ describe("DM-only pictures from documents", () => {
     render(<Pictures api={mockApi("table")} path={PLAYER_PATH} />);
     await waitFor(() => expect(alts().length).toBeGreaterThan(0));
     expect(alts()).not.toContain(DM_ONLY);
+  });
+});
+
+describe("following a waiting action by its id (#3355, route 6)", () => {
+  const tile = (): PictureItem => ({
+    code: "pic-1",
+    cursor: "1791004000:1",
+    at: 1791004000,
+    sessionNumber: 2,
+    poster: "Mira",
+    description: "A map of the Brass Ford",
+    previewUrl: "/pictures/preview-1.webp",
+    permanent: false,
+    isPublic: true,
+    mine: true,
+  });
+  // The list never shows the change, so only the action's own look can end the wait.
+  function followApi(looks: Partial<PictureActionLook>[]) {
+    let at = 0;
+    const pictures = vi.fn(async () => ({ pictures: [tile()], more: false, isDm: true, usage: null, sessions: [2], posters: ["Mira"] }));
+    const pictureAction = vi.fn(async () => ({ state: "waiting" as const, note: "", id: "act-1" }));
+    const pictureActionLook = vi.fn(async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const look = looks[Math.min(at++, looks.length - 1)] ?? {};
+      return { id: "act-1", action: "make-private", state: "working", stage: "working", note: "", startedAt: now - 30, updatedAt: now - 10, serverNow: now, stalled: false, ...look } as PictureActionLook;
+    });
+    return { pictures, pictureAction, pictureActionLook } as unknown as AccountApi & { pictureActionLook: ReturnType<typeof vi.fn> };
+  }
+  async function passTime(ms: number): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+  }
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  async function press(api: AccountApi) {
+    render(<Pictures api={api} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    vi.useFakeTimers();
+    fireEvent.click(within(tileFor("A map of the Brass Ford")).getByRole("button", { name: w.makePrivate }));
+    await passTime(0);
+  }
+
+  it("asks how the action stands and says DMbot is working on it when the bot has taken it", async () => {
+    const api = followApi([{ state: "working" }]);
+    await press(api);
+    expect(api.pictureActionLook).toHaveBeenCalledWith("100.cmp1", "act-1");
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.workingStage)).toBeTruthy();
+    expect(within(tileFor("A map of the Brass Ford")).getByText(/Running for/)).toBeTruthy();
+  });
+
+  it("says waiting while the bot has not taken it", async () => {
+    const api = followApi([{ state: "waiting", stage: "waiting" }]);
+    await press(api);
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.waitingStage)).toBeTruthy();
+    expect(within(tileFor("A map of the Brass Ford")).queryByText(w.workingStage)).toBeNull();
+  });
+
+  it("says it is stuck, with what to do, when the server calls it stalled", async () => {
+    const api = followApi([{ state: "working", stalled: true }]);
+    await press(api);
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.stuck)).toBeTruthy();
+  });
+
+  it("a refused action ends the wait and shows the refusal's own words", async () => {
+    const api = followApi([{ state: "refused", note: "Only the person who posted it or a DM can do that." }]);
+    await press(api);
+    expect(await screen.findByText("Only the person who posted it or a DM can do that.")).toBeTruthy();
+    expect(within(tileFor("A map of the Brass Ford")).queryByText(w.waitingStage)).toBeNull();
+    expect(within(tileFor("A map of the Brass Ford")).queryByText(w.workingStage)).toBeNull();
+  });
+
+  it("a failed action with no words says the page's own failure line", async () => {
+    const api = followApi([{ state: "failed", note: "" }]);
+    await press(api);
+    expect(await screen.findByText(w.actionFailed)).toBeTruthy();
+  });
+
+  it("a done action ends the wait and reads the list again", async () => {
+    const api = followApi([{ state: "done" }]);
+    await press(api);
+    const reads = (api.pictures as unknown as ReturnType<typeof vi.fn>).mock.calls.length;
+    expect(reads).toBeGreaterThanOrEqual(3); // the first read, the one after the press, and the one after "done"
+    expect(within(tileFor("A map of the Brass Ford")).queryByText(w.workingStage)).toBeNull();
+  });
+
+  it("a look that worked and then fails goes back to the page's own wait", async () => {
+    const api = followApi([{ state: "working" }]);
+    await press(api);
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.workingStage)).toBeTruthy();
+    (api.pictureActionLook as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("down"));
+    await passTime(WAITING_RECHECK_MS);
+    expect(within(tileFor("A map of the Brass Ford")).queryByText(w.workingStage)).toBeNull();
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.waitingStage)).toBeTruthy();
+  });
+
+  it("a look that fails changes nothing: the wait stays and the list read goes on", async () => {
+    const api = followApi([{ state: "working" }]);
+    (api.pictureActionLook as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("down"));
+    await press(api);
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.waitingStage)).toBeTruthy();
+    await passTime(WAITING_RECHECK_MS);
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.waitingStage)).toBeTruthy();
   });
 });

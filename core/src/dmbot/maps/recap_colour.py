@@ -59,7 +59,12 @@ def line(name: str, facts: Sequence[mf.Fact], names: Mapping[str, str]) -> str |
     return f"{name}: {'; '.join(parts)}." if parts else None
 
 
-async def lines(scope: Scope, place_ids: Sequence[str], names: Mapping[str, str]) -> list[str]:
+async def lines(
+    scope: Scope,
+    place_ids: Sequence[str],
+    names: Mapping[str, str],
+    viewer: gate.Viewer | None = None,
+) -> list[str]:
     """One line for each place the session visited (in the order given, at most `MAX_PLACES`)
     that the party may know something of. `names`: entry id to the name the PLAYERS know it by
     (the caller reads it through the party's view, never the DM's), for the places and for any
@@ -67,7 +72,8 @@ async def lines(scope: Scope, place_ids: Sequence[str], names: Mapping[str, str]
     wanted = [p for p in dict.fromkeys(place_ids) if p in names][:MAX_PLACES]
     if not wanted:
         return []
-    found = await map_fact_store.facts_for(scope, wanted, gate.Viewer.the_party())
+    # (the party at that session when the caller gives it, #4537 slice 3b; else today's party)
+    found = await map_fact_store.facts_for(scope, wanted, viewer or gate.Viewer.the_party())
     out: list[str] = []
     for place in wanted:
         said = line(names[place], found.get(place, []), names)

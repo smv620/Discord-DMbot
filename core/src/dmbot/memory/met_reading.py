@@ -88,7 +88,11 @@ _FORMS = (("ves", ("f", "fe")), ("ies", ("y", "ie")), ("es", ("", "e")), ("s", (
 def _forms(word: str) -> set[str]:
     """The word and what it would be without a plain plural ending, every reading of it ("snakes"
     gives "snake", "boxes" gives "box", "wolves" gives "wolf"): a quote check, not a dictionary,
-    so two words match when their forms meet."""
+    so two words match when their forms meet. A possessive stands for its word too ("the ogre's
+    club" says "ogre"; Supervisor's ruling A on #4997). `_words` makes a curly apostrophe plain
+    first."""
+    if word.endswith("'s") and len(word) > 2:
+        return {word} | _forms(word[:-2])
     out = {word}
     for end, puts in _FORMS:
         if word.endswith(end) and len(word) > len(end) + 2:

@@ -197,6 +197,8 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             record_extraction=AsyncMock(),
             is_import=AsyncMock(return_value=False),
             session_split=AsyncMock(return_value=None),  # (no split yet: every line is play)
+            claim_recap_note=AsyncMock(return_value=True),  # (#5232: said once for each session)
+            release_recap_note=AsyncMock(),
         )
         me = SimpleNamespace(
             settings=SimpleNamespace(
@@ -208,11 +210,13 @@ class Gates(unittest.IsolatedAsyncioTestCase):
                 story_reveals_precheck=False,
                 met_unnamed_on=False,
                 session_languages_on=False,
+                party_leaves_on=False,
                 weather_notes_on=False,
                 story_who_on=False,
                 story_family_only=False,
                 story_extractor_max_calls=480,
                 story_extractor_max_calls_day=960,
+                name_trace_dir="",  # (#5123: no trace here, as on the live server)
             ),
             extractor_ai=object(),
             memory=object(),
@@ -233,6 +237,10 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         )  # fmt: skip
         me._upkeep_channel = lambda c: DMBot._upkeep_channel(me, c)  # type: ignore[arg-type]
         me._extract_session = partial(BOT._extract_session, me)  # (extract_claims calls it)
+        me.members = None  # (no directory: the cache answers, as before)
+        me._people_keys = partial(BOT._people_keys, me)
+        me._story_trace_start = partial(BOT._story_trace_start, me)  # (#5123: off, returns None)
+        me._post_recap_note = partial(BOT._post_recap_note, me)  # (#5232)
         return me
 
     def table(self) -> Any:

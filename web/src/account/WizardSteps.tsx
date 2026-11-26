@@ -36,6 +36,25 @@ const DEFAULT_BOOKS = ["xanathar", "tasha"];
 const SHEET = /^https:\/\/www\.dndbeyond\.com\/(?:profile\/[^/]+\/)?characters\/\d+/;
 
 /** Step 1: where the campaign is, and the dndbeyond.com invite and public sheet links. */
+/** The list with one more name, as the party-name Add adds it: trimmed, not a repeat in another case, at most eight (#5026). */
+function withName(list: string[], text: string): string[] {
+  const n = text.trim();
+  if (!n || list.length >= 8 || list.some((x) => x.toLowerCase() === n.toLowerCase())) return list;
+  return [...list, n];
+}
+
+/** The party names of a character: the list, or the one name an older draft kept (#4300). */
+function partyNamesOf(c: WizardCharacter): string[] | undefined {
+  return c.partyNames ?? (c.partyName ? [c.partyName] : undefined);
+}
+
+/** The names shown in brackets after a character, or nothing: none for no names, and none for one name equal to the full name (#4300). */
+function bracketOf(c: WizardCharacter): string {
+  const names = partyNamesOf(c) ?? [];
+  if (names.length === 0 || (names.length === 1 && names[0] === c.full)) return "";
+  return names.join(" · ");
+}
+
 export function WhereStep({ api, guild, draft, onPatch, pasted = "", onPasted }: StepProps) {
   const a = draft.answers;
   const [invite, setInvite] = useState(a.invite);
@@ -69,7 +88,7 @@ export function WhereStep({ api, guild, draft, onPatch, pasted = "", onPasted }:
         const got = await api.sheetState(guild, id);
         if (!mounted.current) return;
         if (got.state === "done") {
-          const next: WizardCharacter = { full: got.name, partyName: got.name.split(" ")[0] ?? got.name, sheetUrl: url, player: "pending" };
+          const next: WizardCharacter = { full: got.name, partyNames: [got.name.split(" ")[0] ?? got.name], sheetUrl: url, player: "pending" };
           await onPatch((latest) => ({ characters: [...latest.characters, next].slice(0, 12) }));
           setSheet("");
           return setSheetNote(t.sheetFound(got.name));
@@ -93,7 +112,7 @@ export function WhereStep({ api, guild, draft, onPatch, pasted = "", onPasted }:
       await onPatch((latest) => ({
         pageTextUsed: true,
         ...(latest.name ? {} : { name: got.name }),
-        characters: [...latest.characters, ...got.characters.map((c) => ({ full: c.full, partyName: c.partyName, sheetUrl: "", player: "pending" }))].slice(0, 12),
+        characters: [...latest.characters, ...got.characters.map((c) => ({ full: c.full, partyNames: c.partyNames ?? [], sheetUrl: "", player: "pending" }))].slice(0, 12),
       }));
       setPasteNote(t.pasteFound(got.characters.length)); // (the text stays in the box, so Back shows it again)
     } catch {
@@ -161,17 +180,27 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
   const t = w.confirm;
   const [name, setName] = useState(a.name);
   const [full, setFull] = useState("");
+  // The names the party calls this character, added one at a time (#4300): at most 8, each at most 100 characters.
   const [party, setParty] = useState("");
+  const [partyNames, setPartyNames] = useState<string[]>([]);
   const [sheetUrl, setSheetUrl] = useState("");
   const [adding, setAdding] = useState(false);
+  // A name is added with Add or Enter: the box clears; the same name in another case is not added twice; a comma stays part of a name.
+  const addPartyName = () => {
+    setPartyNames(withName(partyNames, party));
+    setParty("");
+  };
   const add = async () => {
     const f = full.trim();
     if (!f || adding || a.characters.length >= 12) return;
     setAdding(true);
     try {
-      await onPatch((latest) => ({ characters: [...latest.characters, { full: f, partyName: party.trim() || f, sheetUrl: WIZARD_SHEETS_LIVE ? sheetUrl.trim() : "", player: "pending" }].slice(0, 12) }));
+      // A name typed but not yet added goes in with the rest, as the Add button would add it (#5026).
+      const names = withName(partyNames, party);
+      await onPatch((latest) => ({ characters: [...latest.characters, { full: f, partyNames: names, sheetUrl: WIZARD_SHEETS_LIVE ? sheetUrl.trim() : "", player: "pending" }].slice(0, 12) }));
       setFull("");
       setParty("");
+      setPartyNames([]);
       setSheetUrl("");
     } finally {
       setAdding(false);
@@ -191,7 +220,7 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
         <ul>
           {a.characters.map((c, i) => (
             <li key={`${c.full}-${i}`}>
-              {c.full} {c.partyName !== c.full && <span class="small">({c.partyName})</span>}{" "}
+              {c.full} {bracketOf(c) && <span class="small">({bracketOf(c)})</span>}{" "}
               <button type="button" class="link" onClick={() => void onPatch((latest) => ({ characters: latest.characters.filter((_, j) => j !== i) }))}>
                 {t.remove}
               </button>
@@ -207,13 +236,43 @@ export function ConfirmStep({ draft, onPatch }: StepProps) {
             {t.fullLabel}
             <input type="text" maxLength={100} value={full} onInput={(e) => setFull((e.target as HTMLInputElement).value)} />
           </label>
-          <label>
-            {t.partyLabel}
-            <input type="text" maxLength={100} value={party} onInput={(e) => setParty((e.target as HTMLInputElement).value)} aria-describedby="wizard-party-hint" />
+          <div>
+            <label>
+              {t.partyLabel}
+              <input
+                type="text"
+                maxLength={100}
+                value={party}
+                onInput={(e) => setParty((e.target as HTMLInputElement).value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addPartyName();
+                  }
+                }}
+                aria-describedby="wizard-party-hint"
+              />
+            </label>
+            <button type="button" class="button secondary" disabled={party.trim() === "" || partyNames.length >= 8} onClick={addPartyName}>
+              {t.partyAdd}
+            </button>
             <span class="small" id="wizard-party-hint">
               {t.partyHint}
             </span>
-          </label>
+            {partyNames.length > 0 && (
+              <ul aria-label={t.partyNamesList}>
+                {partyNames.map((n, i) => (
+                  <li key={`${n}-${i}`}>
+                    {n}{" "}
+                    <button type="button" class="link" aria-label={`${t.remove} ${n}`} onClick={() => setPartyNames((was) => was.filter((_, j) => j !== i))}>
+                      {t.remove}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {partyNames.length >= 8 && <p class="small">{t.partyFull}</p>}
+          </div>
           {WIZARD_SHEETS_LIVE && (
             <label>
               {t.sheetLabelBefore}

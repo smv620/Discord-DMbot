@@ -3,6 +3,7 @@
 // in `CAMPAIGN_METHODS` there, and a test keeps the two in step.
 import type {
   PictureAction,
+  PictureActionLook,
   PictureActionResult,
   PictureItem,
   PictureList,
@@ -15,6 +16,8 @@ import type {
   HouseFileState,
   AiFeedRead,
   LoreUpload,
+  WaitCountsImport,
+  WaitCountsLore,
   LorePdf,
   CampaignPage,
   CampaignSettingAnswer,
@@ -31,6 +34,7 @@ import type {
   RuleDecision,
   RuleSharing,
   RuleUpdate,
+  PackUpdates,
   RuleSharingAnswer,
   SharedRulesCampaign,
   SheetAnswer,
@@ -137,6 +141,8 @@ export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Parti
         false,
         pictureErrorKinds,
       )) as PictureActionResult,
+    pictureActionLook: async (campaignRef, id) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/pictures/actions/${encodeURIComponent(String(id))}`)) as PictureActionLook,
     sessionNotes: async (campaignRef, at) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/session-notes/${at}`)) as SessionNotes,
     transcript: async (campaignRef, number, version, offset = 0) =>
@@ -294,6 +300,10 @@ export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Parti
       )) as HouseRules,
     ruleDecisions: async (campaignRef) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-decisions`)) as { decisions: RuleDecision[] }).decisions,
+    packUpdates: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/pack-updates`)) as PackUpdates,
+    ruleTaken: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-update/taken`)) as { taken: RuleUpdate | null },
     ruleUpdate: async (campaignRef) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-update`)) as { update: RuleUpdate | null },
     ruleSharing: async (campaignRef) =>
@@ -346,6 +356,9 @@ export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Parti
       )) as Blob,
     campaignPage: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}`)) as CampaignPage,
+    visitCampaign: async (ref) => {
+      await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/visit`, {});
+    },
     recapStyle: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/recap-style`)) as RecapStyle,
     changeRecapStyle: async (ref, action, arg = "") =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/recap-style`, { action, arg })) as { id: string },
@@ -384,6 +397,8 @@ export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Parti
     lorePdfDrop: async (ref) => {
       await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf`);
     },
+    waitCounts: async (ref, kind, id) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/wait-counts?kind=${kind}&id=${encodeURIComponent(id)}`)) as WaitCountsLore | WaitCountsImport,
     loreRead: async (ref, id) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/lore${id ? `/${encodeURIComponent(id)}` : ""}`)) as { upload: LoreUpload | null }).upload,
   };

@@ -87,6 +87,11 @@ class Settings:
     # The same for the beat sheet. Off unless RECAP_STRUCTURED_OUTPUT_BEATS.
     recap_structured_output_beats: bool = False
     gemini_key: str = field(default="", repr=False)
+    # Graph improvement reports posted to the owner's private repository (#3742): the repository as
+    # owner/name and a fine-grained token for that one repository (Discussions: read and write).
+    # Either empty: nothing is posted. The token is never printed or logged.
+    improvements_repo: str = ""
+    improvements_token: str = field(default="", repr=False)
     # How long Undo works on campaign memory; older change-log entries are deleted (#164).
     memory_keep_days: int = 30
     # The owner's own Discord accounts: free access, no caps (#771). Never logged.
@@ -137,9 +142,28 @@ class Settings:
     # asked in the claims call itself. Off until the DM's list of them (#4045) has merged
     # (Supervisor, 2026-11-10).
     met_unnamed_on: bool = False
+    # A character's card says who they are in one sentence, where they were first met and when last
+    # mentioned (#5050), made by a background job (DMBOT_CARD_SUMMARY, off until dev1 has read ten
+    # cards on the sample campaign and they are right).
+    card_summary_on: bool = False
+    # A monthly budget for DMbot's AI, in dollars (#5270): warnings at 80% and 100%, nothing stops.
+    # 0 is off.
+    ai_monthly_budget_usd: float = 0.0
     # #4229 1d: the session reader also asks which languages a character was heard speaking, each
     # a question for the DM (DMBOT_SESSION_LANGUAGES, off until dev1's language_cases counts)
     session_languages_on: bool = False
+    # docs/design/session_names.md slice 2: after a session, an AI reader lists the names said,
+    # judged by what is said about them, never by capitals; joined with the scan's suggestions
+    # (DMBOT_SESSION_NAMES, off until dev1's typed, no-capitals and spoken counts)
+    session_names_on: bool = False
+    # #5055 slice B (dev tools, server only): a folder where the after-session name step writes,
+    # for a sample campaign only, each candidate with the fixed reason it ended with (empty: off)
+    name_trace_dir: str = ""
+    name_trace_guild: int = 0  # the test server: the trace is written there only (#5055 B)
+    # #4537 slice 6b: the session reader also hears a player character saying goodbye to the
+    # party, each an after-session question for the DM, never a closed stretch
+    # (DMBOT_PARTY_LEAVES, off until the sample's counts show no false goodbye questions)
+    party_leaves_on: bool = False
     # a character who joins a party with members is asked about ("What does Mira know about what
     # came before?") instead of copied what the party knows (DMBOT_PARTY_JOIN, #4537 slice 2b; off
     # until dev1's check on the test server)
@@ -198,6 +222,12 @@ class Settings:
     # The recap's "did we miss anything" check and its fact check also read the session's script
     # (#3901, part 2). Needs theatre_on; off until dev1's scores are in.
     recap_reads_script: bool = False
+    # The worker (#2128): with it on, work that can be done away from Discord leaves the bot, and
+    # what it wants said goes through the outbox (#3843: the recap-ready line first). Off, the bot
+    # does it all itself as before, so flipping it back is the rollback.
+    worker_on: bool = False
+    # The name step of a session's end in the worker too (#4905 4c); needs DMBOT_WORKER. Off.
+    worker_names_on: bool = False
     # The relationship reader beside the old one (#3244), on the test server only.
     rel_read_on: bool = False
     # The start-up wizard's link, offered first by the New campaign buttons (#3955): off until dev1
@@ -359,13 +389,24 @@ class Settings:
     link_token_secret: bytes = field(default=b"", repr=False)
 
 
-def load_settings(env: Mapping[str, str] | None = None) -> Settings:
+def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False) -> Settings:
+    """The settings from the environment. The worker (#3844) has no Discord connection, so it needs
+    no token."""
     env = os.environ if env is None else env
 
     def get(name: str) -> str:
         return env.get(name, "").strip()
 
-    missing = [n for n in ("DISCORD_TOKEN", "EARS_SHARED_SECRET", "DATABASE_URL") if not get(n)]
+    needed = (
+        ("EARS_SHARED_SECRET", "DATABASE_URL")
+        if worker
+        else (
+            "DISCORD_TOKEN",
+            "EARS_SHARED_SECRET",
+            "DATABASE_URL",
+        )
+    )
+    missing = [n for n in needed if not get(n)]
     if missing:
         raise ConfigError(
             f"Missing required settings: {', '.join(missing)}. "
@@ -515,6 +556,14 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     theatre_raw = (get("DMBOT_THEATRE_ON") or "0").lower()
     if theatre_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_THEATRE_ON must be 1 (on) or 0 (off), got "' + theatre_raw + '".')
+    worker_raw = (get("DMBOT_WORKER") or "0").lower()
+    if worker_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_WORKER must be 1 (on) or 0 (off), got "' + worker_raw + '".')
+    worker_names_raw = (get("DMBOT_WORKER_NAMES") or "0").lower()
+    if worker_names_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_WORKER_NAMES must be 1 (on) or 0 (off), got "' + worker_names_raw + '".'
+        )
     wizard_raw = (get("DMBOT_WIZARD_LINK") or "0").lower()
     if wizard_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_WIZARD_LINK must be 1 (on) or 0 (off), got "' + wizard_raw + '".')
@@ -572,14 +621,36 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_STORY_REVEALS_PRECHECK must be 1 (on) or 0 (off), got "' + precheck_raw + '".'
         )
+    improvements_repo = (get("DMBOT_IMPROVEMENTS_REPO") or "").strip()
+    if improvements_repo and (
+        not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}", improvements_repo)
+        or any(part in (".", "..") for part in improvements_repo.split("/"))
+    ):
+        raise ConfigError("DMBOT_IMPROVEMENTS_REPO must be owner/name, or empty.")
+    card_raw = (get("DMBOT_CARD_SUMMARY") or "0").lower()
+    if card_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_CARD_SUMMARY must be 1 (on) or 0 (off), got "' + card_raw + '".')
+    budget_raw = (get("DMBOT_AI_MONTHLY_BUDGET_USD") or "0").strip()
+    try:
+        ai_budget = float(budget_raw)
+    except ValueError:
+        ai_budget = -1.0
+    if not 0 <= ai_budget < 1_000_000:  # (also refuses nan and inf)
+        raise ConfigError("DMBOT_AI_MONTHLY_BUDGET_USD must be a number of dollars (0 for off).")
     met_raw = (get("DMBOT_MET_UNNAMED") or "0").lower()
     if met_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_MET_UNNAMED must be 1 (on) or 0 (off), got "' + met_raw + '".')
+    names_raw = (get("DMBOT_SESSION_NAMES") or "0").lower()
+    if names_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_SESSION_NAMES must be 1 (on) or 0 (off), got "' + names_raw + '".')
     languages_raw = (get("DMBOT_SESSION_LANGUAGES") or "0").lower()
     if languages_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
             'DMBOT_SESSION_LANGUAGES must be 1 (on) or 0 (off), got "' + languages_raw + '".'
         )
+    leaves_raw = (get("DMBOT_PARTY_LEAVES") or "0").lower()
+    if leaves_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_PARTY_LEAVES must be 1 (on) or 0 (off), got "' + leaves_raw + '".')
     weather_raw = (get("DMBOT_WEATHER_NOTES") or "0").lower()
     if weather_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -816,6 +887,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         recap_structured_output_split=_on_off(get, "RECAP_STRUCTURED_OUTPUT_SPLIT"),
         recap_structured_output_beats=_on_off(get, "RECAP_STRUCTURED_OUTPUT_BEATS"),
         gemini_key=get("GEMINI_API_KEY"),
+        improvements_repo=improvements_repo,
+        improvements_token=get("GITHUB_IMPROVEMENTS_TOKEN"),
         memory_keep_days=keep_days,
         free_users=free_users,
         free_guilds=free_guilds,
@@ -835,7 +908,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         map_layers_on=layers_raw in ("1", "true", "on"),
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
+        card_summary_on=card_raw in ("1", "true", "on"),
+        ai_monthly_budget_usd=ai_budget,
         session_languages_on=languages_raw in ("1", "true", "on"),
+        session_names_on=names_raw in ("1", "true", "on"),
+        name_trace_dir=(get("DMBOT_NAME_TRACE_DIR") or "").strip(),
+        name_trace_guild=_trace_guild(get("DMBOT_NAME_TRACE_GUILD")),
+        party_leaves_on=leaves_raw in ("1", "true", "on"),
         party_join_on=party_join_raw in ("1", "true", "on"),
         weather_notes_on=weather_raw in ("1", "true", "on"),
         private_scenes_on=private_raw in ("1", "true", "on"),
@@ -854,6 +933,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         theatre_on=theatre_raw in ("1", "true", "on"),
         recap_reads_script=reads_script_raw in ("1", "true", "on")
         and theatre_raw in ("1", "true", "on"),
+        worker_on=worker_raw in ("1", "true", "on"),
+        worker_names_on=worker_names_raw in ("1", "true", "on")
+        and worker_raw in ("1", "true", "on"),
         rel_read_on=rel_read_raw in ("1", "true", "on"),
         wizard_link_on=wizard_raw in ("1", "true", "on"),
         role_match=role_match_raw in ("1", "true", "on"),
@@ -1111,3 +1193,13 @@ def _continuity_levels(get: Callable[[str], str]) -> Levels:
             "smallest first."
         )
     return levels
+
+
+def _trace_guild(raw: str | None) -> int:
+    """DMBOT_NAME_TRACE_GUILD: the test server's number, or 0 (the trace is off)."""
+    text = (raw or "").strip()
+    if not text:
+        return 0
+    if not text.isdigit():
+        raise ConfigError('DMBOT_NAME_TRACE_GUILD must be a server number, got "' + text + '".')
+    return int(text)

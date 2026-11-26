@@ -291,7 +291,6 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
       const { look } = view;
       const reason = look.why ? (words.why[look.why] ?? words.cantNow) : words.cantNow;
       const anyServer = look.servers.some((s) => s.botIn && !s.why);
-      const onlyGreyed = !anyServer && look.servers.some((s) => s.botIn && s.why);
       return (
         <section class="panel stack" aria-labelledby="handover-heading">
           <h2 id="handover-heading" tabIndex={-1} ref={headRef}>
@@ -345,7 +344,7 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
                       />{" "}
                       {s.name} {s.current && <span class="muted small">{words.current}</span>}
                       {!s.botIn && !s.why && <span class="muted small"> {words.needsBot}</span>}
-                      {s.why && <span class="muted small"> {words.serverWhy[s.why] ?? words.cantMoveThere}</span>}
+                      {s.why && <span class="muted small"> {words.cantMoveThere}</span>}
                     </label>
                     {!s.botIn && !s.why && (
                       <>
@@ -355,8 +354,7 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
                     )}
                   </div>
                 ))}
-                {!anyServer && !onlyGreyed && <p>{words.noServers}</p>}
-                {onlyGreyed && <p role="status">{words.onlyHere}</p>}
+                {!anyServer && <p>{words.noServers}</p>}
                 {look.servers.some((s) => !s.botIn) && <p class="muted small">{words.comeBack}</p>}
               </fieldset>
               <p>{words.acceptNote}</p>
@@ -372,17 +370,15 @@ export default function Handover({ api, hash = "" }: { api: AccountApi; hash?: s
               )}
               {anyServer && !server && <p class="muted small">{words.pickFirst}</p>}
               <div class="row">
-                {!onlyGreyed && (
-                  <button
-                    type="button"
-                    class="button"
-                    disabled={busy !== null || !server || !anyServer}
-                    aria-busy={busy === "accept"}
-                    onClick={() => void accept()}
-                  >
-                    {busy === "accept" ? words.accepting : words.accept}
-                  </button>
-                )}
+                <button
+                  type="button"
+                  class="button"
+                  disabled={busy !== null || !server || !anyServer}
+                  aria-busy={busy === "accept"}
+                  onClick={() => void accept()}
+                >
+                  {busy === "accept" ? words.accepting : words.accept}
+                </button>
                 <button type="button" class="button secondary" disabled={busy !== null} onClick={() => void decline()}>
                   {busy === "decline" ? words.declining : words.decline}
                 </button>

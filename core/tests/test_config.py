@@ -194,6 +194,12 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_WIZARD_LINK must be 1"):
             load_settings({**BASE, "DMBOT_WIZARD_LINK": "maybe"})
 
+    def test_worker_switch_is_off_by_default_and_refuses_a_bad_word(self) -> None:
+        self.assertFalse(load_settings(BASE).worker_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_WORKER": "1"}).worker_on)
+        with self.assertRaises(ConfigError):
+            load_settings({**BASE, "DMBOT_WORKER": "maybe"})
+
     def test_theatre_switch_is_off_by_default(self) -> None:
         self.assertFalse(load_settings(BASE).theatre_on)
         self.assertTrue(load_settings({**BASE, "DMBOT_THEATRE_ON": "on"}).theatre_on)

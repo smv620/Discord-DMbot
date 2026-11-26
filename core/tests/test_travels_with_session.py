@@ -66,9 +66,33 @@ class FromTheSession(NamesTest):
         self.assertEqual(await self.waiting(), [])
         self.assertEqual([r for r in await self.kinds() if r[1] == "travels_with"], [])
 
-    async def test_a_player_character_first_is_not_asked(self) -> None:
+    async def test_a_player_character_first_is_asked_the_right_way_round(self) -> None:
+        # (#5164: the store would refuse it as said, and takes it turned round)
         await self.propose(said("Cerric", "travels with", "Glyph"))
+        self.assertEqual(await self.waiting(), [("Glyph", "Cerric")])
+        await self.keep_all()
+        self.assertIn(("Glyph", "travels_with", "Cerric"), await self.kinds())
+
+    async def test_a_new_name_after_the_player_character_is_asked_turned(self) -> None:
+        # (a hireling is often a new name: turned once the name is made, #5164)
+        await self.propose(said("Cerric", "travels with", "Wick"))
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT subject, object, status, reason FROM memory_claims WHERE campaign_id = %s",
+                (self.campaign.id,),
+            )
+            rows = [(r["subject"], r["object"], r["reason"]) for r in await cur.fetchall()]
+        self.assertEqual(rows, [("Wick", "Cerric", "")])  # (asked once the name is answered)
+
+    async def test_two_player_characters_are_never_asked(self) -> None:
+        # (#5164, the owner's case: both are in the party, so no companion link at all)
+        await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Bree", type="character", role="player_character",
+            played_by=102, status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        await self.propose(said("Bree", "travels with", "Cerric"))
         self.assertEqual(await self.waiting(), [])
+        self.assertEqual([r for r in await self.kinds() if r[1] == "travels_with"], [])
 
     async def test_a_place_as_the_object_is_not_asked(self) -> None:
         await self.memory.add_entity(

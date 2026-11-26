@@ -1,7 +1,7 @@
 """The whole per-deploy sample run in one command, with no one in Discord (#3547, #3545):
 
     python -m dmbot.devtools.sample_run --guild GUILD --dm DM_USER_ID \\
-        --deploy N --lore FILE --session FILE --yes
+        --deploy LABEL --lore FILE --session FILE --yes
 
 The session's speakers are `player_jac`, `player_ist`, `player_owe` and `player_eri` (players who
 are NOT on Discord, imported with the DM's confirmation as the website's import does) and `DM`.
@@ -13,7 +13,8 @@ file as an imported one and waits for the bot to clean, scan and read it, accept
 and scores both, then writes the recap (no audio). The last thing it prints is one block of counts
 and times, ready to paste on #3545.
 
-Only campaigns called "test of the frostmaiden (sample N)" (N is the deploy, `--deploy N`) are ever
+Only campaigns called "test of the frostmaiden (sample LABEL)" (LABEL is the deploy,
+`--deploy LABEL`: a number 1 to 9999 with an optional lowercase letter, 40 or 40b) are ever
 made or deleted, and only when they are plainly this tool's. The newest three are kept so the story
 graphs can be compared; the same N again replaces that deploy's campaign (#4538). Paid AI calls:
 the most they can be is printed first, and nothing runs without `--yes`. Nothing of the lore, the
@@ -34,7 +35,8 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from dmbot.devtools import sample_name
+from dmbot import service_spend
+from dmbot.devtools import sample_name, sample_respell
 from dmbot.devtools.sample_run import characters, costs, counts, map_step, plan, steps
 from dmbot.devtools.sample_run import decide as decide_mod
 from dmbot.devtools.sample_run.plan import SampleError, Step
@@ -83,6 +85,17 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--lore", type=Path, help="the lore text file")
     parser.add_argument("--session", type=Path, help="the session text file")
     parser.add_argument(
+        "--version",
+        choices=tuple(sample_name.VERSIONS),
+        default=sample_name.TYPED,
+        help="which version of the sample session --session is (docs/design/session_names.md, "
+        "section 8): typed (the default, as always), no-capitals (the owner's edit with the "
+        "capital-letter clues taken out), spoken (through speech-to-text) or respelled (dev only, "
+        "#5133: give the typed file; a few key names are written several ways from a fixed table, "
+        "`sample_respell`). Each is its own "
+        'series: its own campaigns ("sample N.k no capitals") and summaries, never mixed',
+    )
+    parser.add_argument(
         "--repeat",
         type=int,
         default=DEFAULT_REPEAT,
@@ -128,10 +141,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--deploy",
-        type=int,
-        metavar="N",
-        help="this deploy's number (1 to 9999): the campaign is \"test of the frostmaiden "
-        '(sample N)", and the newest three are kept (#4538)',
+        type=str,
+        metavar="LABEL",
+        help="this deploy's label: a number from 1 to 9999 and, if you like, one lowercase letter "
+        '(40, 40b); the campaign is "test of the frostmaiden (sample 40b)", and the newest three '
+        "are kept (#4538)",
     )
     parser.add_argument("--lore-choice", default="smart", help="world, spoilers or smart")
     parser.add_argument("--date", help="when the past session was held (YYYY-MM-DD)")
@@ -147,6 +161,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--accept-all",
         action="store_true",
         help="the old way: accept everything (#3544) instead of sure, then the AI's decisions",
+    )
+    parser.add_argument(
+        "--party-key",
+        type=Path,
+        help="score the goodbye questions against this key (party_cases_key.json, #4537 6c)",
     )
     parser.add_argument("--yes", action="store_true", help="spend the money")
     return parser.parse_args(argv)
@@ -164,13 +183,15 @@ def switches(environ: Mapping[str, str]) -> list[str]:
     )
 
 
-def deploy_number(value: int | None) -> int:
-    """The deploy's number from `--deploy N`, or a refusal that changes nothing (#4538)."""
+def deploy_label(value: str | None) -> sample_name.Label:
+    """The deploy's label from `--deploy LABEL` (40 or 40b), or a refusal that changes nothing
+    (#4538, #5057)."""
     if value is None:
         raise SampleError(sample_name.SAY_WHICH)
-    if not 1 <= value <= sample_name.DEPLOY_MAX:
-        raise SampleError(f"--deploy is a whole number from 1 to {sample_name.DEPLOY_MAX}")
-    return value
+    try:
+        return sample_name.parse_label(value)
+    except ValueError as exc:
+        raise SampleError(str(exc)) from exc
 
 
 def session_start(date: str | None, now: int) -> int:
@@ -217,7 +238,7 @@ async def run(
     say = say or (lambda line: print(line, flush=True))
     if args.lore is None or args.session is None:
         raise SampleError("--lore and --session are needed for a run")
-    deploy = deploy_number(args.deploy)
+    deploy = deploy_label(args.deploy)
     accept = accept or _accept_all()
     sure = sure or _sure()
     decide_client = decide_client or _careful_client
@@ -229,6 +250,8 @@ async def run(
     if not off:
         plan.require_character_players(players)
     lore_text, session_text = read_text(args.lore, "lore"), read_text(args.session, "session")
+    if args.version == "respelled":  # (the typed session, a few key names heard several ways)
+        session_text = respelled(session_text)
     steps.check_lore(lore_text, args.lore_choice)
     started = session_start(args.date, now)
     from dmbot.transcript import importer
@@ -258,6 +281,8 @@ async def run(
             f"decisions: at most {calls} careful-model calls (#3900),"
             f" about ${decide_mod.estimate(calls):.2f}"
         )
+    for line in describe_input(transcript, args.version):  # (counts, and the sample's names only)
+        say(line)
     if not args.yes:
         say("Nothing was run. Add --yes to spend the money.")
         return 0
@@ -289,6 +314,7 @@ async def run(
         args.commit, tool="sample_run"
     )  # before the run: it cannot mask an error
     db = await Database.open(url, migrate=False, max_size=4)
+    service_spend.configure(db, None, source=service_spend.SAMPLE)  # (its AI cost is its own)
     done: list[Step] = []
     spent: list[costs.CostLine] = []  # the recap's own figures, for the block at the end (#4087)
     where: list[str] = []  # the campaign's id once it is known: the ledger is read from it
@@ -300,7 +326,9 @@ async def run(
         gid, dm = args.guild, args.dm
         # The checks that need the database, still before anything is changed or spent.
         await steps.require_paid(db, dm, now, guild_id=gid)
-        found = await steps.check_existing(db, campaigns, gid, dm, None if run_k else deploy)
+        found = await steps.check_existing(
+            db, campaigns, gid, dm, None if run_k else deploy, args.version
+        )
         ids = set(players.values()) if not off else {dm}
         agreed = await ConsentStore(db).consenting(gid)
         refused = await steps.refused_accounts(db, gid, ids)
@@ -315,11 +343,11 @@ async def run(
 
         if run_k is not None:  # (a sibling's campaign is no reason to stop: no replacing here)
             campaign = await steps.make_campaign(
-                campaigns, gid, dm, deploy=deploy, run=run_k, say=say
+                campaigns, gid, dm, deploy=deploy, run=run_k, say=say, version=args.version
             )
         else:
             campaign = await steps.fresh_campaign(
-                db, campaigns, gid, dm, deploy=deploy, say=say, found=found
+                db, campaigns, gid, dm, deploy=deploy, say=say, found=found, version=args.version
             )
         cid = campaign.id
         where.append(cid)
@@ -398,10 +426,13 @@ async def run(
 
         async def score_step(label: str, docs: str) -> Mapping[str, int | str]:
             path = await steps.backup(campaigns, gid, cid, folder, label)
-            lines = steps.score(path, docs)
+            # (#5055 D: a backup does not carry them; read just after it, close enough for a test
+            # campaign nobody else touches)
+            met = await steps.met_words(db, gid, cid)
+            lines = steps.score(path, docs, met)
             for line in lines:
                 say(line)
-            return {"lines": len(lines), **steps.score_numbers(path, docs)}
+            return {"lines": len(lines), **steps.score_numbers(path, docs, met)}
 
         async def found_step() -> Mapping[str, int | str]:
             n = await characters.found_by_the_read(db, memory, gid, cid)
@@ -520,11 +551,23 @@ async def run(
                 say(line)
         except Exception as exc:  # (a count that can't be read never fails the run)
             say(f"Counts: not read ({type(exc).__name__})")
+        # The party's questions and closed stretches (#4537 slice 6c), scored against the party
+        # key when one is given (`--party-key`): counts only.
+        try:
+            given = getattr(args, "party_key", None)
+            key = counts.load_party_key(given) if given else None
+            for line in await counts.read_party(db, gid, cid, key):
+                say(line)
+        except Exception as exc:
+            say(f"Party counts: not read ({type(exc).__name__})")
     finally:
         # The bot's own AI by step, read here so a run that stopped part way still counts what the
         # bot spent before it stopped (the db is open on every path only until the next line).
         ledger = await _ledger(db, args.guild, where[0], say) if where else []
+        await service_spend.flush()
         await db.close()
+        for done_cid in where:  # (this run is over: its campaign may be replaced again, #5247)
+            steps.MADE_HERE.discard(done_cid)
         if decider:  # the run's decisions, all stages together: counts and agreement only
             if metrics is not None:
                 metrics["spend: decisions ($)"] = round(decider[0].run.cost, 4)
@@ -647,6 +690,7 @@ async def run_many(args: argparse.Namespace, **kw: Any) -> int:
     from dmbot.devtools import common
 
     say: Callable[[str], None] = kw.get("say") or (lambda line: print(line, flush=True))
+    check_compare(args)  # (before anything is spent)
     n = max(1, args.repeat)
     if not args.yes or n == 1:
         return await run(args, **kw)
@@ -694,7 +738,7 @@ def fit_parallel(budget: float, run_usd: float, wanted: int) -> int:
 
 
 async def _make_room(
-    args: argparse.Namespace, deploy: int, say: Callable[[str], None], need: int = 1
+    args: argparse.Namespace, deploy: sample_name.Label, say: Callable[[str], None], need: int = 1
 ) -> int:
     """Once, before the runs of a parallel deploy start (#4551): the plan check, and every sample
     campaign of this deploy (a re-run) and the oldest beyond the newest three deleted, as a single
@@ -715,14 +759,15 @@ async def _make_room(
     except ValueError as exc:
         raise SampleError(str(exc)) from exc
     db = await Database.open(url, migrate=False, max_size=2)
+    service_spend.configure(db, None, source=service_spend.SAMPLE)
     try:
         campaigns = steps.campaign_store(db)
         await steps.require_paid(db, args.dm, int(time.time()), guild_id=args.guild)
-        found = await steps.check_existing(db, campaigns, args.guild, args.dm, deploy)
+        found = await steps.check_existing(db, campaigns, args.guild, args.dm, deploy, args.version)
         free = await steps.free_slots(db, args.dm, int(time.time()), args.guild)
         _kept, allowed = await steps.clear_for_deploy(
             db, campaigns, args.guild, args.dm, deploy=deploy, say=say, found=found,
-            need=need, free=free,
+            need=need, free=free, version=args.version,
         )  # fmt: skip
         return allowed
     finally:
@@ -758,7 +803,7 @@ async def run_parallel(args: argparse.Namespace, n: int, **kw: Any) -> int:
             f"Only {width} at once fit ${args.max_usd:g}; --max-usd {need:.2f} would fit "
             f"{wanted}. Going {width} at a time."
         )
-    deploy = deploy_number(args.deploy)
+    deploy = deploy_label(args.deploy)
     # The paid slots are counted before anything is deleted or made, like the money: older kept
     # deploys go (all their runs, never the newest) until the runs fit, or fewer runs are made.
     allowed = await _make_room(args, deploy, say, n)
@@ -852,12 +897,16 @@ async def _finish(
     elif args.map is not None:  # (#4646)
         map_step.skipped(say, "a run failed, so none was kept" if failed else "no run was kept")
     stats = spread.summarize(runs)
-    say(f"Sample summary, commit {commit}: {len(runs)} runs, about ${spent:.2f} (#3545)")
+    version = summary_version(args)
+    say(
+        f"Sample summary, commit {commit}, {version} session: {len(runs)} runs, about"
+        f" ${spent:.2f} (#3545)"
+    )
     for line in spread.render(stats):
         say(line)
     for name in spread.sure_flags(stats):
         say(f"SURE STEP VARIED with the same input, a bug to file: {name}")
-    before = args.compare or _newest(folder, "summary-*.json")
+    before = args.compare or _newest(folder, summary_glob(args.version))
     if before is not None:
         old_commit, old = spread.load(before)
         moved = spread.compare(stats, old)
@@ -865,8 +914,99 @@ async def _finish(
         for line in moved:
             say(line)
     if runs:
-        spread.save(folder / f"summary-{stamp}.json", stats, commit=commit)
+        spread.save(
+            folder / summary_file(args.version, stamp), stats, commit=commit, version=args.version
+        )
     return 1 if failed else 0
+
+
+def describe_input(transcript: Any, version: str) -> list[str]:
+    """How the session file writes the session key's names (docs/design/session_names.md,
+    section 8): a description of the input, beside the score, never a score. For a version other
+    than typed, the names still written with a capital mid-sentence are listed (the public
+    sample's names), since the edit was meant to remove every one."""
+    import json
+
+    from dmbot.devtools import graph_key_check
+    from dmbot.devtools.sample_run import input_shape
+
+    path = graph_key_check.DEFAULT_KEY.parent / "session_key.json"
+    try:
+        key = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:  # (the kind only)
+        return [f"Session file: the session key could not be read ({type(exc).__name__})"]
+    got = input_shape.shape((u.text for u in transcript.utterances), input_shape.key_names(key))
+    lines = [got.line()]
+    # (only the versions meant to have no capitals: the respelled one is the typed file, capitals
+    # and all)
+    if version in ("no-capitals", "spoken") and got.capitalized:
+        lines.append(
+            "Still capitalized mid-sentence in this version (check the file): "
+            + ", ".join(got.capitalized)
+        )
+    return lines
+
+
+def check_compare(args: argparse.Namespace) -> None:
+    """An explicit `--compare` must be a summary of the same version of the session: refused here,
+    before any run spends, never after (docs/design/session_names.md, section 8)."""
+    if args.compare is None:
+        return
+    from dmbot.devtools.sample_run import spread
+
+    try:
+        theirs = spread.version_of(args.compare)
+    except (OSError, ValueError) as exc:  # (the kind only: never the file's contents)
+        raise SampleError(f"--compare cannot be read ({type(exc).__name__})") from exc
+    if theirs != args.version:
+        raise SampleError(
+            f"--compare is a summary of the {theirs} session, not the {args.version} one:"
+            " the versions are never mixed"
+        )
+
+
+def respelled(typed: str) -> str:
+    """The typed session with its key names heard several ways (`sample_respell`), refused unless
+    it reads with exactly the typed one's speakers, characters and number of lines: a respelling
+    must only change words said, never who said them."""
+    from dmbot.transcript import importer
+
+    out = sample_respell.respell(typed)
+    try:
+        before, after = importer.parse(typed), importer.parse(out)
+    except importer.TranscriptError as exc:
+        raise SampleError(f"the session file cannot be read ({exc.code})") from exc
+    same = (
+        before.speakers == after.speakers
+        and before.characters == after.characters
+        and len(before.utterances) == len(after.utterances)
+    )
+    if not same:
+        raise SampleError("the respelled session changed who spoke; give the typed session file")
+    return out
+
+
+def summary_version(args: argparse.Namespace) -> str:
+    """The version's words for the summary line: "typed", "no capitals", "spoken", "respelled"."""
+    return sample_name.VERSIONS[args.version] or sample_name.TYPED
+
+
+def summary_file(version: str, stamp: str) -> str:
+    """The summary's file name: the typed one keeps the name it always had (`summary-STAMP.json`),
+    so the last typed summary before this change is still compared with; another version's
+    carries its name (`summary-no-capitals-STAMP.json`), so each series compares only with its
+    own (docs/design/session_names.md, section 8: "numbers are never mixed across versions")."""
+    if version == sample_name.TYPED:
+        return f"summary-{stamp}.json"
+    return f"summary-{version}-{stamp}.json"
+
+
+def summary_glob(version: str) -> str:
+    """The pattern for this version's summaries: a stamp starts with a digit, a version's name
+    with a letter, so the typed series never picks up another's."""
+    if version == sample_name.TYPED:
+        return "summary-[0-9]*.json"
+    return f"summary-{version}-[0-9]*.json"
 
 
 async def _map_on(
@@ -931,7 +1071,8 @@ async def part2(args: argparse.Namespace, say: Callable[[str], None] | None = No
         path = await steps.backup(
             steps.campaign_store(db), args.guild, args.part2, folder, "answered"
         )
-        for line in steps.score(path, "both"):
+        met = await steps.met_words(db, args.guild, args.part2)
+        for line in steps.score(path, "both", met):
             say(line)
     finally:
         await db.close()

@@ -30,11 +30,13 @@ import {
   type JobProgress,
 } from "./api";
 import CampaignNav from "./CampaignNav";
+import { useWaitCounts } from "./useWaitCounts";
 import WorkProgress, { RunningCounts } from "./WorkProgress";
 import ClockOffer from "./ClockOffer";
 import { memberLabel } from "./memberLabel";
 import LazyPanel from "./LazyPanel";
 import { stageWords } from "../content/work-progress";
+import AddAll from "./AddAll";
 
 /** The campaign's address, read from `/account/import/<server>.<campaign>`. */
 export function campaignFromPath(path: string): string | null {
@@ -87,13 +89,20 @@ function storyShown(s: Session): boolean {
 function storyWaiting(s: Session): boolean {
   return s.story?.stage === "waiting_for_limit";
 }
+/** The name reader of a session that is still going (#5127): its stage shows with the shared wait, and the page keeps looking. */
+function namesOpen(s: Session): boolean {
+  const st = s.names;
+  return st != null && (st.state === "running" || st.state === "stalled") && st.stage === "reading_names";
+}
+
+const sumOf = (n: number[]): number => n.reduce((a, b) => a + b, 0);
 
 /** The whole import's progress as the shared wait shows it. The server says `failed` as soon as one session
  * has, but the others go on: while any can still move it is shown as running (or stalled, when the server
  * says so); once none can, as failed only if every session failed, else done. */
 function shownState(imp: JobProgress, sessions: Session[]): "running" | "stalled" | "failed" | "done" {
   // (the connections read goes on after a session is imported, and the whole import is still working until it stops)
-  if (sessions.some((s) => !isFinal(s) || storyOpen(s))) return imp.state === "stalled" ? "stalled" : "running";
+  if (sessions.some((s) => !isFinal(s) || storyOpen(s) || namesOpen(s))) return imp.state === "stalled" ? "stalled" : "running";
   return sessions.length > 0 && sessions.every(isFailed) ? "failed" : "done";
 }
 
@@ -219,6 +228,10 @@ export default function Import({
   // Set when the start reply says recaps weren't possible although ticks were sent (#2229).
   const [startedWithoutRecaps, setStartedWithoutRecaps] = useState<string | null>(null);
   const [progress, setProgress] = useState<ImportProgress | null>(null);
+  // Add all stays on the page once there were names to add, so its result and Undo outlive the counts going to zero; a player or an
+  // import that found none never sees it. (Setting a ref while rendering is safe here: it only ever goes from false to true.)
+  const addAllSeen = useRef(false);
+  if (progress?.waiting && Object.values(progress.waiting).some((n) => n > 0)) addAllSeen.current = true;
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   // A problem with the chosen files themselves: it blocks Preview until other files are chosen.
@@ -233,7 +246,7 @@ export default function Import({
   const [pollTries, setPollTries] = useState(0);
   // The newest `updatedAt` shown: a late reply that is older never moves the page backwards (#2564).
   const lastUpdated = useRef(0);
-  const lastStory = useRef(0); // the latest move of any session's connections read, so a read that moves keeps the page looking quickly
+  const lastRead = useRef(0); // the latest move of any session's connections or names read, so a read that moves keeps the page looking quickly
   const idleLooks = useRef(0); // looks in a row where nothing moved forward
   const watchStart = useRef(0);
 
@@ -326,15 +339,15 @@ export default function Import({
         if (!live) return;
         const stamp = next.import?.updatedAt;
         const older = typeof stamp === "number" && stamp < lastUpdated.current;
-        const storyStamp = Math.max(0, ...next.sessions.map((x) => x.story?.updatedAt ?? 0));
-        const storyMoved = storyStamp > lastStory.current;
-        if (storyStamp > lastStory.current) lastStory.current = storyStamp;
-        const moved = (typeof stamp === "number" ? stamp > lastUpdated.current : true) || storyMoved;
+        const readStamp = Math.max(0, ...next.sessions.map((x) => Math.max(x.story?.updatedAt ?? 0, x.names?.updatedAt ?? 0)));
+        const readMoved = readStamp > lastRead.current;
+        if (readStamp > lastRead.current) lastRead.current = readStamp;
+        const moved = (typeof stamp === "number" ? stamp > lastUpdated.current : true) || readMoved;
         if (typeof stamp === "number" && !older) lastUpdated.current = stamp;
         if (!older) setProgress(next); // (an older answer: keep what is shown, ask again)
         idleLooks.current = moved && !older ? 0 : idleLooks.current + 1;
         // A session's connections are read after it is imported, so the page keeps looking until that is done or waiting.
-        const open = next.sessions.filter((s) => !isFinal(s) || storyOpen(s));
+        const open = next.sessions.filter((s) => !isFinal(s) || storyOpen(s) || namesOpen(s));
         if (open.length > 0) {
           // Waiting for the daily limit can take hours and carries on by itself, so it never trips the limit; the page just looks slowly.
           const onlyLimit = open.every((x) => storyWaiting(x) && isFinal(x));
@@ -361,6 +374,9 @@ export default function Import({
     // `fail` only sets state, so it is left out of the dependencies on purpose; pollTries restarts it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, ref, importId, pollTries]);
+
+  // Twice a second while the import runs and this tab is seen (#3534 part 3, behind WAIT_COUNTS_LIVE): the words and calls come sooner.
+  const fast = useWaitCounts(api, ref ?? null, "import", importId ?? null, progress !== null && progress.sessions.some((s) => !isFinal(s)));
 
   // Nothing is shown unless the API has the routes (an older API has none) and importing is open:
   // for the whole site (IMPORT_LIVE), or for this campaign's server alone (`importsOn`, #2260).
@@ -741,6 +757,7 @@ export default function Import({
     const done = progress.sessions.every(isFinal);
     const failed = progress.sessions.some(isFailed);
     const unchecked = progress.sessions.some((s) => s.namesUnchecked === true);
+    const cut = progress.sessions.reduce((n, s) => n + (s.namesCut ?? 0), 0);
     return (
       <div class="stack">
         <h2>{words.progressHeading}</h2>
@@ -777,10 +794,10 @@ export default function Import({
             done={progress.import.done}
             total={progress.import.total}
             unit={progress.import.unit ? words.unit[progress.import.unit] : undefined}
-            counts={progress.import.counts}
+            counts={fast ? { ...progress.import.counts, words: Math.max(progress.import.counts?.words ?? 0, sumOf(fast.sessions.map((s) => s.wordsDone))), calls: Math.max(progress.import.counts?.calls ?? 0, sumOf(fast.sessions.map((s) => s.callsMade))) } : progress.import.counts}
             startedAt={progress.import.startedAt}
-            updatedAt={progress.import.updatedAt}
-            serverNow={progress.import.serverNow}
+            updatedAt={fast ? Math.max(progress.import.updatedAt ?? 0, ...fast.sessions.map((s) => s.updatedAt)) : progress.import.updatedAt}
+            serverNow={fast ? fast.serverNow : progress.import.serverNow}
             state={shownState(progress.import, progress.sessions)}
             waiting={progress.import.stage === "waiting_for_names"}
             frozen={problem !== null} // (gone, an error, or the page stopped looking: no clock keeps running beside it)
@@ -795,6 +812,19 @@ export default function Import({
               progress.sessions.length,
             )}
           </p>
+        )}
+        {done && importId && addAllSeen.current && !progress.sessions.some(namesOpen) && (
+          <AddAll
+            api={api}
+            campaign={ref}
+            upload={{ id: importId, waiting: progress.waiting ?? {} }}
+            source="import"
+            onChanged={() => {
+              // The waiting counts changed: read the import again, so the buttons show what is left.
+              // Only the counts: a whole new progress could overwrite a newer one the poll has just read.
+              void api.importProgress?.(ref, importId).then((got) => setProgress((was) => (was ? { ...was, waiting: got.waiting ?? {} } : was))).catch(() => undefined);
+            }}
+          />
         )}
         {AI_FEED_LIVE && importId && api.aiFeed && (
           <LazyPanel
@@ -843,6 +873,24 @@ export default function Import({
                 />
               )}
               {s.story?.stage === "connections_read" && s.story.state !== "failed" && <p class="small">{words.story.connections_read}</p>}
+              {namesOpen(s) && s.names && (
+                <WorkProgress
+                  stage={stageWords(words.names, s.names.stage)}
+                  done={s.names.done}
+                  total={s.names.total}
+                  unit={s.names.unit ? words.unit[s.names.unit] : undefined}
+                  startedAt={s.names.startedAt}
+                  updatedAt={s.names.updatedAt}
+                  serverNow={s.names.serverNow}
+                  state={s.names.state}
+                  frozen={problem !== null}
+                  whatToDo={words.stalledDo}
+                />
+              )}
+              {s.names?.stage === "names_stopped" && <p class="small">{words.namesStopped}</p>}
+              {(s.names?.stage === "names_read" || s.names?.stage === "names_stopped") && (s.namesUnread ?? 0) > 0 && (
+                <p class="small">{words.namesUnread(s.namesUnread ?? 0)}</p>
+              )}
               {importId && isFinal(s) && s.clock && (
                 <ClockOffer api={api} campaignRef={ref} importId={importId} file={s.file} clock={s.clock} />
               )}
@@ -860,6 +908,7 @@ export default function Import({
           ))}
         </ul>
         {unchecked && <p class="small muted">{words.namesUnchecked}</p>}
+        {done && cut > 0 && <p class="small muted">{words.namesCut(cut)}</p>}
         {AUTO_ADD_LIVE && done && importId && api.uploadNotice && (
           <LazyPanel load={() => import("./UploadNotice")} what="what DMbot added" props={{ api, campaignRef: ref, source: { kind: "import" as const, id: importId } }} />
         )}

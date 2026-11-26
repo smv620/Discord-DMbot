@@ -5,8 +5,13 @@
  *
  * The names are our own invented cast (docs/test-scripts/), never real people.
  */
+import { plotThreadsWords } from "../content/plot-threads-words";
 import type { PlanId } from "../content/pricing";
 import type {
+  ContinuityHit,
+  ContinuityHits,
+  DeedQuestions,
+  DeedWaiting,
   AccountApi,
   BackupFile,
   Campaign,
@@ -69,14 +74,19 @@ import type {
   Reading,
   Waiting,
   MyNpcNote,
+  CardSummaryFields,
   NpcPage,
   RuleDecision,
   RuleSharing,
+  HeardQuestions,
   RuleUpdate,
+  JoinChoices,
+  JoinChoose,
+  PackUpdates,
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
+import type { AdventureApi, RevealProposal, WorldFeelingNote, PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion, PlotThreads, LeaveGroup } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type LorePdf, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -691,11 +701,94 @@ function startWeb(big: boolean, lonely = false): WebState {
   return { nodes, links, nextLink: links.length + 1 };
 }
 
+// What the characters learned, waiting in a pretend campaign (#3863 step 2): a player's, a guess, and one already known.
+function pretendReveals(): RevealProposal[] {
+  return [
+    { id: "rv-player", who: "Tavin", what: "the ferryman owes the mill a favour", how: "overheard at the ford", player: true, guessing: false },
+    { id: "rv-guess", who: "Mira", what: "the cellar door is trapped", how: "guessed from a sound", player: false, guessing: true },
+    { id: "rv-known", who: "Brynn", what: "the heir is alive", how: "a rumour in the tavern", player: false, guessing: false },
+  ];
+}
+
+/** Six heads-ups from this session in the pretend campaign (#3695): a clash, an ended one, a pinned one, a secret clue with a list and one without, and one more clash. */
+function pretendContinuity(): ContinuityHit[] {
+  const at = { subject: "", relationship: "", object: "", details: "" };
+  const now = (subject: string, relationship: string, object: string) => ({ ...at, subject, relationship, object });
+  return [
+    { id: "c1".repeat(16), kind: "clash", level: "probable", name: "Captain Brask", now: now("Captain Brask", "is", "at the ferry"), earlier: null, earlierWords: "Brask is in the keep", ended: null, earlierSession: 2, quote: "Brask was in the keep", pinned: false, learner: null, listed: null, choice: "story_changed" },
+    { id: "c2".repeat(16), kind: "ended", level: "likely", name: "Old Pell", now: now("Old Pell", "is", "alive"), earlier: null, earlierWords: null, ended: "dead", earlierSession: 1, quote: "Pell died at the mill", pinned: false, learner: null, listed: null, choice: "alive_after_all" },
+    { id: "c3".repeat(16), kind: "clash", level: "possible", name: "Tamsin Reed", now: now("Tamsin Reed", "lives", "in Greywatch"), earlier: null, earlierWords: "Tamsin lives in the hills", ended: null, earlierSession: null, quote: null, pinned: true, learner: null, listed: null, choice: "still_here" },
+    { id: "c4".repeat(16), kind: "knows_a_secret", level: "likely", name: "the cellar key", now: now("Mira Voss", "knows", "the cellar key"), earlier: null, earlierWords: null, ended: null, earlierSession: null, quote: null, pinned: false, learner: "Brewner", listed: ["Mira Voss"], choice: "they_learned_it" },
+    { id: "c5".repeat(16), kind: "knows_a_secret", level: "probable", name: "the mill plan", now: now("Aldric Thorn", "knows", "the mill plan"), earlier: null, earlierWords: null, ended: null, earlierSession: null, quote: null, pinned: false, learner: null, listed: null, choice: "they_learned_it" },
+    { id: "c6".repeat(16), kind: "clash", level: "possible", name: "Sister Ilse", now: now("Sister Ilse", "is", "in the crypt"), earlier: null, earlierWords: "Ilse left the abbey", ended: "destroyed", earlierSession: 3, quote: null, pinned: false, learner: null, listed: null, choice: "story_changed" },
+  ];
+}
+/** Two deeds the party did in the pretend campaign (#3591): ids are 32 hex characters, as the page sends them. */
+function pretendDeeds(): (DeedWaiting & { done: boolean })[] {
+  return [
+    { id: "a1".repeat(16), doer: "Mira Voss", text: "pulled Tavin out of the river", viewers: ["Tavin"], effect: "Helped them", kind: "rescue", done: false },
+    { id: "b2".repeat(16), doer: "Captain Brask", text: "turned away the ferrymen at dusk", viewers: ["Old Pell", "Tamsin Reed"], effect: "Annoyed them", kind: "", done: false },
+  ];
+}
+// The "Still in the party?" questions waiting in a pretend campaign (#4895): one death, one goodbye with two in it.
+function pretendLeaveGroups(): LeaveGroup[] {
+  return [
+    { group: "dead-okthandom", kind: "died", characters: [{ id: "lv-okthandom", name: "Okthandom" }] },
+    {
+      group: "bye-tavin",
+      kind: "leave",
+      characters: [
+        { id: "lv-tavin", name: "Tavin" },
+        { id: "lv-brynn", name: "Brynn Ashwood-of-the-Northern-Wastes" },
+      ],
+    },
+  ];
+}
+
+// The open plot threads (#3696, slice 1): in play first, then resolved or dropped; one stalled, one promise, one with no state yet.
+function pretendPlotThreads(): PlotThreads {
+  return {
+    after: 3,
+    stalledCount: 1,
+    total: 4,
+    threads: [
+      {
+        id: "a1".repeat(16), name: "The drowned bell", kind: "thread", state: "active", stateWords: "Happening now",
+        history: ["Open (Session 2)", "checked, still going (Session 4)"],
+        involved: [{ id: "pc-cerric", name: "Cerric", role: "quest giver" }, { id: "npc-tavin", name: "Tavin", role: "" }],
+        movers: [{ id: "pc-cerric", name: "Cerric", endsIt: false, session: 4 }],
+        cameFrom: [{ id: "b2".repeat(16), name: "The river mill" }], ledTo: [{ id: "c3".repeat(16), name: "The bell tower" }],
+        promise: null, quiet: 0, stalled: false,
+      },
+      {
+        id: "d4".repeat(16), name: "Mira's word to the guard", kind: "promise", state: "open", stateWords: "Promised",
+        history: ["Open (Session 3)"],
+        involved: [{ id: "pc-mira", name: "Mira", role: "" }],
+        movers: [], cameFrom: [], ledTo: [],
+        promise: { by: ["Mira"], to: ["Guard 1"], due: "before the next full moon" }, quiet: 1, stalled: false,
+      },
+      {
+        id: "e5".repeat(16), name: "The missing courier", kind: "quest", state: "hinted", stateWords: "Hinted",
+        history: ["Hinted (Session 1)"],
+        involved: [], movers: [], cameFrom: [], ledTo: [],
+        promise: null, quiet: 3, stalled: true,
+      },
+      {
+        id: "f6".repeat(16), name: "The hooded stranger", kind: "mystery", state: null, stateWords: "",
+        history: [],
+        involved: [], movers: [], cameFrom: [], ledTo: [],
+        promise: null, quiet: 0, stalled: false,
+      },
+    ],
+  };
+}
+
 /** The pretend names a DM may look at the web as (#2999): two player characters first, then NPCs. */
-const PRETEND_VIEWERS: { id: string; name: string; kind: "pc" | "npc" }[] = [
-  { id: "pc-cerric", name: "Cerric", kind: "pc" },
-  { id: "pc-mira", name: "Mira", kind: "pc" },
-  ...Array.from({ length: 28 }, (_, i) => ({ id: `npc-guard-${i + 1}`, name: `Guard ${i + 1}`, kind: "npc" as const })),
+const PRETEND_VIEWERS: { id: string; name: string; kind: "pc" | "npc"; group: "party" | "left" | "other"; note?: string }[] = [
+  { id: "pc-cerric", name: "Cerric", kind: "pc", group: "party" },
+  { id: "pc-mira", name: "Mira", kind: "pc", group: "party" },
+  { id: "npc-tavin", name: "Tavin", kind: "npc", group: "left", note: "Retired" },
+  ...Array.from({ length: 28 }, (_, i) => ({ id: `npc-guard-${i + 1}`, name: `Guard ${i + 1}`, kind: "npc" as const, group: "other" as const })),
 ];
 
 function webView(ref: string): "dm" | "manager" | "none" {
@@ -797,7 +890,13 @@ function pretendWaiting(ref = ""): Waiting {
     : [];
   return {
     claims: [
-      { id: "c1", statement: "Mira Voss knows Far Hall", canSecret: true, at: 1791000000 },
+      {
+        id: "c1",
+        statement: "Mira Voss knows Far Hall",
+        canSecret: true,
+        at: 1791000000,
+        startingFeeling: "🤔 **Mithral Keep** (Tala's home) is unfriendly toward dwarves, and **Brewner** is a dwarf. You decide how they feel.",
+      },
       { id: "c2", statement: "Roan is dead", canSecret: false },
       ...shownHeld,
     ],
@@ -875,6 +974,21 @@ function mockSourcesOf(id: string): string[] {
   return MOCK_NAME_SOURCES.filter((_, i) => (n + i) % 3 !== 0).map((s) => s.id);
 }
 
+// "Did they mean…?" questions the mock holds (#4857): a pick or a keep takes its question out of the list.
+const HEARD_WAITING: HeardQuestions["questions"] = [
+  {
+    id: "h1",
+    heard: "Vorrun",
+    speaker: "Wren",
+    options: [
+      { index: 0, id: "n1", name: "Vorun" },
+      { index: 2, id: "n2", name: "Vorrin the Tall" },
+    ],
+  },
+  { id: "h2", heard: "Sterling", speaker: null, options: [{ index: 1, id: "n3", name: "Sterling Vale" }] },
+];
+const heardDone = new Set<string>();
+
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const removedClaims = new Map<string, WaitingClaim>(); // answered claims, kept for "Undo all" (#3645)
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
@@ -899,6 +1013,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let houseFileNow: HouseFileRequest | null = null;
   let houseFileLooks = 0;
   let loreLooks = 0;
+  const adventureRemovals = new Map<string, { document: string; looks: number }>(); // (removing a file of the adventure, #3694 slice C)
+  const adventureGone = new Set<string>();
+  const adventureMatches = new Map<string, { ref: string; body: Parameters<AdventureApi["adventureMatch"]>[1]; looks: number }>(); // (match names, #3694 slice G1)
+  const adventureMatched = new Set<string>();
+  const adventureUndoers = new Map<string, () => void>();
+  const adventureLinks = new Map<string, Set<string>>(); // (one name's links to the adventure, #3694 slice G2)
+  const adventureGuides = new Map<string, { ref: string; job: "read" | "pick" | "clear"; document: string; looks: number }>(); // (Guide me, #3694 slice F)
+  const adventurePick = new Map<string, string>();
+  const adventureStarts = new Map<string, { ref: string; document: string; looks: number }>(); // (starting a read, #3694 slice E)
+  const adventureReading = new Map<string, number>(); // (a started read's progress: it moves each time the list is read)
+  const adventureGives = new Map<string, { ref: string; name: string; size: number; looks: number }>(); // (giving a file, #3694 slice D)
+  const adventureGiven: { ref: string; name: string; size: number }[] = [];
+  const saidJobs = new Map<string, { text: string; looks: number; job: "read" | "use" | "undo"; edit?: string | undefined; partly?: boolean }>(); // (say a connection in words, #5293)
+  let quickLooks = 0; // (the half-second counts reads of a running job, #3534 part 3)
   let aiFeedLooks = 0;
   // DMbot's own matches (#3602): two waiting in the table scenario, answered one at a time.
   let metNow: MetItem[] = [
@@ -993,10 +1121,34 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const playersLines = new Map<string, string>();
   // A place's land, climate and ruler (#4287), by the name's id; the groups the ruler menu offers; and two places' sizes for the climate rule.
   const worldRows = new Map<string, PlaceWorldRow[]>();
+  // The pretend Saltmarsh (#4990): its culture is dwarves (strong) and the named Illuskan (some); who lives here is halflings
+  // (most) and humans with no share said. Shown to the DM only; a player's read is refused (placeWorld below).
+  worldRows.set("n24", [
+    { layer: "culture", value: "dwarf", words: "", group: null, groupName: null, how: "strong", part: "", read: false, source: "dm", shown: true, cultureId: null, culture: null },
+    { layer: "culture", value: "", words: "", group: null, groupName: null, how: "some", part: "", read: false, source: "dm", shown: true, cultureId: "culture-illuskan", culture: "Illuskan" },
+    { layer: "population", value: "halfling", words: "", group: null, groupName: null, how: "most", part: "", read: false, source: "dm", shown: true, cultureId: null, culture: null },
+    { layer: "population", value: "human", words: "", group: null, groupName: null, how: "", part: "", read: false, source: "dm", shown: true, cultureId: null, culture: null },
+  ]);
   const worldGroups = [{ id: "a".repeat(32), name: "Ten-Towns" }, { id: "b".repeat(32), name: "The Arcane Brotherhood" }];
+  // The campaign's named cultures (#4412): a named culture is made by "Something else…" with words, and reused by its id.
+  const cultureList: { id: string; name: string }[] = [{ id: "culture-illuskan", name: "Illuskan" }];
   const worldLevel = (name: string): string | null => (name === "Brynwater Crossing" ? "settlement" : name === "Saltmarsh" ? "region" : null);
   // A place's size, kind and setting (#4173), by the name's id: nothing is set until a DM sets it, except "Saltmarsh", which DMbot read as a town.
   const placeFacts = new Map<string, { level: string | null; levelFrom: "read" | "dm" | null; form: "water" | "route" | null; formFrom: "read" | "dm" | null; setting: boolean }>();
+  // The card summary (#5051): one character with all three lines, one lore-only, one still being written.
+  const cardSummaries: Record<string, CardSummaryFields> = {
+    "Mira Voss": {
+      who: "A ferrywoman who works the Brynwater crossing.",
+      firstMet: "First met: Session 3, 15 Nov: when the party reached the ferry landing at dusk.",
+      lastMentioned: "Last mentioned: Session 9, 21 Nov: in the argument over the ferry's price.",
+    },
+    "Aldric Thorn": {
+      who: "A ferryman on the Brynwater road, in the old ferry's records.",
+      firstMet: "First met: In your lore: Icewind Dale notes, under 'Brynwater Crossing'.",
+      lastMentioned: "Not mentioned at the table yet.",
+    },
+    "Old Pell": { who: null, whoPending: true },
+  };
   const factsOf = (n: NameRow) => {
     if (n.kind !== "place") return {};
     const f = placeFacts.get(n.id) ?? (n.name === "Saltmarsh" ? { level: "settlement", levelFrom: "read" as const, form: null, formFrom: null, setting: false } : { level: null, levelFrom: null, form: null, formFrom: null, setting: false });
@@ -1096,7 +1248,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: `road:${"c1".repeat(16)}`, name: "Targos to Bryn Shander", note: "The map puts it three hours' ride apart; the lore says two days.", fromSession: 1_700_000_000 },
     { id: `road:${"c2".repeat(16)}`, name: "Bryn Shander to Icewind Dale", note: "Forty miles on the map; the lore says it is a week's walk.", fromSession: null },
   ];
-  const worldNotes: { places: WorldPlaceNote[]; languages: WorldLanguageNote[]; roads: WorldRoadNote[] } = {
+  const worldNotes: { places: WorldPlaceNote[]; languages: WorldLanguageNote[]; roads: WorldRoadNote[]; feelings: WorldFeelingNote[] } = {
     places: [
       { id: `place:${"a1".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "terrain", value: "swamp", words: "", how: null, rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
       { id: `place:${"a2".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "climate", value: "temperate", words: "", how: "wet", rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
@@ -1104,8 +1256,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     ],
     languages: [{ id: `language:${"b1".repeat(16)}`, entityId: "n3", name: "Brother Venn", language: "Giant", from: "lore", fromSession: null }],
     roads: worldRoads,
+    // The Feelings group (#4959): DMbot's guesses of how a people feels toward another, for the DM to keep, change or turn down.
+    feelings: [
+      { id: `bias:${"d1".repeat(16)}`, entityId: "n7", name: "Mithral Keep", target: "elves", step: "Unfriendly" },
+      { id: `bias:${"d2".repeat(16)}`, entityId: "n8", name: "Greywatch", target: "the Ashen Court", step: "Wary" },
+    ],
   };
-  const worldBatches = new Map<number, { places: WorldPlaceNote[]; languages: WorldLanguageNote[]; roads: WorldRoadNote[] }>();
+  const worldBatches = new Map<number, { places: WorldPlaceNote[]; languages: WorldLanguageNote[]; roads: WorldRoadNote[]; feelings: WorldFeelingNote[] }>();
   // The story threads DMbot found in an upload (#4482), waiting for the DM; a keep or a 🚫 takes one out, and Undo puts it back.
   const storyThreadList: StoryThreadSuggestion[] = [
     {
@@ -1151,11 +1308,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let mapSeq = 5;
   const linkBatches = new Map<number, { id: string; a: string; b: string; words: string; secret: boolean; direction: "a-b" | "b-a" | "both"; pinned?: boolean }[]>();
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
-  const linkWho = new Map<string, { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string }[] }>();
+  const linkWho = new Map<string, { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string; guess?: "sure" | "likely" }[] }>();
   // Player character icons (#3621, #3622): in a campaign reference ending ".icons" the first three names are player
   // characters: the first has a Discord avatar and a dndbeyond.com portrait, the second only a portrait, the third none.
   const pcChoice = new Map<string, IconChoice>();
-  const pcHas = (id: string): { discord: boolean; dndbeyond: boolean } => ({ discord: id === "n1", dndbeyond: id === "n1" || id === "n2" });
+  const pcHas = (id: string): { discord: boolean; dndbeyond: boolean; pictures: boolean } => ({ discord: id === "n1", dndbeyond: id === "n1" || id === "n2", pictures: true });
+  const pcPicture = new Map<string, number>(); // the picture a `custom` choice points at, by campaign and character
   const pretendIcons = (ref: string, n: WebNode, dm: boolean): WebNode => {
     if (!["n1", "n2", "n3"].includes(n.id)) return n;
     const choice = pcChoice.get(`${ref}:${n.id}`) ?? "default";
@@ -1164,6 +1322,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     const shown: WebNode["icon"] =
       choice === "hidden"
         ? { kind: "hidden", url: null }
+        : choice === "custom" && pcPicture.has(`${ref}:${n.id}`)
+          ? { kind: "picture", url: picture("P") }
         : (choice === "discord" || (choice === "default" && has.discord)) && has.discord
           ? { kind: "discord", url: picture("D") }
           : (choice === "dndbeyond" || choice === "default") && has.dndbeyond
@@ -1261,10 +1421,15 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         return s !== undefined && (s.secret === true || s.revealed === false);
       })
       .map((l) => l.id);
-    const defaultWho: { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string }[] }[] = [
+    // The fourth held connection (#4970): DMbot's guesses, sure and likely, and one character it names with no guess.
+    const defaultWho: { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string; guess?: "sure" | "likely" }[] }[] = [
       { who: "dm", knownBy: [] },
       { who: "some", knownBy: [{ id: "pc-cerric", name: "Cerric" }, { id: "pc-mira", name: "Mira" }] },
       { who: "all", knownBy: [] },
+      {
+        who: "some",
+        knownBy: [{ id: "pc-cerric", name: "Cerric", guess: "sure" }, { id: "pc-mira", name: "Mira", guess: "likely" }, { id: "npc-tavin", name: "Tavin" }],
+      },
     ];
     const whoEdges =
       dm && all
@@ -1280,7 +1445,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     return {
       center: centre,
       nodes: knownNodes,
-      edges: whoEdges,
+      edges: whoEdges.map((e) => ({ ...e, links: e.links.map((l) => ({ ...l, ...routeOf(l.id) })) })),
       truncated: false,
       maxHops: 8,
       canEdit: dm && all,
@@ -1294,8 +1459,39 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
   let improve = true;
   const calls: string[] = [];
+  // Route lengths in a pretend campaign (#4392): by id, "" when none, and the batches Undo can take back.
+  // The routes the pretend campaign shows (#4986): the connection l1 has DMbot's read, the place Greywatch a length the DM kept,
+  // and Saltmarsh a route with no length yet. Places are keyed by name, since their ids follow the order the names were made in.
+  const routeLengths = new Map<string, { words: string; read: boolean }>([
+    ["l1", { words: "two days by cart", read: true }],
+    ["Greywatch", { words: "a day on foot", read: false }],
+    ["Saltmarsh", { words: "", read: false }],
+  ]);
+  const routeKey = (id: string): string => {
+    const n = memory.find((x) => x.id === id);
+    return n && n.kind === "place" ? n.name : id;
+  };
+  const routeOf = (id: string) => {
+    const r = routeLengths.get(id);
+    return r ? { route: true as const, ...(r.words ? { length: { words: r.words, read: r.read } } : {}) } : {};
+  };
+  const routeBatches = new Map<number, { id: string; prev: { words: string; read: boolean } }>();
+  let routeBatch = 0;
   // The join question's groups per campaign (#4778 part b): made when first read, then changed by the answers.
   const joinState: Record<string, { group: string; answer: "waiting" | "everyone"; names: string[] }[]> = {};
+  // The "Still in the party?" questions waiting, by campaign (#4895). An answer takes its character out of the list.
+  const leaveState: Record<string, LeaveGroup[]> = {};
+  // The deeds the party did, per campaign (#3591): one still waiting, one already recorded (its change can be taken back).
+  const deedState: Record<string, { deeds: (DeedWaiting & { done: boolean })[]; undo: Map<number, string>; batch: number }> = {};
+  // The heads-ups from this session, per campaign (#3695): six, one of each form, so the panel shows five and then "more waiting".
+  const continuityState: Record<string, ContinuityHit[]> = {};
+  const continuityOf = (ref: string) => (continuityState[ref] ??= pretendContinuity());
+  const deedsOf = (ref: string) => (deedState[ref] ??= { deeds: pretendDeeds(), undo: new Map(), batch: 0 });
+  // What the characters learned, waiting, by campaign (#3863 step 2). A keep or a not takes its proposal out of the list.
+  const revealState: Record<string, RevealProposal[]> = {};
+  // The open plot threads by campaign (#3696): a state change is kept here, so the next read shows it.
+  const plotThreadsOf: Record<string, PlotThreads> = {};
+  let plotThreadSeq = 0; // the ids of threads started in the pretend campaign (#3696, slice 2c)
   // The party record (#4778 a2): Wren is in the party; Ash left and is out. A leave or a return is one change, with one Undo.
   const pretendParty = (): PartyRecordCharacter[] => [
     { id: "p1".repeat(16), name: "Wren", inParty: true, spans: [{ from: 1700000000, to: null, ended: null, session: 2 }] },
@@ -1324,6 +1520,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { group: "e2".repeat(16), answer: "waiting" as const, names: ["Tavin", "Oskar"], kind: "join" as const },
   ];
   // The kept pictures (#3275): five pretend pictures, each 100 MB; the permanent ones count toward the limit.
+  // How many times each waiting picture action has been looked at (#3355).
+  const pictureLooks = new Map<string, number>();
   const pictureRows = [
     { code: "pic-1", at: 1791004000, sessionNumber: 2, poster: "Mira", description: "A map of the Brass Ford", permanent: false, isPublic: true },
     { code: "pic-2", at: 1791003000, sessionNumber: 2, poster: "Cerric", description: "Cerric's oath scroll", permanent: true, isPublic: true },
@@ -1468,6 +1666,26 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
   const made = new Map<number, string>();
   const staleSeen = new Set<string>(); // recaps whose scene 3 already answered `stale` (#2577)
   const namesUndone = new Set<string>(); // name fixes undone (#2645), by recap and id
+  const importWaitingNow: Record<string, number> = { place: 5, character: 7 }; // an import's names still waiting, by kind (#5276)
+  const moreNamesPressed = new Set<string>(); // campaigns whose 📝 More names was pressed (#5081)
+  // 🔗 Look-alikes (#5259): two groups; a merge or None are the same takes one away, and Undo of batch 21 puts the merged one back.
+  const lookAlikeGroups = new Map<string, { id: string; name: string; kind: string; heard: number }[][]>();
+  const mergedLookAlikes = new Map<number, { ref: string; group: { id: string; name: string; kind: string; heard: number }[] }>();
+  const lookAlikesOf = (ref: string) =>
+    lookAlikeGroups.get(ref) ??
+    lookAlikeGroups
+      .set(ref, [
+        [
+          { id: "l1".repeat(16), name: "Bel-Eros", kind: "NPC", heard: 7 },
+          { id: "l2".repeat(16), name: "Beleros", kind: "NPC", heard: 2 },
+          { id: "l3".repeat(16), name: "Baleros", kind: "place", heard: 1 },
+        ],
+        [
+          { id: "m1".repeat(16), name: "Harrow's Keep", kind: "place", heard: 4 },
+          { id: "m2".repeat(16), name: "Harrows Keep", kind: "place", heard: 1 },
+        ],
+      ])
+      .get(ref)!;
   // The after-session report (#2661) the pretend API keeps by campaign and session.
   const reports = new Map<string, { made: boolean; failed?: boolean; tries: number; answers: Map<string, ReportAnswer>; looks?: number }>();
   const reportItems = (): { contradictions: ReportContradiction[]; differences: SessionReport["differences"] } => {
@@ -1710,8 +1928,237 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         asked.setting === "retention" ? `Saved. Sessions older than ${asked.value} days are deleted every night.` : "";
       return { ...base, state: "done", note };
     };
+  // The Shared story adventure's calls (#3694), apart from the rest as in the real client: `adventureApi` hands them out.
+  const adventureMock: AdventureApi = {
+    // The Shared story adventure (#3694 slices A and B): made-up files and chapters only. A reference ending ".no-adventure" is a campaign with
+    // none, ".adventure-off" has Shared story off, ".player" is not a DM (404).
+    async adventure(ref) {
+      calls.push(`adventure:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const at = Math.floor(Date.now() / 1000);
+      const none = ref.includes(".no-adventure");
+      const built = {
+        mode: ref.includes(".adventure-off") ? "off" : ref.includes(".adventure-watch") ? "watch" : "guide",
+        documents: none
+          ? []
+          : [
+              { id: "d1", name: "The Glass Orchard.pdf", characters: 120000, restored: false, addedAt: at - 9000, read: { status: "done" as const, nextChunk: 40, totalChunks: 40, stopReason: "", skippedParts: 2, updatedAt: at - 8000 }, found: { chapters: 12, places: 1, people: 30, links: 4 } },
+              { id: "d2", name: "Second Book.docx", characters: 40000, restored: false, addedAt: at - 800, read: { status: "stopped" as const, nextChunk: 5, totalChunks: 20, stopReason: "month_cap", skippedParts: 0, updatedAt: at - 300 }, found: { chapters: 0, places: 0, people: 0, links: 0 } },
+              { id: "d3", name: "Notes.txt", characters: 3000, restored: true, addedAt: at - 100, read: null, found: { chapters: 0, places: 0, people: 0, links: 0 } },
+            ],
+        documentsMax: 20,
+        charactersMax: 2000000,
+        charactersHeld: none ? 0 : 163000,
+      };
+      const added = adventureGiven.filter((g) => g.ref === ref).map((g, i) => ({ id: `g${i + 1}`, name: g.name, characters: 5000, restored: false, addedAt: Math.floor(Date.now() / 1000), read: null, found: { chapters: 0, places: 0, people: 0, links: 0 } }));
+      const sentence = "Reading this file costs about 12 AI credits. You have 480 left this month.";
+      const docs = [...built.documents, ...added].map((d) => {
+        const step = adventureReading.get(`${ref}:${d.id}`);
+        if (step === undefined) return { ...d, estimate: d.read === null && !d.restored ? sentence : d.read?.status === "stopped" ? sentence : null };
+        adventureReading.set(`${ref}:${d.id}`, step + 1);
+        const done = step >= 3;
+        return {
+          ...d,
+          estimate: null,
+          read: { status: done ? ("done" as const) : ("reading" as const), nextChunk: done ? 20 : 5 + step * 5, totalChunks: 20, stopReason: "", skippedParts: 0, updatedAt: Math.floor(Date.now() / 1000) },
+          found: done ? { chapters: 3, places: 2, people: 9, links: 1 } : d.found,
+        };
+      });
+      return { ...built, documents: docs.filter((d) => !adventureGone.has(`${ref}:${d.id}`)) };
+    },
+    // Guide me (#3694 slice F): a made-up answer; the DM's pick is kept per campaign until cleared.
+    async adventureGuide(ref, document, job, chapter) {
+      calls.push(`adventureGuide:${ref}:${document}:${job}:${chapter ?? "-"}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (ref.includes(".not-guide")) throw new ApiError("not-on");
+      const id = `guide-${adventureGuides.size + 1}`;
+      if (job === "pick" && chapter) adventurePick.set(ref, chapter);
+      if (job === "clear") adventurePick.delete(ref);
+      adventureGuides.set(id, { ref, job, document, looks: 0 });
+      return { guide: id };
+    },
+    async adventureGuiding(ref, guide) {
+      calls.push(`adventureGuiding:${ref}:${guide}`);
+      await reachable();
+      signedIn();
+      const got = adventureGuides.get(guide);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { error: "", job: got.job, documentId: got.document, createdAt: at - got.looks, updatedAt: at, serverNow: at };
+      if (got.looks < 2) return { ...base, state: "working" as const, answer: null };
+      const chapters = [
+        { id: "c1", name: "Made-up chapter one" },
+        { id: "c2", name: "Made-up chapter two" },
+        { id: "c3", name: "Made-up chapter three" },
+      ];
+      const picked = adventurePick.get(ref);
+      const chosen = chapters.find((c) => c.id === picked) ?? null;
+      return {
+        ...base,
+        state: "done" as const,
+        answer: {
+          text: chosen ? `The table is in ${chosen.name} (you said so).\nAhead: a made-up place.` : "The table seems to be in Made-up chapter two.\nAhead: a made-up place.",
+          picked: chosen !== null,
+          chapter: chosen,
+          chapters,
+        },
+      };
+    },
+    // Match names (#3694 slice G1): two made-up pairs; answers are kept per campaign, and a save of a pair named "Gate" is refused as already linked.
+    async adventureMatch(ref, body) {
+      calls.push(`adventureMatch:${ref}:${body.job}${body.job === "decide" ? `:${body.picks.map((p) => `${p[0]}>${p[1]}=${p[2]}`).join(",")}` : ""}${body.job === "undo" ? `:${body.source}` : ""}${body.job === "options" ? `:${body.skip}` : ""}${body.job === "pick" || body.job === "unpick" ? `:${body.plan}` : ""}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (ref.includes(".match-busy")) throw new ApiError("slow-down");
+      const id = `match-${adventureMatches.size + 1}`;
+      adventureMatches.set(id, { ref, body, looks: 0 });
+      return { match: id };
+    },
+    async adventureMatching(ref, match) {
+      calls.push(`adventureMatching:${ref}:${match}`);
+      await reachable();
+      signedIn();
+      const got = adventureMatches.get(match);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { error: "", job: got.body.job, canUndo: false, createdAt: at - got.looks, updatedAt: at, serverNow: at };
+      if (got.looks < 2) return { ...base, state: "working" as const, answer: null };
+      // One name's own links (#3694 slice G2): thirty made-up entries in the book, up to twenty-five a page; a name "Taken" refuses a pick.
+      if (got.body.job === "options" || got.body.job === "pick" || got.body.job === "unpick") {
+        const body = got.body;
+        const key = `${ref}:${body.entity}`;
+        const mine = adventureLinks.get(key) ?? new Set<string>();
+        const entry = (n: number) => ({ planId: `p${n}`, name: `Entry ${n}`, kind: n % 2 ? "character" : "place", chapter: n % 3 ? `Chapter ${n % 3}` : "" });
+        const all = Array.from({ length: ref.includes(".link-none") ? 0 : 30 }, (_, i) => entry(i + 1));
+        if (body.job === "options") {
+          const rest = all.filter((e) => !mine.has(e.planId));
+          return { ...base, state: "done" as const, answer: { entity: { id: body.entity, name: "Mira" }, linked: all.filter((e) => mine.has(e.planId)), options: rest.slice(body.skip, body.skip + 25), total: rest.length, offset: body.skip, pageSize: 25 } };
+        }
+        if (body.job === "pick" && ref.includes(".link-taken")) return { ...base, state: "done" as const, answer: { written: 0, refusal: "taken_book", at: 0 } };
+        const had = mine.has(body.plan);
+        if (body.job === "pick") mine.add(body.plan);
+        else mine.delete(body.plan);
+        adventureLinks.set(key, mine);
+        const wrote = body.job === "pick" ? !had : had;
+        if (wrote) adventureUndoers.set(match, () => (body.job === "pick" ? mine.delete(body.plan) : mine.add(body.plan)));
+        return { ...base, state: "done" as const, canUndo: wrote, answer: { written: wrote ? 1 : 0, refusal: "", at: null } };
+      }
+      if (got.body.job === "suggest") {
+        const left = [
+          { planId: "b1", planName: "Captain Varn", planKind: "character", entityId: "e1", entityName: "Varn" },
+          { planId: "b2", planName: "The Salt Gate", planKind: "place", entityId: "e2", entityName: "Gate" },
+        ].filter((p) => !adventureMatched.has(`${ref}:${p.planId}`));
+        return { ...base, state: "done" as const, answer: { pairs: ref.includes(".match-none") ? [] : left } };
+      }
+      if (got.body.job === "decide") {
+        const picks = got.body.picks;
+        const stopAt = picks.findIndex((p) => p[0] === "b2" && p[2] === "same" && ref.includes(".match-taken"));
+        const written = stopAt === -1 ? picks.length : stopAt;
+        for (const p of picks.slice(0, written)) adventureMatched.add(`${ref}:${p[0]}`);
+        return { ...base, state: "done" as const, canUndo: written > 0, answer: { written, refusal: stopAt === -1 ? "" : "taken_book", at: stopAt === -1 ? null : stopAt } };
+      }
+      if (got.body.job === "undo") adventureUndoers.get(got.body.source)?.(); // (a link change taken back)
+      for (const key of [...adventureMatched].filter((k) => k.startsWith(`${ref}:`))) adventureMatched.delete(key);
+      return { ...base, state: "done" as const, answer: { undone: 1, note: ref.includes(".match-late") ? "too_late" : "" } };
+    },
+    async adventureStartRead(ref, document) {
+      calls.push(`adventureStartRead:${ref}:${document}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (document === "d1") throw new ApiError("not-readable");
+      if (document === "d3") throw new ApiError("not-readable");
+      const id = `read-${adventureStarts.size + 1}`;
+      adventureStarts.set(id, { ref, document, looks: 0 });
+      return { read: id };
+    },
+    async adventureStarting(ref, read) {
+      calls.push(`adventureStarting:${ref}:${read}`);
+      await reachable();
+      signedIn();
+      const got = adventureStarts.get(read);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { error: "", documentId: got.document, createdAt: at - got.looks, updatedAt: at, serverNow: at };
+      if (got.looks < 2) return { ...base, state: "working" as const };
+      adventureReading.set(`${ref}:${got.document}`, 0); // (the read has started: its progress is in the list from now)
+      return { ...base, state: "done" as const };
+    },
+    async adventureGive(ref, file, name) {
+      calls.push(`adventureGive:${ref}:${name}:${file.size}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (name.includes("badfile")) throw new ApiError("bad-file");
+      if (name.includes("busyfile")) throw new ApiError("slow-down");
+      const id = `give-${adventureGives.size + 1}`;
+      adventureGives.set(id, { ref, name, size: file.size, looks: 0 });
+      return { give: id };
+    },
+    async adventureGiving(ref, give) {
+      calls.push(`adventureGiving:${ref}:${give}`);
+      await reachable();
+      signedIn();
+      const got = adventureGives.get(give);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { error: "", name: got.name, sizeBytes: got.size, characters: 0, chunks: 0, createdAt: at - got.looks, updatedAt: at, serverNow: at };
+      if (got.looks === 1) return { ...base, state: "waiting" as const, stage: "waiting" as const };
+      if (got.looks === 2) return { ...base, state: "working" as const, stage: "reading" as const };
+      if (got.name.includes("dupfile")) return { ...base, state: "failed" as const, stage: "failed" as const, error: "already" };
+      if (got.name.includes("emptyfile")) return { ...base, state: "failed" as const, stage: "failed" as const, error: "no_text" };
+      adventureGiven.push({ ref, name: got.name, size: got.size });
+      return { ...base, state: "done" as const, stage: "done" as const, characters: 5000, chunks: 3 };
+    },
+    async adventureRemove(ref, document) {
+      calls.push(`adventureRemove:${ref}:${document}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (!["d1", "d2", "d3"].includes(document)) throw new ApiError("not-found");
+      const id = `rm-${adventureRemovals.size + 1}`;
+      adventureRemovals.set(id, { document, looks: 0 });
+      return { removal: id };
+    },
+    async adventureRemoval(ref, removal) {
+      calls.push(`adventureRemoval:${ref}:${removal}`);
+      await reachable();
+      signedIn();
+      const got = adventureRemovals.get(removal);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      if (got.looks < 2) return { id: removal, state: "working" as const, error: "", updatedAt: at };
+      if (got.document === "d2") return { id: removal, state: "failed" as const, error: "failed", updatedAt: at }; // (the second file always fails: the failure words)
+      adventureGone.add(`${ref}:${got.document}`);
+      return { id: removal, state: "done" as const, error: "", updatedAt: at };
+    },
+    async adventureRead(ref, offset) {
+      calls.push(`adventureRead:${ref}:${offset}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const total = ref.includes(".nothing-read") ? 0 : 120;
+      const items = Array.from({ length: Math.max(0, Math.min(50, total - offset)) }, (_, i) => {
+        const n = offset + i + 1;
+        const kind = (["chapter", "place", "person", "link"] as const)[n % 4]!;
+        return { kind, name: kind === "link" ? `Gate ${n} → Key ${n}` : `Made-up ${kind} ${n}`, summary: `A made-up line about number ${n}.`, quote: n % 3 === 0 ? `“A made-up quote ${n}.”` : "" };
+      });
+      return { total, offset, items };
+    },
+  };
   return {
     calls,
+    adventureApi: async () => adventureMock,
     async recaps() {
       calls.push("recaps");
       await reachable();
@@ -1802,7 +2249,27 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       } else {
         picture.permanent = false;
       }
-      return { state: waiting ? ("waiting" as const) : ("done" as const), note: "" };
+      return waiting ? { state: "waiting" as const, note: "", id: "act-5" } : { state: "done" as const, note: "" };
+    },
+    // How the waiting delete of pic-5 stands (#3355): working on the first look, done on the second.
+    async pictureActionLook(campaignRef, id) {
+      calls.push(`pictureActionLook:${campaignRef}:${id}`);
+      await reachable();
+      signedIn();
+      const looks = (pictureLooks.get(String(id)) ?? 0) + 1;
+      pictureLooks.set(String(id), looks);
+      const now = Math.floor(Date.now() / 1000);
+      return {
+        id,
+        action: "delete",
+        state: looks > 1 ? ("done" as const) : ("working" as const),
+        stage: looks > 1 ? "done" : "working",
+        note: "",
+        startedAt: now - 5,
+        updatedAt: now,
+        serverNow: now,
+        stalled: false,
+      };
     },
     async sessionNotesList(campaignRef) {
       calls.push(`sessionNotesList:${campaignRef}`);
@@ -1947,6 +2414,17 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!stalled) onLook?.({ stage: "working", startedAt: at, updatedAt: now - 1, serverNow: now, state: "running" });
       namesUndone.add(`${recapRef}:${id}`);
       return { putBack: 8 };
+    },
+    async moreNames(campaignRef, onLook) {
+      calls.push(`moreNames:${campaignRef}`);
+      await reachable();
+      signedIn();
+      if (campaignRef.includes("player")) throw new ApiError("not-found");
+      onLook?.({ done: 20, total: 120 }); // (core's real shape: counts, no stage)
+      // The pretend bot makes 12 and 40 still wait; asking again finds none.
+      const first = !moreNamesPressed.has(campaignRef);
+      moreNamesPressed.add(campaignRef);
+      return first ? { made: 12, left: 40 } : { made: 0, left: 0 };
     },
     async makeRecap(recapRef, replace) {
       calls.push(`makeRecap:${recapRef}${replace ? ":replace" : ""}`);
@@ -2167,6 +2645,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const now = Math.floor(Date.now() / 1000);
       const file = lastImportFile ?? "session-1-2026-09-14.txt";
       return {
+        // The names the scan found that still wait for the DM (#5276): counts by kind, once the import is done.
+        ...(state === "done" ? { waiting: { ...importWaitingNow } } : {}),
         // The whole import's progress, the shared shape (#2564).
         import: {
           stage: state === "done" ? "done" : "cleaning",
@@ -2187,6 +2667,72 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
             reason: null,
             stage: state === "done" ? ("done" as const) : ("cleaning" as const),
             clock: clockOf(file),
+            // The name reader's stage on this session (#5127): part 3 of 8 while the import runs, then read once it is done.
+            names:
+              state === "done"
+                ? {
+                    stage: "names_read" as const,
+                    done: 8,
+                    total: 8,
+                    unit: "parts" as const,
+                    startedAt: now - 20,
+                    updatedAt: now - 2,
+                    serverNow: now,
+                    state: "done" as const,
+                    reason: null,
+                  }
+                : {
+                    stage: "reading_names" as const,
+                    done: 3,
+                    total: 8,
+                    unit: "parts" as const,
+                    startedAt: now - 20,
+                    updatedAt: now - 2,
+                    serverNow: now,
+                    state: "running" as const,
+                    reason: null,
+                  },
+          },
+          {
+            file: "session-2-2026-09-21.txt",
+            date: "2026-09-21",
+            state: "done" as const,
+            reason: null,
+            stage: "done" as const,
+            clock: null,
+            // Read, with two parts that could not be checked for names (#5127).
+            names: {
+              stage: "names_read" as const,
+              done: 8,
+              total: 8,
+              unit: "parts" as const,
+              startedAt: now - 90,
+              updatedAt: now - 60,
+              serverNow: now,
+              state: "done" as const,
+              reason: null,
+            },
+            namesUnread: 2,
+          },
+          {
+            file: "session-3-2026-09-28.txt",
+            date: "2026-09-28",
+            state: "done" as const,
+            reason: null,
+            stage: "done" as const,
+            clock: null,
+            // The reader stopped early (#5127): some names may be missing; the session itself is safe.
+            names: {
+              stage: "names_stopped" as const,
+              done: 2,
+              total: 8,
+              unit: "parts" as const,
+              startedAt: now - 90,
+              updatedAt: now - 40,
+              serverNow: now,
+              state: "failed" as const,
+              reason: null,
+            },
           },
         ],
       };
@@ -2234,6 +2780,70 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const needle = q.trim().toLowerCase();
       const all = PRETEND_VIEWERS.filter((v) => v.name.toLowerCase().includes(needle));
       return { viewers: all.slice(0, 25), total: all.length };
+    },
+    // A road's or route place's condition (#4451): DM only; the mock keeps no state, the page's own list is what it draws.
+    async roadCondition(ref, change) {
+      calls.push(`roadCondition:${ref}:${change.on}:${change.id}:${change.value}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return { batch: 90 };
+    },
+    async keepRoadCondition(ref, id) {
+      calls.push(`keepRoadCondition:${ref}:${id}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+    },
+    async showRoadCondition(ref, id, shown) {
+      calls.push(`showRoadCondition:${ref}:${id}:${shown}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+    },
+    async undoRouteLength(ref, batch) {
+      calls.push(`undoRouteLength:${ref}:${batch}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+    },
+    async changeRouteLength(ref, change) {
+      calls.push(`changeRouteLength:${ref}:${change.action}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (change.action === "undo") {
+        const back = routeBatches.get(change.batch);
+        if (!back) throw new ApiError("undo-late");
+        routeBatches.delete(change.batch);
+        routeLengths.set(back.id, back.prev);
+        return { batch: null };
+      }
+      const prev = routeLengths.get(routeKey(change.id));
+      if (!prev) throw new ApiError("gone");
+      // A keep of a length that is already the DM's own is refused as changed; the same words again change nothing.
+      if (change.action === "keep" && !prev.read) throw new ApiError("changed");
+      const words = change.action === "set" ? change.words.trim() : prev.words;
+      if (change.action === "set" && words === prev.words) return { batch: null };
+      routeLengths.set(routeKey(change.id), { words, read: false });
+      const batch = ++routeBatch;
+      routeBatches.set(batch, { id: routeKey(change.id), prev });
+      return { batch };
+    },
+    // A character's lineage and class (#3925): DM only. "pc-cerric" is a Dwarf and a Cleric, "npc-guard-1" has none; any other node has none.
+    async nodeTraits(ref, node) {
+      calls.push(`nodeTraits:${ref}:${node}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (node === "pc-cerric") {
+        return [
+          { kind: "species", name: "Dwarf", known: true, edition: "2024" },
+          { kind: "class", name: "Cleric", known: true, edition: "2014" },
+          { kind: "class", name: "Skald", known: false, edition: "" },
+        ];
+      }
+      return [];
     },
     // The short summary of a picked name (#3243): a pretend DM reads it at once; a player's first name is behind a
     // spoiler gate until they ask with `peek`. An id that is not on the graph is not found.
@@ -2406,6 +3016,16 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         { id: "p2", name: "Ash" },
       ];
     },
+    // The line of a pick not yet made (#5332): the same words as Discord's `party_icons.line`, for a party of three.
+    async knowLine(ref, pick) {
+      calls.push(`knowLine:${ref}:${pick.characters.join(",")}:${pick.common}`);
+      await reachable();
+      signedIn();
+      if (pick.common) return { line: "🌍 Everyone knows" };
+      if (pick.characters.length === 0) return { line: "🤫 No one in the party knows" };
+      if (pick.characters.length >= 3) return { line: "✅ The whole party knows" };
+      return { line: `👥 Known to: ${pick.characters.length} of the party` };
+    },
     async answerWaiting(ref, answer, onLook) {
       calls.push(
         `answerWaiting:${ref}:${answer.kind}:${answer.action}:${"ids" in answer ? answer.ids.join(",") : answer.id}${"entity" in answer ? `:${answer.entity}` : ""}${"secret" in answer && answer.secret ? ":secret" : ""}`,
@@ -2526,17 +3146,21 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!found) throw new ApiError("not-found");
       found.revealed = true;
     },
-    async setPcIcon(ref, entityId, choice) {
-      calls.push(`setPcIcon:${ref}:${entityId}:${choice}`);
+    async setPcIcon(ref, entityId, choice, picture) {
+      calls.push(`setPcIcon:${ref}:${entityId}:${choice}${picture !== undefined ? `:${picture}` : ""}`);
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
       if (!["n1", "n2", "n3"].includes(entityId)) throw new ApiError("not-found");
       const has = pcHas(entityId);
       if ((choice === "discord" && !has.discord) || (choice === "dndbeyond" && !has.dndbeyond)) throw new ApiError("unavailable");
+      if (choice === "custom" && !Number.isInteger(picture)) throw new ApiError("unavailable");
       const previous = pcChoice.get(`${ref}:${entityId}`) ?? "default";
+      const previousPicture = pcPicture.get(`${ref}:${entityId}`) ?? null;
       pcChoice.set(`${ref}:${entityId}`, choice);
-      return { previous, now: choice };
+      if (choice === "custom") pcPicture.set(`${ref}:${entityId}`, picture!);
+      else pcPicture.delete(`${ref}:${entityId}`);
+      return { previous, now: choice, previousPicture };
     },
     async changeWebLink(ref, change: WebLinkChange) {
       calls.push(`changeWebLink:${ref}:${JSON.stringify(change)}`);
@@ -2846,12 +3470,90 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       loreNow = { ...loreNow, serverNow: at };
       return loreNow;
     },
-    async confirmKinds(ref, upload, kinds) {
-      calls.push(`confirmKinds:${ref}:${upload}:${kinds === "all" ? "all" : kinds.join(",")}`);
+    // Say a connection in words (#5293; core #5298): a read waits one look, reads one, then is ready. Words with "nothing" are read as no
+    // connection, "unreadable" fail, "secret" ask who knows from the start, and every ready read has two things DMbot understood.
+    async saidSend(ref, input) {
+      calls.push(`saidSend:${ref}:${input.a}:${input.b}:${input.edit ?? "-"}:${input.text.length}`);
       await reachable();
       signedIn();
-      if (!loreNow || upload !== loreNow.id) throw new ApiError("not-found");
-      const waiting = loreNow.waiting ?? {};
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (input.text.length > 1000 || input.text.trim() === "") throw new ApiError("bad-text");
+      if (input.text.includes("hourfull")) throw new ApiError("hour-full");
+      if (input.text.includes("busy")) throw new ApiError("slow-down");
+      const answer = `said-${saidJobs.size + 1}`;
+      saidJobs.set(answer, { text: input.text, looks: 0, job: "read", edit: input.edit });
+      return { answer };
+    },
+    async saidRead(ref, answer) {
+      calls.push(`saidRead:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const job = saidJobs.get(answer);
+      if (!job) throw new ApiError("not-found");
+      job.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { startedAt: at - job.looks, updatedAt: at, serverNow: at };
+      if (job.job === "undo" && job.text.includes("undofail") && job.looks >= 2) return { ...base, job: "undo", stage: "failed", state: "failed" as const, reason: "failed" };
+      if (job.job !== "read" && job.looks >= 2) {
+        return { ...base, job: job.job, stage: "done", state: "done" as const, ...(job.job === "use" ? { canUndo: true } : { partly: job.partly ?? false }) };
+      }
+      if (job.job !== "read") return { ...base, job: job.job, stage: "fixing", state: "running" as const };
+      if (job.looks < 2) return { ...base, job: "read", stage: job.looks < 1 ? "waiting" : "reading", state: "running" as const };
+      if (job.text.includes("unreadable")) return { ...base, job: "read", stage: "failed", state: "failed" as const, reason: "unreadable" };
+      if (job.text.includes("nothing")) return { ...base, job: "read", stage: "failed", state: "failed" as const, reason: "nothing" };
+      return {
+        ...base,
+        job: "read",
+        stage: "done",
+        state: "done" as const,
+        proposals: [
+          { number: 1, first: "Mara", second: "Tavin", kind: "owes", words: "owes", secret: false, sentence: "Mara “owes” Tavin" },
+          { number: 2, first: "Tavin", second: "Mara", kind: "knows", words: "knows", secret: job.text.includes("secret"), sentence: "Tavin knows Mara" },
+        ],
+        whoKnows: job.text.includes("secret") ? "dm" : "everyone",
+        characters: [{ id: "n1", name: "Tavin" }],
+        leftOut: job.text.includes("stranger") ? ["Zed"] : [],
+        replacing: job.edit ? true : null,
+      };
+    },
+    async saidUse(ref, answer, use) {
+      calls.push(`saidUse:${ref}:${answer}:${use.picks.join(",")}:${use.who}:${use.characters.join(",")}`);
+      await reachable();
+      signedIn();
+      const job = saidJobs.get(answer);
+      if (!job) throw new ApiError("not-found");
+      if (use.picks.length === 0) throw new ApiError("bad-choice");
+      saidJobs.set(answer, { ...job, job: "use", looks: 0 });
+    },
+    async saidUndo(ref, answer) {
+      calls.push(`saidUndo:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const job = saidJobs.get(answer);
+      if (!job) throw new ApiError("not-found");
+      saidJobs.set(answer, { ...job, job: "undo", looks: 0, partly: job.text.includes("partly") });
+    },
+    // The half-second counts read (#3534 part 3): numbers only; the words climb with each look of a running upload.
+    async waitCounts(ref, kind, id) {
+      calls.push(`waitCounts:${ref}:${kind}:${id}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const at = Math.floor(Date.now() / 1000);
+      quickLooks += 1;
+      if (kind === "lore") {
+        if (!loreNow || id !== loreNow.id) throw new ApiError("not-found");
+        return { kind: "lore", state: loreNow.state, stage: loreNow.stage, done: loreNow.done, total: loreNow.total, wordsDone: quickLooks * 120, callsMade: Math.floor(quickLooks / 4), namesFound: loreNow.namesFound, linksFound: loreNow.linksFound, createdAt: loreNow.createdAt, updatedAt: Math.max(loreNow.updatedAt, at), serverNow: at };
+      }
+      return { kind: "import", serverNow: at, sessions: [{ file: "one.txt", state: "working", scanFinished: false, stepDone: quickLooks, stepTotal: 40, wordsDone: quickLooks * 90, callsMade: Math.floor(quickLooks / 4), startedAt: at - 20, updatedAt: at }] };
+    },
+    async confirmKinds(ref, upload, kinds, source) {
+      calls.push(`confirmKinds:${ref}:${upload}:${kinds === "all" ? "all" : kinds.join(",")}${source === "import" ? ":import" : ""}`);
+      await reachable();
+      signedIn();
+      // An import's names (#5276) are the two kinds its scan left; an upload's are the lore reading's.
+      if (source !== "import" && (!loreNow || upload !== loreNow.id)) throw new ApiError("not-found");
+      const waiting = source === "import" ? importWaitingNow : (loreNow?.waiting ?? {});
       const chosen = kinds === "all" ? Object.keys(waiting) : kinds;
       const counts = Object.fromEntries(chosen.filter((k) => (waiting[k] ?? 0) > 0).map((k) => [k, waiting[k]!]));
       const at = Math.floor(Date.now() / 1000);
@@ -2895,9 +3597,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     // "Private scenes" (#4102): two in the table scenario; a second "Not private" on one says gone.
     async placeWorld(ref, placeId) {
       calls.push(`placeWorld:${ref}:${placeId}`);
+      // The DM's door: a player's read is refused, as the real one answers nothing to a player.
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
-      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })) };
+      // A route place (#5010): Greywatch is a road with a hard going condition the DM set; other places are not roads.
+      const route = named.name === "Greywatch" ? { road: true, condition: { value: "hard" as const, words: "", since: 3, before: null, read: false, shown: false } } : {};
+      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })), cultures: cultureList.map((c) => ({ ...c })), ...route, ...routeOf(named.name) };
     },
     // The quest sheet of the mock's kept thread (#4547): the example the spec gives, for its one thread node.
     async threadCard(ref, thread) {
@@ -3013,6 +3719,127 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       calls.push(`storyThreads:${ref}`);
       return { suggestions: storyThreadList.map((t) => ({ ...t, people: t.people.map((p) => ({ ...p })), lines: t.lines.map((l) => ({ ...l })) })) };
     },
+    // The open plot threads (#3696, slice 1): read only, DM only (a player is refused).
+    async plotThreads(ref) {
+      calls.push(`plotThreads:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone((plotThreadsOf[ref] ??= pretendPlotThreads()));
+    },
+    // A state change or "check" (#3696, slice 2a): a thread not in the list is gone; "check" needs a live thread.
+    async changePlotThreadState(ref, change) {
+      calls.push(`changePlotThreadState:${ref}:${change.thread}:${change.state}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = (plotThreadsOf[ref] ??= pretendPlotThreads());
+      const t = list.threads.find((x) => x.id === change.thread);
+      if (!t) throw new ApiError("gone");
+      const live = t.state === "hinted" || t.state === "open" || t.state === "active";
+      if (change.state === "check") {
+        if (!live) throw new ApiError("gone");
+        t.quiet = 0;
+        t.stalled = false;
+        return;
+      }
+      t.state = change.state;
+      t.stateWords = plotThreadsWords.stateWord(t.kind === "promise", change.state);
+      t.quiet = 0;
+      t.stalled = false;
+    },
+    // Starts a thread or a promise (#3696, slice 2c): DM only; the new thread is kept, so the next read shows it.
+    async addPlotThread(ref, change) {
+      calls.push(`addPlotThread:${ref}:${change.kind}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = (plotThreadsOf[ref] ??= pretendPlotThreads());
+      const id = (++plotThreadSeq).toString(16).padStart(32, "0");
+      const promise = change.kind === "promise";
+      list.threads.push({
+        id,
+        name: change.name,
+        kind: change.kind,
+        state: change.state,
+        stateWords: plotThreadsWords.stateWord(promise, change.state),
+        history: [],
+        involved: [],
+        movers: [],
+        cameFrom: [],
+        ledTo: [],
+        promise: promise ? { by: [], to: [], due: "" } : null,
+        quiet: 0,
+        stalled: false,
+      });
+      list.total += 1;
+      return { id };
+    },
+    // A promise's due note, and who made it or it was made to (#3696, slice 2c): DM only; a thread that is not a promise is gone.
+    async setPlotThreadDue(ref, change) {
+      calls.push(`setPlotThreadDue:${ref}:${change.promise}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const t = (plotThreadsOf[ref] ??= pretendPlotThreads()).threads.find((x) => x.id === change.promise);
+      if (!t || !t.promise) throw new ApiError("gone");
+      t.promise = { ...t.promise, due: change.due };
+    },
+    async addPlotThreadParty(ref, change) {
+      calls.push(`addPlotThreadParty:${ref}:${change.promise}:${change.side}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const t = (plotThreadsOf[ref] ??= pretendPlotThreads()).threads.find((x) => x.id === change.promise);
+      const who = names.find((n) => n.id === change.who);
+      if (!t || !t.promise || !who) throw new ApiError("gone");
+      t.promise = change.side === "by" ? { ...t.promise, by: [...t.promise.by, who.text] } : { ...t.promise, to: [...t.promise.to, who.text] };
+    },
+    // Links an event to a thread (#3696, slice 2d): DM only; a thread or an event not in the lists is gone. A new event joins the names.
+    async linkPlotThreadEvent(ref, change) {
+      calls.push(`linkPlotThreadEvent:${ref}:${change.thread}:${change.how}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const t = (plotThreadsOf[ref] ??= pretendPlotThreads()).threads.find((x) => x.id === change.thread);
+      if (!t) throw new ApiError("gone");
+      let event: CampaignName | undefined;
+      if ("newEvent" in change) {
+        event = { id: (++plotThreadSeq).toString(16).padStart(32, "0"), text: change.newEvent, kind: "event", saidAs: null };
+        names.push(event);
+      } else {
+        event = names.find((n) => n.id === change.event && n.kind === "event");
+      }
+      if (!event) throw new ApiError("gone");
+      t.movers = [...t.movers, { id: event.id, name: event.text, endsIt: change.how === "ended", session: null }];
+    },
+    // One thread led to another (#3696, slice 2d): DM only; a thread not in the list is gone. A thread target also lists the origin as came from.
+    async plotThreadLedTo(ref, change) {
+      calls.push(`plotThreadLedTo:${ref}:${change.from}:${change.to}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = (plotThreadsOf[ref] ??= pretendPlotThreads());
+      const from = list.threads.find((x) => x.id === change.from);
+      const toThread = list.threads.find((x) => x.id === change.to);
+      const toName = names.find((n) => n.id === change.to);
+      if (!from || (!toThread && !toName)) throw new ApiError("gone");
+      const to = toThread ?? { id: change.to, name: toName!.text };
+      from.ledTo = [...from.ledTo, { id: to.id, name: to.name }];
+      if (toThread) toThread.cameFrom = [...toThread.cameFrom, { id: from.id, name: from.name }];
+    },
+    // Adds one name to a thread with its part (#3696, slice 2b): DM only; a thread or a name not in the list is gone.
+    async addPlotThreadInvolved(ref, change) {
+      calls.push(`addPlotThreadInvolved:${ref}:${change.thread}:${change.who}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = (plotThreadsOf[ref] ??= pretendPlotThreads());
+      const t = list.threads.find((x) => x.id === change.thread);
+      const who = names.find((n) => n.id === change.who);
+      if (!t || !who) throw new ApiError("gone");
+      t.involved = [...t.involved, { id: who.id, name: who.text, role: change.role }];
+    },
     async changeStoryThreads(ref, change) {
       calls.push(`changeStoryThreads:${ref}:${JSON.stringify(change)}`);
       if (change.action === "undo") {
@@ -3053,7 +3880,12 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     async worldNotes(ref) {
       calls.push(`worldNotes:${ref}`);
-      return { places: worldNotes.places.map((n) => ({ ...n })), languages: worldNotes.languages.map((n) => ({ ...n })), roads: worldNotes.roads.map((n) => ({ ...n })) };
+      return {
+        places: worldNotes.places.map((n) => ({ ...n })),
+        languages: worldNotes.languages.map((n) => ({ ...n })),
+        roads: worldNotes.roads.map((n) => ({ ...n })),
+        feelings: worldNotes.feelings.map((n) => ({ ...n })),
+      };
     },
     // ✅, 🚫 and ↩ Undo on World notes (#4285): a line checked meanwhile is "gone", as the real bot says.
     async changeWorldNotes(ref, change) {
@@ -3065,20 +3897,32 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         worldNotes.places.push(...back.places);
         worldNotes.languages.push(...back.languages);
         worldNotes.roads.push(...back.roads);
+        worldNotes.feelings.push(...back.feelings);
         return { kept: null, batch: null };
+      }
+      // A feeling changed to another step leaves the list, as a kept line does; Undo puts it back as it was (#4959).
+      if (change.action === "bias") {
+        const feeling = worldNotes.feelings.find((n) => n.id === change.id);
+        if (!feeling) throw new ApiError("gone");
+        worldNotes.feelings = worldNotes.feelings.filter((n) => n.id !== change.id);
+        const batch = ++lastBatch;
+        worldBatches.set(batch, { places: [], languages: [], roads: [], feelings: [feeling] });
+        return { kept: null, batch };
       }
       const ids = change.action === "keep" ? change.ids : [change.id];
       const places = worldNotes.places.filter((n) => ids.includes(n.id));
       const languages = worldNotes.languages.filter((n) => ids.includes(n.id));
       if (change.action === "not" && change.id.startsWith("road:")) throw new ApiError("bad-action");
       const roads = worldNotes.roads.filter((n) => ids.includes(n.id));
-      if (places.length + languages.length + roads.length === 0) throw new ApiError("gone");
+      const feelings = worldNotes.feelings.filter((n) => ids.includes(n.id));
+      if (places.length + languages.length + roads.length + feelings.length === 0) throw new ApiError("gone");
       worldNotes.roads = worldNotes.roads.filter((n) => !ids.includes(n.id));
       worldNotes.places = worldNotes.places.filter((n) => !ids.includes(n.id));
       worldNotes.languages = worldNotes.languages.filter((n) => !ids.includes(n.id));
+      worldNotes.feelings = worldNotes.feelings.filter((n) => !ids.includes(n.id));
       const batch = ++lastBatch;
-      worldBatches.set(batch, { places, languages, roads });
-      return { kept: change.action === "keep" ? places.length + languages.length + roads.length : null, batch };
+      worldBatches.set(batch, { places, languages, roads, feelings });
+      return { kept: change.action === "keep" ? places.length + languages.length + roads.length + feelings.length : null, batch };
     },
     // The Maps page (#4347). A ref ending `.player` is a player's campaign: the player rule applies, and `shown` and `state` are only on their own rows.
     // A map's pins, scale, grid and north (#4672): DM only. A ref ending `.pins-none` has none; `.pins-fail` cannot be read.
@@ -3176,7 +4020,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       // only what the DM confirmed and showed: no "read" row and no hidden one (the real door also cuts by what the reader may know)
-      return { rows: (worldRows.get(placeId) ?? []).filter((r) => r.shown && !r.read).map((r) => ({ layer: r.layer, value: r.value, words: r.words, groupName: r.groupName, how: r.how, part: r.part })) };
+      // The table shows what the DM kept and showed: land, climate, ruler, and culture and who lives here (#4412).
+      return { rows: (worldRows.get(placeId) ?? []).filter((r) => r.shown && !r.read).map((r) => ({ layer: r.layer, value: r.value, words: r.words, groupName: r.groupName, how: r.how, part: r.part, culture: r.culture ?? null })) };
     },
     async privateScenes(ref): Promise<PrivateScene[]> {
       calls.push(`privateScenes:${ref}`);
@@ -3237,6 +4082,9 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The pretend campaign page (#2416): a ref ending `.cp-none` is one nobody may see, `.cp-player` one
     // the person plays in without running it, `.cp-co` one they help run.
+    async visitCampaign(ref): Promise<void> {
+      calls.push(`visitCampaign:${ref}`);
+    },
     async campaignPage(ref): Promise<CampaignPage> {
       calls.push(`campaignPage:${ref}`);
       await reachable();
@@ -3430,6 +4278,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         myNote: npcNotes.get(entry) ?? "",
         isDm,
         dmNote: isDm ? "Knows who burned the mill." : null,
+        // The card summary is the DM's alone (the API sends none to anyone else).
+        ...(isDm ? cardSummaries["Mira Voss"] : {}),
       };
     },
     async saveNpcNote(ref, entry, body): Promise<void> {
@@ -3594,12 +4444,116 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The join question (#4778 part b): two messages, one name and two names. A "party" answer carries its change number (61) and
     // what the party gave (3); the group with no things to give carries none. A second answer to a group is "gone".
+    async lookAlikes(ref) {
+      calls.push(`lookAlikes:${ref}`);
+      await reachable();
+      signedIn();
+      if (ref.includes("player")) throw new ApiError("not-found");
+      const groups = lookAlikesOf(ref);
+      return { groups: structuredClone(groups), count: groups.length };
+    },
+    async mergeLookAlikes(ref, body, onLook) {
+      calls.push(`mergeLookAlikes:${ref}:${JSON.stringify(body)}`);
+      await reachable();
+      signedIn();
+      if (ref.includes("player")) throw new ApiError("not-found");
+      const now = Math.floor(Date.now() / 1000);
+      onLook?.({ stage: "working", startedAt: now - 2, updatedAt: now - 1, serverNow: now, state: "running" });
+      const groups = lookAlikesOf(ref);
+      const at = groups.findIndex((g) => g.some((n) => n.id === body.keep));
+      if (at < 0) throw new ApiError("gone");
+      lookAlikeGroups.set(ref, groups.filter((_, i) => i !== at));
+      mergedLookAlikes.set(21, { ref, group: groups[at]! });
+      return { batch: 21, secret: null };
+    },
+    async lookAlikesApart(ref, ids) {
+      calls.push(`lookAlikesApart:${ref}:${ids.join(",")}`);
+      await reachable();
+      signedIn();
+      const groups = lookAlikesOf(ref);
+      lookAlikeGroups.set(ref, groups.filter((g) => !g.some((n) => ids.includes(n.id))));
+    },
+    async undoLookAlikes(ref, batch) {
+      calls.push(`undoLookAlikes:${ref}:${batch}`);
+      await reachable();
+      signedIn();
+      const merged = mergedLookAlikes.get(batch);
+      if (!merged) throw new ApiError("undo-late");
+      mergedLookAlikes.delete(batch);
+      lookAlikeGroups.set(ref, [...lookAlikesOf(ref), merged.group]);
+    },
+    async heardQuestions(ref): Promise<HeardQuestions> {
+      calls.push(`heardQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      const questions = HEARD_WAITING.filter((q) => !heardDone.has(q.id)).map((q) => structuredClone(q));
+      return { total: questions.length, questions };
+    },
+    async heardPick(ref, question, index): Promise<{ code: string | null }> {
+      calls.push(`heardPick:${ref}:${question}:${index}`);
+      await reachable();
+      signedIn();
+      heardDone.add(question);
+      return { code: "fixed" };
+    },
+    async heardType(ref, question, name): Promise<{ code: string | null }> {
+      calls.push(`heardType:${ref}:${question}:${name}`);
+      await reachable();
+      signedIn();
+      // Refusals by the words of core's check; a name the campaign already has is refused as already there (#4865).
+      const refuse = (kind: "typed-problem" | "typed-refused", reason?: string): never => {
+        const err = new ApiError(kind);
+        if (reason !== undefined) err.reason = reason;
+        throw err;
+      };
+      if (name.trim() === "") refuse("typed-problem", "empty");
+      if (name.includes("|")) refuse("typed-problem", "bar");
+      if (name.length > 60) refuse("typed-problem", "too long");
+      if (name.trim().split(/\s+/).length > 8) refuse("typed-problem", "too many words");
+      if (name === "Wren") refuse("typed-refused");
+      heardDone.add(question);
+      return { code: "fixed-new" };
+    },
+    async heardKeep(ref, question): Promise<{ code: string | null }> {
+      calls.push(`heardKeep:${ref}:${question}`);
+      await reachable();
+      signedIn();
+      heardDone.add(question);
+      return { code: "kept" };
+    },
     async joinQuestions(ref): Promise<{ group: string; answer: "waiting" | "everyone"; names: string[] }[]> {
       calls.push(`joinQuestions:${ref}`);
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-allowed");
       return structuredClone(joinState[ref] ??= pretendJoinGroups());
+    },
+    async joinChoices(ref, group): Promise<JoinChoices> {
+      calls.push(`joinChoices:${ref}:${group}`);
+      await reachable();
+      signedIn();
+      return {
+        madeAt: 1_800_000_000,
+        choices: {
+          members: [{ id: "n1234567", name: "Mira" }],
+          sessions: [{ at: 1000, number: 3, counts: { n1234567: 14 } }],
+          threads: [{ id: "t1", name: "The Ashen Road", counts: { n1234567: 9 } }],
+          sessionsInAll: 2,
+          threadsInAll: 1,
+          nobody: false,
+        },
+      };
+    },
+    async askJoinChoices(ref, group): Promise<void> {
+      calls.push(`askJoinChoices:${ref}:${group}`);
+      await reachable();
+      signedIn();
+    },
+    async joinChoose(ref, group, pick): Promise<JoinChoose> {
+      calls.push(`joinChoose:${ref}:${group}:${JSON.stringify(pick)}`);
+      await reachable();
+      signedIn();
+      return { chose: [{ id: "n1234567", count: 14 }], choseMore: 0, first: true, batch: 9 };
     },
     async answerJoin(ref, change) {
       calls.push(`answerJoin:${ref}:${change.action}:${change.action === "undo" ? change.batch : change.group}`);
@@ -3616,6 +4570,103 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       const [done] = list.splice(at, 1);
       return done!.names.length === 2 ? { batch: null, given: null } : { batch: 61, given: 3 };
+    },
+    // The "Still in the party?" questions (#4895): DM only. A "left" answer gives its batch, for the Undo through answerJoin's undo.
+    async revealQuestions(ref): Promise<RevealProposal[]> {
+      calls.push(`revealQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone((revealState[ref] ??= pretendReveals()));
+    },
+    async answerReveal(ref, change): Promise<{ batch: number | null }> {
+      calls.push(`answerReveal:${ref}:${change.id}:${change.answer}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = (revealState[ref] ??= pretendReveals());
+      const at = list.findIndex((p) => p.id === change.id);
+      if (at < 0) throw new ApiError("gone");
+      list.splice(at, 1);
+      // "rv-known" was already known for sure: a keep changes nothing and has no batch to undo.
+      if (change.answer === "keep" && change.id !== "rv-known") return { batch: 81 };
+      return { batch: null };
+    },
+    async leaveQuestions(ref): Promise<LeaveGroup[]> {
+      calls.push(`leaveQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone((leaveState[ref] ??= pretendLeaveGroups()));
+    },
+    async continuityHits(ref): Promise<ContinuityHits> {
+      calls.push(`continuityHits:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const hits = continuityOf(ref);
+      return { total: hits.length, hits: hits.slice(0, 50) };
+    },
+    async askContinuity(ref): Promise<{ count: number }> {
+      calls.push(`askContinuity:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return { count: continuityOf(ref).length };
+    },
+    async answerContinuity(ref, change): Promise<void> {
+      calls.push(`answerContinuity:${ref}:${change.claim}:${change.choice}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const hits = continuityOf(ref);
+      const at = hits.findIndex((h) => h.id === change.claim);
+      if (at < 0) throw new ApiError("gone");
+      // Story changed and Wasn't real both settle the heads-up; the page then reads the list again.
+      hits.splice(at, 1);
+    },
+    async deedQuestions(ref): Promise<DeedQuestions> {
+      calls.push(`deedQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      // The door answers only the DM of the campaign, with nothing to anyone else (#3591).
+      if (webView(ref) !== "dm") return { total: 0, deeds: [] };
+      const open = deedsOf(ref).deeds.filter((d) => !d.done).map(({ done: _done, ...d }) => d);
+      return { total: open.length, deeds: open.slice(0, 50) };
+    },
+    async answerDeed(ref, change): Promise<{ batch: number | null }> {
+      calls.push(`answerDeed:${ref}:${"undo" in change ? `undo:${change.undo}` : `${change.deed}:${change.answer}`}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const state = deedsOf(ref);
+      if ("undo" in change) {
+        const id = state.undo.get(change.undo);
+        if (id === undefined) throw new ApiError("undo-late");
+        state.undo.delete(change.undo);
+        const deed = state.deeds.find((d) => d.id === id);
+        if (deed) deed.done = false;
+        return { batch: null };
+      }
+      const deed = state.deeds.find((d) => d.id === change.deed);
+      if (!deed || deed.done) throw new ApiError("gone");
+      deed.done = true;
+      if (change.answer === "not") return { batch: null };
+      const batch = ++state.batch;
+      state.undo.set(batch, deed.id);
+      return { batch };
+    },
+    async answerLeave(ref, change): Promise<{ batch: number | null }> {
+      calls.push(`answerLeave:${ref}:${change.character}:${change.answer}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = (leaveState[ref] ??= pretendLeaveGroups());
+      const group = list.find((g) => g.characters.some((c) => c.id === change.character));
+      if (!group) throw new ApiError("gone");
+      group.characters = group.characters.filter((c) => c.id !== change.character);
+      const left = change.answer === "left";
+      return { batch: left ? 71 : null };
     },
     // The party record (#4778 a2): DM only. A leave of someone not in the party is `not-in-party`; a return of someone in it is `already-back`.
     async partyRecord(ref) {
@@ -3745,7 +4796,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         // A DM's rows carry the main name's id and how it is said (#2317); a manager's do not.
         names: sorted
           .slice((query.page - 1) * pageSize, query.page * pageSize)
-          .map((n) => ({ ...n, others: [...n.others], ...factsOf(n), ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null, playersText: playersLines.get(n.id) ?? null } : {}) })),
+          .map((n) => ({ ...n, others: [...n.others], ...factsOf(n), ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null, playersText: playersLines.get(n.id) ?? null, ...(cardSummaries[n.name] ?? {}) } : {}) })),
         kinds,
         total: sorted.length,
         page: query.page,
@@ -3793,6 +4844,41 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         const at = from.findIndex((x) => x.id === change.character);
         if (at >= 0) to.push(...from.splice(at, 1));
         else if (!to.some((x) => x.id === change.character)) throw new ApiError("bad-target");
+        return { ...row, others: [...row.others] };
+      }
+      if (change.action === "map-culture" || change.action === "map-population") {
+        // A culture or who lives here (#4412): one row per lineage (or named culture); null clears the layer; "other" makes a named culture.
+        if (row.kind !== "place") throw new ApiError("bad-target");
+        const layer = change.action === "map-culture" ? "culture" : "population";
+        const mine = worldRows.get(id) ?? [];
+        if (change.value === null) {
+          worldRows.set(id, mine.filter((r) => r.layer !== layer));
+          return { ...row, others: [...row.others] };
+        }
+        // A named culture is stored with an empty value and its id (as the store does); "Something else" reuses a name already kept.
+        let cultureId: string | null = null;
+        let culture: string | null = null;
+        let value = change.value;
+        if (change.value === "other") {
+          const words = (change.words ?? "").trim();
+          if (!words) throw new ApiError("bad-target");
+          const existing = cultureList.find((c) => c.name.toLowerCase() === words.toLowerCase());
+          const made = existing ?? { id: `culture-${cultureList.length + 1}`, name: words };
+          if (!existing) cultureList.push(made);
+          cultureId = made.id;
+          culture = made.name;
+          value = "";
+        } else {
+          const named = cultureList.find((c) => c.id === change.value);
+          if (named) {
+            cultureId = named.id;
+            culture = named.name;
+            value = "";
+          }
+        }
+        const rest = mine.filter((r) => !(r.layer === layer && (cultureId !== null ? r.cultureId === cultureId : r.value === value)));
+        rest.push({ layer, value: value ?? "", words: "", group: null, groupName: null, how: change.how ?? "", part: "", read: false, source: "dm", shown: false, cultureId, culture });
+        worldRows.set(id, rest);
         return { ...row, others: [...row.others] };
       }
       if (change.action === "map-terrain" || change.action === "map-climate" || change.action === "map-control" || change.action === "map-show") {
@@ -4096,7 +5182,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (number === 1 || madeScripts.has(`${campaignRef}:${number}`)) return { state: "exists", cost: null, allowed: true, why: null };
       if (/\.script-plan$/.test(campaignRef)) return { state: "none", cost: null, allowed: false, why: "plan" };
       if (/\.script-off$/.test(campaignRef)) return { state: "none", cost: null, allowed: false, why: "off" };
-      return { state: "none", cost: "It uses about 6 cents of your AI allowance.", allowed: true, why: null };
+      return { state: "none", cost: "This will take about 3 AI calls. About 40 AI credits for the script.", allowed: true, why: null };
     },
     async makeScript(campaignRef, number, onLook): Promise<void> {
       calls.push(`makeScript:${campaignRef}:${number}`);
@@ -4213,6 +5299,62 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           more: /\.ru-small$/.test(ref) ? 0 : 2,
         },
       };
+    },
+    async packUpdates(ref): Promise<PackUpdates> {
+      calls.push(`packUpdates:${ref}`);
+      await reachable();
+      signedIn();
+      // A campaign whose ref ends ".pk-updates" follows one pack with a newer version waiting and one DMbot already took (#4872).
+      if (!/\.pk-updates$/.test(ref)) return { waiting: [], taken: [] };
+      return {
+        waiting: [
+          { setId: "s1", name: "Lantern Tavern pack", publisher: "The Lantern table", from: 1, to: 2, words: "2 rules", lines: ["Rule 1 now says a torch lasts an hour.", "A new rule on rope."], more: 0 },
+        ],
+        taken: [
+          { setId: "s2", name: "Moor Road pack", publisher: "The Moor table", from: 3, to: 4, words: "1 rule", lines: ["Rule 1 is new."], more: 0 },
+        ],
+      };
+    },
+    async packUpdatePick(ref, setId, version, kept): Promise<{ kept: number; left: number; skipped: number; take: number | null }> {
+      calls.push(`packUpdatePick:${ref}:${setId}:${version}:${kept.join(",")}`);
+      await reachable();
+      signedIn();
+      return { kept: kept.length, left: 2 - kept.length, skipped: 0, take: 7 };
+    },
+    async packUpdateUndo(ref, take): Promise<void> {
+      calls.push(`packUpdateUndo:${ref}:${take}`);
+      await reachable();
+      signedIn();
+    },
+    async packUpdateUndoLast(ref, setId, version): Promise<{ back: number | null }> {
+      calls.push(`packUpdateUndoLast:${ref}:${setId}:${version}`);
+      await reachable();
+      signedIn();
+      return { back: 3 };
+    },
+    async ruleTaken(ref): Promise<{ taken: RuleUpdate | null }> {
+      calls.push(`ruleTaken:${ref}`);
+      await reachable();
+      signedIn();
+      // A campaign whose ref ends ".ru-taken" has taken "Tavern rules" version 3, from version 2, and can undo it (#4867).
+      if (!/\.ru-taken$/.test(ref)) return { taken: null };
+      return {
+        taken: {
+          name: "Tavern rules",
+          publisher: "The Lantern table",
+          from: 2,
+          to: 3,
+          words: "3 rules and 1 relationship",
+          lines: ["Rule 2 now says a short rest is one hour.", "A new rule on torches.", "Rule 5 is gone."],
+          more: 0,
+        },
+      };
+    },
+    async ruleUpdateUndoLast(ref, version): Promise<{ back: number | null }> {
+      calls.push(`ruleUpdateUndoLast:${ref}:${version}`);
+      await reachable();
+      signedIn();
+      return { back: 2 };
     },
     async ruleUpdatePick(ref, version, kept): Promise<{ kept: number; left: number; take: number | null }> {
       calls.push(`ruleUpdatePick:${ref}:${version}:${kept.join(",")}`);
@@ -4431,7 +5573,21 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const names = [
         { id: "a".repeat(32), name: "Brannoch", note: "A smith in Eastmarch.", scene: "The party reached Brannoch's forge as the storm broke.", playersText: "The smith of Eastmarch." },
         { id: "b".repeat(32), name: "Veshla", note: "Spoken of as the queen's rider." },
-        { id: "c".repeat(32), name: "Garrick", note: "" },
+        {
+          id: "c".repeat(32),
+          name: "Garrick",
+          note: "",
+          // How the session-names reader found it (#5144): heard five times, with a guess and the line that made it a name.
+          found: {
+            how: "introduced" as const,
+            times: 5,
+            typed: 0,
+            also: ["Garrik", "gar rick"],
+            heard: "Garrick: a new name? Heard 5 times, sometimes as Garrik or gar rick.",
+            guess: "npc",
+            line: { speaker: "Mira", at: 2210, text: "This is Garrick, the ferryman." },
+          },
+        },
         // Lists of names (#3406): a split or a group is offered on these; "Brannoch and Veshla" has a group DMbot knows.
         { id: "f".repeat(32), name: "Aldmoor, Quillgate and Fenwick", note: "Three towns named together.", isList: true, groups: [] as NameGroupHint[] },
         {
@@ -4664,9 +5820,18 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         scene: ref.includes(".no-scene") ? null : "Brannoch the smith mends Mira's sword in Eastmarch while the party waits out the storm.",
         places: [{ session: 12, available: true, lines: [{ speaker: "Mira", at: 1840, text: "…we rode to Brannoch's forge before dark…" }] }],
         morePlaces: 2,
+        // `.ranked`: what core's ranked fill sends (#5264, core #5295): DMbot's stored answers first, then the ranked entries, five
+        // at most, each label carrying its most significant detail, and the card's own "new <kind>" last. Two share a name.
         answers: ref.includes(".no-answers")
           ? []
-          : [
+          : ref.includes(".ranked")
+            ? [
+                { label: "a.k.a. Veshla (a smith who mends swords)", answer: { action: "same" as const, known: "k".repeat(32) } },
+                { label: "a.k.a. Veshla (a ship of the Silver League)", answer: { action: "same" as const, known: "l".repeat(32) } },
+                { label: "a.k.a. Brannock (an NPC)", answer: { action: "same" as const, known: "m".repeat(32) } },
+                { label: "new NPC", answer: { action: "confirm" as const, kind: "npc" } },
+              ]
+            : [
               { label: "a.k.a. Veshla", answer: { action: "same" as const, known: "k".repeat(32) } },
               { label: "new NPC", answer: { action: "confirm" as const, kind: "npc" } },
             ],
@@ -5009,7 +6174,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         return { status: "ended" };
       }
       const why = token === "no-plan" ? "no_plan" : token === "try-it" ? "try_it" : token === "own" ? "owner" : null;
-      // `shares` can't move to another server; `failed` has a move that did not happen last time (#2550).
+      // `shares` greys one server out with a generic reason; `failed` has a move that did not happen last time (#2550).
       return {
         status: "open",
         campaign: { name: "The Silver Hall" },
@@ -5018,14 +6183,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         canAccept: why === null,
         why,
         servers:
-          token === "greyonly"
-            ? // not in the server it runs on, and every other one is out too
-              [{ id: "s2", name: "Sunday Table", current: false, botIn: true, why: "shares_rules" }]
-            : [
-                { id: "s1", name: "Friday Night Dice", current: true, botIn: true },
-                { id: "s2", name: "Sunday Table", current: false, botIn: true, why: token === "shares" ? "shares_rules" : null },
-                { id: "s3", name: "New Server", current: false, botIn: false },
-              ],
+          [
+            { id: "s1", name: "Friday Night Dice", current: true, botIn: true },
+            { id: "s2", name: "Sunday Table", current: false, botIn: true, why: token === "shares" ? "other" : null }, // (a generic reason: none is sent today)
+            { id: "s3", name: "New Server", current: false, botIn: false },
+          ],
         moveFailed: token === "failed" || failedMove ? "A session is running. Try again after it ends." : null,
       };
     },
@@ -5035,7 +6197,6 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (token === "gone-after") throw new ApiError("ended");
       if (serverId === "s3") throw new ApiError("bad-server");
-      if (token === "shares" && serverId !== "s1") throw new ApiError("shares-rules");
       // Another server than where it runs: the bot moves it, and it appears under the person's campaigns.
       if (serverId !== "s1") {
         if (token === "movefail") moveState = "failing";

@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Final
 
 NAMES: Final = "names"
+MORE_NAMES: Final = "more_names"  # an import's names past the scan's 10, waiting (#5055 B)
 HEARD: Final = "heard"
 LOOKALIKES: Final = "lookalikes"
 CONNECTIONS: Final = "connections"
@@ -24,10 +25,17 @@ WORLD: Final = "world_notes"  # DMbot's guesses about places and languages, to c
 THREADS: Final = "threads"  # story threads the lore holds, to keep or turn down (#4453)
 SECRETS: Final = "secrets"  # what the players know that sounded like a secret (#4524)
 JOINS: Final = "party_joins"  # characters who joined: what do they know of before? (#4537)
+LEAVES: Final = "party_leaves"  # a goodbye or a death: still in the party? (#4537 slice 6)
+REVEALS: Final = "reveals"  # what the characters learned, waiting to be kept (#3863, #2996)
+DEEDS: Final = (
+    "deeds"  # deeds the party did that mattered to someone, waiting to be recorded (#3591, #3590)
+)
+HEADS_UPS: Final = "heads_ups"  # continuity heads-ups waiting for the DM (#3695, #5147)
 
 # In the order the list shows them (the ones people answer most first).
 ORDER: Final[tuple[str, ...]] = (
     NAMES,
+    MORE_NAMES,
     HEARD,
     LOOKALIKES,
     CONNECTIONS,
@@ -38,6 +46,10 @@ ORDER: Final[tuple[str, ...]] = (
     THREADS,
     SECRETS,
     JOINS,
+    LEAVES,
+    DEEDS,
+    HEADS_UPS,
+    REVEALS,
     MAPS,
     CLAIMS,
     READINGS,
@@ -48,6 +60,7 @@ ORDER: Final[tuple[str, ...]] = (
 
 LABELS: Final[dict[str, str]] = {
     NAMES: "New names to check",
+    MORE_NAMES: "More names from your sessions",
     HEARD: "Did they mean…?",
     LOOKALIKES: "Names that look alike",
     CONNECTIONS: "Connections waiting",
@@ -58,6 +71,10 @@ LABELS: Final[dict[str, str]] = {
     THREADS: "Story threads to check",
     SECRETS: "Known or secret?",
     JOINS: "New in the party",
+    LEAVES: "Still in the party?",
+    DEEDS: "Deeds to record",
+    HEADS_UPS: "Heads-ups",
+    REVEALS: "Things the characters learned",
     MAPS: "Maps waiting for your yes",
     CLAIMS: "Facts to check",
     READINGS: "What people believe",

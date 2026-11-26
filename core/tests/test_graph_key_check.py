@@ -513,6 +513,12 @@ class ThePlaceholders(unittest.TestCase):
         self.assertEqual(sum(report.extra_entries.values()), 0)
         self.assertIn("Player placeholders left out (not extras): 2", gkc.render(report))
 
+    def test_a_player_without_discord_is_a_placeholder_too(self) -> None:
+        # (#5055: dev1's unmatched list had these four as extra names in every run)
+        data = backup([("p1", "Player 3 (no Discord)", "person")], [])
+        report = gkc.check(data, self.key(), "lore")
+        self.assertEqual((report.placeholders, sum(report.extra_entries.values())), (1, 0))
+
     def test_a_placeholder_that_only_plays_a_character_is_left_out(self) -> None:
         plays = {
             "table": "relation", "id": "r1", "subject_id": "p1", "predicate": "plays",
@@ -631,6 +637,23 @@ class UnnamedPeople(unittest.TestCase):
         (tie,) = [t for t in report.ties if t.id == "l035"]
         self.assertEqual((spirit.status, tie.status), (gkc.FOUND, gkc.FOUND))
 
+    def test_extras_are_listed_by_name_only_when_asked(self) -> None:
+        # (#5055: dev1 lists what each run stored that the key does not match, on #3545)
+        data = backup(
+            [("c1", "Cerric", "character"), ("x1", "Underdark", "place"),
+             ("u1", "unnamed - Cerric's grandfather", "character")],
+            [],
+        )  # fmt: skip
+        data["sections"]["memory"][2]["unnamed"] = True
+        for row in data["sections"]["memory"]:
+            row["source"] = "lore"
+        report = gkc.check(data, KEY)
+        listed = gkc.render(report, counts_only=True, list_extras=True)
+        self.assertIn("place | confirmed | lore | Underdark", listed)
+        self.assertIn("unnamed - Cerric's grandfather", listed)
+        self.assertNotIn("Underdark", gkc.render(report, counts_only=True))
+        self.assertNotIn("| Cerric\n", listed)  # (a key match is never an extra)
+
     def test_other_must_not_names_still_count_as_descriptions(self) -> None:
         key = {**self.raider_key(), "must_not_names": ["maul barbarian", "the attackers"]}
         data = backup([("u1", "unnamed - the attackers", "character")], [])
@@ -640,6 +663,92 @@ class UnnamedPeople(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DescribedThings(unittest.TestCase):
+    """A thing the story describes but never names (#5055 D, Supervisor's ruling): scored on its
+    own line, found as an entry or (a being only) on the met-but-not-named list, never a name
+    miss; its ties are found by the same words."""
+
+    KEY: ClassVar[dict[str, Any]] = {
+        "nodes": [
+            {"name": "The kennel", "kind": "place", "aliases": [], "described": True,
+             "said_as": ["kennel"]},
+            {"name": "Garret's old sled", "kind": "item", "aliases": [], "described": True,
+             "said_as": ["Garret's old sled", "old sled"]},
+            {"name": "Garret's clients", "kind": "group", "aliases": [], "described": True,
+             "said_as": ["Garret's clients"]},
+            {"name": "Garret Velryn", "kind": "person", "aliases": []},
+        ],
+        "pairs": [
+            {"id": "d1", "a": "Garret Velryn", "relation": "owns", "b": "Garret's old sled",
+             "tier": "stated", "must_find": True, "in": ["session"]},
+        ],
+    }  # fmt: skip
+
+    def statuses(self, report: gkc.Report) -> dict[str, str]:
+        return {r.id: r.status for r in report.described}
+
+    def test_found_as_an_entry_with_its_tie_or_a_being_on_the_met_list(self) -> None:
+        data = backup(
+            [("g1", "Garret Velryn", "character"), ("s1", "Old sled", "item")],
+            [rel("r1", "g1", "owns", "s1")],
+        )
+        met = ["Garret's clients, waiting by the dock.", "the dogs in the kennel"]
+        report = gkc.check(data, self.KEY, met=met)
+        self.assertEqual([e.id for e in report.entries], ["Garret Velryn"])  # (not in the names)
+        self.assertEqual(
+            self.statuses(report),
+            {
+                "Garret's old sled": gkc.AS_ENTRY,
+                "Garret's clients": gkc.ON_MET_LIST,  # (punctuation and all)
+                "The kennel": gkc.MISSING,  # (a place is never on the met list: beings only)
+            },
+        )
+        (tie,) = report.ties
+        self.assertEqual(tie.status, gkc.FOUND)  # (the sled's tie, found by its said_as words)
+        self.assertEqual((sum(report.extra_entries.values()), report.extra_ties), (0, 0))
+        self.assertIn(
+            "Described, never named: found 2 of 3 (1 as an entry, 1 on the met list)",
+            gkc.render(report, counts_only=True),
+        )
+        self.assertEqual(gkc.summarize(report)["described"]["total"], 3)
+
+    def test_a_person_the_story_never_named_is_found_by_description(self) -> None:
+        data = backup([("u1", "unnamed - Garret's clients", "character")], [])
+        data["sections"]["memory"][0]["unnamed"] = True
+        self.assertEqual(self.statuses(gkc.check(data, self.KEY))["Garret's clients"], gkc.AS_ENTRY)
+
+    def test_a_word_inside_another_word_is_no_find(self) -> None:
+        report = gkc.check(backup([], []), self.KEY, met=["Garret's clientele"])
+        self.assertIn(
+            "Described, never named: found 0 of 3 (0 as an entry, 0 on the met list)",
+            gkc.render(report, counts_only=True),
+        )
+
+    def test_the_command_reads_the_met_words_from_a_file(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            folder = Path(d)
+            (folder / "key.json").write_text(json.dumps(self.KEY))
+            (folder / "b.json").write_text(json.dumps(backup([], [])))
+            (folder / "met.json").write_text(json.dumps(["Garret's clients"]))
+            (folder / "bad.json").write_text(json.dumps("Garret's clients"))
+            base = [str(folder / "b.json"), "--key", str(folder / "key.json"), "--counts-only"]
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(gkc.main([*base, "--met", str(folder / "met.json")]), 0)
+            self.assertIn("found 1 of 3 (0 as an entry, 1 on the met list)", out.getvalue())
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(gkc.main([*base, "--met", str(folder / "bad.json")]), 2)
+
+    def test_the_sample_keys_mark_the_four_described_rows(self) -> None:
+        for name in ("session_key.json", "master_key.json"):
+            rows = [n["name"] for n in load(name)["nodes"] if n.get("described")]
+            self.assertEqual(
+                sorted(rows),
+                ["Garret's clients", "Garret's old sled", "The kennel", "The windbreak shelter"],
+                name,
+            )
 
 
 class PlaceFacts(unittest.TestCase):
@@ -759,6 +868,34 @@ class Languages(unittest.TestCase):
                 [("Cerric Vanya'elen", "Draconic"), ("Cerric Vanya'elen", "Elvish")],
             )
             self.assertFalse([p for p in key["pairs"] if "language" in p["relation"]])
+
+
+class Feelings(unittest.TestCase):
+    """A place's, group's or people's feeling toward a lineage or a named culture (#4229 slice 4):
+    found at any step, missed, and extra; the sample lore states none."""
+
+    def row(self, holder: str, **toward: Any) -> dict[str, Any]:
+        row: dict[str, Any] = {"table": "attitude", "id": holder + str(len(toward)),
+                               "holder_id": holder, "toward_id": None, "toward_lineage": None,
+                               "toward_culture_id": None, "closed_at": None}  # fmt: skip
+        return {**row, **toward}
+
+    def test_found_missed_and_extra(self) -> None:
+        key = {
+            "nodes": [{"name": "Mithral Keep", "kind": "place", "aliases": [], "note": ""}],
+            "pairs": [],
+            "attitudes": [
+                {"holder": "Mithral Keep", "toward": "elf"},
+                {"holder": "Mithral Keep", "toward": "Varnish"},
+            ],
+        }
+        rows = [self.row("k", toward_lineage="elf"), self.row("k", toward_lineage="orc")]
+        report = gkc.check(backup([("k", "Mithral Keep", "place")], rows), key)
+        self.assertEqual(report.attitudes, Counter(found=1, missed=1, extra=1))
+        self.assertIn("Feelings: found 1, missed 1, extra 1", gkc.render(report))
+
+    def test_the_sample_lore_states_none(self) -> None:
+        self.assertEqual(load("lore_key.json")["attitudes"], [])
 
 
 class Roads(unittest.TestCase):
@@ -1137,3 +1274,71 @@ class StoryThreads(unittest.TestCase):
         report = gkc.check(backup([("p", "Old Pell", "npc"), *threads], []), key)
         self.assertEqual(report.threads["false"], 1)
         self.assertEqual(report.threads["missed"], 5)
+
+
+class WrongShape(unittest.TestCase):
+    """docs/design/session_names.md, section 8: a key name missed while a part of it is stored
+    ("Valley" for Dwarven Valley) is counted as a wrong shape, beside the miss."""
+
+    def key(self) -> dict[str, Any]:
+        return {
+            "nodes": [
+                {"name": "Dwarven Valley", "kind": "place"},
+                {"name": "Kelvin's Cairn", "kind": "place", "aliases": ["Kelvin Cairn"]},
+                {"name": "Targos", "kind": "place"},
+            ],
+            "pairs": [],
+        }
+
+    def test_a_part_of_a_missed_name_is_a_wrong_shape(self) -> None:
+        data = backup([("e1", "Valley", "place"), ("e2", "the Kelvin", "place")], [])
+        report = gkc.check(data, self.key())
+        self.assertEqual(report.wrong_shape, 2)  # (each key entry once; "the" never counts)
+        self.assertEqual(gkc.summarize(report)["wrong_shape"], 2)
+        self.assertIn("Missed, but part of the name stored (wrong shape): 2", gkc.render(report))
+
+    def test_a_found_name_or_an_unrelated_extra_is_no_wrong_shape(self) -> None:
+        data = backup(
+            [
+                ("e1", "Dwarven Valley", "place"),
+                ("e2", "Valley", "place"),
+                ("e3", "Bremen", "place"),
+            ],
+            [],
+        )
+        report = gkc.check(data, self.key())
+        self.assertEqual(report.wrong_shape, 0)  # (Dwarven Valley is found; Bremen is no part)
+
+    def test_two_parts_of_one_name_count_it_once(self) -> None:
+        data = backup([("e1", "Dwarven", "place"), ("e2", "Valley", "place")], [])
+        self.assertEqual(gkc.check(data, self.key()).wrong_shape, 1)
+
+    def test_an_article_alone_or_a_description_is_no_part(self) -> None:
+        key = {"nodes": [{"name": "Valley of the Dead", "kind": "place"}], "pairs": []}
+        data = backup([("e1", "The", "place")], [])
+        self.assertEqual(gkc.check(data, key).wrong_shape, 0)
+        unnamed = backup([("e2", "Dead", "person")], [])
+        unnamed["sections"]["memory"][0]["unnamed"] = True
+        self.assertEqual(gkc.check(unnamed, key).wrong_shape, 0)
+
+
+class FoundBySource(unittest.TestCase):
+    """Which reader stored each found key entry (the Expert, on session_names slice 2c)."""
+
+    def test_found_entries_are_counted_by_their_stored_source(self) -> None:
+        key = {
+            "nodes": [
+                {"name": "Targos", "kind": "place"},
+                {"name": "Hrothgar", "kind": "person"},
+                {"name": "Bryn Shander", "kind": "place"},
+            ],
+            "pairs": [],
+        }
+        data = backup([("e1", "Targos", "place"), ("e2", "Hrothgar", "npc")], [])
+        rows = data["sections"]["memory"]
+        rows[0]["source"], rows[1]["source"] = "scan", "extractor"
+        report = gkc.check(data, key)
+        self.assertEqual(dict(report.found_by), {"scan": 1, "extractor": 1})
+        self.assertIn(
+            "Found, by the stored entry's source: extractor 1, scan 1", gkc.render(report)
+        )

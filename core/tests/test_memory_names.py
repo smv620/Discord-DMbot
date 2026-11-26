@@ -75,6 +75,21 @@ class NamesTest(DatabaseTest):
             SessionStore(self.db),
             memory=self.memory,
         )
+        entities = self.memory.entities
+
+        async def every_entry(
+            guild_id: int, campaign_id: str, viewer: Any = None, *, live_at: int | None = None
+        ) -> frozenset[str]:
+            # (what the gate answers is tested in test_name_card_gate.py: these cards are about
+            # what is on them, so everyone here holds every entry)
+            return frozenset(e.id for e in await entities(guild_id, campaign_id))
+
+        self.memory.entries_held = every_entry  # type: ignore[method-assign]
+
+        async def every_entry_seen(guild_id: int, campaign_id: str, user_id: int) -> frozenset[str]:
+            return await every_entry(guild_id, campaign_id)
+
+        self.memory.entries_seen_by = every_entry_seen  # type: ignore[method-assign]
         self.campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
         # The tests built on this one are of the Add all flow and the cards. A lore upload adds what
         # DMbot is sure of by itself unless the campaign asks first (#3878), so the campaign asks
@@ -1224,10 +1239,10 @@ class NameCards(NamesTest):
         self.assertTrue(full.secret_neighbours)  # the DM's view has the secret link
         self.assertEqual(full.for_viewer(True).secret_neighbours, full.secret_neighbours)
         # Nothing here is DM-only, so this is the early-return path that must still blank it.
-        self.assertFalse(full.hidden)
-        self.assertEqual(full.for_viewer(False).secret_neighbours, {})
+        held = frozenset(full.entities)  # (a player who holds every entry: still no secret link)
+        self.assertEqual(full.for_viewer(False, held).secret_neighbours, {})
         self.assertNotIn(
-            vessa.id, full.for_viewer(False).confirmed_neighbours.get(self.bell.id, ())
+            vessa.id, full.for_viewer(False, held).confirmed_neighbours.get(self.bell.id, ())
         )
 
     async def test_the_dropdown_pages_at_25_names(self) -> None:
@@ -1615,7 +1630,7 @@ class NameCards(NamesTest):
         names = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
         rel = await self.memory.relations(GUILD, self.campaign.id, entity_id=self.bell.id)
         self.assertEqual(name_card.cut_sections(names, self.bell.id, rel, secrets=False), [])
-        text = name_card.card_text(names, self.bell.id, rel, secrets=False)
+        text = name_card.card_text(names, self.bell.id, rel, secrets=False, seen={self.bell.id})
         assert text is not None
         lines = text.split("\n")
         self.assertIn("**Connections:**", lines)
@@ -3911,3 +3926,146 @@ class Store(NamesTest):
                 ("Cerric", PLAYER)
             ],  # (The party, made when the player was given the character, aside)
         )
+
+
+class NewCard(NamesTest):
+    """The new name card's answers (#5133 slice 3c-2a): a waiting name the after-session step kept
+    what made it a name for. Invented names."""
+
+    async def waiting(self, name: str, kind: str = "concept") -> str:
+        from dmbot.memory.name_found import NameFound
+
+        written = await self.memory.add_entity(
+            GUILD,
+            self.campaign.id,
+            type=kind,
+            name=name,
+            source="scan",
+            description="Heard 3 times",
+        )
+        await NameFound(self.db).keep(
+            GUILD, self.campaign.id, written.value.id, "scan", None, times=3
+        )
+        return written.value.id
+
+    async def review(self) -> tuple[ui.SuggestionReview, str]:
+        it = self.it()
+        await ui.start_review(it, self.campaign.id)
+        text, kw = it.response.sent[0]
+        return kw["view"], text
+
+    def said(self, it: Any) -> str:
+        return "\n".join(t for t, _ in [*it.response.sent, *it.response.edited])
+
+    async def status(self, entity_id: str) -> tuple[str, str]:
+        entity = await self.memory.entity(GUILD, self.campaign.id, entity_id)
+        assert entity is not None
+        return entity.name, entity.status
+
+    async def test_the_card_asks_on_its_title_line_with_the_new_answers(self) -> None:
+        await self.waiting("Hrothgar")
+        view, text = await self.review()
+        self.assertTrue(text.startswith("📝 **Hrothgar**: a new name? Heard 3 times."))
+        labels = [str(getattr(c, "label", "") or "") for c in view.children]
+        self.assertIn("✏️ Spelled another way…", labels)
+        self.assertNotIn("✏️ Change the words", labels)
+
+    async def test_yes_keeps_it_as_dmbot_s_guess(self) -> None:
+        eid = await self.waiting("Hrothgar Hall", "place")
+        view, _ = await self.review()
+        it = self.it()
+        await view._yes(it)
+        self.assertEqual(await self.status(eid), ("Hrothgar Hall", CONFIRMED))
+        self.assertIn("✅ Kept **Hrothgar Hall** as a place.", self.said(it))
+
+    async def test_another_spelling_keeps_it_under_that_spelling(self) -> None:
+        eid = await self.waiting("Hrothgar Hal", "place")
+        view, _ = await self.review()
+        it = self.it()
+        await view.apply_words(it, eid, "", "Hrothgar Hall", keep=True)
+        self.assertEqual(await self.status(eid), ("Hrothgar Hall", CONFIRMED))
+        # (the spelling heard is kept as another, and the reply says so)
+        self.assertIn(
+            "✅ Kept **Hrothgar Hall** (also **Hrothgar Hal**) as a place.", self.said(it)
+        )
+
+    async def test_another_spelling_with_no_guess_asks_what_it_is(self) -> None:
+        eid = await self.waiting("Hrothgr")
+        view, _ = await self.review()
+        it = self.it()
+        await view.apply_words(it, eid, "", "Hrothgar", keep=True)
+        self.assertEqual(await self.status(eid), ("Hrothgar", PROPOSED))
+        self.assertIn("**What is Hrothgar?**", self.said(it))
+
+    async def test_an_empty_spelling_or_a_known_name_says_what_to_do(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Vorna", "npc", [], [])
+        eid = await self.waiting("Vornah")
+        view, _ = await self.review()
+        it = self.it()
+        await view.apply_words(it, eid, "", "   ", keep=True)
+        self.assertIn("Type the name, then press Submit.", self.said(it))
+        it = self.it()
+        await view.apply_words(it, eid, "", "Vorna", keep=True)
+        self.assertIn(
+            "**Vorna** is already a name in this campaign. "
+            "Press 🔗 Same as a known name… to join them.",
+            self.said(it),
+        )
+        self.assertEqual(await self.status(eid), ("Vornah", PROPOSED))
+
+    async def test_spelled_another_way_is_the_dm_s(self) -> None:
+        await self.waiting("Hrothgar")
+        view, _ = await self.review()
+        it = self.it(MANAGER)
+        await view._spelled_another(it)
+        self.assertIn("Only the DM", self.said(it))
+        it = self.it()
+        await view._spelled_another(it)
+        self.assertIsInstance(it.response.modal, ui.SpelledForm)
+        self.assertEqual(it.response.modal.name.default, "Hrothgar")
+
+    async def test_not_a_name_says_it_won_t_ask_again_about_any_spelling(self) -> None:
+        eid = await self.waiting("Hrothgar")
+        await self.memory.add_alias(
+            GUILD, self.campaign.id, eid, "Rothgar", kind="misheard", source="scan"
+        )
+        view, _ = await self.review()
+        it = self.it()
+        await view._no(it)
+        self.assertEqual((await self.status(eid))[1], REJECTED)
+        self.assertIn(
+            "🚫 Not a name. DMbot won't ask about Hrothgar or Rothgar again.", self.said(it)
+        )
+
+    async def test_a_spelling_already_heard_names_the_others_as_they_are_now(self) -> None:
+        eid = await self.waiting("Rothgar", "place")
+        await self.memory.add_alias(
+            GUILD, self.campaign.id, eid, "Hrothgar", kind="misheard", source="scan"
+        )
+        view, _ = await self.review()
+        it = self.it()
+        await view.apply_words(it, eid, "", "Hrothgar", keep=True)
+        said = self.said(it)
+        self.assertEqual(await self.status(eid), ("Hrothgar", CONFIRMED))
+        self.assertIn("✅ Kept **Hrothgar** (also **Rothgar**) as a place.", said)
+        self.assertNotIn("(also **Hrothgar**", said)
+
+    async def test_with_no_guess_the_kind_question_says_the_spelling_is_saved(self) -> None:
+        eid = await self.waiting("Hrothgr")
+        view, _ = await self.review()
+        it = self.it()
+        await view.apply_words(it, eid, "", "Hrothgar", keep=True)
+        self.assertIn("✏️ Saved as **Hrothgar**.\n**What is Hrothgar?**", self.said(it))
+        it = self.it()
+        view.kind._values = ["place"]  # (the pick, as discord.py sets it)
+        await view._kind_picked(it)
+        self.assertEqual(await self.status(eid), ("Hrothgar", CONFIRMED))
+        self.assertIn("✅ Kept **Hrothgar** (also **Hrothgr**) as a place.", self.said(it))
+
+    async def test_the_form_keeps_the_name_under_its_spelling(self) -> None:
+        eid = await self.waiting("Hrothgar Hal", "place")
+        view, _ = await self.review()
+        form = ui.SpelledForm(view, eid, "Hrothgar Hal")
+        form.name._value = "Hrothgar Hall"
+        await form.on_submit(self.it())
+        self.assertEqual(await self.status(eid), ("Hrothgar Hall", CONFIRMED))

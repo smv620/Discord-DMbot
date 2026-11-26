@@ -59,6 +59,11 @@ class Clues(ConfirmedMemoryTest):
         await super().asyncSetUp()
         self.claims = ClaimStore(self.memory)
         self.store = ContinuityStore(self.memory)
+        # (the players' audience is the party's view, #4537 slice 5a: a party of one, made first,
+        # so every entry shown to the table after it is written as known to it)
+        await self.add(
+            "Pcwyn Testhand", type="character", role="player_character", played_by=900_001
+        )
         self.secret = await self.add("The baron's secret", type="clue")
         self.cerric = await self.add("Cerric", type="character")
         self.kesh = await self.add("Kesh", type="character")
@@ -280,16 +285,21 @@ class Clues(ConfirmedMemoryTest):
 
         lookup = CampaignLookup.build(data)
         connections = await self.memory.relations(GUILD_A, self.c, entity_id=self.secret)
-        dm = name_card.card_text(lookup, self.secret, connections, secrets=True)
+        dm = name_card.card_text(lookup, self.secret, connections, secrets=True, table=frozenset())
         assert dm is not None
         self.assertIn("🔒 **Only some people know this:** Cerric, Kesh", dm)
         self.assertIsNone(name_card.card_text(lookup, self.secret, connections, secrets=False))
 
-    async def view(self, secrets: bool) -> Any:
+    async def view(self, secrets: bool, also: frozenset[str] = frozenset()) -> Any:
         from dmbot.memory.lookup import CampaignLookup
 
+        # (a manager who isn't a DM and plays no one holds the common knowledge, from the gate;
+        # `also`: what a player's own character knows besides, #4802)
+        seen = (
+            None if secrets else await self.memory.entries_seen_by(GUILD_A, self.c, 987_654) | also
+        )
         return CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c)).for_viewer(
-            secrets
+            secrets, seen
         )
 
     async def test_a_manager_who_is_not_a_dm_finds_the_clue_nowhere(self) -> None:
@@ -317,8 +327,16 @@ class Clues(ConfirmedMemoryTest):
     async def test_a_knowers_card_does_not_mention_a_limited_clue_to_a_non_dm(self) -> None:
         await self.limit(self.cerric)
         connections = await self.memory.relations(GUILD_A, self.c, entity_id=self.cerric)
-        other = name_card.card_text(await self.view(False), self.cerric, connections, secrets=False)
-        dm = name_card.card_text(await self.view(True), self.cerric, connections, secrets=True)
+        other = name_card.card_text(
+            await self.view(False, frozenset({self.cerric})),  # (a player who knows Cerric)
+            self.cerric,
+            connections,
+            secrets=False,
+            seen={self.cerric},
+        )
+        dm = name_card.card_text(
+            await self.view(True), self.cerric, connections, secrets=True, table=frozenset()
+        )
         assert other is not None and dm is not None
         self.assertNotIn("baron", other)
         self.assertIn("baron", dm)
@@ -327,6 +345,7 @@ class Clues(ConfirmedMemoryTest):
             self.secret,
             await self.memory.relations(GUILD_A, self.c, entity_id=self.secret),
             secrets=True,
+            table=frozenset(),  # (a clue only some people know: the table doesn't hold it)
         )
         assert clue_card is not None
         self.assertNotIn("Secret:", clue_card)  # its own name is the title, not a second line

@@ -6,7 +6,7 @@
 // HOW IT TURNS ON: when the web door (migration 0288) and CloudDev's bot step (#3022) are deployed and dev1 has uploaded a
 // short text for a test campaign and seen the names arrive, the What's new entry "Upload lore" moves out of `held`
 // and LORE_LIVE becomes true in the same change; the server switch DMBOT_WEB_LORE=1 is set after the bot (docs/GO_LIVE.md).
-export const LORE_LIVE = false;
+export { LORE_LIVE } from "./lore-switch"; // (the switch is in its own file: #5324)
 
 /** Mirror the core limits (web/lore.py, the same as Discord's form): change them together. */
 export const LORE_TEXT_MAX = 262_144;
@@ -68,6 +68,9 @@ export const lorePage = {
   units: { parts: "parts", names: "names", checks: "checks", pictures: "pictures" } as Record<string, string>,
   found: (names: number, links: number): string =>
     `DMbot found ${names} ${names === 1 ? "name" : "names"} and ${links} ${links === 1 ? "connection" : "connections"}.`,
+  /** Names past the limit of one document (#5072), the same words as Discord: the count first. */
+  cut: (n: number): string =>
+    `${n === 1 ? "1 more name was" : `${n} more names were`} left out. DMbot lists up to 200 names from one document. To get ${n === 1 ? "it" : "them"}, split the document and upload each part.`,
   foundNothing: "DMbot didn't find any names in that. Try a longer piece.",
   nextLead: "Nothing is kept until you check it:",
   checkNames: "Check the new names",

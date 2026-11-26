@@ -197,7 +197,9 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
         ]
         memory = SimpleNamespace(
             entities=AsyncMock(return_value=[mira, gone, npc]),
-            visible_to=AsyncMock(return_value=seen),
+            # (that session's party and what it knew, one read, #4537 3b and #4877; no members
+            # read: every speaker's character counts, as before)
+            party_at_session=AsyncMock(return_value=SimpleNamespace(members=(), seen=seen)),
             threads=AsyncMock(return_value=threads),
             recap_reveals=AsyncMock(return_value=[SAID]),
         )
@@ -206,6 +208,10 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_table_is_the_speakers_characters_and_only_the_recorded_count(self) -> None:
         bot = self.bot({11})
+        # (the normal path: the party at that session is read, and Mira is in it, #4877)
+        bot.memory.party_at_session.return_value = SimpleNamespace(
+            members=("e1",), seen=bot.memory.party_at_session.return_value.seen
+        )
         job: Any = SimpleNamespace(session_at=100, speakers=(11,))
         got = await RecapFeatures.recap_reveals(bot, 1, "c", job)
         self.assertEqual(got, [SAID])
@@ -213,7 +219,22 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(args[:3], (1, "c", 100))
         self.assertEqual(set(args[3]), {"e1"})  # not the NPC, not a player who didn't speak
         self.assertEqual(set(args[4]), {"t1", "n1"})  # only what the party knows is open
+        # (what the party AT that session knows, #4537 slice 3b)
+        bot.memory.party_at_session.assert_awaited_with(1, "c", 100)
         self.assertEqual(set(args[5]), {11})  # recorded now: the reader drops the rest
+
+    async def test_a_speakers_character_outside_that_sessions_party_is_not_at_its_table(
+        self,
+    ) -> None:
+        bot = self.bot({11, 22})
+        bot.memory.party_at_session = AsyncMock(
+            return_value=SimpleNamespace(
+                members=("e2",), seen=SimpleNamespace(how_sure=lambda kind, i: "sure")
+            )
+        )
+        job: Any = SimpleNamespace(session_at=100, speakers=(11, 22))
+        await RecapFeatures.recap_reveals(bot, 1, "c", job)
+        self.assertEqual(set(bot.memory.recap_reveals.await_args.args[3]), {"e2"})  # (#4877)
 
     async def test_nobody_at_the_table_asks_for_nothing(self) -> None:
         bot = self.bot({11})
@@ -227,7 +248,9 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
         seen = SimpleNamespace(how_sure=lambda kind, i: "sure")
         memory = SimpleNamespace(
             entities=AsyncMock(return_value=[pc]),
-            visible_to=AsyncMock(return_value=seen),
+            # (that session's party and what it knew, one read, #4537 3b and #4877; no members
+            # read: every speaker's character counts, as before)
+            party_at_session=AsyncMock(return_value=SimpleNamespace(members=(), seen=seen)),
             threads=AsyncMock(return_value=threads),
             recap_reveals=AsyncMock(return_value=[SAID]),
         )
@@ -289,9 +312,10 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
             self._thread("t-hidden", OPEN, ["n-hidden"]),
         ]
         bot = self._reader(threads)
-        bot.memory.visible_to = AsyncMock(
+        bot.memory.party_at_session = AsyncMock(
             return_value=SimpleNamespace(
-                how_sure=lambda kind, i: "sure" if i == "t-known" else None
+                members=(),
+                seen=SimpleNamespace(how_sure=lambda kind, i: "sure" if i == "t-known" else None),
             )
         )
         job: Any = SimpleNamespace(session_at=100, speakers=(11,))

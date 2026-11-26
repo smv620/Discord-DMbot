@@ -13,6 +13,11 @@ LABEL = "swore on Veil's grave to guard"
 class OnTheRecall(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        # (the players' audience is the party's view, #4537 slice 5a: a party of one, made first,
+        # so every entry shown to the table after it is written as known to it)
+        await self.add(
+            "Pcwyn Testhand", type="character", role="player_character", played_by=900_001
+        )
         self.cerric = await self.add("Cerric", type="character", role="npc")
         self.far = await self.add("Far Keep", type="place")
         self.temple = await self.add("Old Temple", type="place")
@@ -64,3 +69,25 @@ class OnTheRecall(ConfirmedMemoryTest):
         await self.add("Sir Dunmoor", type="character", status="proposed")
         await self.link(self.cerric, "associated_with", self.temple, "bound by oath to Sir Dunmoor")
         self.assertNotIn("Dunmoor", await self.says(PLAYERS))
+
+    # (#4911: the guard's names are now chosen in its query: each branch of it)
+    async def test_an_open_other_name_of_a_hidden_entry_is_not_named(self) -> None:
+        await self.memory.add_alias(
+            GUILD_A, self.c, self.veil, "the Pale Lord", kind="nickname", source="dm",
+            secret=False, dm_chose_secret=False, status="confirmed",
+        )  # fmt: skip
+        await self.link(self.cerric, "associated_with", self.temple, "fears the Pale Lord")
+        self.assertNotIn("Pale", await self.says(PLAYERS))
+
+    async def test_a_proposed_other_name_of_a_known_entry_is_not_named(self) -> None:
+        await self.memory.add_alias(
+            GUILD_A, self.c, self.ulfgar, "Stonebeard", kind="nickname", source="extractor",
+            secret=False, dm_chose_secret=False, status="proposed",
+        )  # fmt: skip
+        await self.link(self.cerric, "associated_with", self.temple, "drinks with Stonebeard")
+        self.assertNotIn("Stonebeard", await self.says(PLAYERS))
+
+    async def test_a_dm_only_kind_is_not_named(self) -> None:
+        await self.add("The Drowned Crown", type="quest")
+        await self.link(self.cerric, "associated_with", self.temple, "seeks the Drowned Crown")
+        self.assertNotIn("Drowned", await self.says(PLAYERS))

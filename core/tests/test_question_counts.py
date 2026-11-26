@@ -8,6 +8,7 @@ import unittest
 from collections.abc import Collection
 from dataclasses import replace
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from dmbot.campaigns import CampaignStore
@@ -60,6 +61,7 @@ class TheKinds(unittest.TestCase):
             [kinds.LABELS[k] for k in kinds.ORDER],
             [
                 "New names to check",
+                "More names from your sessions",  # (#5055 B)
                 "Did they mean…?",
                 "Names that look alike",
                 "Connections waiting",
@@ -70,6 +72,10 @@ class TheKinds(unittest.TestCase):
                 "Story threads to check",  # (#4453)
                 "Known or secret?",  # (#4524)
                 "New in the party",  # (#4537)
+                "Still in the party?",  # (#4537 slice 6)
+                "Deeds to record",  # (#3591)
+                "Heads-ups",  # (#5147)
+                "Things the characters learned",  # (#3863)
                 "Maps waiting for your yes",
                 "Facts to check",
                 "What people believe",
@@ -100,6 +106,54 @@ class WhatCountsAsAnAnswer(unittest.TestCase):
 
     def test_the_total_adds_every_kind(self) -> None:
         self.assertEqual(total({kinds.NAMES: Counted(2), kinds.WHICH: Counted(3)}), 5)
+
+
+class TheHeavyKinds(unittest.TestCase):
+    def test_heads_ups_are_throttled_like_the_other_full_reads(self) -> None:
+        # (#5147: a continuity check reads the whole snapshot, so the loop counts it every 5th
+        # round, as it does the other heavy kinds, and not every minute)
+        from dmbot.questions.loop import HEAVY
+
+        self.assertIn(kinds.HEADS_UPS, HEAVY)
+
+
+class TheRevealsCount(unittest.IsolatedAsyncioTestCase):
+    """What the characters learned (#3863): the count is the reveal card's own, with the people
+    recorded in that campaign as the only speakers that count. Stand-ins, no database."""
+
+    async def counted(self, recorded: object, waiting: int) -> tuple[int, list[object]]:
+        from unittest.mock import patch
+
+        seen: list[object] = []
+
+        async def count_waiting(_self: object, g: int, c: str, *, opted_in: object) -> int:
+            seen.append(opted_in)
+            return waiting
+
+        async def who(_g: int, _c: str) -> object:
+            return recorded
+
+        async def asked(_g: int, _c: str) -> bool:
+            return True
+
+        src = Sources(
+            db=cast(Any, object()),
+            memory=object(),
+            recorded=cast(Any, who if recorded is not None else None),
+            reveals_on=asked,
+        )
+        with patch("dmbot.memory.reveal_proposals.RevealProposals.count_waiting", count_waiting):
+            got = await counts.count_kinds(src, 1, "c", only={kinds.REVEALS})
+        return got[kinds.REVEALS].n, seen
+
+    async def test_the_count_is_the_cards_and_asks_with_who_is_recorded(self) -> None:
+        self.assertEqual(await self.counted({7}, 3), (3, [{7}]))
+
+    async def test_an_empty_recorded_list_is_passed_on_as_empty_not_as_no_filter(self) -> None:
+        self.assertEqual(await self.counted(set(), 2), (2, [set()]))
+
+    async def test_nobody_known_to_be_recorded_counts_nothing(self) -> None:
+        self.assertEqual(await self.counted(None, 3), (0, []))
 
 
 class TheCounts(Base):
@@ -565,6 +619,72 @@ class TheCounts(Base):
         # ... and counted again once it works
         self.assertEqual((await self.count(kinds.LOOKALIKES)).n, 1)
 
+    async def test_deeds_waiting_are_counted_and_a_speaker_who_stopped_is_not(self) -> None:
+        # (#5105: the deed card's own count, as readings are; a deed whose speaker is no longer
+        # recorded is left out, and a bot with no memory store counts nothing)
+        from dmbot.memory.deed_proposals import DeedProposals
+        from dmbot.memory.deed_reading import DeedProposal
+
+        deeds = DeedProposals(self.memory)
+        await deeds.store(
+            self.g, self.c,
+            [
+                (
+                    DeedProposal(
+                        "Cerric", "Saved the mill", ("Brindle",), "Helped them", ("1", "2")
+                    ),
+                    (7,),
+                )
+            ],
+            opted_in={7, 8}, session_started_at=500, prompt_version="deeds-1", model="m",
+        )  # fmt: skip
+        await deeds.store(
+            self.g, self.c,
+            [(DeedProposal("Brindle", "Lit the beacon", ("Cerric",), "Hurt them", ("3",)), (8,))],
+            opted_in={7, 8}, session_started_at=600, prompt_version="deeds-1", model="m",
+        )  # fmt: skip
+
+        async def agreed(_g: int) -> set[int]:
+            return {7}  # (speaker 8 has stopped being recorded)
+
+        self.src.agreed = agreed
+
+        async def switched_on(_g: int, _c: str) -> bool:
+            return True
+
+        async def lapsed(_g: int, _c: str) -> bool:
+            return False  # (the switch is off, or the plan has no story memory)
+
+        self.src.deeds_on = switched_on
+        self.assertEqual((await self.count(kinds.DEEDS)).n, 1)
+        self.src.deeds_on = lapsed
+        self.assertEqual((await self.count(kinds.DEEDS)).n, 0)  # a lapsed plan offers none
+        self.src.deeds_on = None
+        self.assertEqual((await self.count(kinds.DEEDS)).n, 0)  # a gate not wired counts nothing
+        self.src.deeds_on = switched_on
+        bare = Sources(db=self.db)  # (no memory store: the bot without the feature)
+        found = await counts.count_kinds(bare, self.g, self.c, only={kinds.DEEDS})
+        self.assertEqual(found[kinds.DEEDS].n, 0)
+        no_agreed = Sources(db=self.db, memory=self.memory)  # (no agreed set: counts nothing)
+        found = await counts.count_kinds(no_agreed, self.g, self.c, only={kinds.DEEDS})
+        self.assertEqual(found[kinds.DEEDS].n, 0)
+
+    async def test_heads_ups_come_from_the_bots_count_and_a_missing_source_is_zero(self) -> None:
+        # (#5147: the bot's own count, passed in as `heads_ups`; no source counts nothing, and a
+        # negative number is never shown)
+        async def three(_g: int, _c: str) -> int:
+            return 3
+
+        async def negative(_g: int, _c: str) -> int:
+            return -2
+
+        self.src.heads_ups = three
+        self.assertEqual((await self.count(kinds.HEADS_UPS)).n, 3)
+        self.src.heads_ups = negative
+        self.assertEqual((await self.count(kinds.HEADS_UPS)).n, 0)
+        self.src.heads_ups = None
+        self.assertEqual((await self.count(kinds.HEADS_UPS)).n, 0)
+
 
 class TheStoredCounts(Base):
     async def test_counts_are_written_read_back_and_kept_per_campaign(self) -> None:
@@ -602,3 +722,161 @@ class FamilyTiesAreShownAndAnswerable(unittest.TestCase):
         before = {kinds.FAMILY: Counted(3)}
         self.assertTrue(answered(before, {kinds.FAMILY: Counted(1)}))
         self.assertTrue(grew(before, {kinds.FAMILY: Counted(4)}))
+
+
+class TheDeedsGate(unittest.IsolatedAsyncioTestCase):
+    """The question count's deeds gate is the bot's own `deeds_on` (#5105): off with the switch,
+    off for a campaign that is gone, and the plan's story memory decides otherwise."""
+
+    def fake(self, *, switch: bool, campaign: object, allowed: bool) -> Any:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.bot import DMBot
+
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(story_deeds_on=switch, story_reveals_on=switch),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            plan_allows=AsyncMock(return_value=allowed),
+        )
+        bot._story_asked = lambda sw, g, c: DMBot._story_asked(cast(DMBot, bot), sw, g, c)
+        bot.deeds_on = lambda g, c: DMBot.deeds_on(cast(DMBot, bot), g, c)
+        bot.reveals_on = lambda g, c: DMBot.reveals_on(cast(DMBot, bot), g, c)
+        return bot
+
+    async def test_the_switch_off_is_no_and_asks_no_campaign(self) -> None:
+        bot = self.fake(switch=False, campaign=object(), allowed=True)
+        self.assertFalse(await bot.deeds_on(7, "c"))
+        bot.campaigns.get.assert_not_awaited()
+        bot.plan_allows.assert_not_awaited()
+
+    async def test_a_campaign_that_is_gone_is_no(self) -> None:
+        bot = self.fake(switch=True, campaign=None, allowed=True)
+        self.assertFalse(await bot.deeds_on(7, "c"))
+        bot.plan_allows.assert_not_awaited()
+
+    async def test_a_lapsed_plan_is_no_and_is_asked_fail_closed(self) -> None:
+        campaign = object()
+        bot = self.fake(switch=True, campaign=campaign, allowed=False)
+        self.assertFalse(await bot.deeds_on(7, "c"))
+        bot.plan_allows.assert_awaited_once_with("story", 7, campaign, fail_open=False)
+
+    async def test_switch_on_with_story_memory_is_yes(self) -> None:
+        bot = self.fake(switch=True, campaign=object(), allowed=True)
+        self.assertTrue(await bot.deeds_on(7, "c"))
+
+    async def test_reveals_have_the_same_gate_with_their_own_switch(self) -> None:
+        off = self.fake(switch=False, campaign=object(), allowed=True)
+        self.assertFalse(await off.reveals_on(7, "c"))
+        lapsed = self.fake(switch=True, campaign=object(), allowed=False)
+        self.assertFalse(await lapsed.reveals_on(7, "c"))
+        on = self.fake(switch=True, campaign=object(), allowed=True)
+        self.assertTrue(await on.reveals_on(7, "c"))
+
+    async def test_a_reveals_count_is_zero_for_a_lapsed_plan_or_no_gate(self) -> None:
+        from unittest.mock import patch
+
+        async def count_waiting(_self: object, g: int, c: str, *, opted_in: object) -> int:
+            return 3
+
+        async def who(_g: int, _c: str) -> set[int]:
+            return {7}
+
+        async def yes(_g: int, _c: str) -> bool:
+            return True
+
+        async def no(_g: int, _c: str) -> bool:
+            return False
+
+        with patch("dmbot.memory.reveal_proposals.RevealProposals.count_waiting", count_waiting):
+            for gate, want in ((yes, 3), (no, 0), (None, 0)):
+                src = Sources(
+                    db=cast(Any, object()), memory=object(), recorded=who, reveals_on=gate
+                )
+                got = await counts.count_kinds(src, 1, "c", only={kinds.REVEALS})
+                self.assertEqual(got[kinds.REVEALS].n, want)
+
+
+class TheHeadsUpCount(unittest.IsolatedAsyncioTestCase):
+    """The heads-ups count is the bot's `heads_up_count` (#5147): the continuity check with no AI
+    call, behind the story extractor and the plan's story memory, and any error counts zero."""
+
+    def fake(self, *, extractor: bool, allowed: bool, memory: object | None = object()) -> Any:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.bot import DMBot
+
+        bot = SimpleNamespace(
+            memory=memory,
+            settings=SimpleNamespace(story_extractor_on=extractor, continuity=object()),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=object())),
+            plan_allows=AsyncMock(return_value=allowed),
+            consent=SimpleNamespace(consenting=AsyncMock(return_value=frozenset({7, 8}))),
+        )
+        bot._story_asked = lambda sw, g, c: DMBot._story_asked(cast(DMBot, bot), sw, g, c)
+        bot.heads_up_count = lambda g, c: DMBot.heads_up_count(cast(DMBot, bot), g, c)
+        return bot
+
+    async def test_the_switch_off_or_a_lapsed_plan_counts_zero_and_never_checks(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.memory.continuity import ContinuityStore
+
+        with patch.object(ContinuityStore, "check", AsyncMock()) as check:
+            off = self.fake(extractor=False, allowed=True)
+            self.assertEqual(await off.heads_up_count(7, "c"), 0)
+            lapsed = self.fake(extractor=True, allowed=False)
+            self.assertEqual(await lapsed.heads_up_count(7, "c"), 0)
+            check.assert_not_awaited()
+
+    async def test_both_on_counts_the_conflicts_with_who_agrees_read_now(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.memory.continuity import ContinuityStore
+
+        report = SimpleNamespace(conflicts=(object(), object()))
+        with patch.object(ContinuityStore, "check", AsyncMock(return_value=report)) as check:
+            bot = self.fake(extractor=True, allowed=True)
+            self.assertEqual(await bot.heads_up_count(7, "c"), 2)
+            bot.consent.consenting.assert_awaited_once_with(7)
+            kwargs = check.call_args.kwargs
+            self.assertEqual(kwargs["opted_in"], frozenset({7, 8}))
+            self.assertIs(kwargs["levels"], bot.settings.continuity)
+
+    async def test_an_error_counts_zero_and_the_log_names_the_type_only(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.memory.continuity import ContinuityStore
+
+        bot = self.fake(extractor=True, allowed=True)
+        with (
+            patch.object(ContinuityStore, "check", AsyncMock(side_effect=RuntimeError("secret"))),
+            self.assertLogs("dmbot.bot", level="WARNING") as logged,
+        ):
+            self.assertEqual(await bot.heads_up_count(7, "c"), 0)
+        (line,) = logged.output
+        self.assertIn("RuntimeError", line)
+        self.assertNotIn("secret", line)
+
+    async def test_no_memory_store_counts_zero(self) -> None:
+        bot = self.fake(extractor=True, allowed=True, memory=None)
+        self.assertEqual(await bot.heads_up_count(7, "c"), 0)
+
+    async def test_an_error_in_the_gate_counts_zero_and_logs_the_type_only(self) -> None:
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.memory.continuity import ContinuityStore
+
+        bot = self.fake(extractor=True, allowed=True)
+        bot.plan_allows = AsyncMock(side_effect=RuntimeError("plan down"))
+        with (
+            patch.object(ContinuityStore, "check", AsyncMock()) as check,
+            self.assertLogs("dmbot.bot", level="WARNING") as logged,
+        ):
+            self.assertEqual(await bot.heads_up_count(7, "c"), 0)
+        check.assert_not_awaited()
+        (line,) = logged.output
+        self.assertIn("RuntimeError", line)
+        self.assertNotIn("plan down", line)

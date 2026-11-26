@@ -25,14 +25,16 @@ transcript.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.scan import alike, find_new_names, group_alike, sound_keys
+from dmbot.memory.models import CONFIRMED, DM_ONLY_TYPES, name_key
+from dmbot.memory.scan import Suggestion, alike, find_new_names, group_alike, sound_keys
 from dmbot.transcript.cleaner import text_names_a_secret
 
 MIN_LETTERS = 4  # shorter words sound like too many names
@@ -116,11 +118,26 @@ def _kind_of(lookup: CampaignLookup, entity_id: str) -> str:
     return "player character" if entity.is_player_character else entity.type.replace("_", " ")
 
 
-def _near(lookup: CampaignLookup, spelling: str) -> tuple[list[Near], bool]:
+def kept_from_table(lookup: CampaignLookup, table: Collection[str]) -> frozenset[str]:
+    """The entries the table may not read in the shared transcript (#4802, Supervisor's ruling
+    Q2): every entry the table doesn't hold (`table`: the gate's table view, read once per pass by
+    the caller, `MemoryStore.entries_held`), and the DM-only kinds whatever the table holds, as
+    before. The pass never writes one of their names into a line, nor asks about a spelling close
+    to one."""
+    # (a suggested entry is on no one's list yet: never written anyway, `_near` needs a confirmed
+    # name; it is not kept back, so a spelling close to it is still asked about, as before)
+    return frozenset(
+        e.id
+        for e in lookup.entities.values()
+        if e.type in DM_ONLY_TYPES or (e.status == CONFIRMED and e.id not in table)
+    )
+
+
+def _near(lookup: CampaignLookup, spelling: str, kept: Collection[str]) -> tuple[list[Near], bool]:
     """The list names `spelling` is close to, most alike first (at most `MAX_NEAR`), and whether it
-    is also close to a secret name (then it is never asked about)."""
+    is also close to a secret name or one the table doesn't hold (`kept`, `kept_from_table`):
+    then it is never asked about."""
     mine = set(sound_keys(spelling))
-    hidden = lookup.hidden
     best: dict[str, Near] = {}
     secret_close = False
     for entry in lookup.names:
@@ -131,7 +148,7 @@ def _near(lookup: CampaignLookup, spelling: str) -> tuple[list[Near], bool]:
         close = (sounds and likeness >= NEAR_BY_SOUND) or likeness >= NEAR_BY_LETTERS
         if not close:
             continue
-        if entry.secret or entry.entity_id in hidden:
+        if entry.secret or entry.entity_id in kept:
             secret_close = True  # (an entry only the DM sees is never written into the transcript)
             continue
         if not entry.confirmed:
@@ -148,6 +165,29 @@ def _near(lookup: CampaignLookup, spelling: str) -> tuple[list[Near], bool]:
     return ranked, secret_close
 
 
+def secret_test(lookup: CampaignLookup, table: Collection[str]) -> Callable[[str], bool]:
+    """Whether a spelling is close to a secret name, or one the table doesn't hold
+    (`kept_from_table`), by sound and letters, as this pass's own `_near` judges it, with those
+    entries picked out once (the after-session name step asks it for many spellings and drops
+    such a name whole, design section 5)."""
+    kept = kept_from_table(lookup, table)
+    secret = [e for e in lookup.names if not e.person and (e.secret or e.entity_id in kept)]
+
+    def close(spelling: str) -> bool:
+        if not secret:
+            return False
+        mine = set(sound_keys(spelling))
+        for entry in secret:
+            likeness = alike(spelling, entry.text, NEAR_BY_SOUND)
+            if (mine & set(entry.codes) and likeness >= NEAR_BY_SOUND) or (
+                likeness >= NEAR_BY_LETTERS
+            ):
+                return True
+        return False
+
+    return close
+
+
 def _bit(line: str, spelling: str) -> str:
     """A few words either side of the spelling."""
     at = line.casefold().find(spelling.casefold())
@@ -162,16 +202,37 @@ class Survey:
     items: list[Candidate]  # the words to ask PlotBot about, most heard first
     guarded: int  # words left as heard because they are close to a secret (or DM-only) name
     new: int  # words close to no list name: new names, for the after-session scan and the DM
+    # Past MAX_CANDIDATES (slice 4): never asked, so the name step's card keeps them; their keys
+    left_out: tuple[str, ...] = ()
 
 
-def survey(lines: Sequence[str], lookup: CampaignLookup, people: Iterable[str] = ()) -> Survey:
+def survey(
+    lines: Sequence[str],
+    lookup: CampaignLookup,
+    people: Iterable[str] = (),
+    extra: Sequence[Suggestion] = (),
+    *,
+    table: Collection[str],
+) -> Survey:
     """The words in `lines` (cleaned text) worth asking PlotBot about, most heard first, and how
     many were left alone. `people`: the names of the people at the table, each whole name and each
-    word of it."""
+    word of it. `extra` (docs/design/session_names.md, section 7, slice 4): the spellings the name
+    reader found, capitals or none, joined to the capital-letter scan's (the union, by key), so a
+    known name heard in lower case is asked about too; each goes through the same tests. `table`:
+    the entries the table holds (`kept_from_table`, #4802)."""
+    kept = kept_from_table(lookup, table)
     skip = {entry.key for entry in lookup.names} | set(lookup.keep_keys)
     skip |= {key for key in lookup.people_by_key}
     skip |= {p.casefold() for p in people}
-    found = group_alike(find_new_names(lines, skip, min_times=1, unlimited=True))
+    scanned = find_new_names(lines, skip, min_times=1, unlimited=True)
+    have = {name_key(s.name) for s in scanned} | {name_key(a) for s in scanned for a in s.also}
+    added: list[Suggestion] = []
+    for s in extra:
+        key = name_key(s.name)
+        if key and key not in skip and s.name.casefold() not in skip and key not in have:
+            have.add(key)
+            added.append(s)
+    found = group_alike([*scanned, *added])
     out: list[Candidate] = []
     guarded = new = 0
     for suggestion in found:
@@ -186,7 +247,7 @@ def survey(lines: Sequence[str], lookup: CampaignLookup, people: Iterable[str] =
         near: dict[str, Near] = {}
         secret = False
         for spelling in spellings:
-            ranked, close_to_secret = _near(lookup, spelling)
+            ranked, close_to_secret = _near(lookup, spelling, kept)
             secret = secret or close_to_secret
             for n in ranked:
                 if n.entity_id not in near or n.likeness > near[n.entity_id].likeness:
@@ -215,14 +276,25 @@ def survey(lines: Sequence[str], lookup: CampaignLookup, people: Iterable[str] =
                 tuple(shown),
             )
         )
-    out.sort(key=lambda c: (-c.times, c.heard))
-    return Survey(out[:MAX_CANDIDATES], guarded, new)
+    if extra:
+        # (slice 4, the Expert on #5133: with the reader's names joined, the limit decides more,
+        # so the closest to a known name go first, then the most heard: it cuts the weakest)
+        out.sort(key=lambda c: (-max(n.likeness for n in c.near), -c.times, c.heard))
+    else:
+        out.sort(key=lambda c: (-c.times, c.heard))
+    cut = out[MAX_CANDIDATES:]
+    left = tuple(name_key(s) for c in cut for s in (c.heard, *c.also))
+    return Survey(out[:MAX_CANDIDATES], guarded, new, left)
 
 
 def candidates(
-    lines: Sequence[str], lookup: CampaignLookup, people: Iterable[str] = ()
+    lines: Sequence[str],
+    lookup: CampaignLookup,
+    people: Iterable[str] = (),
+    *,
+    table: Collection[str],
 ) -> list[Candidate]:
-    return survey(lines, lookup, people).items
+    return survey(lines, lookup, people, table=table).items
 
 
 def question(cands: Sequence[Candidate]) -> str:
@@ -329,6 +401,39 @@ class Report:
     @property
     def quiet(self) -> bool:
         return not (self.fixed or self.unsure or self.new or self.guarded or self.cut)
+
+
+def report_to_json(report: Report) -> str:
+    """A report as text, to keep it in the database until the import's one report is made (#4904:
+    the scans may run in the worker, the report is the bot's). Words from a transcript, kept as
+    any campaign row is: the same people may read it as read the report."""
+    return json.dumps(dataclasses.asdict(report), ensure_ascii=False)
+
+
+def report_from_json(text: str) -> Report:
+    """The report `report_to_json` made."""
+    data = json.loads(text)
+
+    def near(n: dict[str, Any]) -> Near:
+        return Near(n["entity_id"], n["name"], n.get("kind", "name"), float(n.get("likeness", 0)))
+
+    def candidate(c: dict[str, Any]) -> Candidate:
+        return Candidate(
+            c["heard"], tuple(c.get("also", ())), int(c.get("times", 1)),
+            tuple(near(n) for n in c.get("near", ())), tuple(c.get("lines", ())),
+        )  # fmt: skip
+
+    # (`.get` with a default for what a later version may add, so an older row still reads)
+    return Report(
+        fixed=tuple(
+            Fixed(f["name"], tuple((str(a), int(b)) for a, b in f["forms"]), int(f["batch"]))
+            for f in data.get("fixed", ())
+        ),
+        unsure=tuple(candidate(c) for c in data.get("unsure", ())),
+        new=tuple(candidate(c) for c in data.get("new", ())),
+        guarded=int(data.get("guarded", 0)),
+        cut=bool(data.get("cut", False)),
+    )
 
 
 # PlotBot's answer stopped at its limit (#2649): every word it did not reach is "not sure", which

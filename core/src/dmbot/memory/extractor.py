@@ -48,6 +48,9 @@ from dmbot.memory.claims import (
 )
 from dmbot.memory.deed_proposals import DeedProposals
 from dmbot.memory.deed_reading import DEED_SYSTEM, DeedProposal, parse_deeds
+from dmbot.memory.goodbye_reading import LEAVE_ADDENDUM, Goodbye, parse_leaves
+from dmbot.memory.goodbye_reading import PROMPT_SUFFIX as LEAVE_SUFFIX
+from dmbot.memory.goodbye_reading import once_each as goodbyes_once
 from dmbot.memory.language_reading import LANGUAGE_ADDENDUM, Heard, once_each, parse_languages
 from dmbot.memory.language_reading import PROMPT_SUFFIX as LANGUAGE_SUFFIX
 from dmbot.memory.met_reading import MET_ADDENDUM, Met, gathered, parse_met
@@ -313,6 +316,7 @@ class Report:
     joined: int = 0  # spellings joined to a name already waiting
     tidied: int = 0  # claims with a name tidied before judging (#3634)
     deferred: int = 0  # claims left for next time (their name was past the limit)
+    names_over_cap: int = 0  # new names past the session's limit, not made (#5055 A; a count)
     unsent: int = 0  # lines never sent: the call cap, or the run stopped
     readings: int = 0  # beliefs found (theories, reveals, frame-ups, divinations), kept as claims
     readings_refused: int = 0  # answers or items the reading rules turned down
@@ -361,6 +365,12 @@ class Report:
     languages_dropped: Counter[str] = field(default_factory=Counter)
     languages_cut: int = 0  # claims answers cut short with the switch on: their languages are lost
     heard_languages: list[Heard] = field(default_factory=list, repr=False)  # (words: never logged)
+    # #4537 slice 6b (DMBOT_PARTY_LEAVES): a player character heard saying goodbye to the party,
+    # each an after-session question for the DM ("Has Okthandom left the party?"), never written
+    leaves: int = 0
+    leaves_dropped: Counter[str] = field(default_factory=Counter)
+    leaves_cut: int = 0  # claims answers cut short with the switch on: their goodbyes are lost
+    goodbyes: list[Goodbye] = field(default_factory=list, repr=False)  # (names: never logged)
     # #4260 10c-2 (DMBOT_WEATHER_NOTES): snow, frost or heat the DM described in a named place
     weather: int = 0
     weather_dropped: Counter[str] = field(default_factory=Counter)
@@ -374,6 +384,7 @@ class Report:
             f"{self.proposed} proposed, dropped: {why}, {self.repeated} repeated, "
             f"{self.malformed} malformed, {self.named} new name(s), {self.joined} joined, "
             f"{self.tidied} tidied, {self.deferred} deferred, {self.unsent} line(s) not sent"
+            + (f", {self.names_over_cap} new name(s) past the limit" if self.names_over_cap else "")
             + (f", {self.cut} answer(s) cut short" if self.cut else "")
             + (f", {self.recap_lines} recap line(s) left out" if self.recap_lines else "")
             + (
@@ -424,6 +435,12 @@ class Report:
                 f", languages: {self.languages} heard, {self.languages_cut} cut short"
                 + "".join(f", {n} {k}" for k, n in sorted(self.languages_dropped.items()) if n)
                 if self.languages or self.languages_dropped or self.languages_cut
+                else ""
+            )
+            + (
+                f", goodbyes: {self.leaves} heard, {self.leaves_cut} cut short"
+                + "".join(f", {n} {k}" for k, n in sorted(self.leaves_dropped.items()) if n)
+                if self.leaves or self.leaves_dropped or self.leaves_cut
                 else ""
             )
             + (
@@ -612,6 +629,7 @@ async def run(
     session_id: str | None = None,
     languages: bool = False,
     weather: bool = False,
+    leaves: bool = False,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -679,7 +697,15 @@ async def run(
     or heat the DM described in a named place (`weather_reading.WEATHER_ADDENDUM`), in the same
     call. What holds is only gathered (`Report.heard_weather`, place names and line numbers, no
     words): the caller checks it against the kept climate and notes the DM. Never stored: weather
-    never is (design §6). Never in `family_only`."""
+    never is (design §6). Never in `family_only`.
+
+    `leaves` (#4537 slice 6b, DMBOT_PARTY_LEAVES): the claims call is also asked which player
+    characters said goodbye to the party (`goodbye_reading.LEAVE_ADDENDUM`), in the same call, with
+    a quote checked against the cited lines. What holds is only gathered (`Report.goodbyes`, names
+    and line numbers with who spoke each, no words; a line voiced as an NPC is no one's): the
+    caller keeps the DM's and the character's own player's lines and asks the DM, after play.
+    Nothing closes a stretch here (§11). Never in `family_only`. The caller leaves it off for an
+    imported session that is old history (`goodbye_reading.import_refusal`, ruling V)."""
     report = Report()
     # (theories are the first kind of reading: asked when either switch is on, the rest only with
     # the readings switch)
@@ -700,17 +726,21 @@ async def run(
     met = met and not family_only
     languages = languages and not family_only
     weather = weather and not family_only
+    leaves = leaves and not family_only  # (an old import is the caller's: `import_refusal`)
+    voiced: set[str] = set()  # (with `leaves`: lines the DM said as a named NPC, no one's goodbye)
     system = (
         SYSTEM
         + (MET_ADDENDUM if met else "")
         + (LANGUAGE_ADDENDUM if languages else "")
         + (WEATHER_ADDENDUM if weather else "")
+        + (LEAVE_ADDENDUM if leaves else "")
     )
     prompt_version = (
         PROMPT_VERSION
         + (MET_SUFFIX if met else "")
         + (LANGUAGE_SUFFIX if languages else "")
         + (WEATHER_SUFFIX if weather else "")
+        + (LEAVE_SUFFIX if leaves else "")
     )
     deed_pairs: set[tuple[str, str]] = set()  # the pairs a deed was proposed for, so far
     answered: list[list[Said]] = []  # the batches whose claims were read
@@ -819,6 +849,13 @@ async def run(
             report.weather_dropped.update(told.dropped)
             report.weather_cut += int(reply.cut)
             report.heard_weather.extend(told.weather)
+        if leaves:
+            said = parse_leaves(reply.text, {number: text for number, _who, text in rows})
+            report.leaves += len(said.goodbyes)
+            report.leaves_dropped.update(said.dropped)
+            report.leaves_cut += int(reply.cut)
+            report.goodbyes.extend(said.goodbyes)
+            voiced.update(str(s.number) for s in batch if s.voiced)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
@@ -995,6 +1032,7 @@ async def run(
             report.joined += done.joined
             report.tidied += done.tidied
             report.deferred += done.deferred
+            report.names_over_cap += done.names_over_cap
             for reason, n in done.reasons.items():
                 report.dropped[_LOGGED_REASONS.get(reason, "other")] += n
     if believed:
@@ -1054,6 +1092,24 @@ async def run(
         report.weather_dropped["weather_speaker_gone"] += len(report.heard_weather) - len(recorded)
         report.heard_weather = weather_once(recorded)
         report.weather = len(report.heard_weather)
+    if report.goodbyes:
+        # (asked again at the end, as languages are: a goodbye cited from a speaker who stopped
+        # meanwhile is dropped; each keeps who spoke each line, for the caller's DM-or-own-player
+        # check and the question's forgets; one character's twice is one)
+        still = await consenting()
+        recorded_goodbyes = [
+            g for g in report.goodbyes if all(everyone.get(n) in still for n in g.lines)
+        ]
+        report.leaves_dropped["leave_speaker_gone"] += len(report.goodbyes) - len(recorded_goodbyes)
+        named = [g for g in recorded_goodbyes if name_key(g.who) not in skip]
+        report.leaves_dropped["leave_skip"] += len(recorded_goodbyes) - len(named)
+        # (a line the DM said as a named NPC is the story's words, never the DM's: no one's, so
+        # `whose` refuses it, as weather leaves it out, #4748)
+        report.goodbyes = goodbyes_once(
+            replace(g, speakers=tuple(None if n in voiced else everyone.get(n) for n in g.lines))
+            for g in named
+        )
+        report.leaves = len(report.goodbyes)
     report.through_ms = reached
     return report
 

@@ -20,6 +20,11 @@ LINE = "the lantern glows green when a monstrosity is near"
 class TheLine(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        # (the players' audience is the party's view, #4537 slice 5a: a party of one, made first,
+        # so every entry shown to the table after it is written as known to it)
+        await self.add(
+            "Pcwyn Testhand", type="character", role="player_character", played_by=900_001
+        )
         self.lantern = await self.add("Greenlight", type="item")
         self.keep = await self.add("The Keep", type="place")
         await self.memory.add_relation(
@@ -112,7 +117,8 @@ class TheLine(ConfirmedMemoryTest):
         from dmbot.recaps.discord import RecapFeatures
 
         bot = SimpleNamespace(memory=self.memory, importance=None)
-        found = await RecapFeatures.recap_story(bot, GUILD_A, self.c, None, ["Greenlight"])  # type: ignore[arg-type]
+        job = SimpleNamespace(session_at=4_000_000_000_000)  # (a session after the party formed)
+        found = await RecapFeatures.recap_story(bot, GUILD_A, self.c, job, ["Greenlight"])  # type: ignore[arg-type]
         lines = draft.sheet_lines(
             [(m.text, m.known) for m in found], {"Greenlight", "The Keep"}, set()
         )
@@ -145,7 +151,8 @@ class TheLine(ConfirmedMemoryTest):
         from dmbot.recaps.discord import RecapFeatures
 
         bot = SimpleNamespace(memory=self.memory, importance=None)
-        found = await RecapFeatures.recap_story(bot, GUILD_A, self.c, None, ["Veilstone"])  # type: ignore[arg-type]
+        job = SimpleNamespace(session_at=4_000_000_000_000)  # (a session after the party formed)
+        found = await RecapFeatures.recap_story(bot, GUILD_A, self.c, job, ["Veilstone"])  # type: ignore[arg-type]
         self.assertTrue(all(not m.known or "hums" not in m.text for m in found))
 
 

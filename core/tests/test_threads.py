@@ -151,6 +151,63 @@ class Threads(ConfirmedMemoryTest):
         await self.memory.set_condition(GUILD_A, self.c, self.heir, OPEN, source="dm")
         self.assertEqual((await self.info()).state.condition, OPEN)  # type: ignore[union-attr]
 
+    async def test_a_part_is_optional_and_only_a_too_long_one_is_refused(self) -> None:
+        # (#4937: the card says "Their part (optional)", so empty must be kept, not an error)
+        from dmbot.memory.models import MemoryRuleError
+
+        await self.memory.involve(GUILD_A, self.c, self.heir, self.mira, "  ", source="dm")
+        got = await self.info()
+        self.assertEqual([(i.who.name, i.role) for i in got.involved], [("Mira", "")])
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.involve(GUILD_A, self.c, self.heir, self.mira, "x" * 500, source="dm")
+
+    async def test_a_new_event_and_its_link_are_one_write_and_one_undo(self) -> None:
+        # (#4950: the event typed on the card is made with its link, never left behind alone)
+        before = {e.name for e in await self.memory.entities(GUILD_A, self.c)}
+        made = await self.memory.link_new_event(
+            GUILD_A, self.c, self.heir, "The bridge falls", ends_it=False, source="dm"
+        )
+        got = await self.info()
+        self.assertEqual(
+            [(m.event.name, m.ends_it) for m in got.movers], [("The bridge falls", False)]
+        )
+        event = next(
+            e for e in await self.memory.entities(GUILD_A, self.c) if e.name == "The bridge falls"
+        )
+        self.assertTrue(event.hidden_from_players)  # (typed by the DM: unrevealed, #2404)
+        self.assertEqual(
+            before | {"The bridge falls"},
+            {e.name for e in await self.memory.entities(GUILD_A, self.c)},
+        )
+        assert made.batch is not None
+        await self.memory.undo(GUILD_A, self.c, made.batch)
+        self.assertEqual(before, {e.name for e in await self.memory.entities(GUILD_A, self.c)})
+        self.assertEqual(len((await self.info()).movers), 0)
+
+    async def test_an_empty_event_name_is_refused_and_nothing_is_written(self) -> None:
+        from dmbot.memory.models import MemoryRuleError
+
+        before = {e.name for e in await self.memory.entities(GUILD_A, self.c)}
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.link_new_event(
+                GUILD_A, self.c, self.heir, "   ", ends_it=False, source="dm"
+            )
+        self.assertEqual(before, {e.name for e in await self.memory.entities(GUILD_A, self.c)})
+
+    async def test_a_link_that_fails_leaves_no_event_behind(self) -> None:
+        from dmbot.memory.models import MemoryRuleError
+
+        before = {e.name for e in await self.memory.entities(GUILD_A, self.c)}
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.link_new_event(
+                GUILD_A, self.c, "no-such-thread", "The bridge falls", ends_it=False, source="dm"
+            )  # (the link fails after the event would have been made)
+        self.assertEqual(before, {e.name for e in await self.memory.entities(GUILD_A, self.c)})
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.link_new_event(
+                GUILD_A, self.c, self.heir, "The bridge falls", ends_it=False, source="extractor"
+            )
+
     async def test_who_is_involved_and_what_moved_it(self) -> None:
         await self.memory.involve(GUILD_A, self.c, self.heir, self.mira, "quest giver", source="dm")
         await self.memory.link_event(
@@ -260,9 +317,11 @@ class Threads(ConfirmedMemoryTest):
         names = await self.memory.lookup_data(GUILD_A, self.c)
         whole = CampaignLookup.build(names)
         self.assertIn(self.heir, whole.entities)
-        self.assertNotIn(self.heir, whole.for_viewer(False).entities)
+        everything = frozenset(whole.entities)  # (held and still gone: the DM's by kind, #4802)
+        self.assertNotIn(self.heir, whole.for_viewer(False, everything).entities)
         self.assertEqual(
-            [m for m in find(whole.for_viewer(False), "Missing Heir", secrets=False)], []
+            [m for m in find(whole.for_viewer(False, everything), "Missing Heir", secrets=False)],
+            [],
         )
 
     async def test_a_link_from_the_story_plan_never_reaches_players(self) -> None:

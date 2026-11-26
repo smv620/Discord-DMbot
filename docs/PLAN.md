@@ -682,8 +682,9 @@ always; DMbot never picks one.
   your DM.", and the DM is told privately.
 - **Built in slices (#2284, CloudDev, 2026-10-21):** the save-time check, the stored "wins" and
   backups first; the answer-time question after. At save, a rule accepted from the linked file that
-  disagrees is held back with a line saying so (the DM adds it by hand and picks), and the rest of the
-  file is added. A check that cannot run never blocks a save: the rule is saved and the DM is told it
+  disagrees is held back with a line saying so, and the rest of the file is added. Each held rule
+  has a button that opens the same "which one applies" question with its words filled in, so the DM
+  picks without retyping it (#3841, 2026-11-25); DMbot never picks. A check that cannot run never blocks a save: the rule is saved and the DM is told it
   was not checked. Editing or removing a rule forgets what was decided about it, in the same
   transaction.
 - **Between sources** the order is unchanged: the campaign's own house rules, then the set it
@@ -3025,8 +3026,10 @@ reads the campaign memory and never changes it.
 `dmbot.transcript.cleaner`, run on every written-down line with no wait, so the
 consent check just made still holds:
 - **Silent fixes only, of three kinds:** the same letters spelled another way
-  ("Kazeth" → "Ka'zeth"; a word in lower case keeps its capitals, so "the bell" never
-  becomes "Bell"); a spelling the DM fixed ("Sara" → Cerric); and an unknown
+  ("Kazeth" → "Ka'zeth"; a word in lower case gets a name's capitals only when the name is
+  one confirmed, non-secret word that is no ordinary English word, game term or kind of
+  creature, so "hrothgar" becomes "Hrothgar" but "the bell" never becomes "Bell"; Supervisor,
+  2026-11-24, #5154, SCOWL 60 word list); a spelling the DM fixed ("Sara" → Cerric); and an unknown
   capitalized word, or up to 3 of them in a row ("Ka Zeth"), that sounds like exactly
   one confirmed name (`lookup.by_sound`) and is spelled much like it (at least 0.7
   alike). Matching reuses `scene.find_mentions` and the lookup's sound codes.
@@ -5961,10 +5964,10 @@ Supervisor's details marked).**
      fails, nothing is removed and the offer opens again with a plain reason. As after loading a backup,
      the old server's channels (DM screen, voice, chat) don't carry over; the new owner picks them with
      `/dmbot start`. Rulesets the campaign follows keep being followed; a ruleset it published moves with
-     it and the new owner becomes its publisher. *(Supervisor, 2026-10-23, #2550:)* **for now** a campaign
-     that **shares** a rule set (`status = 'shared'`) can't move to another server: the hand-over page says
-     so before anyone accepts, and it can still be handed over on its own server. Moving a shared set with
-     its followers is #2551. **How the move is done (#2550):** the campaign's rows are moved, not copied: a
+     it and the new owner becomes its publisher. A campaign that **shares** a rule set moves too (#2551,
+     Supervisor 2026-11-25; until then it was refused, #2550): the set, its versions and share codes move
+     in the same update, its followers keep following and the code still works, the new owner becomes the
+     publisher, and the old publisher's editors are dropped (the new publisher names their own). **How the move is done (#2550):** the campaign's rows are moved, not copied: a
      single change of its `guild_id`, carried into every row by `ON UPDATE CASCADE` (CLAUDE.md, Code
      standards), with the busy checks (a session, a recap job or import at work) and the new owner's paid
      slot checked in the same step, so nothing can be lost or left behind.
@@ -6258,6 +6261,28 @@ dozen screens, and gets the same list, words and context in both places.
   and capturing a call never slows or fails it. The prompt shown is the material sent, not DMbot's fixed
   instructions. Off by default (`DMBOT_AI_FEED` and the page's switch); whether paying customers' DMs get it is the
   owner's call before it goes on for them.
+
+**Places (#4173; owner's directions and Supervisor's rulings, 2026-11-11 to 11-13).**
+
+**How big a place is.** Every place has a level: plane, world, region, settlement, district, street, building or room (`place_levels.LEVELS`). DMbot reads it from the text ("the city of", "a tavern") and marks it as read; the DM's own word always wins. "Is in" is only kept when the inner place is smaller, so a tavern is never in a room.
+
+**Where the campaign is set.** One place can be the campaign's setting. It's chosen at setup, on the website or in Discord, and is read from the lore when nobody chose.
+
+**The "where the story is" chain.** As lore and sessions are read, each scene's place is noted in order. A place named with no parent gets an *assumed* parent from where the story was: stored, never asked, held back from the players, and marked "(assumed)" on the DM's card. A parent that is stated later replaces it. "That's right" makes it a stated parent.
+
+**Where people and things are.** A person or item has one current whereabouts. Moving ends the old place as history ("was in"), never deletes it. Being on a road or at sea closes the town level and below; arriving opens it again. A move into a bigger place that the smaller one turns out to be inside ("in the bakery", "in Waterdeep", then "the bakery is in Waterdeep") never counts as leaving.
+
+**Next to.** One kind, `next_to`, for places that touch: borders read both ways; "on the shore of" and "at the foot of" read one way. The same two places are never both "in" and "next to" each other: a reader that finds both asks the DM.
+
+**A place's form.** An area by default, or water (lake, bay, sea, river) or a route (a named road, a pass). Water and routes sit outside the size order. The DM can change the form in one tap.
+
+**Routes.** `route_to` joins two places by a stated way. The means come from a fixed list (road, river, sea, air, portal, the wild, or the text's own words); two means between two places are two routes. A means word alone makes no route, so both places must be named. A route can be known, *travelled* (a journey in a session, with its order; at most one leg per pair, means and session) or *planned* (never where anyone is; a dropped plan ends as history; the DM's own prep plans are held back). A named road is itself a place, and towns on it are "next to" it. A route can carry its stated length (hours, days or miles, "about" kept) and its condition (open, hard going, closed, gone), each with its history.
+
+**Maps (MapBot) write to the graph** under one rule of who wins: the DM's own word, then a map, then the text, then an assumption. A map never overrides the DM's link, and "not sure" writes nothing. "Apart" ends a "next to" only when both places are drawn and labelled on that map and the AI is sure. A correction ends the old link as wrong (rejected), never as history, because geography doesn't change. The DM gets one private note listing each change in plain words, and one Undo takes back the whole map's changes.
+
+**Players see** only what was said at the table, or what the DM showed them. Assumed parents and DM-prep plans stay hidden until then.
+
+**Later:** items inside other items (containers) wait until the above has been live and the owner has seen it.
 
 **License (decided 2026-10-03).** Public repository under PolyForm Strict 1.0.0.
 

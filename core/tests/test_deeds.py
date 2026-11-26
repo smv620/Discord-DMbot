@@ -278,7 +278,8 @@ class Stored(ConfirmedMemoryTest):
                 self.assertNotIn("Saved the mill", said)
         lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
         self.assertTrue(any(e.type == "deed" for e in lookup.entities.values()))
-        shown = lookup.for_viewer(False)
+        # (held by the viewer and still gone: a deed is the DM's by kind, #4802)
+        shown = lookup.for_viewer(False, frozenset(lookup.entities))
         self.assertFalse(any(e.type == "deed" for e in shown.entities.values()))
 
     async def test_the_players_card_for_the_doer_never_lists_the_deed(self) -> None:
@@ -290,7 +291,13 @@ class Stored(ConfirmedMemoryTest):
             GUILD_A, self.c, entity_id=self.kesh, include_secret=True
         )
         mine = card_text(lookup.for_viewer(True), self.kesh, connections, secrets=True)
-        players = card_text(lookup.for_viewer(False), self.kesh, connections, secrets=False)
+        players = card_text(
+            lookup.for_viewer(False, frozenset(lookup.entities)),  # (even held: the DM's by kind)
+            self.kesh,
+            connections,
+            secrets=False,
+            seen={self.kesh},
+        )
         self.assertIn("Saved the mill", mine or "")
         self.assertNotIn("Saved the mill", players or "")
 

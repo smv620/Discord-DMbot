@@ -2,7 +2,7 @@
 // @vitest-environment happy-dom
 // "See as…" on the Story graph (#2999, slice 2): a DM looks at the web as one character, or the party, knows it.
 // Shown in the Players View only, read-only while on, and cleared by Full View or "Back to the party".
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ApiError } from "../src/account/api";
@@ -161,5 +161,24 @@ describe("See as…", () => {
     fireEvent.click(screen.getByRole("button", { name: w.seeAsBack }));
     await waitFor(() => expect(screen.queryByText(w.seeAsNow("Cerric"))).toBeNull());
     expect(screen.getByLabelText(w.centreSearch)).toBeTruthy();
+  });
+});
+
+// The names come in the order the API sends them (party, then those who left, then the rest), and a leaver shows the
+// note the API gives (#4888, the page half of #4887).
+describe("See as… lists names in the order the API sends, with a leaver's note (#4888)", () => {
+  it("the picker lists in the order it is given and shows a leaver's note", async () => {
+    await openPlayersView();
+    await screen.findByRole("button", { name: "Tavin (Retired)" });
+    const names = within(screen.getByRole("list", { name: w.seeAsListLabel }))
+      .getAllByRole("button")
+      .map((b) => b.textContent);
+    expect(names.slice(0, 5)).toEqual([w.seeAsParty, "Cerric", "Mira", "Tavin (Retired)", "Guard 1"]);
+  });
+
+  it("a name with no note shows no brackets", async () => {
+    await openPlayersView();
+    const cerric = await screen.findByRole("button", { name: "Cerric" });
+    expect(cerric.textContent).toBe("Cerric");
   });
 });

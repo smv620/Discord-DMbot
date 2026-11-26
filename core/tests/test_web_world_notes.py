@@ -254,3 +254,66 @@ class TheActions(WorldNotesDoor):
         outcome = await wa.apply(self.memory, self.g, {BOB.id}, claimed, actions=self.actions)
         self.assertEqual(outcome.error, wa.NOT_ALLOWED)
         self.assertEqual(len(await self.lines()), 2)
+
+
+class TheRoadLine(WorldNotesDoor):
+    """A known road's condition DMbot read (#5003, migration 0593): listed like Discord's list does
+    it, kept and turned down by the same actions, and gone with its road."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.town = await self.add("Bryn Shander", "place")
+        made = await self.memory.add_relation(
+            self.g, self.one.id, self.keep, "route_to", self.town, detail="road",
+            source="dm", confidence=1.0, status="confirmed",
+        )  # fmt: skip
+        self.road: str = made.value[0].id
+        await self.memory.add_read_map_facts(
+            self.g, self.one.id, [Read("", mf.CONDITION, "closed", relation_id=self.road)],
+            source="background",
+        )  # fmt: skip
+
+    async def test_the_road_is_listed_as_discord_lists_it(self) -> None:
+        store = await self.memory.world_notes(self.g, self.one.id)
+        got = await self.lines()
+        self.assertEqual(sorted(line["id"] for line in got), sorted(n.id for n in store))
+        (road,) = [line for line in got if line.get("layer") == mf.CONDITION]
+        (note,) = [n for n in store if n.layer == mf.CONDITION]
+        # (which end is first follows how the store keeps the road: Discord says it the same way)
+        self.assertEqual(
+            (road["name"], road["value"], road["entityId"], road["from"]),
+            (note.name, "closed", note.entity_id, "lore"),
+        )
+        self.assertTrue(road["name"].startswith("the road between "))
+
+    async def test_keep_takes_it_and_a_taken_away_road_is_not_listed(self) -> None:
+        (road,) = [line for line in await self.lines() if line.get("layer") == mf.CONDITION]
+        self.assertEqual((await self.act("world-keep", road["id"])).error, "")
+        self.assertEqual([x for x in await self.lines() if x.get("layer") == mf.CONDITION], [])
+
+    async def test_a_road_taken_away_is_not_listed(self) -> None:
+        await self.memory.update_relation(
+            self.g, self.one.id, self.road, source="dm", status="rejected"
+        )
+        self.assertEqual([x for x in await self.lines() if x.get("layer") == mf.CONDITION], [])
+
+    async def test_not_that_turns_a_road_line_down(self) -> None:
+        (road,) = [line for line in await self.lines() if line.get("layer") == mf.CONDITION]
+        self.assertEqual((await self.act("world-not", road["id"])).error, "")
+        self.assertEqual([x for x in await self.lines() if x.get("layer") == mf.CONDITION], [])
+
+
+class TheNamedCulture(WorldNotesDoor):
+    """#5062 (migration 0598): a culture line that holds a named culture says its name."""
+
+    async def test_a_named_culture_line_carries_the_cultures_name(self) -> None:
+        await self.memory.add_read_map_facts(
+            self.g, self.one.id,
+            [Read(self.keep, mf.CULTURE, "", how="strong", culture="Illuskan")],
+            source="background",
+        )  # fmt: skip
+        lines = [x for x in await self.lines() if x.get("layer") == mf.CULTURE]
+        self.assertEqual([x["culture"] for x in lines], ["Illuskan"])
+        # (a plain lineage line, or land, has none)
+        terrain = [x for x in await self.lines() if x.get("layer") == mf.TERRAIN]
+        self.assertEqual([x.get("culture") for x in terrain], [None])

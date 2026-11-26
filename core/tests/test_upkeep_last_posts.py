@@ -27,10 +27,13 @@ def fake(*, dm_bot: int | None) -> Any:
         recaps=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(title=TITLE))),
         audio_waits=SimpleNamespace(finish=AsyncMock()),
         _audio_seen={},
-        settings=SimpleNamespace(site_url=""),
+        settings=SimpleNamespace(site_url="", worker_on=False),
+        outbox=None,
         _recap_refusal=AsyncMock(return_value="you've used this month's recaps; next on 3 Dec."),
     )
     me._upkeep_channel = lambda c: RecapFeatures._upkeep_channel(cast(Any, me), c)
+    for name in ("_queued", "_say_allowance", "_say_unchecked"):
+        setattr(me, name, getattr(RecapFeatures, name).__get__(me))
     return me, campaign
 
 

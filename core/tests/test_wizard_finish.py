@@ -135,9 +135,10 @@ class FinishTest(DatabaseTest):
                 if rows:
                     self.seen.append((rows[0]["choice"], rows[0]["text"]))
                     await self.sql(
-                        "UPDATE lore_uploads SET state = 'done', text = '' WHERE id = %s",
-                        rows[0]["id"],
-                    )
+                        "UPDATE lore_uploads SET state = 'done', text = '', names_cut = %s"
+                        " WHERE id = %s",
+                        getattr(self, "cut", 0), rows[0]["id"],
+                    )  # fmt: skip
                 await asyncio.sleep(0.01)
 
         self.worker = asyncio.create_task(work())
@@ -546,6 +547,23 @@ class TheLinks(FinishTest):
         [up] = await self.sql("SELECT source, text, link, choice FROM lore_uploads")
         self.assertEqual((up["source"], up["text"], up["choice"]), ("link", "", "world"))
         self.assertTrue(up["link"].startswith("https://docs.google.com/"))
+
+    async def test_names_a_limit_left_out_are_counted_in_the_notes(
+        self,
+    ) -> None:
+        self.cut = 7
+        await self.draft()
+        await self.add_doc("lore", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit")
+        await self.add_doc("lore", "https://docs.google.com/document/d/bbcdefghijklmnopqrstu/edit")
+        row = await self.finish()
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        self.assertEqual(row["notes"], "names_cut:14")  # (summed over the two documents)
+
+    async def test_no_names_cut_leaves_the_notes_empty(self) -> None:
+        await self.draft()
+        await self.add_doc("lore", "https://docs.google.com/document/d/abcdefghijklmnopqrstu/edit")
+        row = await self.finish()
+        self.assertEqual(row["notes"], "")
 
     async def test_a_bad_address_in_a_lore_step_is_a_failed_read_and_nothing_is_queued(
         self,
@@ -1042,6 +1060,57 @@ class TheCharacters(FinishTest):
         await wizard_finish.run_round(self.bot, GUILD)
         texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
         self.assertEqual(texts, ["Cerric Vanya'elen", "Ric"])  # (no "Cerric" beside it)
+
+    async def test_every_name_the_table_calls_a_character_is_kept_with_its_comma(self) -> None:
+        """#4300: a list of names, each its own; a comma belongs to a name."""
+        chars = [
+            {
+                "full": "Cerric Vanya'elen",
+                "party_names": ["Ric", "Hector, Savior of the Keep"],
+                "sheet_url": "",
+                "player": "pending",
+            }
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        texts = [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")]
+        self.assertEqual(texts, ["Cerric Vanya'elen", "Hector, Savior of the Keep", "Ric"])
+
+    async def test_a_name_another_character_is_called_blocks_a_first_name(self) -> None:
+        """#4300: the collision check reads every name the table calls the other character."""
+        chars = [
+            {"full": "Mira Dawn", "party_name": "", "sheet_url": "", "player": "pending"},
+            {"full": "Zed Rook", "party_names": ["Mira"], "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        texts = [t for t, _, _ in await self.aliases_of("Mira Dawn")]
+        self.assertEqual(texts, ["Mira Dawn"])  # (no "Mira" beside it)
+        self.assertEqual([t for t, _, _ in await self.aliases_of("Zed Rook")], ["Mira", "Zed Rook"])
+
+    async def test_a_draft_with_only_the_old_single_name_still_finishes(self) -> None:
+        """#4300: `party_name` alone (no list) is kept; an empty one still gets the first name."""
+        chars = [
+            {
+                "full": "Cerric Vanya'elen",
+                "party_name": "Ric",
+                "sheet_url": "",
+                "player": "pending",
+            },
+            {"full": "Dane Holt", "party_name": "", "sheet_url": "", "player": "pending"},
+        ]
+        await self.draft({"name": "Frostmaiden", "characters": chars})
+        await self.queue()
+        await wizard_finish.run_round(self.bot, GUILD)
+        self.assertEqual(
+            [t for t, _, _ in await self.aliases_of("Cerric Vanya'elen")],
+            ["Cerric Vanya'elen", "Ric"],
+        )
+        self.assertEqual(
+            [t for t, _, _ in await self.aliases_of("Dane Holt")], ["Dane", "Dane Holt"]
+        )
 
     async def test_two_characters_with_one_first_name_get_none(self) -> None:
         chars = [

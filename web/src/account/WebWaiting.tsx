@@ -6,11 +6,14 @@
 // consent, secrets and Undo hold the same. Only a DM of the campaign gets the list from the API; a player
 // never sees this part. One answer at a time per item: its buttons wait while it is sent, and the list
 // is read again after, so what shows is always the API's own.
+import { FIRST_FEELING_LIVE } from "../content/first-feeling-switch";
+import { feelingParts } from "./starting-feeling";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { handBracket, handKeeps } from "../content/hand-over-words";
 import { differs, waitingWords as w } from "../content/web-waiting";
 import { SOME_KNOW_LIVE } from "../content/some-know-switch";
+import { KNOW_LINE_LIVE } from "../content/know-line-switch";
 import { ApiError, type AccountApi, type PartyCharacter, type Waiting, type WaitingAnswer, type WaitingBackstory, type WaitingLook } from "./api";
 import { currentItem, itemDomId, openItem, pairFromItem } from "./itemLink";
 import WaitingBulk from "./WaitingBulk";
@@ -48,6 +51,12 @@ const startCap = (line: string): string => line.charAt(0).toUpperCase() + line.s
 const bracketOf = (b: Waiting["backstory"][number]): string => (b.handOver && b.handOverName ? handBracket(b.handOver, b.handOverName) : "");
 /** The "Proposed:" line (#4429): on an update only the words that differ from "Now" are bold and the names are plain; on a new card the names are
  * bold and the connection plain, as nothing is compared. */
+/** What a "travels with" connection or claim means (#5165): core's own words, first letter capitalised, ending in a full stop. */
+function MeansLine({ means }: { means?: string | undefined }) {
+  const text = means?.trim();
+  if (!text) return null;
+  return <p class="small muted">{`${text.charAt(0).toUpperCase()}${text.slice(1)}${text.endsWith(".") ? "" : "."}`}</p>;
+}
 function proposedOf(b: WaitingBackstory, hand: string) {
   if (!b.now) {
     return (
@@ -110,11 +119,36 @@ export default function WebWaiting({
   const [answered, setAnswered] = useState(false);
   const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
+  const [keptAll, setKeptAll] = useState(false); // a Keep all was pressed on this visit: the guesses it left get a count (#3928)
   const [bulkOn, setBulkOn] = useState(false); // an "All true" / "All secret" press is on: every own button waits
   // The claim whose "Which one?" pick can still be taken back (#3463): only the latest pick offers Undo.
   const [undo, setUndo] = useState<string | null>(null);
   // The "Some know" picker open on one claim (#4680 part 1): nobody is ticked when it opens.
   const [picker, setPicker] = useState<{ kind: "claim" | "backstory"; id: string; party: PartyCharacter[] | null; chosen: string[] } | null>(null);
+  // The line the ticked characters will give (#5332), asked as the ticks change; a stale answer is dropped by its number.
+  // The line is kept with the picker and ticks it was asked for, and shown only while they are still the current ones, so an old
+  // line never shows under another picker or an older tick.
+  const [knowLine, setKnowLine] = useState<{ key: string; line: string } | null>(null);
+  const knowLooks = useRef(0);
+  const chosenKey = picker?.chosen.join(",") ?? "";
+  const pickKey = picker ? `${campaignRef}:${picker.kind}:${picker.id}:${chosenKey}` : "";
+  useEffect(() => {
+    const mine = ++knowLooks.current;
+    if (!KNOW_LINE_LIVE || !api.knowLine || !picker || picker.chosen.length === 0) return void setKnowLine(null);
+    const key = pickKey;
+    api
+      .knowLine(campaignRef, { characters: picker.chosen, common: false })
+      .then((got) => {
+        if (mine === knowLooks.current) setKnowLine({ key, line: got.line });
+      })
+      .catch(() => {
+        // Only a preview: with no line, the picker works as before.
+        if (mine === knowLooks.current) setKnowLine(null);
+      });
+    return () => {
+      knowLooks.current += 1; // an answer that arrives after the ticks changed or the page was left is dropped
+    };
+  }, [pickKey]);
   // The last "Some know" can be taken back by its batch, until the next answer.
   const [someUndo, setSomeUndo] = useState<{ id: string; batch: number } | null>(null);
   const counter = useRef(0);
@@ -249,6 +283,11 @@ export default function WebWaiting({
               <span>{p.name}</span>
             </label>
           ))
+        )}
+        {knowLine && knowLine.key === pickKey && (
+          <p class="small" role="status">
+            {knowLine.line}
+          </p>
         )}
         <div class="row">
           <button type="button" class="button" disabled={busy || picker.party === null || picker.chosen.length === 0} onClick={() => void saveSome(kind, id)}>
@@ -537,23 +576,17 @@ export default function WebWaiting({
           <p class="small">{w.claimsNote}</p>
         </div>
       )}
-      {/* Outside the claims list, so a press's summary and its "Undo all" stay after the answered claims have left it. */}
-      <WaitingBulk
-        api={api}
-        campaignRef={campaignRef}
-        claims={list.claims.filter((c) => !c.choices?.length)}
-        locked={sending !== null}
-        onRunning={setBulkOn}
-        onChanged={async () => {
-          await read();
-          onChanged?.();
-        }}
-      />
       {list.claims.some((c) => !c.choices?.length) && (
         <div class="stack">
           {list.claims.filter((c) => !c.choices?.length).map((c) => (
             <div key={c.id} class="panel" id={itemDomId(c.id)} tabIndex={-1}>
               <p id={`wc-${c.id}`}>{c.statement}</p>
+              <MeansLine means={c.means} />
+              {FIRST_FEELING_LIVE && c.startingFeeling && (
+                <p class="small">
+                  {feelingParts(c.startingFeeling).map((part, i) => (part.bold ? <strong key={i}>{part.text}</strong> : part.text))}
+                </p>
+              )}
               {typeof c.at === "number" && c.at > 0 && <p class="muted small">{w.saidAt(sessionDay(c.at))}</p>}
               <div class="row">
                 <button
@@ -604,6 +637,18 @@ export default function WebWaiting({
           ))}
         </div>
       )}
+      {/* Outside the claims list, so a press's summary and its "Undo all" stay after the answered claims have left it. */}
+      <WaitingBulk
+        api={api}
+        campaignRef={campaignRef}
+        claims={list.claims.filter((c) => !c.choices?.length)}
+        locked={sending !== null}
+        onRunning={setBulkOn}
+        onChanged={async () => {
+          await read();
+          onChanged?.();
+        }}
+      />
 
       {list.backstory.length > 0 && (
         <div class="stack">
@@ -623,12 +668,13 @@ export default function WebWaiting({
                       type="button"
                       class="button"
                       disabled={busy}
-                      onClick={() =>
+                      onClick={() => {
+                        setKeptAll(true);
                         void send({ kind: "backstory", action: "keep_all", ids },
                           (got) => (left > 0 && got.kept !== undefined ? w.keepAllCut(got.kept, left) : w.kept(got.kept)),
                           w.keepingStage(ids.length),
-                        )
-                      }
+                        );
+                      }}
                     >
                       {w.keepAll(ids.length)}
                     </button>
@@ -646,6 +692,7 @@ export default function WebWaiting({
                   <div key={b.id} class="panel" id={itemDomId(b.id)} tabIndex={-1}>
                     {b.now && <p class="small">{w.nowLine(b.subject, b.now.how, b.object)}</p>}
                     <p id={`wb-${b.id}`}>{proposedOf(b, handOf(b) ? ` (${handOf(b)})` : "")}</p>
+                    <MeansLine means={b.means} />
                     {b.check && <p class="small muted">{w.checkLine(b.check)}</p>}
                     {b.guess && <p class="small">{w.guessLine(b.guess)}</p>}
                     {b.quote && <p class="muted small">{w.fromText(b.quote)}</p>}
@@ -696,6 +743,9 @@ export default function WebWaiting({
               </div>
             );
           })}
+          {keptAll && list.backstory.some((b) => b.guess) && (
+            <p class="small">{w.guessesLeft(list.backstory.filter((b) => b.guess).length)}</p>
+          )}
         </div>
       )}
     </section>

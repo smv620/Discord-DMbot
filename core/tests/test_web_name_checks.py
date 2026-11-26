@@ -15,6 +15,7 @@ from dmbot.memory.models import CONFIRMED, PROPOSED, REJECTED
 from dmbot.memory.scenes import ENTITY, Scene, Scenes
 from dmbot.memory.store import MemoryStore
 from dmbot.recaps import name_answers as na
+from dmbot.recaps.notify import job_ref
 from dmbot.transcript.models import Line, line_ref
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import name_checks as web
@@ -91,7 +92,7 @@ class TheCampaignList(WithChecks):
         await self.suggest("Brannoch")
         await self.suggest("Veshla")
         got = await web.read_campaign_checks(self.web, self.session, self.cref())
-        self.assertEqual(got, {"recaps": [{"ref": self.ref, "at": AT, "count": 2}]})
+        self.assertEqual(got, {"recaps": [{"ref": self.ref, "at": AT, "count": 2, "other": False}]})
 
     async def test_nothing_waiting_is_an_empty_list(self) -> None:
         got = await web.read_campaign_checks(self.web, self.session, self.cref())
@@ -139,6 +140,100 @@ class TheCampaignList(WithChecks):
     async def test_a_bad_address_is_not_found(self) -> None:
         code = await self.code(web.read_campaign_checks(self.web, self.session, "nope"))
         self.assertEqual(code, "not_found")
+
+
+class TheOtherNewNames(WithChecks):
+    """The names no recap linked (#5186): kept at session 0 by the bot, listed last as "other", and
+    opened, answered and undone through the same ref as a recap's."""
+
+    def cref(self) -> str:
+        return f"{GUILD}.{self.one.id}"
+
+    def no_recap(self, campaign: str | None = None) -> str:
+        return job_ref(GUILD, campaign or self.one.id, 0)
+
+    async def orphan(self, name: str, campaign: str | None = None) -> str:
+        written = await self.memory.add_entity(
+            GUILD, campaign or self.one.id, type="concept", name=name, source="extractor",
+            description="Found in the lore",
+        )  # fmt: skip
+        return written.value.id
+
+    async def test_a_name_no_recap_linked_is_listed_last_as_other_once_the_bot_links_it(
+        self,
+    ) -> None:
+        await self.suggest("Veshla")  # (linked to the recap)
+        lone = await self.orphan("Brannoch")
+        before = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual([r["other"] for r in before["recaps"]], [False])  # (not linked yet)
+        self.assertEqual(await self.answers.link_orphans(GUILD), 1)
+        self.assertEqual(await self.answers.link_orphans(GUILD), 0)  # (repeats change nothing)
+        got = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual([r["other"] for r in got["recaps"]], [False, True])
+        self.assertEqual(
+            got["recaps"][-1], {"ref": self.no_recap(), "at": 0, "count": 1, "other": True}
+        )
+        card = (await web.read_checks(self.web, self.session, self.no_recap()))["names"]
+        self.assertEqual([n["id"] for n in card], [lone])
+
+    async def test_a_name_taken_before_its_recap_links_it_is_listed_once_not_twice(self) -> None:
+        """The race: the bot's "no recap" linking takes a session's new names at 0 before the recap
+        job links them. Linking drops the 0 row, and a 0 row beside a real link is ignored."""
+        lone = await self.orphan("Brannoch")
+        await self.answers.link_orphans(GUILD)
+        await self.answers.link(GUILD, self.one.id, AT, [lone])
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT session_at FROM recap_name_checks WHERE guild_id = %s AND entity_id = %s",
+                (GUILD, lone),
+            )
+            self.assertEqual([r["session_at"] for r in await cur.fetchall()], [AT])
+            await conn.execute(  # (the 0 row put back, as a racing writer would leave it)
+                "INSERT INTO recap_name_checks (guild_id, campaign_id, session_at, entity_id)"
+                " VALUES (%s, %s, 0, %s)",
+                (GUILD, self.one.id, lone),
+            )
+        got = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual([(r["other"], r["count"]) for r in got["recaps"]], [(False, 1)])
+
+    async def test_a_name_with_a_secret_spelling_and_another_campaigns_name_are_not_listed(
+        self,
+    ) -> None:
+        hidden = await self.orphan("Brannoch")
+        await self.memory.add_alias(
+            GUILD, self.one.id, hidden, "Brannoch", kind="full", source="dm", secret=True,
+            dm_chose_secret=True,
+        )  # fmt: skip
+        await self.orphan("Veshla", campaign=self.two.id)
+        await self.answers.link_orphans(GUILD)
+        got = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual(got["recaps"], [])
+        self.assertEqual(
+            (await web.read_checks(self.web, self.session, self.no_recap()))["names"], []
+        )
+        code = await self.code(web.read_checks(self.web, self.session, self.no_recap(self.two.id)))
+        self.assertEqual(code, "not_found")  # (Alice is not Two's DM)
+
+    async def test_it_can_be_answered_from_the_list_like_any_recap_name(self) -> None:
+        lone = await self.orphan("Brannoch")
+        await self.answers.link_orphans(GUILD)
+        got = await web.answer(
+            self.web, self.session, self.no_recap(), lone, {"action": "confirm", "kind": "place"}
+        )
+        self.assertIn("answerId", got)
+        self.assertEqual(await self.apply_next(), "")
+        entity = await self.memory.entity(GUILD, self.one.id, lone)
+        assert entity is not None
+        self.assertEqual((entity.status, entity.type), (CONFIRMED, "place"))
+        after = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual(after["recaps"], [])
+
+    async def test_a_name_answered_in_discord_leaves_the_list(self) -> None:
+        lone = await self.orphan("Brannoch")
+        await self.answers.link_orphans(GUILD)
+        await self.memory.confirm_entity(GUILD, self.one.id, lone, "place", source="dm")
+        got = await web.read_campaign_checks(self.web, self.session, self.cref())
+        self.assertEqual(got["recaps"], [])
 
 
 class TheScene(WithChecks):
@@ -215,9 +310,9 @@ class TheList(WithChecks):
         await self.known("Oakmere")
         got = await self.listed()
         self.assertEqual(
-            got["names"],
+            [{k: v for k, v in n.items() if k != "soundsLike"} for n in got["names"]],
             [{"id": mira, "name": "Mirelle", "note": "Used in a recap", "answering": False,
-              "error": "", "longerNames": []}],
+              "error": "", "longerNames": [], "guess": None}],
         )  # fmt: skip
         self.assertEqual([k["name"] for k in got["known"]], ["Oakmere"])
         self.assertNotIn("player_character", [k["key"] for k in got["kinds"]])

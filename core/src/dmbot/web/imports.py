@@ -1015,6 +1015,34 @@ def _story_shape(story: dict[str, Any] | None, now: int) -> dict[str, Any] | Non
     )
 
 
+# The name reader's states, as the door keeps them (#5091) -> the shared stage codes (#5127).
+_NAMES_STAGES = {
+    "reading": "reading_names",
+    "read": "names_read",
+    "stopped": "names_stopped",
+}
+
+
+def _names_shape(names: dict[str, Any] | None, now: int) -> dict[str, Any] | None:
+    """The name reader of one imported session in the shared shape: reading (part n of m, how long
+    it has run, when it last moved), read, or stopped (it failed after it started, so the names
+    come from the name scan alone). None when it is off or has not started. Counts and times only,
+    never a name."""
+    stage = _NAMES_STAGES.get(str((names or {}).get("state") or ""))
+    if names is None or stage is None:
+        return None
+    reading = stage == "reading_names"
+    return progress_shape.shape(
+        stage,
+        started_at=int(names["started"]),
+        updated_at=int(names["moved"]),
+        now=now,
+        done=int(names["part"]) if reading else None,
+        total=int(names["parts"]) if reading else None,
+        unit=progress_shape.UNITS.get(stage),
+    )
+
+
 async def progress(
     db: Database,
     session: Session,
@@ -1035,6 +1063,12 @@ async def progress(
             r["file"]: r
             for r in await import_clock.read_rows(conn, c.guild_id, c.campaign_id, import_id)
         }
+        # How many names of each kind still wait for "Add all" (#5276): counts only, a DM's alone
+        cur = await conn.execute(
+            "SELECT dmbot_web_import_waiting(%s, %s, %s) AS r",
+            (c.guild_id, c.campaign_id, import_id),
+        )
+        waiting = (await cur.fetchone() or {}).get("r")
     if not found:
         raise RecapError("not_found")
     now = int(time.time())
@@ -1044,6 +1078,9 @@ async def progress(
         # A session's `state` stays the stored one (waiting, working, done, failed); the shape's
         # `state` is running, stalled, failed or done.
         "import": progress_shape.whole(parts, now=now),
+        # The names still waiting, by kind, for "Add all" on this import (the lore upload's own
+        # `waiting`): the page sends `{action: "confirm-kinds", import: <this id>, kinds}`.
+        "waiting": dict(waiting) if isinstance(waiting, dict) else {},
         "sessions": [
             {
                 "file": s["file"],
@@ -1057,12 +1094,17 @@ async def progress(
                 "stage": s["stage"],
                 "namesToAnswer": int(s["namesToAnswer"]),
                 "namesUnchecked": bool(s["namesUnchecked"]),
+                # Names the name scan left out past its limit (a count, never a name; #5072).
+                "namesCut": int(s.get("namesCut") or 0),
                 "progress": part,
                 # The offer to set the game clock where this session ended (#3199), or None.
                 "clock": import_clock.shown(clocks.get(s["file"])),
                 # The story read (the connections found in what was said) in the same shape, or
                 # None when it has not started (#3307).
                 "story": _story_shape(s.get("story"), now),
+                # The name reader's stage and how many stretches could not be read (#5127).
+                "names": _names_shape(s.get("names"), now),
+                "namesUnread": int((s.get("names") or {}).get("unread") or 0),
                 # Its own recap's reference, for the stages that have a recap or a held one: the
                 # page then links the session's recap, not the list (#2240). The session time is
                 # the door's `date`; the campaign is the one opened above (never another's).

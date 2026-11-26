@@ -28,6 +28,9 @@ from dmbot.memory.whereabouts import CARRIES
 OWNS = "owns"
 # The only ties a hand-over ends. Anything else (a "found", a "made") is something that happened.
 HELD = (OWNS, CARRIES)
+# The hand-overs that end the one before's owning too, not only their holding (#4115): the one
+# list, read by the lore reader (`background`), the keep (`backstory_keep`) and Undo (#4170).
+SALES = ("sold", "gave", "traded")
 GONE = "That question no longer waits."  # (the card says it in its own words)
 
 

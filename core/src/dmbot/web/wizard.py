@@ -32,6 +32,7 @@ SLOTS = ("lore", "secrets", "ruleset", "house", "homebrew")
 SOURCES = ("upload", "link", "drive")
 STATUSES = ("ok", "unreadable")
 REASONS = ("", "empty", "scanned", "locked", "too_big", "not_text")
+PARTY_NAMES_MAX = 8  # (#4300) the names the table calls one character
 NAME_MAX = 100
 LINK_MAX = 2_048
 CHARACTERS_MAX = 12
@@ -52,6 +53,7 @@ _TO_STORED = {
     "pageTextUsed": "page_text_used",
     "dataUse": "data_use",
     "partyName": "party_name",
+    "partyNames": "party_names",
     "sheetUrl": "sheet_url",
 }
 _TO_PAGE = {stored: page for page, stored in _TO_STORED.items()}
@@ -169,10 +171,26 @@ def _characters(value: Any, finishing: bool = False) -> list[dict[str, Any]]:
         # Only a D&D Beyond character link is ever fetched (#4205).
         if link and sheets.character_id(link) is None and not finishing:
             raise RecapError("bad_sheet")
+        # What the party calls them (#4300): a list, each name on its own (a comma is part of a
+        # name). `party_name` stays as the first one, for a draft or a page that only knows one.
+        # A page that sends both is read by the list (an empty list clears the old name); the new
+        # page sends only the list. The same name in another case is one name here; the finish
+        # step folds a little more (`name_key`), which only repeats an alias that is kept once.
+        raw = item.get("party_names")
+        if raw is None:
+            raw = [item.get("party_name", "")]
+        if not isinstance(raw, list) or len(raw) > PARTY_NAMES_MAX:
+            raise RecapError("bad_characters")
+        names: list[str] = []
+        for entry in raw:
+            one = _text(entry, NAME_MAX, "characters")
+            if one and one.casefold() not in {n.casefold() for n in names}:
+                names.append(one)
         found.append(
             {
                 "full": _text(item.get("full", ""), NAME_MAX, "characters"),
-                "party_name": _text(item.get("party_name", ""), NAME_MAX, "characters"),
+                "party_name": names[0] if names else "",
+                "party_names": names,
                 "sheet_url": link,
                 "player": player,
             }

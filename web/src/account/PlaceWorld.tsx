@@ -5,6 +5,11 @@
 // own Undo, only what changed is sent, and a later one is sent only once the page has read the earlier one back as saved. Every press goes
 // through the page's own `act`. What players see of these is another piece (#4311). Shown by the Names page for a place, to a DM, while
 // PLACE_WORLD_LIVE.
+import RoadCondition from "./RoadCondition";
+import RouteLength from "./RouteLength";
+import { ROUTE_LENGTH_LIVE } from "../content/route-length-switch";
+import PlaceCulture from "./PlaceCulture";
+import { ROAD_CONDITION_LIVE } from "../content/road-condition-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { HOWS, LAND, placeWorldWords as w, WARMTH } from "../content/place-world-words";
@@ -41,6 +46,8 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
   const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const flight = useRef(false);
+  // The newest read: an answer older than a later one (a slow reload after a Save) is not drawn, so it can never put stale data back.
+  const latest = useRef(0);
 
   /** Read the place again. `scope` is the part of the choices to reset to what is saved: all of them for the first read, only the layer just
    * saved after a Save (so a choice not sent yet is never thrown away), none after the show switch. */
@@ -49,8 +56,10 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
       setFailed(true);
       return null;
     }
+    const mine = ++latest.current;
     try {
       const got = await api.placeWorld(refId, row.id);
+      if (mine !== latest.current) return got; // (a newer read is on its way or drawn: the caller still gets this answer)
       setData(got);
       setFailed(false);
       const saved = picksOf(got);
@@ -152,6 +161,32 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
     }
   }
 
+  // A culture or who-lives-here change (#4412): sent on its own, then the place is read again, as the other layers are.
+  async function sendCulture(change: NameChange, ok: string, matches: (got: PlaceWorld) => boolean): Promise<boolean> {
+    if (flight.current) return false;
+    flight.current = true;
+    setBusy(true);
+    setNote(null);
+    try {
+      const problem = await act(change, ok);
+      if (problem !== null) {
+        if (problem !== "") setNote({ ok: false, text: problem });
+        return false;
+      }
+      await new Promise((go) => setTimeout(go, 0));
+      const got = await load("none");
+      if (got === null || !matches(got)) {
+        setNote({ ok: false, text: w.stillSaving });
+        return false;
+      }
+      setNote({ ok: true, text: ok });
+      return true;
+    } finally {
+      flight.current = false;
+      setBusy(false);
+    }
+  }
+
   async function toggleShown(): Promise<void> {
     if (flight.current) return;
     flight.current = true;
@@ -171,6 +206,33 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
   return (
     <div class="name-form stack" aria-busy={busy}>
       <h4>{w.heading}</h4>
+      {/* A route place's condition (#5010, #4996): behind ROAD_CONDITION_LIVE; the DM sets it, the page reads the place again after a change. */}
+      {ROAD_CONDITION_LIVE && data.road && (
+        <RoadCondition
+          api={api}
+          refId={refId}
+          on="place"
+          id={row.id}
+          name={row.name}
+          condition={data.condition}
+          road
+          canEdit
+          onChanged={() => void load("none")}
+        />
+      )}
+      {/* A route place's stated length (#4392): behind ROUTE_LENGTH_LIVE; the DM sets it, and the page reads the place again after a change. */}
+      {ROUTE_LENGTH_LIVE && (data.route || data.length) && (
+        <RouteLength
+          api={api}
+          refId={refId}
+          on="place"
+          id={row.id}
+          length={data.length}
+          route={!!data.route}
+          canEdit
+          onChanged={() => void load("none")}
+        />
+      )}
       {land && (
         <p>
           {w.landLine(landWord, land.how === "partly")}
@@ -256,6 +318,7 @@ export default function PlaceWorldPanel({ api, refId, row, act }: { api: Account
         </div>
       )}
 
+      <PlaceCulture key={row.id} data={data} name={row.name} busy={busy} send={sendCulture} />
       <button type="button" class="button secondary" disabled={busy || !changed} onClick={() => void save()}>
         {w.save}
       </button>

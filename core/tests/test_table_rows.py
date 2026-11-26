@@ -157,6 +157,38 @@ class TableRows(MemoryTest):
         async with self.memory._read(GUILD_A, self.c, snapshot=True) as scope:
             self.assertIsNone(await gate.party_entries(scope))
 
+    async def test_a_members_own_entry_needs_every_other_member(self) -> None:
+        # (#4911: the quick answer decides in its query; its hardest case is a member's own entry,
+        # which every member but that one must hold, each step checked against the full gate)
+        a = await self.pc("Tavin", 1001)
+        b = await self.pc("Mara", 1002)
+        c = await self.pc("Kesh", 1003)
+        pub = await self.add("The Pub", status=CONFIRMED)
+
+        async def both() -> tuple[frozenset[str], set[str]]:
+            async with self.memory._read(GUILD_A, self.c, snapshot=True) as scope:
+                quick = await gate.party_entries(scope)
+                full = gate.visible(Viewer.the_party(), await gate.load(scope))
+            assert quick is not None
+            return quick, {i for (k, i) in full.sureness if k == ENTRY}
+
+        async def knows(entry: str, who: list[str]) -> None:
+            await self.memory.set_statement_knowers(
+                GUILD_A, self.c, ENTRY, entry, who, source="dm", dm_chose_secret=True
+            )
+
+        for entry, who, seen in (
+            (a, [b, c], True),  # (every other member holds Tavin's own entry)
+            (a, [b], False),  # (Kesh doesn't)
+            (pub, [a, b], False),  # (no one's own entry: every member must hold it)
+            (pub, [a, b, c], True),
+        ):
+            with self.subTest(entry=entry, who=len(who)):
+                await knows(entry, who)
+                quick, full = await both()
+                self.assertEqual(quick, full)
+                self.assertEqual(entry in quick, seen)
+
     async def test_no_player_character_means_no_quick_answer(self) -> None:
         await self.entries()
         async with self.memory._read(GUILD_A, self.c, snapshot=True) as scope:

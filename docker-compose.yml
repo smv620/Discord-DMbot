@@ -68,6 +68,43 @@ services:
       - ./web/src/content/help.ts:/app/knowledge/web/src/content/help.ts:ro
     restart: unless-stopped
 
+  # The worker (#3844): the bot's own services without a Discord connection, running the jobs that
+  # have moved to it (the recap audio so far). Same image and .env; it does nothing until
+  # DMBOT_WORKER=1 (then the bot stops running those jobs itself). No Discord token: it never logs in.
+  worker:
+    image: dmbot-core
+    command: ["python", "-m", "dmbot.worker"]
+    env_file: .env
+    environment:
+      DISCORD_TOKEN: ""
+      DMBOT_WORKER_BEAT: /tmp/dmbot-worker-alive   # the file its loop touches; the healthcheck reads it
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
+      POSTGRES_ADMIN_PASSWORD: ""
+      DMBOT_DB_PASSWORD: ""
+      DISCORD_CLIENT_SECRET: ""
+      WEB_SECRET_KEY: ""
+      PAYMENT_WEBHOOK_SECRET: ""
+      DMBOT_WEB_DB_PASSWORD: ""
+      CLOUDFLARE_TUNNEL_TOKEN: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      core:
+        condition: service_started   # (the bot's start runs the database migrations)
+    volumes:
+      - recap-audio:/data/recap-audio   # the narration and music it makes (the same files the bot read)
+    mem_limit: 1g
+    cpus: 1.0
+    healthcheck:
+      # The loop touches a file every 20 s; a stuck process stops touching it.
+      test: ["CMD-SHELL", "python -c \"import os, time; assert time.time() - os.path.getmtime(os.environ['DMBOT_WORKER_BEAT']) < 90\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
   ears:
     build: ./ears
     env_file: .env
@@ -179,6 +216,12 @@ services:
       # "Make it again" on a session's report (#2661): off, the route that queues the request is 404.
       DMBOT_WEB_REPORT_MAKE: ${DMBOT_WEB_REPORT_MAKE:-0}
       DMBOT_WEB_LORE: ${DMBOT_WEB_LORE:-0}
+      # (the same switch as the bot's: the card's one sentence on a top guess, #5264)
+      DMBOT_CARD_SUMMARY: ${DMBOT_CARD_SUMMARY:-0}
+      # (the Shared story adventure on the website, #3694: off, its routes answer 404)
+      DMBOT_WEB_ADVENTURE: ${DMBOT_WEB_ADVENTURE:-0}
+      # (a connection said in words on the website, #2940: off, its routes answer 404)
+      DMBOT_WEB_CONNECTION_SAID: ${DMBOT_WEB_CONNECTION_SAID:-0}
       DMBOT_WEB_PAUSE: ${DMBOT_WEB_PAUSE:-0}
       DMBOT_WEB_STORY_MODE: ${DMBOT_WEB_STORY_MODE:-0}
       DMBOT_WEB_HOUSE_FILE: ${DMBOT_WEB_HOUSE_FILE:-0}

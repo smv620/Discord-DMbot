@@ -96,17 +96,37 @@ def entity(entity_id: str, kind: str = "place", merged: str | None = None) -> An
 
 
 class TheBotsReader(unittest.IsolatedAsyncioTestCase):
-    def bot(self, entries: list[Any], entities: dict[str, Any]) -> Any:
-        by_text: dict[str, list[Any]] = {}
-        for e in entries:
-            by_text.setdefault(e.text, []).append(e)
-        players = SimpleNamespace(
-            entities=entities, names=tuple(entries), exact=lambda heard: by_text.get(heard, ())
+    def bot(
+        self,
+        entries: list[Any],
+        entities: dict[str, Any],
+        known: frozenset[str] | None = None,
+        members: tuple[str, ...] = ("pc",),
+    ) -> Any:
+        # (what the party at the session knows, #4877; by default every entry but the ones
+        # flagged "not known yet", and given apart where the two must disagree)
+        if known is None:
+            known = frozenset(e.entity_id for e in entries if not e.entry_hidden)
+
+        def for_viewer(secrets: bool, seen: Any = None) -> Any:
+            # (as `CampaignLookup.for_viewer`: the entries that party doesn't hold are gone)
+            kept = [e for e in entries if seen is None or e.entity_id in seen]
+            by_text: dict[str, list[Any]] = {}
+            for e in kept:
+                by_text.setdefault(e.text, []).append(e)
+            return SimpleNamespace(
+                entities={k: v for k, v in entities.items() if seen is None or k in seen},
+                names=tuple(kept),
+                exact=lambda heard: by_text.get(heard, ()),
+            )
+
+        lookup = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(for_viewer=for_viewer)))
+        memory = SimpleNamespace(
+            recap_colour=AsyncMock(return_value=["a line"]),
+            party_at_session=AsyncMock(
+                return_value=SimpleNamespace(members=members, entries=known)
+            ),
         )
-        lookup = SimpleNamespace(
-            get=AsyncMock(return_value=SimpleNamespace(for_viewer=lambda secrets: players))
-        )
-        memory = SimpleNamespace(recap_colour=AsyncMock(return_value=["a line"]))
         return SimpleNamespace(lookup=lookup, memory=memory)
 
     async def go(self, bot: Any, places: list[str]) -> list[str]:
@@ -144,6 +164,24 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list(args[2]), ["p1"])  # the one place the players know by that name
         # a ruler is named only by a name the players may see: never a secret or unseen entry
         self.assertEqual(args[3], {"p1": "Bryn Shander", "f1": "Ten-Towns"})
+        # (the party at that session, read once and passed on, #4877)
+        bot.memory.party_at_session.assert_awaited_once_with(1, "c", 100)
+        self.assertEqual(bot.memory.recap_colour.await_args.kwargs["members"], ("pc",))
+
+    async def test_the_sessions_party_decides_not_todays_flag(self) -> None:
+        # (unflagged but unknown to that party: left out; flagged but known to it: used)
+        bot = self.bot(
+            [entry("p1", "Bryn Shander"), entry("p2", "Targos", hidden=True)],
+            {"p1": entity("p1"), "p2": entity("p2")},
+            known=frozenset({"p2"}),
+        )
+        await self.go(bot, ["Bryn Shander", "Targos"])
+        self.assertEqual(list(bot.memory.recap_colour.await_args.args[2]), ["p2"])
+
+    async def test_no_party_at_the_session_passes_no_members(self) -> None:
+        bot = self.bot([entry("p1", "Bryn Shander")], {"p1": entity("p1")}, members=())
+        await self.go(bot, ["Bryn Shander"])
+        self.assertEqual(bot.memory.recap_colour.await_args.kwargs["members"], ())
 
     async def test_a_place_matched_through_an_alias_is_named_the_way_the_beat_said_it(self) -> None:
         bot = self.bot(
@@ -268,7 +306,10 @@ class TheRealLookup(_StoreBase):
         bot: Any = SimpleNamespace(
             lookup=SimpleNamespace(get=AsyncMock(return_value=lookup)), memory=self.memory
         )
-        lines = await RecapFeatures.recap_colour(bot, 1, self.campaign, JOB, ["Bryn Shander"])
+        # (a session after Cerric joined: the party at a session nobody was in is common knowledge
+        # only, #4806)
+        job: Any = SimpleNamespace(session_at=4_000_000_000_000)
+        lines = await RecapFeatures.recap_colour(bot, 1, self.campaign, job, ["Bryn Shander"])
         self.assertEqual(len(lines), 1)
         self.assertIn("tundra", lines[0])
         self.assertNotIn("Veiled", lines[0])

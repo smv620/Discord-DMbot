@@ -59,10 +59,6 @@ Result = Literal["moved", "reopened", "ended", "skipped"]
 
 # What the new owner is told when a move does not happen (the old owner is told only that it did
 # not, never why: a reason can be about the new owner's plan).
-SHARES_RULES = (
-    "This campaign shares a rule set, so it can't move to another server yet. "
-    "It can still be handed over on this server."
-)
 CHANGED_HANDS = "The campaign changed hands while the move was waiting."
 NO_PAID_ROOM = "Your plan has no room for one more campaign, so the move did not happen."
 SESSION_RUNNING = "A session is running. Try again after it ends."
@@ -330,13 +326,6 @@ class HandoverMover:
             )
             if await cur.fetchone() is not None:
                 raise Refused(BUSY)
-        cur = await conn.execute(
-            "SELECT 1 FROM rule_sets WHERE guild_id = %s AND campaign_id = %s"
-            " AND status = 'shared' LIMIT 1",
-            (g, c),
-        )
-        if await cur.fetchone() is not None:
-            raise Refused(SHARES_RULES)
         # The plan is checked now, not when they accepted: it may have lapsed since.
         # (their plan is the account's: the offer may name any login of it, #2533)
         to_account = await self._store.account_for(conn, offer.to_user_id)

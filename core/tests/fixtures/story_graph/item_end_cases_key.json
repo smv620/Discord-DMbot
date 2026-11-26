@@ -1,0 +1,25 @@
+{
+  "about": "Invented connection ends for matching an end to a kept item or place (memory/end_match.py `Ends.match`, with #4923's rule that a kept name in small letters is an end only whole; #4991). `kept`: the campaign's kept names. Each case: an end as a reader wrote it and the name it must match ('' for none). `must_not` ends must match nothing: a description opener, a word of a small-letter name, or a thing that isn't kept. Whether an item was lost, sold or given is the AI reader's `change`, never a set phrase, so it is not scored here.",
+  "kept": ["wolf figurine", "old mill", "silver ring", "Heartseeker", "Ring of Frostmere", "Brannoc's Hammer"],
+  "cases": [
+    {"end": "wolf figurine", "name": "wolf figurine"},
+    {"end": "the wolf figurine", "name": "wolf figurine"},
+    {"end": "old mill", "name": "old mill"},
+    {"end": "silver ring", "name": "silver ring"},
+    {"end": "Heartseeker", "name": "Heartseeker"},
+    {"end": "the Ring of Frostmere", "name": "Ring of Frostmere"},
+    {"end": "Brannoc's Hammer", "name": "Brannoc's Hammer"},
+    {"end": "his silver ring", "name": "silver ring"},
+    {"end": "Heartseeker, her bow", "name": "Heartseeker"},
+    {"end": "Frostmere", "name": "Ring of Frostmere"}
+  ],
+  "must_not": [
+    {"end": "the broken sword", "why": "a description of a thing that isn't kept"},
+    {"end": "his lost ring", "why": "a description opener"},
+    {"end": "the wolf", "why": "a word of a small-letter name"},
+    {"end": "the mill", "why": "a word of a small-letter name"},
+    {"end": "a ring", "why": "a description opener"},
+    {"end": "figurine", "why": "a word of a small-letter name"},
+    {"end": "the broken figurine", "why": "a description"}
+  ]
+}

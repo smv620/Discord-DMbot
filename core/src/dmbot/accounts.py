@@ -343,6 +343,16 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         # The maps they uploaded go, and the maps they answered "use it?" for stay with nobody as
         # the DM who said so (#3274, #4344).
         await conn.execute("SELECT dmbot_forget_maps()")
+        # The reads of their own words about two names, asked for on the website (#2940).
+        await conn.execute("SELECT dmbot_forget_connection_reads()")
+        # The removals of adventure files they asked for on the website (#3694).
+        await conn.execute("SELECT dmbot_forget_adventure_removals()")
+        await conn.execute("SELECT dmbot_forget_adventure_gives()")
+        await conn.execute("SELECT dmbot_forget_adventure_reads()")
+        await conn.execute("SELECT dmbot_forget_adventure_guides()")
+        await conn.execute("SELECT dmbot_forget_adventure_matches()")
+        # A character drawn with a picture they posted goes back to the default icon (#3623).
+        await conn.execute("SELECT dmbot_forget_pc_icon_pictures()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.

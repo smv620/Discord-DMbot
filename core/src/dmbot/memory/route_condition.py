@@ -15,6 +15,8 @@ from __future__ import annotations
 import re
 from typing import NamedTuple
 
+from dmbot.memory import hedges
+
 CONDITION = "condition"
 OPEN, HARD, CLOSED, GONE = "open", "hard", "closed", "gone"
 VALUES = (OPEN, HARD, CLOSED, GONE)
@@ -41,7 +43,6 @@ _WAYS = r"(?:road|way|path|trail)"
 _ABOUT_ANOTHER = frozenset(
     {"to", "from", "toward", "towards", "near", "past", "beyond", "through", "across", "over"}
 )
-_SENTENCE_END = re.compile(r"[.!?;\n]")
 
 
 class Said(NamedTuple):
@@ -93,6 +94,8 @@ def read(name: str, text: str, *, is_route: bool) -> Said | None:
         before = plain[: m.start()].split()
         if before and before[-1] in _ABOUT_ANOTHER:
             continue
+        if hedges.hedged(plain, m.start(), m.end()):  # (asked, supposed or someone's view, #4982)
+            continue
         said = _phrase_at(rest[1:]) if rest.startswith(" ") else None  # (right after the name)
         if said is not None:
             return said
@@ -110,8 +113,12 @@ def read_between(text: str) -> list[Between]:
     the phrases, as the text names A and B (the caller finds the places and the one known road
     that joins them, or writes nothing). In the text's own order."""
     out: list[Between] = []
-    for sentence in _SENTENCE_END.split(_plain(text)):
+    plain = _plain(text)
+    for part in re.finditer(r"[^.!?;\n]+", plain):
+        sentence = part.group()
         for m in _BETWEEN.finditer(sentence):
+            if hedges.hedged(plain, part.start() + m.start(), part.start() + m.end()):
+                continue  # (asked, supposed or someone's view, #4982)
             said = _phrase_at(sentence[m.end() :])
             if said is None:
                 continue

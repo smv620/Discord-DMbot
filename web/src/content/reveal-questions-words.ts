@@ -1,0 +1,26 @@
+// The words of "Things the characters learned" on the Questions page (#3863 step 2): the same as Discord's 💡 card (ui/reveal_card.py), with no
+// markdown. A name is the character's own, never a pronoun. DM only.
+export const revealWords = {
+  title: "Things the characters learned",
+  intro: "Look at each one and press Keep if it is right. Nothing is saved until you do.",
+  learned: (who: string, what: string, how: string): string => `${who} learned that ${what}. How: ${how}.`,
+  guessing: (who: string): string => `${who} was only guessing. Keeping this makes ${who} sure of it.`,
+  player: (who: string): string => `Keeping this lets ${who}'s player see it.`,
+  keep: "Keep",
+  notThis: "Not this",
+  loading: "Loading…",
+  failed: "Couldn't load the things the characters learned.",
+  tryAgain: "Try again",
+  empty: "Nothing is waiting. DMbot will ask after a later session if it notices more.",
+  kept: "✅ Kept.",
+  alreadyKnown: "Nothing to change: they already knew it for sure.",
+  okay: "Okay, not this one.",
+  undo: "↩️ Undo",
+  undone: "↩️ Undone. Back to how it was before you pressed Keep.",
+  undoTooLate: "Couldn't undo that: something changed since.",
+  gone: "Already answered (by you or another DM), or it can't be kept any more. Nothing changed.",
+  couldNot: "Couldn't do that just now. Nothing changed. Try again in a moment.",
+  unsure: "Not sure it went through. The list below shows what is still waiting.",
+  refreshFailed: "Couldn't read the list again. What is shown may be out of date.",
+  working: "Working on it…",
+};

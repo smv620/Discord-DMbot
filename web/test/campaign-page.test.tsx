@@ -5,6 +5,7 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../src/content/import-switch", () => ({ IMPORT_LIVE: true }));
 vi.mock("../src/content/import-words", async (original) => ({
   ...(await original<typeof import("../src/content/import-words")>()),
   IMPORT_LIVE: true,
@@ -73,7 +74,7 @@ describe("the page", () => {
         "/account/import/100.cmp1", // an import-enabled test server
         "/account/house-rules/100.cmp1", // read by the whole table
         "/account/homebrew/100.cmp1",
-        "/account/sharing", // a DM can share rules
+        "/account/sharing/100.cmp1", // a DM can share rules: the campaign's own page (#5039)
       ]),
     );
     // Words equal Discord's and the PLAN's (#2461 item 4).
@@ -489,7 +490,7 @@ describe("the parts and the pages in each (#2985)", () => {
   it("lists the pages of the part you are in under the tabs, and marks this page", async () => {
     render(<CampaignNav api={mockApi("table")} campaignRef="100.cmp1" page="graph" />);
     await waitFor(() => expect(pagesOf().getAllByRole("link").length).toBeGreaterThan(1));
-    expect(pagesOf().getAllByRole("link").map((a) => a.textContent)).toEqual([w.pages.recaps, w.pages.timeline, w.pages.graph, w.pages.names, w.pages.transcripts]);
+    expect(pagesOf().getAllByRole("link").map((a) => a.textContent)).toEqual([w.pages.recaps, w.pages.timeline, w.pages.graph, w.pages.names, w.pages.transcripts, w.pages.maps]);
     const here = pagesOf().getAllByRole("link").filter((a) => a.getAttribute("aria-current"));
     expect(here.map((a) => a.textContent)).toEqual([w.pages.graph]);
     expect(here[0]!.getAttribute("aria-current")).toBe("page");

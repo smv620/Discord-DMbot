@@ -26,12 +26,24 @@ FORGET_OWN = import_module("dmbot.migrations.0494_forget_own_records")
 FORGET_RECAP = import_module("dmbot.migrations.0495_forget_recap_approval")
 FORGET_MEMBERSHIP = import_module("dmbot.migrations.0497_forget_membership")
 FORGET_LOOKUPS = import_module("dmbot.migrations.0447_member_lookups")
+FORGET_CONNECTIONS = import_module("dmbot.migrations.0633_forget_connection_reads")
+FORGET_ADVENTURE_REMOVALS = import_module("dmbot.migrations.0640_forget_adventure_removals")
+FORGET_ADVENTURE_GIVES = import_module("dmbot.migrations.0642_forget_adventure_gives")
+FORGET_ADVENTURE_READS = import_module("dmbot.migrations.0644_forget_adventure_reads")
+FORGET_ADVENTURE_GUIDES = import_module("dmbot.migrations.0646_forget_adventure_guides")
+FORGET_ADVENTURE_MATCHES = import_module("dmbot.migrations.0648_forget_adventure_matches")
 DELETED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.DELETED
     + FORGET_REQUESTS.DELETED
     + FORGET_LOOKUPS.DELETED
     + FORGET_OWN.DELETED
     + FORGET_MEMBERSHIP.DELETED
+    + FORGET_CONNECTIONS.DELETED
+    + FORGET_ADVENTURE_REMOVALS.DELETED
+    + FORGET_ADVENTURE_GIVES.DELETED
+    + FORGET_ADVENTURE_READS.DELETED
+    + FORGET_ADVENTURE_GUIDES.DELETED
+    + FORGET_ADVENTURE_MATCHES.DELETED
 )
 ZEROED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.ZEROED
@@ -64,7 +76,13 @@ EXPECTED_DELETED: frozenset[tuple[str, str]] = frozenset(
         ("setting_actions", "user_id"),
         ("trait_answers", "user_id"),
         ("upload_undos", "user_id"),
+        ("web_adventure_gives", "user_id"),
+        ("web_adventure_guides", "user_id"),
+        ("web_adventure_matches", "user_id"),
+        ("web_adventure_reads", "user_id"),
+        ("web_adventure_removals", "user_id"),
         ("web_backups", "user_id"),
+        ("web_connection_reads", "user_id"),
         ("web_house_file_actions", "user_id"),
         ("web_line_deletions", "user_id"),
         ("web_line_fixes", "user_id"),
@@ -188,6 +206,35 @@ ROWS: dict[str, str] = {
     "web_line_deletions": (
         "INSERT INTO web_line_deletions (guild_id, id, user_id, created_at, updated_at)"
         " VALUES (%(g)s, %(k)s, %(u)s, 1, 1)"
+    ),
+    "web_adventure_gives": (
+        "INSERT INTO web_adventure_gives (guild_id, campaign_id, id, user_id, object_key,"
+        " file_name, size_bytes, state, stage, error, created_at, updated_at)"
+        " VALUES (%(g)s, %(c)s, %(k)s, %(u)s, '', 'Book.pdf', 1, 'failed', 'failed', 'x', 1, 1)"
+    ),
+    "web_adventure_guides": (
+        "INSERT INTO web_adventure_guides (guild_id, campaign_id, id, user_id, job, document_id,"
+        " state, error, created_at, updated_at) VALUES (%(g)s, %(c)s, %(k)s, %(u)s, 'read',"
+        " %(k)s, 'failed', 'x', 1, 1)"
+    ),
+    "web_adventure_matches": (
+        "INSERT INTO web_adventure_matches (guild_id, campaign_id, id, user_id, job, state,"
+        " error, created_at, updated_at) VALUES (%(g)s, %(c)s, %(k)s, %(u)s, 'suggest',"
+        " 'failed', 'x', 1, 1)"
+    ),
+    "web_adventure_reads": (
+        "INSERT INTO web_adventure_reads (guild_id, campaign_id, id, user_id, document_id,"
+        " state, error, created_at, updated_at) VALUES (%(g)s, %(c)s, %(k)s, %(u)s, %(k)s,"
+        " 'failed', 'x', 1, 1)"
+    ),
+    "web_adventure_removals": (
+        "INSERT INTO web_adventure_removals (guild_id, campaign_id, id, user_id, document_id,"
+        " created_at, updated_at) VALUES (%(g)s, %(c)s, %(k)s, %(u)s, %(k)s, 1, 1)"
+    ),
+    "web_connection_reads": (
+        "INSERT INTO web_connection_reads (guild_id, campaign_id, id, user_id, first_id,"
+        " second_id, created_at, updated_at) VALUES (%(g)s, %(c)s, %(k)s, %(u)s, %(k)s, %(k)s,"
+        " 1, 1)"
     ),
     "web_line_fixes": (
         "INSERT INTO web_line_fixes (guild_id, campaign_id, id, user_id, session_id,"

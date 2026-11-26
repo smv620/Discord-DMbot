@@ -8,15 +8,34 @@ with the campaign, and in its backup like every campaign table (CLAUDE.md: campa
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from dmbot.campaigns.models import CampaignError
-from dmbot.db import Conn
+from dmbot.db import Conn, Database
 
 MAX_LABELS = 500
 LABEL_MAX = 80
 INT64_MAX = 2**63 - 1
 DAMAGED = "This backup file is damaged (bad import names)."
+
+
+async def labels_of(
+    db: Database, guild_id: int, campaign_id: str, user_ids: Sequence[int]
+) -> list[str]:
+    """The labels an import file called these people by, as the DM tied them (`import_speakers`):
+    the second source for a worker's "people at the table are not story names" (#5023), since a
+    person the uploader confirmed may have no consent row and so no directory name. This campaign
+    only, labels only; someone never tied has none."""
+    if not user_ids:
+        return []
+    async with db.guild(guild_id) as conn:
+        cur = await conn.execute(
+            "SELECT label FROM import_speakers WHERE guild_id = %s AND campaign_id = %s"
+            " AND user_id = ANY(%s) ORDER BY label",
+            (guild_id, campaign_id, list(user_ids)),
+        )
+        return [str(r["label"]) for r in await cur.fetchall()]
 
 
 class ImportSpeakersSection:

@@ -137,3 +137,63 @@ class AFileRefusedSaysWhichTableBrokeIt(ABackupHoldsTheMemory):
         self.assertIn("party_span", logged.output[0])
         self.assertNotIn("vanished", " ".join(logged.output))
         self.assertEqual(backup.damaged_tags(rows), ["party_span"])
+
+    async def test_every_breaking_column_is_named_in_one_pass(self) -> None:
+        from dmbot.campaigns.models import CampaignError
+        from dmbot.memory import backup
+
+        main, _ = await self.store.export_set(GUILD, self.campaign.id)
+        rows = main["memory"] if "memory" in main else main["sections"]["memory"]
+        names = [r for r in rows if r.get("table") == "alias"]
+        beliefs = [r for r in rows if r.get("table") == "belief"]
+        self.assertTrue(names and beliefs)
+        names[0]["created_at"] = "not a time"
+        beliefs[0]["confidence"] = "high"
+        with (
+            self.assertLogs("dmbot.memory.backup", level="WARNING") as logged,
+            self.assertRaises(CampaignError),
+        ):
+            backup.MemorySection().check(rows)
+        said = logged.output[0]
+        self.assertIn("memory_aliases.created_at", said)
+        self.assertIn("memory_beliefs.confidence", said)
+        self.assertIn("raised in _check_rows line", said)
+        self.assertNotIn("not a time", said)
+        self.assertNotIn("high", said.replace("highest", ""))
+
+
+class TheDatabaseRefusingARowSaysWhere(DatabaseTest):
+    """A file that passes its checks and is still refused by the database says which table and
+    rule, never a value (#4858: "damaged" hid which of the ~30 constraints it was)."""
+
+    async def test_a_refused_row_names_its_table_and_rule_and_no_value(self) -> None:
+        from dmbot.campaigns.models import CampaignError
+        from dmbot.memory import backup
+
+        store = CampaignStore(self.db)
+        register_backup_sections(
+            store,
+            forget_audio=lambda g, c: None,
+            consenting=cast(
+                Callable[[int], Awaitable[frozenset[int]]], AsyncMock(return_value=frozenset())
+            ),
+        )
+        memory = MemoryStore(self.db)
+        campaign = await store.create(GUILD, "Frostmaiden", DM_ID)
+        await memory.add_entity(
+            GUILD, campaign.id, name="Secretly Named Npc", type="npc", status=CONFIRMED, source=DM
+        )
+        main, _ = await store.export_set(GUILD, campaign.id)
+        rows = main["sections"]["memory"]
+        by_tag = backup.MemorySection().check(rows)
+        by_tag["entity"] = [*by_tag["entity"], by_tag["entity"][-1]]  # (the same id twice)
+        other = await store.create(GUILD, "Another", DM_ID)
+        with (
+            self.assertLogs("dmbot.memory.backup", level="WARNING") as logged,
+            self.assertRaises(CampaignError),
+        ):
+            async with self.db.guild(GUILD) as conn:
+                await backup.MemorySection().load(conn, GUILD, other.id, by_tag)
+        text = " ".join(logged.output)
+        self.assertIn("memory_entities", text)
+        self.assertNotIn("Secretly", text)

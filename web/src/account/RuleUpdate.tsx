@@ -1,9 +1,10 @@
 /** @jsxImportSource preact */
-// "See changes" and "Pick changes" under a followed house-rules set (#4841 C1–C2, #4845, #4855): a newer version of the set is
-// waiting for the campaign, with what would change. Its own file, loaded only from the House rules page while RULE_UPDATES_LIVE.
-// Nothing is drawn when no update waits for this set. The result of a pick and its Undo stay on screen after the follow has ended
-// (the update read then comes back null), so they are kept above that check. Nothing is taken by this card on its own.
-import { useEffect, useState } from "preact/hooks";
+// "See changes" and "Pick changes" under a followed house-rules set (#4841 C1–C2, #4845, #4855), and "Undo" for an update DMbot
+// already took (#4867). A newer version waiting for the campaign shows with what would change; when DMbot has taken one instead,
+// its changes show with an Undo for a day. Its own file, loaded only from the House rules page while RULE_UPDATES_LIVE. Nothing is
+// drawn when no update waits or was taken for this set. The result of a pick or an Undo stays on screen after the follow has
+// changed (the reads then come back empty), so it is kept above those checks.
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import { ruleUpdateWords as w } from "../content/rule-updates-words";
 import { ApiError, type AccountApi, type RuleUpdate as Update } from "./api";
@@ -30,9 +31,15 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
   const [open, setOpen] = useState(false);
   const [picking, setPicking] = useState(false);
   const [round, setRound] = useState(0);
+  // Focus: the Pick button returns focus when the picker closes; the saved line takes it after a pick (#4884).
+  const pickButton = useRef<HTMLButtonElement | null>(null);
+  const doneLine = useRef<HTMLParagraphElement | null>(null);
   const [result, setResult] = useState<Result | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
   const [undoing, setUndoing] = useState(false);
+  const [taken, setTaken] = useState<Update | null>(null);
+  const [takenFailed, setTakenFailed] = useState(false);
+  const [takenOpen, setTakenOpen] = useState(false);
 
   useEffect(() => {
     if (!api.ruleUpdate) return;
@@ -51,6 +58,34 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
       live = false;
     };
   }, [api, campaignRef, round]);
+
+  // An update DMbot already took is read only while no newer one waits for this set (#4867).
+  useEffect(() => {
+    if (!api.ruleTaken || !loaded || (update && update.name === name)) {
+      setTaken(null);
+      setTakenFailed(false);
+      return;
+    }
+    let live = true;
+    api.ruleTaken(campaignRef).then(
+      (got) => {
+        if (!live) return;
+        setTaken(got.taken);
+        setTakenFailed(false);
+      },
+      () => {
+        if (live) setTakenFailed(true);
+      },
+    );
+    return () => {
+      live = false;
+    };
+  }, [api, campaignRef, name, loaded, update, round]);
+
+  // After a pick the saved line takes focus (#4884).
+  useEffect(() => {
+    if (result?.kind === "done") doneLine.current?.focus();
+  }, [result]);
 
   function picked(got: { kept: number; left: number; take: number | null }) {
     setPicking(false);
@@ -81,6 +116,29 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
     }
   }
 
+  // Undo of the update DMbot took (#4867): back to the version before it, which the card then says.
+  async function undoTaken(t: Update) {
+    if (undoing || !api.ruleUpdateUndoLast) return;
+    setUndoing(true);
+    setAlert(null);
+    try {
+      const got = await api.ruleUpdateUndoLast(campaignRef, t.to);
+      setTaken(null);
+      setResult({ kind: "undone", name, from: got.back ?? t.from });
+      setRound((was) => was + 1);
+    } catch (error) {
+      if (error instanceof ApiError && error.kind === "undo-late") {
+        // Too late: read both again, so the Undo goes away once the update is no longer taken (#4867).
+        setAlert(w.tooLateTaken);
+        setRound((was) => was + 1);
+      } else {
+        setAlert(w.couldNot);
+      }
+    } finally {
+      setUndoing(false);
+    }
+  }
+
   if (!api.ruleUpdate) return null;
   const alertLine = alert ? (
     <p class="small" role="alert">
@@ -94,7 +152,9 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
         {alertLine}
         {result.kind === "done" ? (
           <>
-            <p class="small">{w.done(result.name, result.kept, result.left)}</p>
+            <p class="small" role="status" ref={doneLine} tabIndex={-1}>
+              {w.done(result.name, result.kept, result.left)}
+            </p>
             <div class="row">
               <button type="button" class="button secondary" disabled={undoing || result.take === null} onClick={() => result.take !== null && void undo(result.take)}>
                 {w.undo}
@@ -116,9 +176,53 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
       </p>
     );
   }
-  if (!loaded || !update || update.name !== name) return alertLine;
+  if (!loaded) return alertLine;
+
+  // No newer version waits for this set: an update DMbot already took can still be undone (#4867).
+  if (!update || update.name !== name) {
+    const showTaken = taken !== null && taken.name === name;
+    if (!showTaken && !alert && !takenFailed) return null;
+    const takenId = `rule-taken-${encodeURIComponent(`${campaignRef}-${name}`)}`;
+    return (
+      <div class="stack">
+        {alertLine}
+        {takenFailed && (
+          <p class="small" role="alert">
+            {w.failed}
+          </p>
+        )}
+        {showTaken && taken && (
+          <>
+            <p class="small">{w.taken(taken.name, taken.to)}</p>
+            <div class="row">
+              <button type="button" class="button secondary" aria-expanded={takenOpen} aria-controls={takenId} onClick={() => setTakenOpen((was) => !was)}>
+                {takenOpen ? w.hideChanges : w.seeChanges}
+              </button>
+              <button type="button" class="button secondary" disabled={undoing} onClick={() => void undoTaken(taken)}>
+                {w.undo}
+              </button>
+            </div>
+            <p class="small muted">{w.undoTakenLine(taken.from)}</p>
+            {takenOpen && (
+              <div id={takenId} class="stack">
+                <p class="small">{w.takenChanges}</p>
+                <ul class="small">
+                  {taken.lines.map((line, i) => (
+                    <li key={i}>{line}</li>
+                  ))}
+                </ul>
+                {taken.more > 0 && <p class="small muted">{w.more(taken.more)}</p>}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    );
+  }
 
   const id = `rule-update-${encodeURIComponent(`${campaignRef}-${name}`)}`;
+  // The picker's id names the campaign and the set, since two sets can be followed at once (#4884).
+  const pickId = `rule-pick-${encodeURIComponent(`${campaignRef}-${name}`)}`;
   return (
     <div class="stack">
       {alertLine}
@@ -129,7 +233,15 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
           {open ? w.hideChanges : w.seeChanges}
         </button>
         {update.more === 0 && (
-          <button type="button" class="button secondary" aria-expanded={picking} disabled={!api.ruleUpdatePick} onClick={() => setPicking((was) => !was)}>
+          <button
+            ref={pickButton}
+            type="button"
+            class="button secondary"
+            aria-expanded={picking}
+            aria-controls={picking ? pickId : undefined}
+            disabled={!api.ruleUpdatePick}
+            onClick={() => setPicking((was) => !was)}
+          >
             {w.pick}
           </button>
         )}
@@ -150,7 +262,18 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
         <LazyPanel
           load={loadRulePick}
           what="the changes you can keep"
-          props={{ api, campaignRef, update, onPicked: picked, onCancel: () => setPicking(false), onError: pickFailed }}
+          props={{
+            api,
+            campaignRef,
+            update,
+            id: pickId,
+            onPicked: picked,
+            onCancel: () => {
+              setPicking(false);
+              pickButton.current?.focus();
+            },
+            onError: pickFailed,
+          }}
         />
       )}
     </div>

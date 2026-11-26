@@ -1608,7 +1608,7 @@ class Stored(ConfirmedMemoryTest):
             {"status": "proposed", "fact_id": "a" * 32},
             {"lines": "1"},
             {"lines": ["x" * 300]},
-            {"speaker_ids": [-1]},
+            {"speaker_ids": [0]},
             {"speaker_ids": "7"},
             {"extra": 1},
         ):

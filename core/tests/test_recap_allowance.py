@@ -168,7 +168,10 @@ class TheBotsCheck(text_tests.Base):
         self.bot.post = post
         self.bot.recaps = self.store
         self.bot.campaigns = self.campaigns
-        self.bot.settings = SimpleNamespace(recaps_per_month=2, recap_audio_per_month=1)
+        self.bot.settings = SimpleNamespace(
+            recaps_per_month=2, recap_audio_per_month=1, worker_on=False
+        )
+        self.bot.outbox = None
         self.bot.meter = None
         self.now = at(2026, 10, 16)
         self.clock.now = float(self.now)

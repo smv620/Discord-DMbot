@@ -22,7 +22,10 @@ ROWS_MAX = 5_000
 INT64_MAX = 2**63 - 1
 _KEYS = {"entity_id", "choice", "custom_ref", "set_by", "updated_at"}
 _HEX = re.compile(r"[0-9a-f]{32}")
-STORED_CHOICES = ("discord", "dndbeyond", "custom", "hidden")
+# `custom` (a kept picture, #3623) is not carried: pictures are not in a backup yet (owed, #3274),
+# so the restored campaign would hold an id that points at nothing; that character restores with the
+# default. A file that says `custom` is refused as damaged, as no backup can hold one.
+STORED_CHOICES = ("discord", "dndbeyond", "hidden")
 
 Row = tuple[str, str, str | None, int, int]
 
@@ -45,8 +48,7 @@ def _checked(rows: object) -> list[Row]:
             and _HEX.fullmatch(raw["entity_id"])
             and raw["entity_id"] not in seen
             and raw["choice"] in STORED_CHOICES
-            and (raw["custom_ref"] is None or _is_hex(raw["custom_ref"]))
-            and ((raw["choice"] == "custom") == (raw["custom_ref"] is not None))
+            and raw["custom_ref"] is None
             and _int(raw["set_by"], 0, INT64_MAX)
             and _int(raw["updated_at"], 1, INT64_MAX)
         ):
@@ -72,7 +74,8 @@ class PcIconsSection:
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
             "SELECT entity_id, choice, custom_ref, set_by, updated_at FROM pc_icons"
-            " WHERE guild_id = %s AND campaign_id = %s ORDER BY entity_id LIMIT %s",
+            " WHERE guild_id = %s AND campaign_id = %s AND choice <> 'custom'"
+            " ORDER BY entity_id LIMIT %s",
             (guild_id, campaign_id, ROWS_MAX),
         )
         return [

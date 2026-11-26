@@ -244,6 +244,9 @@ WEB_ROLE_GRANTS: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Database.grant_writer()); account deletion deletes the person's own.
     ("SELECT, INSERT, UPDATE, DELETE", ("access_grants",)),
     ("SELECT, INSERT", ("access_log",)),
+    # What the paid calls cost (#3672): added to by the bot's flush, read by the admin page, each
+    # through its own setting (Database.spend_writer / spend_admin); nothing is ever deleted here.
+    ("SELECT, INSERT, UPDATE", ("service_spend",)),
 )
 
 # Consent given under older wording never counts for an import: the store door refuses a caller
@@ -365,6 +368,9 @@ UNSCOPED_TABLES = (
     "account_moves",
     "recap_audio_strays",
     "move_code_asks",
+    # One row for each kind of background work, naming who holds it and until when (#3842): a kind
+    # word, a random token and a time, nothing about any server. No grant for the website.
+    "worker_leases",
     # One copy of each published homebrew page, whoever imported it (#1633): public content with
     # no campaign scope, the second exception to campaign isolation. No grant for the website.
     "homebrew_pages",

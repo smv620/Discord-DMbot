@@ -9,6 +9,7 @@ import type {
   NameAnswerResult,
   IconChoice,
   ClarifyName,
+  ConnectionSaidRead,
   NameCheckList,
   NamesFixed,
   CleanupView,
@@ -42,7 +43,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, CharacterLanguages, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, ContinuityHits, DeedQuestions, HeardQuestions, LookAlikes, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, NodeTrait, PlotThreads, RevealProposal, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes, LeaveGroup } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 /** The revealed list of an upload notice (#4661): plain lines of at most 200 characters, at most ten; anything else is dropped. */
@@ -71,6 +72,19 @@ export function countOf(counts: unknown, key: string): number | undefined {
   return undefined;
 }
 
+/** A character's picture icon is a path on the API's own host (#3622, core #5280: the route serves the small preview itself, so no
+ * other image host is needed): made absolute here, so the page draws it from the API like the gallery's previews. */
+export function withPictureIcons(graph: WebGraph, root: string): WebGraph {
+  return {
+    ...graph,
+    nodes: graph.nodes.map((n) =>
+      n.icon?.kind === "picture" && n.icon.url?.startsWith("/") ? { ...n, icon: { ...n.icon, url: `${root}${n.icon.url}` } } : n,
+    ),
+  };
+}
+
+const saidPath = (ref: string): string => `/me/campaigns/${encodeURIComponent(ref)}/connections/read`;
+
 export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Partial<AccountApi> {
   // The party record's door answers with {answer}; the answer is waited for like the other queued changes (#4778 a2).
   const partyAnswer = async (ref: string, queued: unknown): Promise<WebAnswer> => {
@@ -92,6 +106,19 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
         onLook?.(sharedOf(look.progress)),
       );
       return { putBack: got.putBack ?? 0 };
+    },
+    // The press is queued for the bot like the other queued changes; the answer carries how many names were made and how many wait (#5081).
+    moreNames: async (campaignRef, onLook) => {
+      const queued = (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/more-names`, {})) as { answer?: string } | null;
+      if (!queued?.answer) throw new ApiError("server");
+      // Core sends `progress: {done, total}` with no stage for this one, so `sharedOf` would drop it: read the counts.
+      const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(campaignRef)}/web/answers/${encodeURIComponent(queued.answer)}`, (look) => {
+        const p = look.progress as { done?: unknown; total?: unknown } | null | undefined;
+        onLook?.(p && typeof p.done === "number" && typeof p.total === "number" && p.total > 0 ? { done: p.done, total: p.total } : null);
+      });
+      // A done answer without its counts is not a success to report ("No more names are waiting" would be false).
+      if (typeof got.made !== "number" || typeof got.left !== "number") throw new ApiError("server");
+      return { made: got.made, left: got.left };
     },
     campaignNames: async (campaignRef) =>
       (
@@ -170,6 +197,14 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     },
     nameChecks: async (ref) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
+    saidSend: async (ref, input) => (await call("POST", saidPath(ref), input)) as { answer: string },
+    saidRead: async (ref, answer) => (await call("GET", `${saidPath(ref)}/${encodeURIComponent(answer)}`)) as ConnectionSaidRead,
+    saidUse: async (ref, answer, use) => {
+      await call("POST", `${saidPath(ref)}/${encodeURIComponent(answer)}/use`, use);
+    },
+    saidUndo: async (ref, answer) => {
+      await call("POST", `${saidPath(ref)}/${encodeURIComponent(answer)}/undo`);
+    },
     // One name on its own page (#3604): the same address as its answer, read with GET; the core door comes with #3596/#3602.
     clarifyName: async (ref, id) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check/${encodeURIComponent(id)}`)) as ClarifyName,
@@ -364,13 +399,13 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       if (q.seeAs) {
         // The web as one character (or the party) knows it (#2999): the same shape, plus whose it is.
         params.set("viewer", q.seeAs);
-        return (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/see-as?${params.toString()}`)) as WebGraph;
+        return withPictureIcons((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/see-as?${params.toString()}`)) as WebGraph, root);
       }
       if (q.view) params.set("view", q.view);
-      return (await call(
-        "GET",
-        `/me/campaigns/${encodeURIComponent(ref)}/web?${params.toString()}`,
-      )) as WebGraph;
+      return withPictureIcons(
+        (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web?${params.toString()}`)) as WebGraph,
+        root,
+      );
     },
     webVersion: async (ref) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/version`)) as { version: number },
@@ -391,10 +426,11 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/find?view=${q.view ?? ""}&q=${encodeURIComponent(q.q)}`)) as { names: { id: string; name: string; kind: string }[] }).names,
     webNodeSummary: async (ref, id, peek) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/nodes/${encodeURIComponent(id)}/summary${peek ? "?peek=1" : ""}`)) as NodeSummary,
-    confirmKinds: async (ref, upload, kinds) => {
+    // Add all under an upload, or (`source` "import", #5276) under an import: the same press, the id under its own key.
+    confirmKinds: async (ref, upload, kinds, source = "upload") => {
       const queued = (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/all-names-confirm`, {
         action: "confirm-kinds",
-        upload,
+        ...(source === "import" ? { import: upload } : { upload }),
         kinds,
       })) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
@@ -562,8 +598,12 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     },
     // The connection edits are queued too (202 {answer}); this waits for the edge as it now stands.
     // The icon choice is instant: the door answers with what it was and what it is now (#3621).
-    setPcIcon: async (ref, entityId, choice) =>
-      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/pc-icons/${encodeURIComponent(entityId)}`, { choice })) as { previous: IconChoice; now: IconChoice },
+    setPcIcon: async (ref, entityId, choice, picture) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/pc-icons/${encodeURIComponent(entityId)}`, { choice, ...(picture !== undefined ? { picture } : {}) })) as {
+        previous: IconChoice;
+        now: IconChoice;
+        previousPicture?: number | null;
+      },
     worldNotes: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/world-notes`)) as WorldNotes,
     // The quest sheet of a kept story thread (#4547): read only, DM only (the door answers anyone else with nothing).
     // Queued for the bot like the other website presses (202 {answer}); this waits for it and gives back the batch for Undo (#4562).
@@ -602,7 +642,137 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     secretQuestions: async (ref) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/secret-questions`)) as { questions: SecretQuestion[] }).questions,
     // The join questions waiting for the DM (#4778 part b): DM only; the door answers anyone else with nothing.
+    // The "Did they mean…?" questions (#4857): read as they are; the three answers are queued for the bot and this waits for each one.
+    // 🔗 Look-alikes (#5259): the read, then three queued answers waited for like the other queued presses.
+    lookAlikes: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/look-alikes`)) as LookAlikes,
+    mergeLookAlikes: async (ref, body, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/look-alikes/merge`, body)) as { answer?: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`, (look) => onLook?.(sharedOf(look.progress)));
+      return { batch: got.batch ?? null, secret: got.secret ?? null };
+    },
+    lookAlikesApart: async (ref, ids) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/look-alikes/apart`, { ids })) as { answer?: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    undoLookAlikes: async (ref, batch) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/look-alikes/undo`, { batch })) as { answer?: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    heardQuestions: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/heard-questions`)) as HeardQuestions,
+    heardPick: async (ref, question, index) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/heard-questions/pick`, { question, index })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { code: got.code ?? null };
+    },
+    heardKeep: async (ref, question) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/heard-questions/keep`, { question })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { code: got.code ?? null };
+    },
+    // "Type it…" (#4865): a name the DM typed for a waiting question. The bot checks it and answers; a refusal carries its reason.
+    heardType: async (ref, question, name) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/heard-questions/type`, { question, name })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      let reason = null as string | null;
+      try {
+        const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`, (look) => {
+          reason = look.reason ?? null;
+        });
+        return { code: got.code ?? null };
+      } catch (error) {
+        if (error instanceof ApiError && error.kind === "typed-problem" && reason !== null) error.reason = reason;
+        throw error;
+      }
+    },
+    // "Let me choose" (#4891): the choices are read; asking the bot is queued and waited for; a pick is queued and waited for.
+    joinChoices: async (ref, group) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/join-questions/${encodeURIComponent(group)}/choices`)) as JoinChoices,
+    askJoinChoices: async (ref, group) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/join-questions/choices`, { group })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    joinChoose: async (ref, group, pick) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const body = "session" in pick ? { group, session: pick.session } : { group, thread: pick.thread };
+      const queued = (await call("POST", `${base}/join-questions/choose`, body)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return {
+        chose: Array.isArray(got.chose) ? got.chose : [],
+        choseMore: typeof got.choseMore === "number" ? got.choseMore : 0,
+        first: got.first === true,
+        batch: typeof got.batch === "number" ? got.batch : null,
+      };
+    },
     joinQuestions: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/join-questions`)) as { groups: JoinGroup[] }).groups,
+    // The "Still in the party?" questions (#4895): DM only (the door answers anyone else with nothing).
+    leaveQuestions: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/leave-questions`)) as { groups: LeaveGroup[] }).groups,
+    // Queued for the bot (202 {answer}), then waited for: a "left" answer gives its batch, for Undo through `answerJoin`'s undo.
+    answerLeave: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/leave-questions/answer`, { character: change.character, answer: change.answer })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
+    // The heads-ups from this session (#3695): DM only; the door answers anyone else with not-allowed.
+    continuityHits: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/continuity`)) as ContinuityHits,
+    // Queued for the bot and waited for: its count says how many heads-ups it found.
+    askContinuity: async (ref) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/continuity/ask`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = (await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`)) as { count?: unknown };
+      return { count: typeof got.count === "number" ? got.count : 0 };
+    },
+    // Queued for the bot and waited for. A "refused" is the bot's own word for a clash it cannot settle yet (#3695).
+    answerContinuity: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/continuity/answer`, change)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`, undefined, undefined, { refused: "refused" });
+    },
+    // The deeds the party did, waiting to be recorded (#3591): DM only; the door answers anyone else with nothing.
+    deedQuestions: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/deeds`)) as DeedQuestions,
+    // Queued for the bot (202 {answer}), then waited for: a record gives its batch, for Undo; an undo gives null.
+    answerDeed: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const body = "undo" in change ? { choice: "undo", batch: change.undo } : { choice: change.answer, deed: change.deed };
+      const queued = (await call("POST", `${base}/deeds/answer`, body)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      // A deed answer can fail with "refused" (the bot does not know a name in it): the card shows its own words for that (#3591).
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`, undefined, undefined, { refused: "refused" });
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
+    // What the characters learned (#3863 step 2): the bot is asked first and waited for, then the list is read. DM only.
+    revealQuestions: async (ref) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/reveals/ask`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return ((await call("GET", `${base}/reveals`)) as { proposals: RevealProposal[] }).proposals;
+    },
+    // Keep or Not this, queued for the bot and waited for; a keep gives its batch for Undo (#3863 step 2).
+    answerReveal: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/reveals/answer`, { id: change.id, answer: change.answer })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
     // Queued for the bot (202 {answer}), then waited for: the batch and `given` of an answer; the batch of an Undo is in its path.
     answerJoin: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
@@ -647,6 +817,44 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { kept: got.kept ?? kept.length, left: got.left ?? 0, take: typeof got.take === "number" ? got.take : null };
     },
+    // Undo of the update DMbot took (#4867): queued for the bot; waits for its answer, which has the version it went back to.
+    ruleUpdateUndoLast: async (ref, version) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/rule-update/undo-last`, { version })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { back: typeof got.back === "number" ? got.back : null };
+    },
+    // Pick of a pack's newer version (#4873): queued for the bot; waits for its answer, which has the counts and the id for Undo.
+    packUpdatePick: async (ref, setId, version, kept) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/pack-updates/pick`, { setId, version, kept })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      // The bot says how many were left out; without it the answer can't be shown, so it is a refusal (#4873).
+      if (typeof got.left !== "number") throw new ApiError("server");
+      return {
+        kept: got.kept ?? kept.length,
+        left: got.left,
+        skipped: typeof got.skipped === "number" ? got.skipped : 0,
+        take: typeof got.take === "number" ? got.take : null,
+      };
+    },
+    // Undo of a pack pick (#4873): queued for the bot, and this waits for its answer (`too_late` past the day).
+    packUpdateUndo: async (ref, take) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/pack-updates/${encodeURIComponent(String(take))}/undo`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    // Undo of the pack update DMbot took (#4872): queued for the bot; waits for its answer, which has the version it went back to.
+    packUpdateUndoLast: async (ref, setId, version) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/pack-updates/undo-last`, { setId, version })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { back: typeof got.back === "number" ? got.back : null };
+    },
     // Undo of a pick (#4855): queued for the bot, and this waits for its answer (`too_late` past the day).
     ruleUpdateUndo: async (ref, take) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
@@ -660,6 +868,9 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     // The party's player characters for the "Some know" picker (#4680 part 1): DM only; the door answers anyone else with nothing.
     partyCharacters: async (ref) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/party-characters`)) as { characters: PartyCharacter[] }).characters,
+    // The line a pick of "Some know" will say, before it is made (#5332, core #5338). Answered at once; nothing is kept.
+    knowLine: async (ref, pick) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/know-line`, pick)) as { line: string },
     // Queued for the bot (202 {answer}); this waits for it and gives back the batch of a make, for Undo (#4598).
     answerSecret: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
@@ -686,8 +897,101 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     },
     threadCard: async (ref, thread) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads/${encodeURIComponent(thread)}/card`)) as ThreadCard,
+    // A road's or route place's condition (#4451): queued for the bot, waited for, and no batch of its own (the Undo is undoRouteLength).
+    roadCondition: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/road-condition`, change)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
+    keepRoadCondition: async (ref, id) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/road-condition/keep`, { id })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    showRoadCondition: async (ref, id, shown) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/road-condition/show`, { id, shown })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    // Takes back a route-length change by its batch (the same undo route as the length page): a road's condition changes come back with it (#4451).
+    undoRouteLength: async (ref, batch) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/route-length/${batch}/undo`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    // A route's stated length (#4392): queued for the bot and waited for. A set or a keep gives its batch; null means nothing changed.
+    changeRouteLength: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await (change.action === "set"
+        ? call("POST", `${base}/route-length`, { on: change.on, id: change.id, words: change.words })
+        : change.action === "keep"
+          ? call("POST", `${base}/route-length/keep`, { on: change.on, id: change.id })
+          : call("POST", `${base}/route-length/${change.batch}/undo`, {}))) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
+    // A character's lineage and class (#3925): DM only; the door answers anyone else with nothing.
+    nodeTraits: async (ref, node) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/nodes/${encodeURIComponent(node)}/traits`)) as { traits: NodeTrait[] }).traits,
     // The story threads DMbot found (#4482): read only, DM only (the door answers anyone else with nothing).
     storyThreads: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads`)) as StoryThreads,
+    // The open plot threads (#3696, slice 1): read only, DM only (the door answers anyone else with nothing).
+    plotThreads: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/plot-threads`)) as PlotThreads,
+    // Adds one name to a thread with its part (#3696, slice 2b): queued for the bot (202 {answer}) and waited for; no batch, no Undo.
+    addPlotThreadInvolved: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/involve`, { thread: change.thread, who: change.who, role: change.role })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    // A new thread or promise (#3696, slice 2c): queued for the bot and waited for; a done answer carries the new thread's id.
+    addPlotThread: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/new`, { kind: change.kind, state: change.state, name: change.name })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = (await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`)) as { id?: unknown };
+      if (typeof got.id !== "string" || got.id === "") throw new ApiError("server");
+      return { id: got.id };
+    },
+    // A promise's due note (empty clears it), and who made it or it was made to (#3696, slice 2c): queued, waited for, no Undo.
+    setPlotThreadDue: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/due`, { promise: change.promise, due: change.due })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    addPlotThreadParty: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/party`, { promise: change.promise, side: change.side, who: change.who })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    // A link of an event to a thread, and a thread that led to another (#3696, slice 2d): queued for the bot and waited for; no Undo.
+    linkPlotThreadEvent: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/link`, change)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    plotThreadLedTo: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/led-to`, { from: change.from, to: change.to })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    // A state change (or "check") is queued for the bot (202 {answer}) and waited for; the answer has no batch, so no Undo (#3696, slice 2a).
+    changePlotThreadState: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/state`, { thread: change.thread, state: change.state })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
     // Queued for the bot (202 {answer}); this waits for it and gives back the batch of a keep, for Undo (#4482).
     changeStoryThreads: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
@@ -715,7 +1019,9 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
           ? ((await call("POST", `${base}/world-notes/keep`, { ids: change.ids })) as { answer: string })
           : change.action === "not"
             ? ((await call("POST", `${base}/world-notes/not`, { id: change.id })) as { answer: string })
-            : ((await call("POST", `${base}/world-notes/${change.batch}/undo`, {})) as { answer: string });
+            : change.action === "bias"
+              ? ((await call("POST", `${base}/world-notes/bias`, { id: change.id, step: change.step })) as { answer: string })
+              : ((await call("POST", `${base}/world-notes/${change.batch}/undo`, {})) as { answer: string });
       if (!queued?.answer) throw new ApiError("server");
       const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { kept: typeof got.kept === "number" ? got.kept : null, batch: typeof got.batch === "number" ? got.batch : null };

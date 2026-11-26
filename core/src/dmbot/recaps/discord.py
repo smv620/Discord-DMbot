@@ -28,6 +28,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     Collection,
+    Mapping,
     Sequence,
 )
 from functools import partial
@@ -36,14 +37,15 @@ from typing import TYPE_CHECKING, Any
 
 import discord
 
-from dmbot import ai_feed
+from dmbot import ai_feed, outbox_delivery
 from dmbot.audio.segmenter import Utterance
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import upkeep
 from dmbot.dm_screen.recap_panel import PlanFacts, audio_how
 from dmbot.entitlements import RECAP_AUDIO_PLANS
+from dmbot.import_state import QUEUED, UNHONOURED, ImportState
 from dmbot.logs import log_context
-from dmbot.memory import gate
+from dmbot.memory import extractor, gate
 from dmbot.memory.exposures import secret_connections
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
@@ -55,8 +57,26 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
+from dmbot.memory.scan import is_rules_phrase, without_roll
 from dmbot.memory.scene import SceneTracker, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
+from dmbot.outbox import (
+    IMPORT_CLOCK_OFFER,
+    IMPORT_RECAP_HOLD,
+    RECAP_ALLOWANCE,
+    RECAP_FAILED,
+    RECAP_NAMES,
+    RECAP_READY,
+    RECAP_UNCHECKED,
+    STORY_HELD_BACK,
+    STORY_JOINED,
+    STORY_MET_LIST,
+    STORY_RECAP_LINES,
+    STORY_SECRET_COUNT,
+    STORY_THREADS,
+    STORY_WEATHER,
+    Outbox,
+)
 from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import critics, cues, name_answers, short, uploaded, voice
 from dmbot.recaps import feedback as recap_feedback
@@ -112,13 +132,13 @@ from dmbot.ui.recap_dm import AUDIO_WHY, RecapButton, ready_text, ready_view
 from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
 from dmbot.ui.recap_short import EXPIRED, WRITING, ShortRecapButton, ask_key, ask_view
+from dmbot.worker_lease import Slots
 
 if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from collections.abc import Coroutine, Hashable, Sequence
 
     from dmbot import plan_rules
     from dmbot.ai import TierClient
-    from dmbot.bot import DMBot
     from dmbot.campaigns import speaker_removal, web_backup, web_line_delete, web_restore
     from dmbot.campaigns.store import CampaignStore
     from dmbot.campaigns.web_delete import WebDeleteNotices
@@ -128,6 +148,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.dm_screen.said_as_hears import HearStore
     from dmbot.dm_screen.said_as_listens import ListenStore
     from dmbot.dm_screen.web_settings import SettingStore
+    from dmbot.install_record import InstallStore
     from dmbot.mail import Mailer
     from dmbot.memory.exposures import ExposureStore
     from dmbot.memory.importance import ImportanceCache
@@ -135,6 +156,12 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.memory.lore_queue import LoreQueue
     from dmbot.memory.store import MemoryStore
     from dmbot.memory.web_actions import ActionStore
+    from dmbot.memory.web_adventure_gives import GiveStore as AdventureGiveStore
+    from dmbot.memory.web_adventure_guides import GuideStore as AdventureGuideStore
+    from dmbot.memory.web_adventure_matches import MatchStore as AdventureMatchStore
+    from dmbot.memory.web_adventure_reads import ReadStore as AdventureReadStore
+    from dmbot.memory.web_adventure_removals import RemovalStore as AdventureRemovalStore
+    from dmbot.memory.web_connection_reads import ActionStore as ConnectionReadStore
     from dmbot.memory.web_sheets import ActionStore as SheetActionStore
     from dmbot.recaps.audio.worker import AudioWorker
     from dmbot.recaps.must_haves import MustStore
@@ -157,8 +184,23 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
 # Logged under the bot's own name, so the lines and any filter on them stay as they were.
 log = logging.getLogger("dmbot.bot")
 
+
+async def session_shown(
+    memory: Any, gid: int, cid: str, session_at: int | None
+) -> frozenset[str] | None:
+    """What the party at that session knows, for the recap's name lists (#4877), so the draft's
+    check, the check at Post and the audio filter all read the same party (#2050: the locks
+    agree). None (the lookup's own flags, as before) with no session, no story memory or no party
+    at it. Raises when it can't be read: each caller then refuses, as for its names."""
+    if session_at is None or memory is None:
+        return None
+    party = await memory.party_at_session(gid, cid, session_at)
+    return party.entries if party.members else None
+
+
 RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's own most for a message
 RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit, with some room
+RECAP_SLOTS = 3  # with the worker: recap jobs at once, across every process (#3845)
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 WEB_RESTORE_ALIVE_EVERY_S = 30  # seconds between touches of the queued website restores
 WEB_RESTORE_TIDY_EVERY = 30  # rounds (about a minute) between the restore rows' upkeep
@@ -172,6 +214,7 @@ CLIP_SWEEP_EVERY = (
     30  # rounds (about a minute) between sweeps of voice clips older than ten minutes
 )
 RECAP_ROUND_S = 60
+WORK_GUILDS_KEEP_S = 30.0  # a worker works out its servers again after this long
 IMPORT_RECAP_TRIES = 3  # so is the start of an imported session's recap
 RECAP_RECALL_BUDGET = 3500  # characters of story memory PlotBot reads for one recap (#2254)
 PLOT_TALK_SWEEP_EVERY = 720  # rounds: about an hour at five seconds
@@ -200,7 +243,7 @@ def _attachable(
     return out
 
 
-async def setup(bot: DMBot) -> None:
+async def setup(bot: discord.Client) -> None:
     """The extension entry: the recap buttons keep working after a restart (a button is dropped
     by Discord's "This interaction failed" unless it is registered at start-up)."""
     bot.add_dynamic_items(RecapNamesButton)  # the private message's check (#2027)
@@ -224,10 +267,11 @@ class RecapFeatures:
         _audio_seen: dict[tuple[int, str, int], tuple[int, int]]
         _clip_sweep_rounds: int
         _group_locks: dict[str, asyncio.Lock]
+        _work_guilds: tuple[float, list[int]] | None
+        installs: InstallStore | None
         _group_made: dict[str, list[int]]
         _group_started: dict[tuple[int, str, str], float]
-        _import_queued: dict[str, list[int]]
-        _import_unhonoured: dict[str, list[str]]
+        import_state: ImportState | None
         _short_asks: dict[str, int]
         _voice_next: int
         _voice_tasks: dict[int, asyncio.Task[None]]
@@ -263,6 +307,10 @@ class RecapFeatures:
         recap_styles: StyleStore | None
         recap_worker: RecapWorker | None
         recaps: RecapStore | None
+        outbox: Outbox | None
+        recap_slots: Slots | None
+        headless: bool
+        outbox_wake: asyncio.Event
         settings: Settings
         tables: dict[int, Table]
         transcripts: TranscriptStore | None
@@ -277,6 +325,12 @@ class RecapFeatures:
         web_rule_actions: RuleActionStore | None
         web_sheets: SheetActionStore | None
         web_line_fixes: LineFixStore | None
+        web_connection_reads: ConnectionReadStore | None
+        web_adventure_removals: AdventureRemovalStore | None
+        web_adventure_gives: AdventureGiveStore | None
+        web_adventure_reads: AdventureReadStore | None
+        web_adventure_guides: AdventureGuideStore | None
+        web_adventure_matches: AdventureMatchStore | None
 
         @property
         def guilds(self) -> Sequence[discord.Guild]: ...
@@ -294,6 +348,33 @@ class RecapFeatures:
         ): ...
         async def fetch_user(self, user_id: int, /) -> discord.User: ...
         async def run_web_backups(self) -> None: ...
+        async def recount_heard(
+            self, gid: int, cid: str, session_at: int, retold: Collection[int] | None = None
+        ) -> int | None: ...
+        async def deliver_story_recap_lines(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
+        async def deliver_story_secret_count(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
+        async def deliver_story_met_list(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
+        async def deliver_story_held_back(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
+        async def deliver_story_weather(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
+        async def deliver_story_threads(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
+        async def deliver_story_joined(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
+        async def deliver_import_clock_offer(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
         async def run_picture_actions(self) -> None: ...
         async def run_picture_sweep(self) -> None: ...
         async def run_waiting_now(self) -> None: ...
@@ -352,6 +433,18 @@ class RecapFeatures:
         async def run_web_report_requests(self) -> None: ...
         async def run_web_sheets(self) -> None: ...
         async def run_web_line_fixes(self) -> None: ...
+
+        async def run_web_connection_reads(self) -> None: ...
+
+        async def run_web_adventure_removals(self) -> None: ...
+
+        async def run_web_adventure_gives(self) -> None: ...
+
+        async def run_web_adventure_reads(self) -> None: ...
+
+        async def run_web_adventure_guides(self) -> None: ...
+
+        async def run_web_adventure_matches(self) -> None: ...
         async def run_web_recap_style(self) -> None: ...
         async def run_member_avatars(self) -> None: ...
         async def run_web_restores(self) -> None: ...
@@ -375,7 +468,48 @@ class RecapFeatures:
                 else []
             ),
             *(
-                [self._watched(self._recap_audio_loop(), "recap-audio")]
+                [
+                    self._watched(
+                        outbox_delivery.run(
+                            self.outbox,
+                            lambda: [g.id for g in self.guilds],
+                            {
+                                RECAP_READY: self.deliver_recap_ready,
+                                RECAP_FAILED: self.deliver_recap_failed,
+                                RECAP_NAMES: self.deliver_recap_names,
+                                RECAP_UNCHECKED: self.deliver_recap_unchecked,
+                                RECAP_ALLOWANCE: self.deliver_recap_allowance,
+                                IMPORT_CLOCK_OFFER: self.deliver_import_clock_offer,
+                                IMPORT_RECAP_HOLD: self.deliver_import_recap_hold,
+                                STORY_RECAP_LINES: self.deliver_story_recap_lines,
+                                STORY_SECRET_COUNT: self.deliver_story_secret_count,
+                                STORY_MET_LIST: self.deliver_story_met_list,
+                                STORY_HELD_BACK: self.deliver_story_held_back,
+                                STORY_WEATHER: self.deliver_story_weather,
+                                STORY_THREADS: self.deliver_story_threads,
+                                STORY_JOINED: self.deliver_story_joined,
+                            },
+                            self.outbox_wake,
+                        ),
+                        "outbox",
+                    ),
+                    self._watched(
+                        outbox_delivery.listen_and_wake(self.outbox.listen, self.outbox_wake),
+                        "outbox-listen",
+                    ),
+                ]
+                # (only with the worker on: off, the bot opens no listener and polls nothing, so the
+                # default path is as it was; rows left from a run with it on wait for it to come on)
+                if self.settings.worker_on and self.outbox is not None
+                else []
+            ),
+            *(
+                [
+                    self._watched(
+                        self._recap_audio_loop(job=not self.settings.worker_on),
+                        "recap-audio",
+                    )
+                ]
                 if self.audio_worker is not None
                 else []
             ),
@@ -639,6 +773,7 @@ class RecapFeatures:
         quiet: bool = False,
         group_id: str = "",
         say: bool = True,
+        defer_question: bool = False,
     ) -> str:
         """Queue the recap, unless the session left name questions open or the story extractor is
         still to run: then hold it (#2169). With questions open the DM is asked at once; with only
@@ -651,7 +786,10 @@ class RecapFeatures:
         imported session): only open questions hold it, never a silent wait. `quiet`: the DM was
         asked about another recap of the same import already, so this hold is made asked but its
         question is not posted again. `group_id`: the import's id; its holds go together.
-        `say` False: a recap queued here is not announced (an import round says it once)."""
+        `say` False: a recap queued here is not announced (an import round says it once).
+        `defer_question` (an import's recap with the worker on, #4904 3b-3): the hold is made as
+        usual but its question is an outbox row the bot posts, so a worker needs no Discord; if
+        that post never lands, the hold's own reminder and expiry still end the wait."""
         gid, cid = campaign.guild_id, campaign.id
         # The name question, its reminder and its edits all go where the hold says (#3874 E2): the
         # DM Bot channel when the campaign has one, else the caller's. Counts only, as before.
@@ -674,6 +812,16 @@ class RecapFeatures:
                     held = True
                     if waiting == 0:
                         log.info("Recap: held until the story extractor has run")
+                        return "held"
+                    if defer_question and not quiet and self.outbox is not None:
+                        await self.outbox.add_now(
+                            gid,
+                            cid,
+                            IMPORT_RECAP_HOLD,
+                            {"session_at": session_at, "group": group_id or "-", "open": waiting},
+                            unique=True,
+                        )
+                        log.info("Recap: held for %d name question(s)", waiting)  # a count
                         return "held"
                     sent = quiet or await self.post(
                         channel_id,
@@ -700,6 +848,35 @@ class RecapFeatures:
             if await self._queue_recap(campaign, session_at, channel_id, dm, say=say)
             else "already"
         )
+
+    async def deliver_import_recap_hold(
+        self, gid: int, cid: str, payload: Mapping[str, Any]
+    ) -> None:
+        """The outbox's name question for a held import recap (#4904 3b-3): the line
+        `_hold_or_queue` posts itself with the worker off, built from the hold. A hold that has
+        gone (answered, released, expired) has nothing to ask; a campaign with no channel
+        releases the hold, so its recap is written; a
+        refused post raises, so the row is tried again."""
+        store = self.recap_holds
+        campaign = await self.campaigns.get(gid, cid)
+        at = int(payload["session_at"])
+        if store is None or campaign is None or await store.get(gid, cid, at) is None:
+            return
+        channel = campaign.dm_bot_channel_id or campaign.dm_screen_channel_id
+        if channel is None:
+            # Nobody can be asked, so release the hold as the in-process path does (a wait nobody
+            # knows about is no wait); the recap is queued, not left holding for ever.
+            await store.release(gid, cid, at)
+            return
+        group = "" if payload["group"] == "-" else str(payload["group"])
+        sent = await self.post(
+            channel,
+            recap_hold.question_text(int(payload["open"])),
+            view=hold_view(cid, at, group),
+            remember=hold_line_key(gid, cid, at, group),
+        )
+        if not sent:
+            raise RuntimeError("not-posted")
 
     async def recheck_recap_hold(self, table: Table) -> None:
         """After the story extractor (#2169): count the name questions again for a recap held
@@ -1068,17 +1245,40 @@ class RecapFeatures:
         """A recap that DMbot could not finish checking for three days (#2255): said once in
         the DM Bot channel, with the link to the recap page. Nothing goes to the table. Fixed
         words only."""
+        if await self._queued(
+            gid, cid, RECAP_UNCHECKED, {"session_at": job.session_at, "keeps": job.keeps_previous}
+        ):
+            return
+        await self._say_unchecked(gid, cid, job.session_at, job.keeps_previous)
+
+    async def _say_unchecked(self, gid: int, cid: str, session_at: int, keeps: bool) -> bool:
         campaign = await self.campaigns.get(gid, cid)
         channel = self._upkeep_channel(campaign)[0] if campaign is not None else None
         if channel is None:
-            return
-        link = page_link(self.settings.site_url, gid, cid, job.session_at)
+            return True  # nowhere to say it: done
+        link = page_link(self.settings.site_url, gid, cid, session_at)
         where = f"\nYour recap page: {link}" if self.settings.site_url else ""
-        await self.post(
+        return await self.post(
             channel,
             f"{critics.UNCHECKED_TOLD}{where}",
-            view=again_view(cid, job.session_at, keep=job.keeps_previous),
+            view=again_view(cid, session_at, keep=keeps),
         )
+
+    async def _queued(self, gid: int, cid: str, kind: str, payload: Mapping[str, Any]) -> bool:
+        """With the worker on, what a job wants said in Discord is an outbox row (ids and counts
+        only) that the bot builds and posts (#3843, #4903), so a job never needs a Discord
+        connection. True when it was queued; False means the caller says it itself (the bot with
+        the worker off, as before)."""
+        if not (self.settings.worker_on and self.outbox is not None):
+            return False
+        await self.outbox.add_now(gid, cid, kind, payload)
+        return True
+
+    async def deliver_recap_unchecked(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        if not await self._say_unchecked(
+            gid, cid, int(payload["session_at"]), bool(payload["keeps"])
+        ):
+            raise RuntimeError("not-posted")
 
     async def _say_writing(
         self, campaign: Campaign, channel_id: int, session_at: int, note: str = ""
@@ -1203,6 +1403,9 @@ class RecapFeatures:
             return None
         try:
             lookup = await self.lookup.get(campaign.guild_id, campaign.id)
+            shown = await session_shown(
+                getattr(self, "memory", None), campaign.guild_id, campaign.id, session_at
+            )
         except Exception:
             log.exception("Recap: couldn't read the campaign's secret names")
             return None
@@ -1210,6 +1413,7 @@ class RecapFeatures:
             lookup,
             await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at),
             await self._recanted(campaign.guild_id, campaign.id, session_at),
+            shown,
         )[1]
 
     async def recap_allowed_names(
@@ -1223,6 +1427,9 @@ class RecapFeatures:
             return []
         try:
             lookup = await self.lookup.get(campaign.guild_id, campaign.id)
+            shown = await session_shown(
+                getattr(self, "memory", None), campaign.guild_id, campaign.id, session_at
+            )
         except Exception:
             log.exception("Recap: couldn't read the campaign's confirmed names")
             return []
@@ -1230,7 +1437,13 @@ class RecapFeatures:
             lookup,
             await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at),
             await self._recanted(campaign.guild_id, campaign.id, session_at),
+            shown,
         )[0]
+
+    async def recap_split_made(self, gid: int, cid: str, session_at: int, split: sp.Split) -> None:
+        """A session's split was made (#3172 item d): count its names said again without the lines
+        the split calls last time's recap. The lines are numbered as the story reader's are."""
+        await self.recount_heard(gid, cid, session_at, extractor.recap_numbers(split.to_json()))
 
     async def recap_stored_split(self, gid: int, cid: str, session_at: int) -> sp.Split | None:
         """The split kept once for the session (#3298), or None when none is kept (the recap then
@@ -1282,6 +1495,7 @@ class RecapFeatures:
             importance=self.importance,
             recanted=await self._recanted(gid, cid, job.session_at),
             relation_ties=await self._relation_ties(gid, cid),
+            memory=self.memory,  # (the party at that session, #4537 slice 3b)
             # The earlier session is read for the split stage only, at the start of a try.
             with_earlier=job.split is None and job.window_done == 0,
         )
@@ -1289,7 +1503,7 @@ class RecapFeatures:
         if found is None:
             return None
         # The open threads and the earlier accepted recaps are context for the writer (#2954).
-        threads = await self._open_threads(gid, cid)
+        threads = await self._open_threads(gid, cid, job.session_at)
         story = await story_so_far(
             AcceptedStore(self.recaps.db),
             gid,
@@ -1316,9 +1530,13 @@ class RecapFeatures:
             gid, cid, seeds=seeds, audience=DM_SCREEN, budget=RECAP_RECALL_BUDGET,
             confirmed_only=True,
         )  # fmt: skip
+        # (the players of THAT session: what the party at it knew, §8 and slice 5a, never today's
+        # table; no party then is common knowledge only, failing closed)
+        then = await self.memory.members_at(gid, cid, job.session_at)
         players = await service.recall(
-            gid, cid, seeds=seeds, audience=PLAYERS, budget=RECAP_RECALL_BUDGET
-        )
+            gid, cid, seeds=seeds, audience=PLAYERS, budget=RECAP_RECALL_BUDGET,
+            viewer=gate.Viewer.party_at(then),
+        )  # fmt: skip
         # What the writer's side may be told about an item the players know is the players' own
         # text for it (no DM note, no condition); the DM-screen text is only for items they do
         # not know, which are never explained.
@@ -1340,31 +1558,33 @@ class RecapFeatures:
         players' view doesn't know by that name is left out, never looked up another way."""
         if self.memory is None or self.lookup is None or not place_names:
             return []
-        players = (await self.lookup.get(gid, cid)).for_viewer(False)
+        # (the party at that session and what it knows, read once for this stage, #4877: the
+        # places are looked up in that party's view, and its lines are that party's rows. With no
+        # party at it, that view is common knowledge only, failing closed as `Viewer.party_at`
+        # does (#4806): background is extra, so a campaign with no player character gets none)
+        party = await self.memory.party_at_session(gid, cid, job.session_at)
+        players = (await self.lookup.get(gid, cid)).for_viewer(False, seen=party.entries)
         # The names are the players' own, taken from the name entries they may see (a place or a
-        # ruler whose only entries are secret spellings or "players don't know this one yet" has
-        # no name here, and is left out), never the entity's canonical name.
+        # ruler whose only entries are secret spellings, or that this party doesn't know, has no
+        # name here, and is left out), never the entity's canonical name.
         live = {e.id for e in players.entities.values() if not e.merged_into}
         names: dict[str, str] = {}
         for name_entry in players.names:
-            if (
-                name_entry.secret
-                or name_entry.entry_hidden
-                or name_entry.person
-                or name_entry.entity_id not in live
-            ):
+            if name_entry.secret or name_entry.person or name_entry.entity_id not in live:
                 continue
             names.setdefault(name_entry.entity_id, name_entry.text)
         place_ids: list[str] = []
         for heard in place_names:
             for name_entry in players.exact(heard):
-                if name_entry.secret or name_entry.entry_hidden or name_entry.entity_id not in live:
+                if name_entry.secret or name_entry.entity_id not in live:
                     continue
                 if players.entities[name_entry.entity_id].type != "place":
                     continue
                 names[name_entry.entity_id] = name_entry.text  # (the spelling the beat used)
                 place_ids.append(name_entry.entity_id)
-        return await self.memory.recap_colour(gid, cid, place_ids, names)
+        return await self.memory.recap_colour(
+            gid, cid, place_ids, names, job.session_at, members=party.members
+        )
 
     async def recap_reveals(self, gid: int, cid: str, job: Job) -> list[str]:
         """This session's partial reveals as the sentences the writer cites (#4737,
@@ -1375,14 +1595,22 @@ class RecapFeatures:
         if self.memory is None:
             return []
         everyone = await self.memory.entities(gid, cid)
-        at_session = {
+        # (the party at that session and what it knew, read once for this stage, #4877)
+        party = await self.memory.party_at_session(gid, cid, job.session_at)
+        speaking_pcs = {
             e.id
             for e in everyone
-            if e.is_player_character and e.played_by is not None and e.played_by in job.speakers
+            if e.is_player_character
+            and e.played_by is not None
+            and e.played_by in job.speakers
+            # (a speaker's character who wasn't in the party at that session, one who left
+            # before it or joined after it, isn't at its table: no party read, every one counts)
+            and (not party.members or e.id in party.members)
         }
-        if not at_session:
+        if not speaking_pcs:
             return []
-        seen = await self.memory.visible_to(gid, cid, gate.Viewer.the_party())
+        # (threads that matter: what the party at that session knew, #4537 slice 3b, §8)
+        seen = party.seen
         mattering: set[str] = set()
         for t in await self.memory.threads(gid, cid):
             if (
@@ -1394,7 +1622,7 @@ class RecapFeatures:
                 mattering.update(i.who.id for i in t.involved)
         opted_in = await self.consent.recorded_in(gid, cid)
         return await self.memory.recap_reveals(
-            gid, cid, job.session_at, at_session, mattering, opted_in
+            gid, cid, job.session_at, speaking_pcs, mattering, opted_in
         )
 
     async def recap_allowed(self, gid: int, cid: str, job: Job | None) -> bool:
@@ -1530,20 +1758,32 @@ class RecapFeatures:
         message = await self._recap_refusal(gid, cid, audio=audio)
         if message is None:
             return None
+        if not await self._queued(gid, cid, RECAP_ALLOWANCE, {"audio": audio}):
+            await self._say_allowance(gid, cid, message)
+        return message
+
+    async def _say_allowance(self, gid: int, cid: str, message: str) -> bool:
         campaign = await self.campaigns.get(gid, cid)
         channel, counts_only = (
             self._upkeep_channel(campaign) if campaign is not None else (None, False)
         )
-        if channel is not None:
-            # The DM Bot channel is read by the campaign's people, who are not told the owner's
-            # plan or its count (#1470): a fixed line there, the full words on the DM screen.
-            shown = (
-                "your recap allowance is used up. See your recap page for when the next one is."
-                if counts_only
-                else message
-            )
-            await self.post(channel, f"📜 Recap: {shown}")
-        return message
+        if channel is None:
+            return True
+        # The DM Bot channel is read by the campaign's people, who are not told the owner's plan or
+        # its count (#1470): a fixed line there, the full words on the DM screen.
+        shown = (
+            "your recap allowance is used up. See your recap page for when the next one is."
+            if counts_only
+            else message
+        )
+        return await self.post(channel, f"📜 Recap: {shown}")
+
+    async def deliver_recap_allowance(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        """Said again from the bot's own read of the allowance, so the words are never the
+        worker's: nothing to say (it is allowed again) is done."""
+        message = await self._recap_refusal(gid, cid, audio=bool(payload.get("audio")))
+        if message is not None and not await self._say_allowance(gid, cid, message):
+            raise RuntimeError("not-posted")
 
     async def _recap_refusal(self, gid: int, cid: str, *, audio: bool) -> str | None:
         """The same check with no side effects: the refusal's words, or None when one more is
@@ -1627,19 +1867,20 @@ class RecapFeatures:
         can't be read (then nothing is sent, since a secret name couldn't be kept out)."""
         if self.lookup is None:
             return None
+        session_at = getattr(job, "session_at", None)
         try:
             lookup = await self.lookup.get(gid, cid)
+            shown = await session_shown(getattr(self, "memory", None), gid, cid, session_at)
         except Exception:
             log.exception("Recap audio: couldn't load the campaign's names")
             return None
         # The same lists as the written recap's check (#2050), so the two locks agree: a name the
-        # players haven't been shown yet is secret unless the table said it in this session.
+        # party at that session hadn't been shown is secret unless the table said it then (#4877).
         _, secret = recap_name_sets(
             lookup,
-            await recap_said(
-                getattr(self, "transcripts", None), gid, cid, getattr(job, "session_at", None)
-            ),
-            await self._recanted(gid, cid, getattr(job, "session_at", None)),
+            await recap_said(getattr(self, "transcripts", None), gid, cid, session_at),
+            await self._recanted(gid, cid, session_at),
+            shown,
         )
         hidden = set(secret)
         return AudioInputs(
@@ -1682,34 +1923,12 @@ class RecapFeatures:
         )
         if campaign is not None and channel is not None:
             if job.state == "ready":
-                try:
-                    why = await self.recap_audio_why(gid, cid)  # the audio button's greyed reason
-                except Exception:  # the recap still goes up, with the button off
-                    log.exception("Recap: couldn't tell why audio is off")
-                    why = "unavailable"
-                await self.post(
-                    channel,
-                    ready_text(
-                        "" if counts_only else job.title, link, AUDIO_WHY[why] if why else ""
-                    ),
-                    view=ready_view(
-                        cid, job.session_at, self.settings.site_url, link, audio_off=bool(why)
-                    ),
-                    remember=("recap", cid, job.session_at),
-                )
-            elif not campaign.recaps_email:
-                where = f": {link}" if link else " on the website"
-                await self.post(
-                    channel,
-                    "📜 I couldn't write this session's recap. "
-                    f"Try again from your recap page{where}"
-                    + (
-                        "\nThe recap you had before is kept: press ↩️ to bring it back."
-                        if job.keeps_previous
-                        else ""
-                    ),
-                    view=again_view(cid, job.session_at, keep=job.keeps_previous),
-                )
+                if not await self._queued(gid, cid, RECAP_READY, {"session_at": job.session_at}):
+                    await self._post_recap_ready(gid, cid, job, channel, counts_only, link)
+            elif not campaign.recaps_email and not await self._queued(
+                gid, cid, RECAP_FAILED, {"session_at": job.session_at, "keeps": job.keeps_previous}
+            ):
+                await self._say_failed(cid, channel, job.session_at, job.keeps_previous, link)
         if campaign is not None and job.state == "ready" and job.to_confirm:
             await self._queue_recap_names(gid, cid, job, campaign)
         if campaign is not None and not campaign.recaps_email:
@@ -1724,6 +1943,69 @@ class RecapFeatures:
                 job,
                 campaign.dm_accounts if campaign is not None else (),
             )
+
+    async def _say_failed(
+        self, cid: str, channel: int, session_at: int, keeps: bool, link: str
+    ) -> bool:
+        where = f": {link}" if link else " on the website"
+        return await self.post(
+            channel,
+            "📜 I couldn't write this session's recap. "
+            f"Try again from your recap page{where}"
+            + ("\nThe recap you had before is kept: press ↩️ to bring it back." if keeps else ""),
+            view=again_view(cid, session_at, keep=keeps),
+        )
+
+    async def deliver_recap_failed(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        """The outbox's "couldn't write it" (#4903): the same line `recap_told` says itself with
+        the worker off, from the recap's id. A campaign that is gone, or whose DM wants email, has
+        nothing to say."""
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or campaign.recaps_email:
+            return
+        channel, _ = self._upkeep_channel(campaign)
+        if channel is None:
+            return
+        at = int(payload["session_at"])
+        link = page_link(self.settings.site_url, gid, cid, at) if self.settings.site_url else ""
+        if not await self._say_failed(cid, channel, at, bool(payload["keeps"]), link):
+            raise RuntimeError("not-posted")
+
+    async def _post_recap_ready(
+        self, gid: int, cid: str, job: Job, channel: int, counts_only: bool, link: str
+    ) -> bool:
+        """The "recap ready" line with its buttons. True when Discord accepted it."""
+        try:
+            why = await self.recap_audio_why(gid, cid)  # the audio button's greyed reason
+        except Exception:  # the recap still goes up, with the button off
+            log.exception("Recap: couldn't tell why audio is off")
+            why = "unavailable"
+        return await self.post(
+            channel,
+            ready_text("" if counts_only else job.title, link, AUDIO_WHY[why] if why else ""),
+            view=ready_view(cid, job.session_at, self.settings.site_url, link, audio_off=bool(why)),
+            remember=("recap", cid, job.session_at),
+        )
+
+    async def deliver_recap_ready(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        """The outbox's "recap ready" (#3843): the same line `recap_told` posts itself with the
+        worker off, built from the recap's id. Nothing to say (the recap is gone, or not ready any
+        more, or the campaign has no channel) is done, not failed; a refused post raises, so the
+        row is tried again."""
+        job = await self.recaps.get(gid, cid, int(payload["session_at"])) if self.recaps else None
+        campaign = await self.campaigns.get(gid, cid)
+        if job is None or job.state != "ready" or campaign is None:
+            return
+        channel, counts_only = self._upkeep_channel(campaign)
+        if channel is None:
+            return
+        link = (
+            page_link(self.settings.site_url, gid, cid, job.session_at)
+            if self.settings.site_url
+            else ""
+        )
+        if not await self._post_recap_ready(gid, cid, job, channel, counts_only, link):
+            raise RuntimeError("not-posted")
 
     async def _queue_recap_names(self, gid: int, cid: str, job: Job, campaign: Campaign) -> None:
         """Names the recap kept that DMbot didn't know (#2027) go into the after-session name
@@ -1745,6 +2027,10 @@ class RecapFeatures:
             for name in job.to_confirm:
                 if name_key(name) in known or names_a_secret(name, secret, []):
                     continue  # the list has it (or the DM said it is not a name) since
+                if is_rules_phrase(name) or without_roll(name) != name:
+                    # ("Animal Handling check" is a roll, never a name; "Strahd check" is a
+                    # hearing of Strahd, never a new name: #5214)
+                    continue
                 try:
                     await self.memory.add_entity(
                         gid,
@@ -1760,17 +2046,40 @@ class RecapFeatures:
                     continue
                 added += 1
             await self._link_recap_names(gid, cid, job)
-            names_channel, _ = self._upkeep_channel(campaign)
-            if added and names_channel is not None:
-                await self.post(names_channel, recap_names_text(added), view=review_view(cid))
-            if added:
-                await self._private_names_note(gid, cid, job.dm_user_id, added)
+            if added and not await self._queued(
+                gid, cid, RECAP_NAMES, {"session_at": job.session_at, "added": added}
+            ):
+                await self._say_names(gid, cid, campaign, job.dm_user_id, added)
+            # (a worker has no live tables, so this always drops its own cache: harmless, and the
+            # bot's cache follows the database's own notification)
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
             ):
                 self.lookup.drop([cid])
         except Exception:
             log.exception("Recap: couldn't queue the names to confirm")
+
+    async def _say_names(
+        self, gid: int, cid: str, campaign: Campaign, dm_user_id: int, added: int
+    ) -> bool:
+        """The channel's line and the DM's private note about names added to the check."""
+        names_channel, _ = self._upkeep_channel(campaign)
+        if names_channel is not None and not await self.post(
+            names_channel, recap_names_text(added), view=review_view(cid)
+        ):
+            return False  # (the private note waits: a retry of this row must not repeat it)
+        await self._private_names_note(gid, cid, dm_user_id, added)
+        return True
+
+    async def deliver_recap_names(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        """The outbox's "names added to your check" (#4903): the count is the row's, the DM is read
+        from the recap, so nothing but ids travelled."""
+        campaign = await self.campaigns.get(gid, cid)
+        job = await self.recaps.get(gid, cid, int(payload["session_at"])) if self.recaps else None
+        if campaign is None or job is None:
+            return
+        if not await self._say_names(gid, cid, campaign, job.dm_user_id, int(payload["added"])):
+            raise RuntimeError("not-posted")
 
     async def _link_recap_names(self, gid: int, cid: str, job: Job) -> None:
         """Remember which waiting suggestions are this recap's names to check (ids only), so its
@@ -1857,40 +2166,122 @@ class RecapFeatures:
                 await self.post_recaps(guild.id)
             except Exception:
                 log.exception("Recap: posting failed for a server")
-        done = 0
-        for guild in list(self.guilds):
+        if self.settings.worker_on:
+            return  # the jobs are the worker's (#4903); holds and Post stay with the bot
+        await self.run_recap_jobs()
+
+    async def _log_queue_depth(self, guild_ids: Sequence[int], *, audio: bool) -> None:
+        """With the worker on, one counts-only line a round: how many recap jobs wait and how long
+        the oldest has (#4914; "Recap queue (text): 2 waiting, oldest 140 s"). No ids, no words.
+        A depth that can't be read is skipped (the type of error in the log), never the round."""
+        if not self.settings.worker_on or self.recaps is None:
+            return
+        waiting, oldest = 0, 0
+        for guild_id in guild_ids:
             try:
-                due = await self.recaps.due(guild.id)
+                n, wait = await self.recaps.queue_depth(guild_id, audio=audio)
+            except Exception as exc:
+                log.warning("Recap queue depth could not be read (%s)", type(exc).__name__)
+                continue
+            waiting, oldest = waiting + n, max(oldest, wait)
+        if waiting:
+            log.info(
+                "Recap queue (%s): %d waiting, oldest %d s",
+                "audio" if audio else "text", waiting, oldest,
+            )  # fmt: skip
+
+    async def run_recap_jobs(self) -> None:
+        """The due recap jobs, a few at a time (no Discord: whatever a job wants said goes to the
+        outbox with the worker on). The bot's round runs it with the worker off, else the worker."""
+        if not self.settings.recaps_on or self.recaps is None or self.recap_worker is None:
+            return
+        await self._log_queue_depth(await self.work_guild_ids(), audio=False)
+        # Every server's due jobs together, the longest wait first: a campaign with many sessions,
+        # or a server whose id sorts early, never keeps another's job from its turn (#3845). A
+        # campaign has one job at a time (`due`), so oldest-first is round-robin across campaigns.
+        waiting: list[tuple[int, int, str, int]] = []
+        for guild_id in await self.work_guild_ids():
+            try:
+                waiting += [
+                    (since, guild_id, cid, at)
+                    for cid, at, since in await self.recaps.due_aged(guild_id)
+                ]
             except Exception:
                 log.exception("Recap: couldn't list the due jobs for a server")
-                continue
-            for cid, at in due:
-                if done >= RECAPS_PER_ROUND:
-                    return
-                done += 1  # counted before it runs, so a job that raises can't stall the round
-                with log_context(guild_id=guild.id, campaign_id=cid):
-                    try:
-                        await self.recap_worker.run(guild.id, cid, at)
-                    except Exception:
-                        log.exception("Recap: a job failed unexpectedly")
+        waiting.sort()
+        if self.settings.worker_on and self.recap_slots is not None:
+            # (the worker: up to RECAP_SLOTS at once across every process, by the slot leases. The
+            # round waits for the slowest of them before the next is picked, and the three oldest
+            # are chosen before the slots are asked: if other processes hold the slots, these wait
+            # their turn rather than younger jobs jumping ahead.)
+            await asyncio.gather(*(self._run_recap_job(*w[1:]) for w in waiting[:RECAP_SLOTS]))
+            return
+        for _, guild_id, cid, at in waiting[:RECAPS_PER_ROUND]:
+            await self._run_recap_job(guild_id, cid, at)
+
+    async def _run_recap_job(self, guild_id: int, cid: str, at: int) -> None:
+        """One job, never raising. With the worker on it first takes one of the recap slots (a job
+        that finds none left waits for the next round)."""
+        assert self.recap_worker is not None
+        with log_context(guild_id=guild_id, campaign_id=cid):
+            try:
+                if self.settings.worker_on and self.recap_slots is not None:
+                    async with self.recap_slots.hold() as got:
+                        if got:
+                            await self.recap_worker.run(guild_id, cid, at)
+                else:
+                    await self.recap_worker.run(guild_id, cid, at)
+            except Exception:
+                log.exception("Recap: a job failed unexpectedly")
+
+    async def _recap_jobs_loop(self) -> None:
+        """The worker's loop for the recap text jobs (#4903): every minute, as the bot's round."""
+        await asyncio.sleep(90)
+        while True:
+            try:
+                await self.run_recap_jobs()
+            except Exception:
+                log.exception("The recap jobs failed")
+            await asyncio.sleep(RECAP_ROUND_S)
+
+    async def work_guild_ids(self) -> list[int]:
+        """The servers a background round works: the bot's own, and for the worker (no Discord
+        connection, so `guilds` is empty) every server that has a campaign and that the bot has not
+        left (#3844, #5030): the bot's news covers only its own servers, so work for one it left
+        would cost AI calls for a campaign nobody can be told about. The answer is kept for a
+        short while, since every loop asks every round."""
+        if self.headless:
+            now = time.monotonic()
+            kept = getattr(self, "_work_guilds", None)
+            if kept is not None and now - kept[0] < WORK_GUILDS_KEEP_S:
+                return list(kept[1])
+            found = await self.campaigns.guilds_with_campaigns()
+            installs = getattr(self, "installs", None)
+            if installs is not None:
+                gone = await installs.left_among(found)
+                found = [g for g in found if g not in gone]
+            self._work_guilds = (now, found)
+            return list(found)
+        return [g.id for g in self.guilds]
 
     async def run_recap_audio(self) -> None:
         """One round of the audio step: recaps whose text is ready and whose narration and music
         wait to be made, one at a time (each is minutes of provider work)."""
         if self.audio_worker is None or self.recaps is None:
             return
-        for guild in list(self.guilds):
+        await self._log_queue_depth(await self.work_guild_ids(), audio=True)
+        for guild_id in await self.work_guild_ids():
             try:
-                if stuck := await self.recaps.fail_stuck_audio(guild.id):
+                if stuck := await self.recaps.fail_stuck_audio(guild_id):
                     log.warning("Recap audio: %d recap(s) never finished and were given up", stuck)
-                due = await self.recaps.audio_due(guild.id)
+                due = await self.recaps.audio_due(guild_id)
             except Exception:
                 log.exception("Recap audio: couldn't list the waiting recaps for a server")
                 continue
             for cid, at in due:
-                with log_context(guild_id=guild.id, campaign_id=cid):
+                with log_context(guild_id=guild_id, campaign_id=cid):
                     try:
-                        ran = await self.audio_worker.run(guild.id, cid, at)
+                        ran = await self.audio_worker.run(guild_id, cid, at)
                     except Exception:
                         log.exception("Recap audio: a job failed unexpectedly")
                         return
@@ -2013,8 +2404,8 @@ class RecapFeatures:
             campaign = await self.campaigns.get(gid, ready.campaign_id)
             if campaign is not None:
                 why = await self._import_recap(campaign, ready)
-                if why:
-                    self._import_unhonoured.setdefault(ready.campaign_id, []).append(why)
+                if why and self.import_state is not None:
+                    await self.import_state.add_each(gid, ready.campaign_id, UNHONOURED, [why])
             await store.mark_recap_started(gid, ready.session_id)
         except PlanUnchecked:
             log.warning("Import: the plan could not be checked; the recap is tried again")
@@ -2022,9 +2413,10 @@ class RecapFeatures:
             log.exception("Import: a session's recap could not be started")
             if await store.note_recap_failure(gid, ready.session_id) >= IMPORT_RECAP_TRIES:
                 await store.mark_recap_started(gid, ready.session_id)  # let go
-                self._import_unhonoured.setdefault(ready.campaign_id, []).append(
-                    "it could not be started"
-                )
+                if self.import_state is not None:
+                    await self.import_state.add_each(
+                        gid, ready.campaign_id, UNHONOURED, ["it could not be started"]
+                    )
 
     async def _import_recap(self, campaign: Campaign, ready: Ready) -> str:
         """The recap of one scanned import the DM asked for: through the same gates as after a live
@@ -2070,21 +2462,27 @@ class RecapFeatures:
             quiet=asked_before,
             group_id=ready.import_id,
             say=False,
+            defer_question=self.settings.worker_on,
         )
-        if result == "queued":
-            self._import_queued.setdefault(campaign.id, []).append(ready.started_at)
+        if result == "queued" and self.import_state is not None:
+            await self.import_state.add_each(
+                campaign.guild_id, campaign.id, QUEUED, [str(ready.started_at)]
+            )
         return ""
 
-    async def _recap_audio_loop(self) -> None:
+    async def _recap_audio_loop(self, *, job: bool = True, notices: bool = True) -> None:
         """Every minute: the narration and music of recaps whose text is ready (#1383). Its own
         loop, because one recap's audio is minutes of waiting on the provider and must never
-        hold up the text jobs or a DM's Post."""
+        hold up the text jobs or a DM's Post. `job` is the paid work (the worker's, #3844, when
+        `DMBOT_WORKER` is on); `notices` is what is said in Discord about it (always the bot's)."""
         await asyncio.sleep(120)
         while True:
             try:
-                await self.run_recap_audio()
-                await self.refresh_audio_waits()
-                await self.run_audio_notices()
+                if job:
+                    await self.run_recap_audio()
+                if notices:
+                    await self.refresh_audio_waits()
+                    await self.run_audio_notices()
             except Exception:
                 log.exception("The recap audio failed")
             await asyncio.sleep(RECAP_ROUND_S)
@@ -2184,6 +2582,30 @@ class RecapFeatures:
             except Exception as exc:
                 log.warning("The website line fixes failed: %s", type(exc).__name__)
             try:
+                await self.run_web_connection_reads()
+            except Exception as exc:
+                log.warning("The website connection reads failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_adventure_removals()
+            except Exception as exc:
+                log.warning("The website adventure removals failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_adventure_gives()
+            except Exception as exc:
+                log.warning("The website adventure files failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_adventure_reads()
+            except Exception as exc:
+                log.warning("The website adventure reads failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_adventure_guides()
+            except Exception as exc:
+                log.warning("The website Guide me failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_adventure_matches()
+            except Exception as exc:
+                log.warning("The website Match to files failed: %s", type(exc).__name__)
+            try:
                 await self.run_web_recap_style()
             except Exception as exc:
                 log.warning("The website recap style choices failed: %s", type(exc).__name__)
@@ -2223,6 +2645,33 @@ class RecapFeatures:
                             await self.web_line_fixes.sweep(guild.id)
                         except Exception as exc:
                             log.warning("The line fix sweep failed: %s", type(exc).__name__)
+                    if self.web_connection_reads is not None:
+                        try:  # its own try: the same promise for a DM's words about two names
+                            await self.web_connection_reads.sweep(guild.id)
+                        except Exception as exc:
+                            log.warning("The connection read sweep failed: %s", type(exc).__name__)
+                    if self.web_adventure_removals is not None:
+                        try:  # its own try: a day's life for a removal row
+                            await self.web_adventure_removals.sweep(guild.id)
+                        except Exception as exc:
+                            log.warning(
+                                "The adventure removal sweep failed: %s", type(exc).__name__
+                            )
+                    if self.web_adventure_reads is not None:
+                        try:  # its own try: a day's life for a read request row
+                            await self.web_adventure_reads.sweep(guild.id)
+                        except Exception as exc:
+                            log.warning("The adventure read sweep failed: %s", type(exc).__name__)
+                    if self.web_adventure_guides is not None:
+                        try:  # its own try: the answer is the book's own words, a day at most
+                            await self.web_adventure_guides.sweep(guild.id)
+                        except Exception as exc:
+                            log.warning("The Guide me sweep failed: %s", type(exc).__name__)
+                    if self.web_adventure_matches is not None:
+                        try:  # its own try: ids and names of the book and the table, a day at most
+                            await self.web_adventure_matches.sweep(guild.id)
+                        except Exception as exc:
+                            log.warning("The Match to files sweep failed: %s", type(exc).__name__)
                     try:  # its own try: the DM-window feed is gone within a day (#3710)
                         if self.recaps is not None:
                             await ai_feed.sweep(self.recaps.db, guild.id)
@@ -2274,6 +2723,10 @@ class RecapFeatures:
         if store is None or self.memory is None:
             return
         for guild in list(self.guilds):
+            try:  # names no recap linked get the "no recap" list on the website (#5186)
+                await store.link_orphans(guild.id)
+            except Exception as exc:
+                log.warning("Linking names without a recap failed: %s", type(exc).__name__)
             for _ in range(NAME_ANSWERS_PER_ROUND):
                 answer = await store.claim_next(guild.id)
                 if answer is None:
@@ -2286,13 +2739,22 @@ class RecapFeatures:
                             name_answers.NOT_ALLOWED
                             if campaign is None
                             else await name_answers.apply(
-                                self.memory, guild.id, campaign.dm_user_ids, answer, kept, store
+                                self.memory,
+                                guild.id,
+                                campaign.dm_user_ids,
+                                answer,
+                                kept,
+                                store,
+                                name_answers.HeardTools(
+                                    getattr(self, "transcripts", None),
+                                    getattr(self, "consent", None),
+                                ),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
                         log.warning("A name answer failed: %s", type(exc).__name__)
                         why = name_answers.FAILED
-                    stays = answer.action in name_answers.KEPT_ACTIONS and kept.batch is not None
+                    stays = answer.action in name_answers.UNDOABLE and kept.batch is not None
                     if not await store.finish(
                         guild.id, answer, error=why, kept=kept if stays else None
                     ):
@@ -2660,7 +3122,9 @@ class RecapFeatures:
             return ()
         return tuple((c.subject, c.object) for c in found)
 
-    async def _open_threads(self, gid: int, cid: str) -> tuple[str, ...]:
+    async def _open_threads(
+        self, gid: int, cid: str, session_at: int | None = None
+    ) -> tuple[str, ...]:
         """The names of the story threads still open (not resolved or abandoned), for PlotBot's
         guide to a writer that reads the transcript (#2590). Names only; none if they can't be
         read (the guide is then shorter, nothing else changes)."""
@@ -2677,7 +3141,12 @@ class RecapFeatures:
         # to the table). Asked of the one gate, never of the old flags (#2995): the viewer is "what
         # every player character knows", so a limited or hidden thread is not among them.
         try:
-            seen = await self.memory.visible_to(gid, cid, gate.Viewer.the_party())
+            # (the party as it was at that session, #4537 slice 3b, §8; else today's)
+            seen = (
+                await self.memory.visible_to_party_at(gid, cid, session_at)
+                if session_at is not None
+                else await self.memory.visible_to(gid, cid, gate.Viewer.the_party())
+            )
         except Exception:
             log.exception("Recap: couldn't ask what the party knows of the story threads")
             return ()

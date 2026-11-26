@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import Wizard from "../src/account/Wizard";
 import { maxBytesFor, MAX_FILE_BYTES, MAX_PDF_BYTES, WizardError } from "../src/account/wizard-api";
+import { draftFrom } from "../src/account/wizard-http";
 import { problemWords } from "../src/account/wizard-problems";
 import { mockWizard } from "../src/account/wizard-mock";
 import { SUPPLEMENTS, wizardWords as w } from "../src/content/wizard-words";
@@ -745,7 +746,10 @@ describe("the wizard", () => {
     for (let i = 0; i < 30 && !screen.queryByText(w.finish.done); i++) await vi.advanceTimersByTimeAsync(2100);
     expect(screen.getByText(w.finish.notes["house_unreadable"]!(2))).toBeTruthy();
     expect(screen.getByText(w.finish.notes["homebrew_link_failed"]!(1))).toBeTruthy();
-    expect(screen.queryByText(/homebrew_/)).toBeNull(); // (words and counts, never the raw note)
+    // Names a limit left out (#5095): a note, not a failure, in the Lore page's words.
+    expect(screen.getByText(w.finish.notes["names_cut"]!(7))).toBeTruthy();
+    expect(w.finish.notes["names_cut"]!(1)).toContain("As many as 1 more name was left out");
+    expect(screen.queryByText(/homebrew_|names_cut/)).toBeNull(); // (words and counts, never the raw note)
   });
 
   it("the typed box is only on the house rules step, not homebrew (#4211)", async () => {
@@ -887,3 +891,109 @@ describe("the setting-up line (#4301)", () => {
     expect(screen.getByText(w.settingUp("The Frostmaiden"))).toBeTruthy();
   });
 });
+
+// The names the party calls a character (#4300): each added on its own, with Add or Enter, and removable; a comma stays part of a name.
+describe("the party names of a character (#4300)", () => {
+  const addName = (text: string) => {
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.partyLabel)), { target: { value: text } });
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.partyAdd }));
+  };
+
+  it("adds names one at a time, keeps a comma in a name, and removes one", async () => {
+    await start();
+    await next(2);
+    addName("Tav");
+    addName("Hector, Savior of Lordaeron");
+    expect(screen.getByText("Tav")).toBeTruthy();
+    expect(screen.getByText("Hector, Savior of Lordaeron")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: `${w.confirm.remove} Tav` }));
+    expect(screen.queryByText("Tav")).toBeNull();
+    expect(screen.getByText("Hector, Savior of Lordaeron")).toBeTruthy();
+  });
+
+  it("the same name in another case is not added twice", async () => {
+    await start();
+    await next(2);
+    addName("Tav");
+    addName("tav");
+    expect(screen.getAllByRole("listitem").filter((li) => /tav/i.test(li.textContent ?? ""))).toHaveLength(1);
+  });
+
+  it("the ninth name is refused: Add is off at eight", async () => {
+    await start();
+    await next(2);
+    for (let i = 1; i <= 8; i++) addName(`Name ${i}`);
+    expect((screen.getByRole("button", { name: w.confirm.partyAdd }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("the character is sent with its partyNames list, and no partyName", async () => {
+    const api = await start();
+    await next(2);
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.fullLabel)), { target: { value: "Tavin Ashgrove" } });
+    addName("Tav");
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.add }));
+    await screen.findByText(/Tavin Ashgrove/);
+    const saved = (await api.get(G))?.answers.characters[0];
+    expect(saved?.partyNames).toEqual(["Tav"]);
+    expect(saved?.partyName).toBeUndefined();
+  });
+
+  it("the names in brackets are joined with a middle dot, so a comma inside a name stays readable", async () => {
+    const api = await start();
+    await next(2);
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.fullLabel)), { target: { value: "Tavin Ashgrove" } });
+    addName("Ric");
+    addName("Hector, Savior of the Keep");
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.add }));
+    await screen.findByText(/Tavin Ashgrove/);
+    expect(screen.getByText("(Ric · Hector, Savior of the Keep)")).toBeTruthy();
+    expect((await api.get(G))?.answers.characters[0]?.partyNames).toEqual(["Ric", "Hector, Savior of the Keep"]);
+  });
+
+  it("at eight names one line says that is the most, under the list, and not before", async () => {
+    await start();
+    await next(2);
+    for (let i = 1; i <= 7; i++) addName(`Name ${i}`);
+    expect(screen.queryByText(w.confirm.partyFull)).toBeNull();
+    addName("Name 8");
+    const line = screen.getByText(w.confirm.partyFull);
+    const list = screen.getByRole("list", { name: w.confirm.partyNamesList });
+    expect(list.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("a single name equal to the full name shows no bracket", async () => {
+    await start();
+    await next(2);
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.fullLabel)), { target: { value: "Tavin Ashgrove" } });
+    addName("Tavin Ashgrove");
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.add }));
+    const row = (await screen.findByText(/Tavin Ashgrove/, { selector: "li" })) as HTMLElement;
+    expect(row.querySelector("span.small")).toBeNull();
+  });
+
+  it("a name typed but not added is sent with the character, as Add would add it", async () => {
+    const api = await start();
+    await next(2);
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.fullLabel)), { target: { value: "Tavin Ashgrove" } });
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.partyLabel)), { target: { value: "  Tav  " } });
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.add }));
+    await screen.findByText(/Tavin Ashgrove/);
+    expect((await api.get(G))?.answers.characters[0]?.partyNames).toEqual(["Tav"]);
+  });
+
+  it("a saved draft's old single name is not sent back on the next save", async () => {
+    const api = await start();
+    await next(2);
+    fireEvent.input(screen.getByLabelText(new RegExp(w.confirm.fullLabel)), { target: { value: "Ivy Quickfoot" } });
+    fireEvent.click(screen.getByRole("button", { name: w.confirm.add }));
+    await screen.findByText(/Ivy Quickfoot/);
+    expect(JSON.stringify(await api.get(G))).not.toContain('"partyName"');
+  });
+
+  it("an older draft with only one party name is read as a list of one", () => {
+    const draft = draftFrom({ answers: { characters: [{ full: "Tavin Ashgrove", partyName: "Tav", sheetUrl: "", player: "pending" }] } } as never);
+    expect(draft.answers.characters[0]?.partyNames).toEqual(["Tav"]);
+    expect(draft.answers.characters[0]).not.toHaveProperty("partyName");
+  });
+});
+

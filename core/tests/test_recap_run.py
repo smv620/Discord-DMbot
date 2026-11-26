@@ -361,6 +361,40 @@ class TheGoldenSet(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(rows), 4)  # the header and at least three invented sessions
 
 
+class TheGoldenReasons(unittest.IsolatedAsyncioTestCase):
+    """A golden session that does not finish says why as codes and counts (#4879)."""
+
+    def test_a_problem_becomes_a_code_and_an_unknown_one_becomes_other(self) -> None:
+        self.assertEqual(
+            run.problem_code("no quotation marks: tell it as narration"), "quotation-marks"
+        )
+        self.assertEqual(
+            run.problem_code("names that are not allowed: Zed Quux. Use only the names"),
+            "names-not-allowed",
+        )
+        self.assertEqual(run.problem_code("something nobody wrote a check for"), "other")
+
+    def test_every_kind_has_its_own_code(self) -> None:
+        for start, code in run.PROBLEM_CODES:
+            self.assertEqual(run.problem_code(start + " and more"), code)
+        self.assertEqual(
+            len({c for _, c in run.PROBLEM_CODES}), len(set(c for _, c in run.PROBLEM_CODES))
+        )
+        self.assertEqual(
+            run.problem_code("a sentence says which names are the same person or place: x"),
+            "same-person-tie",
+        )
+        self.assertEqual(run.problem_code("a sentence names A as the ones there"), "present-too")
+
+    async def test_a_failed_session_row_is_followed_by_a_why_line_with_no_words(self) -> None:
+        rows, clean = await run.run_golden(fx.Canned(AIError("x")), fx.Canned(), ("a", "b"), {})
+        self.assertFalse(clean)
+        why = [r for r in rows if r.startswith("  why: ")]
+        self.assertTrue(why)
+        self.assertIn("state ", why[0])
+        self.assertIn("calls ", why[0])
+
+
 class TheGoldenCost(unittest.IsolatedAsyncioTestCase):
     """`--golden` says its worst case in dollars and `--max-usd` stops it before a call that would
     pass the cap (#4859): stand-in clients, no AI."""
@@ -398,8 +432,30 @@ class TheGoldenCost(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(budget.stopped)
         self.assertEqual(budget.spent, 0.0)  # (no call was made)
         self.assertTrue(any("stopped before a call that would pass $0.00" in r for r in rows))
+        self.assertTrue(any("(about $0.00 spent)" in r for r in rows))  # (the table says how far)
         self.assertTrue(any("0 of" in r for r in rows))
         self.assertEqual(len([r for r in rows if "STOPPED" in r]), 1)
+
+    def test_the_cap_counts_what_a_call_is_expected_to_write_not_its_limit(self) -> None:
+        # (#4879) a background call sends the tier's 16,000-token floor as its limit, but writes a
+        # few thousand: counting the limit stopped a $1 cap at about $0.03 of real spend
+        budget = run.Budget(0.10, {"m": (1.0, 15.0)})
+        budget.before("m", "s" * 30, "t" * 300, 16_000)  # (16,000 out would be $0.24: not counted)
+        self.assertFalse(budget.stopped)
+        budget.after("m", 1_000, 9_000)  # (this model wrote 9,000 tokens: $0.136 spent)
+        with self.assertRaises(run.SpendCap):
+            budget.before("m", "s", "t", 16_000)  # (already past the cap)
+        self.assertTrue(budget.stopped)
+
+    def test_after_a_long_answer_the_next_call_is_expected_to_write_as_much_again(self) -> None:
+        budget = run.Budget(0.20, {"m": (1.0, 15.0)})
+        budget.after("m", 100, 5_000)  # ($0.0751 spent; the next is expected to write 10,000)
+        with self.assertRaises(run.SpendCap):
+            budget.before("m", "x", "y", 16_000)  # (+$0.15 would pass $0.20)
+        small = run.Budget(0.20, {"m": (1.0, 15.0)})
+        small.after("m", 100, 1_000)  # (the floor of 4,000 applies: +$0.06)
+        small.before("m", "x", "y", 16_000)
+        self.assertFalse(small.stopped)
 
     async def test_a_cap_that_is_not_reached_changes_nothing(self) -> None:
         budget = run.Budget(1_000_000.0, self.PRICES)

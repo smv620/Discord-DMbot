@@ -387,6 +387,7 @@ class RecapWorker:
         final_read: bool = False,
         cache_front: bool = False,
         stored_split: Callable[[int, str, int], Awaitable[sp.Split | None]] | None = None,
+        on_split: Callable[[int, str, int, sp.Split], Awaitable[None]] | None = None,
         colour: Colour | None = None,
         reveals: Reveals | None = None,
     ) -> None:
@@ -409,6 +410,10 @@ class RecapWorker:
         # The split kept once for the session (#3298, `recaps.session_split`): when the story
         # reader has made it, the recap uses it and the AI is not asked again.
         self._stored_split = stored_split
+        # Told when a session's split is made, so the counts of names said can leave out the
+        # lines read aloud as last time's recap (#3172 item d). Its own failure never reaches the
+        # recap.
+        self._on_split = on_split
         self._structured_beats = structured_beats
         # The final read (#2952): off for a tool or test that does not pass it; the bot turns it on.
         self._final_read_on = final_read
@@ -896,6 +901,7 @@ class RecapWorker:
                     gid, cid, job.session_at, split=kept.to_json(), errors=0, next_at=0,
                     last_error="",
                 )  # fmt: skip
+                await self._split_made(gid, cid, job.session_at, kept)
                 return await self._store.get(gid, cid, job.session_at)
         earlier = inputs.earlier
         # (no earlier session: only a spoken recap the rule finds is marked, the same answer the
@@ -972,7 +978,17 @@ class RecapWorker:
         await self._store.update(
             gid, cid, job.session_at, split=split.to_json(), errors=0, next_at=0, last_error=""
         )
+        await self._split_made(gid, cid, job.session_at, split)
         return await self._store.get(gid, cid, job.session_at)
+
+    async def _split_made(self, gid: int, cid: str, session_at: int, split: sp.Split) -> None:
+        """Tell the one who asked (`on_split`), never letting its failure touch the recap."""
+        if self._on_split is None:
+            return
+        try:
+            await self._on_split(gid, cid, session_at, split)
+        except Exception as exc:  # the type only
+            log.warning("Recap: the split's follow-up failed (%s)", type(exc).__name__)
 
     async def _check_beats(
         self, gid: int, cid: str, job: Job, inputs: Inputs, consenting: Consenting

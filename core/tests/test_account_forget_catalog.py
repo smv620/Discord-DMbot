@@ -33,6 +33,9 @@ ELSEWHERE: Rules = {
         "campaign_maps",  # (0480: its own forget function, dmbot_forget_maps, #3274, #4344)
         "installs", "move_code_asks",  # (move_code_asks: ON DELETE CASCADE from web_users, 0069)
         "web_rule_takes",  # (a day-long undo handle for a website pick, swept within a day, #4841)
+        "web_join_choices",  # (the choices worked out for a DM's page, swept within an hour, #4799)
+        "web_reveals",  # (what they learned, for a DM's page, swept within an hour, #3863)
+        "continuity_hits",  # (the heads-ups' pointers, for a DM's page, swept within a day, #3695)
     )
 }  # fmt: skip
 BY_DESIGN: Rules = {  # kept on purpose: protects the person, or stops a second free trial (#4145)
@@ -58,6 +61,10 @@ TRANSCRIPTS: Rules = {
         "thread_suggestions",  # (a session's story threads: `thread_suggestions.forget`, #4522)
         "thread_progress",  # (a session's progress on threads: `thread_progress.forget`, #4522)
         "memory_trait_offers",  # (who said a heard language: `trait_offers.forget_speaker`, #4745)
+        "memory_join_questions",  # (who said a goodbye: `join_questions.forget_speaker`, 0574)
+        # (a waiting name's line pointer, which names its speaker: gone with the line, and by
+        # speaker in a person's forget, #5133; listed though no column names a person)
+        "name_found",
     )
 }  # fmt: skip
 TRANSCRIPTS.update(
@@ -105,7 +112,9 @@ NAME_TRANSCRIPTS: Rules = {  # speakers' names: the owner's call with the transc
     "import_speakers": ("label",),
 }
 NAME_NOT_A_PERSON: Rules = {  # a name of something else, with the reason
+    "web_connection_reads": ("who_kind", "use_who"),  # fixed words: everyone, dm, some, keep
     "adventure_documents": ("file_name",),  # an uploaded file's name
+    "web_adventure_gives": ("file_name",),  # the same file's name, while it waits (a day at most)
     "campaigns": ("name", "name_key"),  # the campaign's own name
     "homebrew_entries": ("name", "name_key"),  # the rule's name
     "house_rules": ("source_name",),  # where a rule comes from (a book)
@@ -116,12 +125,17 @@ NAME_NOT_A_PERSON: Rules = {  # a name of something else, with the reason
     "rule_set_follows": ("set_name",),  # a rule set's name
     "rule_set_suggestions_sent": ("set_name",),
     "rule_sets": ("name",),
-    "session_imports": ("file_name",),  # an imported file's name
+    "session_imports": (
+        "file_name",
+        "names_state",
+    ),  # an imported file's name; the reader's stage (#5091)
     "trait_answers": ("name_key",),  # the key of a trait name
+    "web_reveals": ("who",),  # the name of a character in the story, never a person (#3863)
     "secret_questions": ("label",),  # an upload's or a session's label, never a person's name
     "thread_suggestions": ("name", "name_key"),  # a story thread's name, built from its parts
     "memory_trait_offers": ("name", "name_key"),  # the trait's name (a language, lineage or class)
     "web_delete_notices": ("campaign_name",),  # the deleted campaign's name
+    "memory_card_summaries": ("who",),  # DMbot's one sentence about a character, never a person
     "support_replies": ("who",),  # only 'customer', 'ai' or 'person': who wrote, never a name
 }
 
@@ -144,10 +158,18 @@ class EveryPersonColumnHasARule(DatabaseTest):
         part_g = import_module("dmbot.migrations.0494_forget_own_records")
         part_h = import_module("dmbot.migrations.0495_forget_recap_approval")
         part_i = import_module("dmbot.migrations.0497_forget_membership")
+        part_j = import_module("dmbot.migrations.0633_forget_connection_reads")
+        part_k = import_module("dmbot.migrations.0640_forget_adventure_removals")
+        part_l = import_module("dmbot.migrations.0642_forget_adventure_gives")
+        part_m = import_module("dmbot.migrations.0644_forget_adventure_reads")
+        part_n = import_module("dmbot.migrations.0646_forget_adventure_guides")
+        part_o = import_module("dmbot.migrations.0648_forget_adventure_matches")
         done = {
             *part_a.DELETED, *part_a.ZEROED, *part_b.ZEROED, *part_c.DELETED, *part_d.ZEROED,
             *part_e.DELETED, *part_f.ZEROED, *part_g.DELETED, *part_g.ZEROED, *part_g.MOVES,
-            *part_h.ZEROED, *part_i.DELETED, *part_i.ZEROED,
+            *part_h.ZEROED, *part_i.DELETED, *part_i.ZEROED, *part_j.DELETED,
+            *part_k.DELETED, *part_l.DELETED, *part_m.DELETED,
+            *part_n.DELETED, *part_o.DELETED,
         }  # fmt: skip
         deleted_tables = {
             t
@@ -157,6 +179,12 @@ class EveryPersonColumnHasARule(DatabaseTest):
                 *part_e.DELETED,
                 *part_g.DELETED,
                 *part_i.DELETED,
+                *part_j.DELETED,
+                *part_k.DELETED,
+                *part_l.DELETED,
+                *part_m.DELETED,
+                *part_n.DELETED,
+                *part_o.DELETED,
             )
         }
         async with self.db.unscoped() as conn:

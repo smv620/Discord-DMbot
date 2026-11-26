@@ -319,6 +319,69 @@ export const costsText = {
   notAvailable: "Not counted yet",
 };
 
+/** The "What DMbot recorded" section of the Costs page (#3671): DMbot's own record of each call, shown beside the providers' figures. */
+export const recordedText = {
+  heading: "What DMbot recorded",
+  lead: "DMbot's own count of every paid call it made, at list price. It is an estimate, not the provider's bill: it never replaces the figures above. No campaign, server or person is in it.",
+  reading: (seconds: number): string => `Reading DMbot's records… ${seconds}s so far.`,
+  down: "Couldn't read DMbot's records. Try again in a minute.",
+  tryAgain: "Try again",
+  none: "Nothing was recorded this month yet.",
+  byService: "By service",
+  byPlan: "By plan (real use only)",
+  byFeature: "By feature (real use only)",
+  sampleHeading: "Test runs",
+  sampleLead: "Sample runs spend test money. It is shown apart and is never in the totals above.",
+  service: "Service",
+  plan: "Plan",
+  feature: "Feature",
+  calls: "Calls",
+  used: "Used",
+  cost: "Cost",
+  refused: (n: number): string => `refused: ${n}`,
+  notPriced: "not priced",
+  plusNotPriced: (dollars: string): string => `${dollars} + not priced`,
+  refusedColumn: "Refused",
+  unpriced: (n: number): string => `${n} ${n === 1 ? "call was" : "calls were"} recorded at the high default price because no checked price exists yet.`,
+  /** What a service's units are. */
+  units: {
+    anthropic: "words and parts of words",
+    gemini: "words and parts of words",
+    deepgram: "audio seconds",
+    elevenlabs: "credits",
+    voyage: "words and parts of words",
+  } as Record<string, string>,
+  /** The names of the paid services as their makers write them. */
+  services: { anthropic: "Anthropic", gemini: "Gemini", deepgram: "Deepgram", elevenlabs: "ElevenLabs", voyage: "Voyage" } as Record<string, string>,
+  /** What each recorded feature is, in plain words (a feature the page has no words for shows its own word). */
+  features: {
+    names: "Names",
+    cleaner: "Cleaning transcripts",
+    recap: "Recaps",
+    sidebar: "The DM sidebar",
+    transcribe: "Turning voices into text",
+    recap_audio: "Recap voices",
+    search: "Search by meaning",
+  } as Record<string, string>,
+  stage: "Reading DMbot's records",
+  /** The plan words of a campaign owner's plan at the time. */
+  plans: {
+    "try-it": "Try It",
+    table: "Table",
+    "two-tables": "Two Tables",
+    guild: "Guild",
+    free: "Free",
+    listed: "Free list",
+    unknown: "No campaign",
+  } as Record<string, string>,
+};
+
+/** Millionths of a dollar as dollars, "$0.21" (a figure under a cent shows four places, so a small cost never reads as nothing). */
+export function microDollars(micro: number): string {
+  const d = micro / 1_000_000;
+  return d >= 0.01 || d === 0 ? `$${d.toFixed(2)}` : `$${d.toFixed(4)}`;
+}
+
 /** Cents as dollars, "$42.30". */
 export function dollars(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;

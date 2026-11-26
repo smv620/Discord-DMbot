@@ -254,8 +254,8 @@ export default function Clarify({ api, refId, nameId }: { api: AccountApi; refId
               <p class="small muted">{w.noTop}</p>
             ) : (
               <div class="row">
-                {(name.answers ?? []).map((a) => (
-                  <button key={a.label} type="button" class="button" aria-disabled={working} onClick={() => !working && void send(a.answer, a.answer.action === "same" ? w.done.same(who, a.label.replace(/^a\.k\.a\. /, "")) : w.done.confirm(who))}>
+                {(name.answers ?? []).map((a, i) => (
+                  <button key={`${i}:${a.label}`} type="button" class="button" aria-disabled={working} onClick={() => !working && void send(a.answer, a.answer.action === "same" ? w.done.same(who, a.label.replace(/^a\.k\.a\. /, "")) : w.done.confirm(who))}>
                     {a.label}
                   </button>
                 ))}

@@ -281,9 +281,14 @@ class ThePicker(SeeAs):
     async def test_a_dm_gets_player_characters_first_then_by_name(self) -> None:
         got = await self.viewers()
         names = [(v["kind"], v["name"]) for v in got["viewers"]]
-        self.assertEqual(names, [("pc", "Okra"), ("pc", "Rook"), ("npc", "Mira Voss")])
+        # (the party is in the party list's order, oldest first: characters made in the same second
+        # come in no fixed order, so only the group is pinned; the NPC follows the party)
+        self.assertEqual(sorted(names[:2]), [("pc", "Okra"), ("pc", "Rook")])
+        self.assertEqual(names[2], ("npc", "Mira Voss"))
         self.assertEqual(got["total"], 3)
-        self.assertEqual(set(got["viewers"][0]), {"id", "name", "kind"})  # nothing about who plays
+        # (nothing about who plays; the group and a leaver's note are the party list's, #4778)
+        self.assertEqual(set(got["viewers"][0]), {"id", "name", "kind", "group"})
+        self.assertEqual([v["group"] for v in got["viewers"]], ["party", "party", "other"])
 
     async def test_a_search_narrows_a_big_cast_in_any_case(self) -> None:
         got = await self.viewers(query="  MIRA ")

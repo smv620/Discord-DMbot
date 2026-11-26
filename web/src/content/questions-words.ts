@@ -14,6 +14,10 @@ export interface QuestionKindWords {
   /** For `link`: where it is answered, as a path from the campaign's address, and the words of the link. */
   to?: "recaps" | "graph" | "names" | "maps" | "houserules";
   link?: string;
+  /** For `discord`: the menu path to this kind's own place in Discord, when it is not the general "Questions for you" (#5259). */
+  where?: string;
+  /** A second link for a kind answered on two pages (#4875): the Shared rules page lists every campaign, so it takes no ref. */
+  also?: { to: "sharing"; link: string };
 }
 
 export const questionsPage = {
@@ -36,15 +40,20 @@ export const questionsPage = {
   showHere: "Answer them here",
   hideHere: "Hide them",
   sessionOf: (date: string): string => `Session of ${date}`,
+  // The names no recap has linked, from the lore or the story reader (#5186): listed after the sessions.
+  otherNames: "Other new names",
   // Connections, "Which one?" and facts to check are one list on the Story Graph: it opens under the first of them.
   answeredWith: (label: string): string => `Answered with ${label}, in the same list.`,
   noneHere: "Nothing is waiting here now.",
+  // The count is true but the list has no recap to open for it (#5186): a name from the lore or the story reader, in Discord for now.
+  outsideRecap: (n: number): string => `${n === 1 ? "1 name waits" : `${n} names wait`} outside a recap. Answer ${n === 1 ? "it" : "them"} in Discord with ❓ Questions for you.`,
   // The counts are written by the bot every minute or so: older than five minutes, the page says it is catching up.
   catchingUp: "DMbot is catching up. These numbers may be a little old.",
   notYet: "This page isn't available yet.",
   none: "You don't run a campaign yet, so DMbot has no questions for you.",
   failed: "We couldn't load your questions. Reload the page to try again.",
   discord: "Answer in Discord: ⚙️ Manage DMbot → 📬 Questions for you.",
+  discordAt: (path: string): string => `Answer in Discord: ${path}.`,
   campaignLine: (total: number): string => `${total} ${total === 1 ? "question" : "questions"} waiting`,
   kindLine: (label: string, count: number): string => `${label} · ${count}`,
   badge: (total: number): string => `${total} ${total === 1 ? "question" : "questions"} waiting`,
@@ -52,8 +61,12 @@ export const questionsPage = {
   kinds: {
     // (answered on this page when it can read them, else the link to the recaps: see `howFor` in Questions.tsx)
     names: { label: "New names to check", how: "here", to: "recaps", link: "Open the recaps" },
+    // An imported session's names past the scan's first 10, waiting behind 📝 More names (#5055 B):
+    // added from Discord until the website's button (MORE_NAMES_LIVE, #5081, which shows it inside the line).
+    more_names: { label: "More names from your sessions", how: "discord" },
     heard: { label: "Did they mean…?", how: "discord" },
-    lookalikes: { label: "Names that look alike", how: "link", to: "names", link: "Open the Names page" },
+    // The website has no look-alikes cards yet (#5259): the Names page cannot answer them, so no link; Discord's own panel does (🔗 Look-alikes).
+    lookalikes: { label: "Names that look alike", how: "discord", where: "⚙️ Manage DMbot → 📇 Names → 🔗 Look-alikes" },
     connections: { label: "Connections waiting", how: "here", to: "graph", link: "Open the Story Graph" },
     which: { label: "Which one?", how: "here", to: "graph", link: "Open the Story Graph" },
     // Answered in the Story Graph's waiting list ("Which one?" card for a kept fact, #3463) and in Discord.
@@ -70,6 +83,14 @@ export const questionsPage = {
     secrets: { label: "Known or secret?", how: "discord" },
     // Characters who joined the party (#4537 slice 2b): answered in Discord for now; the website half is #4778.
     party_joins: { label: "New in the party", how: "discord" },
+    // A goodbye or a death: still in the party? (#4537 slice 6): answered in Discord until the website's half.
+    party_leaves: { label: "Still in the party?", how: "discord" },
+    // Deeds the party did that mattered to someone, waiting to be recorded (#3591): answered in Discord until the website's card.
+    deeds: { label: "Deeds to record", how: "discord" },
+    // Continuity heads-ups waiting for the DM (#5147): answered in Discord until the Names page's panel (#5136) links from here.
+    heads_ups: { label: "Heads-ups", how: "discord" },
+    // What the characters learned, waiting to be kept (#3863): answered in Discord until the website's card (step 2).
+    reveals: { label: "Things the characters learned", how: "discord" },
     // A map a player kept, waiting for a DM's yes (#4344): asked in Discord until the Maps page (#4347).
     // (#4841 A: a link to the Maps page while its switch is on.)
     maps: { label: "Maps waiting for your yes", how: "discord", to: "maps", link: "Open the Maps page" },
@@ -78,7 +99,13 @@ export const questionsPage = {
     plot: { label: "Plot check", how: "link", to: "recaps", link: "Open the recaps" },
     recap_approve: { label: "Recaps to approve", how: "link", to: "recaps", link: "Open the recaps" },
     // A newer version of a followed house-rules set (#4845): a link to the House rules page while its switch is on.
-    rules: { label: "House rule updates", how: "discord", to: "houserules", link: "Open the House rules page" },
+    rules: {
+      label: "House rule updates",
+      how: "discord",
+      to: "houserules",
+      link: "Open the House rules page",
+      also: { to: "sharing", link: "Open the Shared rules page" },
+    },
   } as Record<string, QuestionKindWords>,
   // A kind the bot counts and this page has no words for yet.
   otherKind: { label: "Other questions", how: "discord" } as QuestionKindWords,

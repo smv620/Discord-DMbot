@@ -25,6 +25,7 @@ from dmbot.memory.models import (
     THREAD_TYPES,
     MemoryRuleError,
 )
+from dmbot.memory.ontology import check_named
 from dmbot.memory.search import MAX_RESULTS, find
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -374,11 +375,13 @@ async def link_by_name(
     kinds: tuple[str, ...] | None,
     then: Any,
     make: str | None = None,
+    then_new: Any = None,
     threads_too: bool = False,
 ) -> None:
     """Find the one entry the DM means by name (the same search as Find a name), and hand it to
-    `then`. Several: a pick list. None: nothing, or the entry made on the spot when `make` names
-    a kind (an event)."""
+    `then`. Several: a pick list. None: nothing, or the name handed to `then_new` (so the entry is
+    made together with what links it, in one write, #4950), or else the entry made on the spot when
+    `make` names a kind (an event)."""
     got = await _dm_and_memory(interaction, campaign_id)
     cache = getattr(interaction.client, "lookup", None)
     if got is None or cache is None:
@@ -399,6 +402,9 @@ async def link_by_name(
         await then(interaction, campaign_id, thread_id, found[0])
         return
     if not found:
+        if make is not None and then_new is not None:
+            await then_new(interaction, campaign_id, thread_id, " ".join(typed.split()))
+            return
         if make is not None:
             name = " ".join(typed.split())
             # Typed by the DM, so it starts unrevealed like any name added by hand (#2404).
@@ -672,6 +678,7 @@ class LinkForm(discord.ui.Modal, title="Link an event"):
             kinds=("event",),
             then=_ask_how,
             make="event",
+            then_new=_ask_how_new,
         )
 
 
@@ -692,10 +699,31 @@ async def _ask_how(
     )
 
 
+async def _ask_how_new(
+    interaction: discord.Interaction, campaign_id: str, thread_id: str, name: str
+) -> None:
+    """A new event name: nothing is made yet. The event and its link are made together when the DM
+    answers (#4950), so leaving the question unanswered leaves nothing behind."""
+    try:
+        check_named("event", name)  # (a bad name is told now, as before, not after the question)
+    except MemoryRuleError as exc:
+        await show_thread(interaction, campaign_id, thread_id, note=f"⚠️ {exc}")
+        return
+    await _replace(
+        interaction,
+        f"**{_md(name)}**: did it move the thread along, or end it?",
+        HowLinked(campaign_id, thread_id, "", new_name=name),
+    )
+
+
 class HowLinked(_Menu):
-    def __init__(self, campaign_id: str, thread_id: str, event_id: str) -> None:
+    def __init__(
+        self, campaign_id: str, thread_id: str, event_id: str, *, new_name: str | None = None
+    ) -> None:
         super().__init__()
         self.campaign_id, self.thread_id, self.event_id = campaign_id, thread_id, event_id
+        self.new_name = new_name  # an event not made yet: made with its link, in one write
+        self._used = False  # (a second tap before the first finishes must not make a second event)
         self.add_item(
             _Button(
                 partial(self._link, False),
@@ -706,20 +734,33 @@ class HowLinked(_Menu):
         self.add_item(_Button(partial(self._link, True), label="Ended the thread"))
 
     async def _link(self, ends_it: bool, interaction: discord.Interaction) -> None:
+        if self._used:
+            return
+        self._used = True
         await _answer_first(interaction, in_place=True)
         got = await _dm_and_memory(interaction, self.campaign_id)
         if got is None:
             return
         campaign, memory = got
         try:
-            await memory.link_event(
-                campaign.guild_id,
-                campaign.id,
-                self.thread_id,
-                self.event_id,
-                ends_it=ends_it,
-                source=DM,
-            )
+            if self.new_name is not None:
+                await memory.link_new_event(
+                    campaign.guild_id,
+                    campaign.id,
+                    self.thread_id,
+                    self.new_name,
+                    ends_it=ends_it,
+                    source=DM,
+                )
+            else:
+                await memory.link_event(
+                    campaign.guild_id,
+                    campaign.id,
+                    self.thread_id,
+                    self.event_id,
+                    ends_it=ends_it,
+                    source=DM,
+                )
         except MemoryRuleError as exc:
             await show_thread(interaction, self.campaign_id, self.thread_id, note=f"⚠️ {exc}")
             return

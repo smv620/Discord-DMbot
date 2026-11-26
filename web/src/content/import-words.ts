@@ -9,7 +9,7 @@
 // in the same change. A test ties the two together and fails until both are done.
 import type { RecapsWhy } from "../account/api";
 
-export const IMPORT_LIVE = false;
+export { IMPORT_LIVE } from "./import-switch"; // (the switch is in its own file: #5324)
 
 /** The uploader confirms consent for each speaker, including people who aren't in Discord (#3306; PLAN, "Import
  * sessions → Consent"). Off until the core half (#3305) is deployed: the routes it needs don't exist before that, so
@@ -203,6 +203,14 @@ export const importPage = {
   } as Record<string, string>,
   storyFailed: "The connections couldn't be read for this session.",
   storyFailedDo: "The session itself is imported and safe.",
+  // The name reader's stage (#5127, the web half of #5091): the same shared shape as the connections read, and a plain line after it.
+  names: { reading_names: "Looking for names" } as Record<string, string>,
+  // One line for the pieces that could not be checked for names (WebDev-lead's words, #5129): a next step, in the names panel.
+  namesUnread: (n: number): string =>
+    n === 1
+      ? "1 piece of this session couldn't be checked for names, so a name may be missing. Add any you know with ➕ Add a name on the names panel in Discord."
+      : `${n} pieces of this session couldn't be checked for names, so some names may be missing. Add any you know with ➕ Add a name on the names panel in Discord.`,
+  namesStopped: "Looking for names stopped early, so some names may be missing. The session itself is imported and safe. Add any you know with ➕ Add a name on the names panel in Discord.",
   // What the counts of the whole import's progress count (the API's `unit` code) (#2565).
   unit: { sessions: "sessions", parts: "pieces", lines: "lines" } as Record<string, string>,
   // Said when the server calls the import stalled: it can still move, and the files are safe.
@@ -224,6 +232,9 @@ export const importPage = {
   linkFor: (link: string, name: string): string => `${link} for ${name}`,
   namesUnchecked:
     "DMbot couldn't check every imported session for new names, so some may be missing. Add any with ➕ Add a name on the names panel.",
+  /** Names the scan left out past its 10 for each session (#5072), the same words as Discord. The count is summed over the sessions, so "as many as". */
+  namesCut: (n: number): string =>
+    `As many as ${n === 1 ? "1 more name was" : `${n} more names were`} left out. DMbot lists up to 10 new names from each session. Add any you know with ➕ Add a name on the names panel.`,
   doneCount: (done: number, n: number): string => `${done} of ${n} done.`,
   failedFallback: "Something went wrong with this one. Import this file again on its own.",
   allDone: "All done. The sessions are in your transcripts.",
