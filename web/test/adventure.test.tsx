@@ -468,3 +468,91 @@ describe("the real client's adventure calls (their names are not in the first do
     vi.unstubAllGlobals();
   });
 });
+
+describe("Match names (#3694 slice G1)", () => {
+  const open = async (ref = "100.cmp1") => {
+    const api = mockApi("table");
+    render(<Adventure api={api} refId={ref} />);
+    await screen.findByText("The Glass Orchard.pdf", {}, slow);
+    return api;
+  };
+  const pairLegend = (plan: string) => screen.getByText(new RegExp(`In your adventure: ${plan}`));
+  const callsOf = (api: ReturnType<typeof mockApi>) => api.calls.filter((c) => c.startsWith("adventureMatch:"));
+
+  it("looks only when asked, then lists each pair with Same, Not the same and Skip, in Discord's words", async () => {
+    const api = await open();
+    expect(callsOf(api)).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: w.match }));
+    expect(await screen.findByText(w.matchHead, {}, slow)).toBeTruthy();
+    expect(await screen.findByText(/In your adventure: Captain Varn \(character\)\. DMbot remembers: Varn/, {}, slow)).toBeTruthy();
+    expect(pairLegend("The Salt Gate")).toBeTruthy();
+    expect(screen.getAllByRole("radio", { name: w.matchSkip }).every((r) => (r as HTMLInputElement).checked)).toBe(true); // (nothing is chosen for the DM)
+    expect(callsOf(api)).toEqual(["adventureMatch:100.cmp1:suggest"]);
+  }, 30_000);
+
+  it("saves only the answered pairs, shows how many, and Undo takes the save back", async () => {
+    const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: w.match }));
+    await screen.findByText(/Captain Varn/, {}, slow);
+    fireEvent.click(screen.getAllByRole("radio", { name: w.matchSame })[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole("radio", { name: w.matchNot })[1] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: w.matchSave }));
+    expect(await screen.findByText(w.matchSaved(2), {}, slow)).toBeTruthy();
+    expect(callsOf(api)[1]).toBe("adventureMatch:100.cmp1:decide:b1>e1=same,b2>e2=not_same");
+    expect(screen.queryByText(/Captain Varn/)).toBeNull(); // (answered pairs leave the list)
+    fireEvent.click(screen.getByRole("button", { name: w.matchUndo }));
+    expect(await screen.findByText(w.matchUndoneLook, {}, slow)).toBeTruthy();
+    expect(callsOf(api)[2]).toBe("adventureMatch:100.cmp1:undo:match-2");
+  }, 60_000);
+
+  it("asks for at least one answer, and sends nothing without one", async () => {
+    const api = await open();
+    fireEvent.click(screen.getByRole("button", { name: w.match }));
+    await screen.findByText(/Captain Varn/, {}, slow);
+    fireEvent.click(screen.getByRole("button", { name: w.matchSave }));
+    expect(screen.getByRole("alert").textContent).toBe(w.matchNone);
+    expect(callsOf(api)).toHaveLength(1);
+  }, 30_000);
+
+  it("says plainly when nothing matches, and when a save stopped part way with the reason as a code worded here", async () => {
+    await open("100.cmp1.match-none");
+    fireEvent.click(screen.getByRole("button", { name: w.match }));
+    expect(await screen.findByText(w.matchNothing, {}, slow)).toBeTruthy();
+    cleanup();
+    const api = await open("100.cmp1.match-taken");
+    fireEvent.click(screen.getByRole("button", { name: w.match }));
+    await screen.findByText(/Captain Varn/, {}, slow);
+    fireEvent.click(screen.getAllByRole("radio", { name: w.matchSame })[0] as HTMLElement);
+    fireEvent.click(screen.getAllByRole("radio", { name: w.matchSame })[1] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: w.matchSave }));
+    expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.matchRefusals.taken_book);
+    expect(await screen.findByText(w.matchSaved(1), {}, slow)).toBeTruthy(); // (the pick before it was written)
+    expect(screen.queryByText(/Captain Varn/)).toBeNull(); // (the written pair leaves the list)
+    expect(pairLegend("The Salt Gate")).toBeTruthy(); // (the pair that stopped the save stays, to be looked at again)
+    expect(callsOf(api)).toHaveLength(2);
+  }, 60_000);
+
+  it("says a refused look in plain words, and Close brings the button back", async () => {
+    await open("100.cmp1.match-busy");
+    fireEvent.click(screen.getByRole("button", { name: w.match }));
+    expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.matchRefused["slow-down"]);
+    fireEvent.click(screen.getByRole("button", { name: w.matchHide }));
+    expect(screen.getByRole("button", { name: w.match })).toBeTruthy();
+  }, 30_000);
+});
+
+describe("Match names: the undo's own note (#3694 slice G1)", () => {
+  it("says it was too late when core says so, and a second look is offered", async () => {
+    const api = mockApi("table");
+    render(<Adventure api={api} refId="100.cmp1.match-late" />);
+    await screen.findByText("The Glass Orchard.pdf", {}, slow);
+    fireEvent.click(screen.getByRole("button", { name: w.match }));
+    await screen.findByText(/Captain Varn/, {}, slow);
+    fireEvent.click(screen.getAllByRole("radio", { name: w.matchSame })[0] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: w.matchSave }));
+    await screen.findByText(w.matchSaved(1), {}, slow);
+    fireEvent.click(screen.getByRole("button", { name: w.matchUndo }));
+    expect(await screen.findByText(w.matchUndoNotes.too_late as string, {}, slow)).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.matchAgain })).toBeTruthy();
+  }, 60_000);
+});
