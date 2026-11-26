@@ -10,6 +10,7 @@ import type {
   IconChoice,
   AdventureList,
   AdventureRead,
+  AdventureRemoval,
   ClarifyName,
   ConnectionSaidRead,
   NameCheckList,
@@ -201,6 +202,8 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       (await call("GET", `/me/recaps/${encodeURIComponent(ref)}/names-to-check`)) as NameCheckList,
     adventure: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/adventure`)) as AdventureList,
     adventureRead: async (ref, offset) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/adventure/read?offset=${offset}`)) as AdventureRead,
+    adventureRemove: async (ref, document) => (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/adventure/${encodeURIComponent(document)}/remove`)) as { removal: string },
+    adventureRemoval: async (ref, removal) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/adventure/removals/${encodeURIComponent(removal)}`)) as AdventureRemoval,
     saidSend: async (ref, input) => (await call("POST", saidPath(ref), input)) as { answer: string },
     saidRead: async (ref, answer) => (await call("GET", `${saidPath(ref)}/${encodeURIComponent(answer)}`)) as ConnectionSaidRead,
     saidUse: async (ref, answer, use) => {

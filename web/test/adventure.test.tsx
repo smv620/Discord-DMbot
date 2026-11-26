@@ -101,6 +101,70 @@ describe("the panel", () => {
     expect(screen.queryByText("Made-up chapter 4")).toBeNull();
   });
 
+  it("asks once before removing a file, and Keep it changes nothing", async () => {
+    const api = show();
+    await screen.findByText("The Glass Orchard.pdf", {}, slow);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Remove / })[0] as HTMLElement);
+    expect(screen.getByText(w.removeAsk("The Glass Orchard.pdf"))).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("adventureRemove"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: w.removeNo }));
+    expect(screen.queryByText(w.removeAsk("The Glass Orchard.pdf"))).toBeNull();
+    expect(api.calls.some((c) => c.startsWith("adventureRemove"))).toBe(false);
+  });
+
+  it("removes a file after the yes, shows it working, and the list no longer has it", async () => {
+    const api = show();
+    await screen.findByText("The Glass Orchard.pdf", {}, slow);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Remove / })[0] as HTMLElement);
+    const yes = screen.getByRole("button", { name: w.removeYes });
+    fireEvent.click(yes);
+    fireEvent.click(yes); // (a double press asks once)
+    expect(await screen.findByText(w.removing, {}, slow)).toBeTruthy();
+    expect(screen.queryAllByRole("button", { name: /^Remove / })).toHaveLength(0); // (no other file can be started meanwhile)
+    expect(await screen.findByText(w.removed, {}, slow)).toBeTruthy();
+    await vi.waitFor(() => expect(screen.queryByText("The Glass Orchard.pdf")).toBeNull(), { timeout: 9000 });
+    expect(api.calls.filter((c) => c.startsWith("adventureRemove:"))).toEqual(["adventureRemove:100.cmp1:d1"]);
+  }, 30_000);
+
+  it("clears what was read when a file is removed while it is open, and reads it again", async () => {
+    const api = show();
+    fireEvent.click(await screen.findByRole("button", { name: w.see }, slow));
+    await screen.findByText(w.of(50, 120), {}, slow);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Remove / })[0] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: w.removeYes }));
+    await screen.findByText(w.removed, {}, slow);
+    await vi.waitFor(() => expect(api.calls.filter((c) => c.startsWith("adventureRead")).length).toBeGreaterThanOrEqual(2), { timeout: 9000 });
+  }, 30_000);
+
+  it("stops watching a removal when the page goes away", async () => {
+    const api = show();
+    await screen.findByText("The Glass Orchard.pdf", {}, slow);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Remove / })[0] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: w.removeYes }));
+    await screen.findByText(w.removing, {}, slow);
+    cleanup();
+    const seen = api.calls.filter((c) => c.startsWith("adventureRemoval")).length;
+    await new Promise((ok) => setTimeout(ok, 2500));
+    expect(api.calls.filter((c) => c.startsWith("adventureRemoval")).length).toBeLessThanOrEqual(seen + 1);
+  }, 30_000);
+
+  it("offers no Remove when the API cannot remove", async () => {
+    const api = mockApi("table");
+    delete (api as { adventureRemoval?: unknown }).adventureRemoval;
+    render(<Adventure api={api} refId="100.cmp1" />);
+    await screen.findByText("The Glass Orchard.pdf", {}, slow);
+    expect(screen.queryAllByRole("button", { name: /^Remove / })).toHaveLength(0);
+  });
+
+  it("says plainly when the removal failed, and leaves the file in the list", async () => {
+    show();
+    await screen.findByText("Second Book.docx", {}, slow);
+    fireEvent.click(screen.getAllByRole("button", { name: /^Remove / })[1] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: w.removeYes }));
+    expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.removeFailed);
+    expect(screen.getByText("Second Book.docx")).toBeTruthy();
+  }, 30_000);
+
   it("drops a late answer after Hide, so See again starts clean, and a failed Show more keeps what is on screen", async () => {
     const api = mockApi("table");
     const real = api.adventureRead!.bind(api);
