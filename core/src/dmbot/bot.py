@@ -368,6 +368,7 @@ from dmbot.memory import (
     waiting_now,
     web_actions,
     web_adventure_gives,
+    web_adventure_reads,
     web_adventure_removals,
     web_connection_reads,
     web_report_requests,
@@ -1356,6 +1357,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             web_adventure_gives.GiveStore(recaps.db) if recaps is not None else None
         )
         self._give_tasks: dict[int, asyncio.Task[None]] = {}
+        # "Yes, read it" for a Shared story file from the website (#3694 slice E): it only STARTS
+        # the read (the same calls as Discord's button), which then runs on its own, so no task.
+        self.web_adventure_reads = (
+            web_adventure_reads.ReadStore(recaps.db) if recaps is not None else None
+        )
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
@@ -17683,6 +17689,37 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
             await web_adventure_gives.run_one(adventure, store, staging, read, guild_id, item)
+
+    async def run_web_adventure_reads(self) -> None:
+        """ "Yes, read it" pressed on the website for a Shared story file (#3694): the plan check,
+        `PlanStore.begin` and `start_plan_read`, as Discord's button does. A few a pass; the read
+        itself runs in the background and shows its progress where Discord shows it. Outcome words
+        only are logged."""
+        store, plan = self.web_adventure_reads, self.plan
+        if store is None or plan is None or self.plan_ai is None:
+            return
+
+        async def refusal(guild_id: int, campaign_id: str, user_id: int) -> str | None:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is None:
+                return "gone"
+            return await self.plan_gate("adventure", guild_id, campaign, user_id)
+
+        for guild in list(self.guilds):
+            for _ in range(5):
+                item = await store.claim_next(guild.id)
+                if item is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
+                    await web_adventure_reads.run_one(
+                        plan,
+                        store,
+                        refusal,
+                        self.start_plan_read,
+                        lambda gid, doc: (gid, doc) in self.plan_reads,
+                        guild.id,
+                        item,
+                    )
 
     async def run_web_adventure_removals(self) -> None:
         """Files removed from the Shared story adventure on the website (#3694): each is the same

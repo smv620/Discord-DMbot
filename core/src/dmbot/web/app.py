@@ -5078,6 +5078,38 @@ def create_app(
         except RecapError:
             raise HTTPException(status_code=404, detail="not_found") from None
 
+    # "Yes, read it" for one file (#3694 slice E): queued for the bot, which makes the plan check
+    # and starts the read as Discord's button does. Poll `.../adventure/reads/{id}` for whether it
+    # started; the read's own progress is the file's `read` in the adventure list.
+    read_refusals = {
+        "gone": (404, "not_found"),
+        "not_readable": (409, "not_readable"),
+        "already_read": (409, "already_read"),
+        "busy": (409, "busy"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/adventure/{document}/read", status_code=202)
+    async def me_adventure_read_start(ref: str, document: str, signed: Signed) -> dict[str, str]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return {"read": await adventure.read(db, session, ref, document)}
+        except RecapError as err:
+            status, detail = read_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/adventure/reads/{read_id}")
+    async def me_adventure_reading(ref: str, read_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await adventure.reading(db, session, ref, read_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     # A connection said in the DM's own words (#2940 slice C): queued for the bot, which reads it,
     # shows proposals, and writes only what the DM confirms. 404 while DMBOT_WEB_CONNECTION_SAID is
     # off. The DM's words are never logged.
