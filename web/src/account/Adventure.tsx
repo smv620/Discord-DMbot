@@ -40,6 +40,9 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
   const [total, setTotal] = useState(0);
   const [looking, setLooking] = useState(false);
   const [lookFailed, setLookFailed] = useState(false);
+  // One removal at a time: which file, and where it stands. `ask` waits for the DM's one confirmation.
+  const [removal, setRemoval] = useState<{ id: string; phase: "ask" | "working" | "done" | "failed"; said: string } | null>(null);
+  const removeBusy = useRef(false);
   const [asked, setAsked] = useState(false); // (a read of the list has come back at least once)
   const busy = useRef(false);
   const latest = useRef(0); // a late answer to an earlier ask is dropped
@@ -82,6 +85,34 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
         busy.current = false;
         setLooking(false);
       }
+    }
+  }
+
+  /** The one confirmed press: queue the removal, then poll it until the bot has finished or said why not. */
+  async function remove(doc: AdventureDocument): Promise<void> {
+    if (!api.adventureRemove || !api.adventureRemoval || removeBusy.current) return;
+    removeBusy.current = true;
+    setRemoval({ id: doc.id, phase: "working", said: w.removing });
+    try {
+      const { removal: id } = await api.adventureRemove(refId, doc.id);
+      for (let i = 0; i < 40; i += 1) {
+        await new Promise((ok) => setTimeout(ok, i === 0 ? 400 : 1500));
+        const got = await api.adventureRemoval(refId, id);
+        if (got.state === "done") {
+          setRemoval({ id: doc.id, phase: "done", said: w.removed });
+          setTries((n) => n + 1); // (the files are read again)
+          return;
+        }
+        if (got.state === "failed") {
+          setRemoval({ id: doc.id, phase: "failed", said: got.error === "not_yours" ? w.removeNotYours : w.removeFailed });
+          return;
+        }
+      }
+      setRemoval({ id: doc.id, phase: "failed", said: w.removeSlow });
+    } catch (error) {
+      setRemoval({ id: doc.id, phase: "failed", said: error instanceof ApiError && error.kind === "not-found" ? w.removeNotYours : w.removeFailed });
+    } finally {
+      removeBusy.current = false;
     }
   }
 
@@ -134,6 +165,34 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
                       {w.pages(d.characters)}
                       {d.restored ? `, ${w.giveAgain}` : `, ${readLine(d)}`}
                     </span>
+                    {api.adventureRemove && removal?.id !== d.id && (
+                      <button type="button" class="button secondary" onClick={() => setRemoval({ id: d.id, phase: "ask", said: "" })}>
+                        {w.remove}
+                      </button>
+                    )}
+                    {removal?.id === d.id && removal.phase === "ask" && (
+                      <div class="stack" role="group" aria-label={w.removeAsk(d.name)}>
+                        <p>{w.removeAsk(d.name)}</p>
+                        <div class="row">
+                          <button type="button" class="button" autoFocus onClick={() => void remove(d)}>
+                            {w.removeYes}
+                          </button>
+                          <button type="button" class="button secondary" onClick={() => setRemoval(null)}>
+                            {w.removeNo}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {removal?.id === d.id && removal.phase === "working" && (
+                      <p class="muted" role="status">
+                        {removal.said}
+                      </p>
+                    )}
+                    {removal?.id === d.id && removal.phase === "failed" && (
+                      <p class="warn" role="alert">
+                        {removal.said}
+                      </p>
+                    )}
                   </li>
                 ))}
               </ol>
