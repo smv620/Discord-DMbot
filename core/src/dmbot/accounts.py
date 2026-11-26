@@ -347,6 +347,7 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         await conn.execute("SELECT dmbot_forget_connection_reads()")
         # The removals of adventure files they asked for on the website (#3694).
         await conn.execute("SELECT dmbot_forget_adventure_removals()")
+        await conn.execute("SELECT dmbot_forget_adventure_gives()")
         # A character drawn with a picture they posted goes back to the default icon (#3623).
         await conn.execute("SELECT dmbot_forget_pc_icon_pictures()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))

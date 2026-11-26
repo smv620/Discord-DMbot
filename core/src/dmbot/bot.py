@@ -367,6 +367,7 @@ from dmbot.memory import (
     voyage,
     waiting_now,
     web_actions,
+    web_adventure_gives,
     web_adventure_removals,
     web_connection_reads,
     web_report_requests,
@@ -380,7 +381,13 @@ from dmbot.memory import scan as name_scan
 from dmbot.memory import (
     sheets as sheets_memory,
 )
-from dmbot.memory.adventure import AdventureSection, AdventureStore
+from dmbot.memory.adventure import (
+    READ_REPLY_BYTES,
+    READ_TIME_S,
+    AdventureSection,
+    AdventureStore,
+    adventure_text,
+)
 from dmbot.memory.background import KINDS as LORE_KINDS
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
@@ -397,6 +404,7 @@ from dmbot.memory.continuity_hits import hit_of as continuity_hit_of
 from dmbot.memory.contradiction_grades import MAJOR, GradeStore
 from dmbot.memory.deed_proposals import DeedProposals
 from dmbot.memory.deed_proposals_backup import DeedProposalsSection
+from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.exposures import (
     ExposureStore,
     dedupe,
@@ -1342,6 +1350,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.web_adventure_removals = (
             web_adventure_removals.RemovalStore(recaps.db) if recaps is not None else None
         )
+        # Giving a Shared story file from the website (#3694 slice D): reading is slow, so each
+        # one runs as a tracked task, at most one a server.
+        self.web_adventure_gives = (
+            web_adventure_gives.GiveStore(recaps.db) if recaps is not None else None
+        )
+        self._give_tasks: dict[int, asyncio.Task[None]] = {}
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
@@ -17172,6 +17186,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 with contextlib.suppress(BucketError):
                     await staging.delete(key)
                 gone += 1
+            # The files given for the Shared story adventure from the website (#3694): a row a day
+            # old goes, and its object if the job never finished it. Its own try, so one failure
+            # does not stop the rest.
+            if self.web_adventure_gives is not None:
+                try:
+                    for key in await self.web_adventure_gives.sweep(guild.id):
+                        with contextlib.suppress(BucketError):
+                            await staging.delete(key)
+                        gone += 1
+                except Exception as exc:
+                    log.warning("The adventure file sweep failed: %s", type(exc).__name__)
         if gone:
             log.info("%s staged lore PDFs were cleared", gone)
 
@@ -17612,6 +17637,52 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def names_lookup(self, guild_id: int, campaign_id: str) -> CampaignLookup | None:
         return await self.lookup.get(guild_id, campaign_id) if self.lookup else None
+
+    async def run_web_adventure_gives(self) -> None:
+        """Files given on the website for the Shared story adventure (#3694): read with the same
+        reader as Discord's 📖 and kept with the same call, each as a tracked task, at most one a
+        server, so the poll loop's other website actions do not wait for a long read. The page
+        shows the stage as it moves. Counts and outcome words are logged, never a name."""
+        store, staging, adventure = self.web_adventure_gives, self.maps_staging, self.adventure
+        if store is None or staging is None or adventure is None:
+            return
+        for guild in list(self.guilds):
+            task = self._give_tasks.get(guild.id)
+            if task is not None and not task.done():
+                continue
+            item = await store.claim_next(guild.id)
+            if item is None:
+                continue
+            gid = guild.id
+            started = self._track(
+                self._run_give(adventure, store, staging, gid, item), f"adventure-give-{gid}"
+            )
+            if started is None:  # shutting down: the row is taken again after a restart
+                return
+            self._give_tasks[gid] = started
+
+            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
+                if self._give_tasks.get(gid) is done:
+                    del self._give_tasks[gid]
+
+            started.add_done_callback(forget)
+
+    async def _run_give(
+        self,
+        adventure: AdventureStore,
+        store: web_adventure_gives.GiveStore,
+        staging: Bucket,
+        guild_id: int,
+        item: web_adventure_gives.Item,
+    ) -> None:
+        async def read(name: str, raw: bytes) -> str:
+            async with READING:  # the same limit as the names screen
+                return await read_document(
+                    name, raw, parse=adventure_text, limit_s=READ_TIME_S, max_reply=READ_REPLY_BYTES
+                )
+
+        with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
+            await web_adventure_gives.run_one(adventure, store, staging, read, guild_id, item)
 
     async def run_web_adventure_removals(self) -> None:
         """Files removed from the Shared story adventure on the website (#3694): each is the same

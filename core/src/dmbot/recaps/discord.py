@@ -156,6 +156,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.memory.lore_queue import LoreQueue
     from dmbot.memory.store import MemoryStore
     from dmbot.memory.web_actions import ActionStore
+    from dmbot.memory.web_adventure_gives import GiveStore as AdventureGiveStore
     from dmbot.memory.web_adventure_removals import RemovalStore as AdventureRemovalStore
     from dmbot.memory.web_connection_reads import ActionStore as ConnectionReadStore
     from dmbot.memory.web_sheets import ActionStore as SheetActionStore
@@ -323,6 +324,7 @@ class RecapFeatures:
         web_line_fixes: LineFixStore | None
         web_connection_reads: ConnectionReadStore | None
         web_adventure_removals: AdventureRemovalStore | None
+        web_adventure_gives: AdventureGiveStore | None
 
         @property
         def guilds(self) -> Sequence[discord.Guild]: ...
@@ -429,6 +431,8 @@ class RecapFeatures:
         async def run_web_connection_reads(self) -> None: ...
 
         async def run_web_adventure_removals(self) -> None: ...
+
+        async def run_web_adventure_gives(self) -> None: ...
         async def run_web_recap_style(self) -> None: ...
         async def run_member_avatars(self) -> None: ...
         async def run_web_restores(self) -> None: ...
@@ -2573,6 +2577,10 @@ class RecapFeatures:
                 await self.run_web_adventure_removals()
             except Exception as exc:
                 log.warning("The website adventure removals failed: %s", type(exc).__name__)
+            try:
+                await self.run_web_adventure_gives()
+            except Exception as exc:
+                log.warning("The website adventure files failed: %s", type(exc).__name__)
             try:
                 await self.run_web_recap_style()
             except Exception as exc:

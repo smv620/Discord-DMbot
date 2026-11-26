@@ -5019,6 +5019,65 @@ def create_app(
         except RecapError:
             raise HTTPException(status_code=404, detail="not_found") from None
 
+    # Give a file for the adventure (#3694 slice D): the file itself is the body, its name is the
+    # `name` query. A DM of the campaign only, checked before any of the body is read; staged in
+    # the same bucket as a lore PDF and read by the bot. Poll `.../adventure/gives/{id}`.
+    give_refusals = {
+        "bad_file": (400, "bad_file"),
+        "uploads_off": (503, "uploads_off"),
+        "failed": (502, "failed"),
+        "not_on": (409, "not_on"),
+        "too_many": (409, "too_many"),
+        "busy": (409, "busy"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/adventure/give", status_code=202)
+    async def me_adventure_give(
+        ref: str, request: Request, signed: Signed, name: str = ""
+    ) -> dict[str, str]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        if pdf_upload_limit.take(f"user-{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        try:
+            await lore_pdf.ensure_dm(db, session, ref)
+        except RecapError:
+            pdf_upload_limit.give_back(f"user-{session.user_id}")
+            raise HTTPException(status_code=404, detail="not_found") from None
+        limit = adventure.PDF_MAX_BYTES
+        data = bytearray()
+        too_big = HTTPException(status_code=413, detail="bad_file")
+        try:
+            if int(request.headers.get("content-length") or 0) > limit:
+                raise too_big
+            async for chunk in request.stream():
+                data.extend(chunk)
+                if len(data) > limit:
+                    raise too_big  # (a body that lies about its length is cut off here)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="bad_file") from None
+        try:
+            return {
+                "give": await adventure.give(db, session, ref, upload_bucket, name, bytes(data))
+            }
+        except RecapError as err:
+            if err.code in ("uploads_off", "not_on", "too_many", "busy"):
+                pdf_upload_limit.give_back(f"user-{session.user_id}")
+            status, detail = give_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/adventure/gives/{give_id}")
+    async def me_adventure_giving(ref: str, give_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await adventure.giving(db, session, ref, give_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     # A connection said in the DM's own words (#2940 slice C): queued for the bot, which reads it,
     # shows proposals, and writes only what the DM confirms. 404 while DMBOT_WEB_CONNECTION_SAID is
     # off. The DM's words are never logged.
