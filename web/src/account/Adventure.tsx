@@ -10,7 +10,7 @@ import { adventureWords as w } from "../content/adventure-words";
 import AdventureGive from "./AdventureGive";
 import AdventureGuide from "./AdventureGuide";
 import AdventureReadNow, { ReadingWait } from "./AdventureReadNow";
-import { type AccountApi, type AdventureDocument, type AdventureItem, type AdventureList, ApiError } from "./api";
+import { type AccountApi, type AdventureApi, type AdventureDocument, type AdventureItem, type AdventureList, ApiError } from "./api";
 
 /** Where a file's reading stands, in Discord's words ("not read yet" when it has not been). A count of nothing is left out. */
 export function readLine(d: AdventureDocument): string {
@@ -39,7 +39,20 @@ const REMOVE_FIRST_MS = 400;
 const REMOVE_EVERY_MS = 1500;
 const REMOVE_LOOKS = 40; // about a minute: a removal is quick
 
-export default function Adventure({ api, refId }: { api: AccountApi; refId: string }) {
+/** The section's calls come from their own file, loaded here the first time the section is drawn (their names are not in the first download). */
+export default function Adventure({ api: site, refId }: { api: AccountApi; refId: string }) {
+  const [api, setApi] = useState<AdventureApi | null>(null);
+  useEffect(() => {
+    let live = true;
+    site.adventureApi?.().then((got) => live && setApi(got), () => undefined);
+    return () => {
+      live = false;
+    };
+  }, [site]);
+  return api ? <AdventureSection key={refId} api={api} refId={refId} /> : null;
+}
+
+function AdventureSection({ api, refId }: { api: AdventureApi; refId: string }) {
   const [list, setList] = useState<AdventureList | null>(null);
   const [gone, setGone] = useState(false); // (not a DM, or the switch is off: nothing is shown at all)
   const [failed, setFailed] = useState(false);
@@ -237,7 +250,7 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
                       watchUntil.current = Date.now() + JUST_STARTED_MS;
                       setTries((n) => n + 1);
                     }} />
-                    {api.adventureRemove && api.adventureRemoval && confirming !== d.id && job?.phase !== "working" && (
+                    {typeof api.adventureRemove === "function" && typeof api.adventureRemoval === "function" && confirming !== d.id && job?.phase !== "working" && (
                       <button type="button" class="button secondary" aria-label={`${w.remove} ${d.name}`} onClick={() => setConfirming(d.id)}>
                         {w.remove}
                       </button>

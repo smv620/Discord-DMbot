@@ -371,7 +371,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
         </p>
       )}
     </form>
-    {ADVENTURE_LIVE && ref && api.adventure && <LazyPanel key={ref} load={() => import("./Adventure")} what="your adventure" props={{ api, refId: ref }} />}
+    {ADVENTURE_LIVE && ref && api.adventureApi && <LazyPanel key={ref} load={() => import("./Adventure")} what="your adventure" props={{ api, refId: ref }} />}
     </>
   );
 }

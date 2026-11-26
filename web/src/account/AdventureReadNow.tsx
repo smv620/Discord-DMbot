@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { adventureWords as w } from "../content/adventure-words";
-import { type AccountApi, ApiError, type AdventureDocument } from "./api";
+import { type AdventureApi, ApiError, type AdventureDocument } from "./api";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
 
@@ -33,7 +33,7 @@ export function ReadingWait({ doc }: { doc: AdventureDocument }) {
   );
 }
 
-export default function AdventureReadNow({ api, refId, doc, disabled, onStarted }: { api: AccountApi; refId: string; doc: AdventureDocument; disabled: boolean; onStarted: () => void }) {
+export default function AdventureReadNow({ api, refId, doc, disabled, onStarted }: { api: AdventureApi; refId: string; doc: AdventureDocument; disabled: boolean; onStarted: () => void }) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [problem, setProblem] = useState("");
