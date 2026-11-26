@@ -11,6 +11,7 @@ import type {
   AdventureGive,
   AdventureList,
   AdventureRead,
+  AdventureReadStart,
   AdventureRemoval,
   ClarifyName,
   ConnectionSaidRead,
@@ -206,6 +207,8 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     // The file goes as it is, not as JSON (its name in the address): the API reads it with a running cap, as the lore PDF's does.
     adventureGive: async (ref, file, name) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/adventure/give?name=${encodeURIComponent(name)}`, undefined, false, new Blob([file], { type: "application/octet-stream" }))) as { give: string },
+    adventureStartRead: async (ref, document) => (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/adventure/${encodeURIComponent(document)}/read`)) as { read: string },
+    adventureStarting: async (ref, read) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/adventure/reads/${encodeURIComponent(read)}`)) as AdventureReadStart,
     adventureGiving: async (ref, give) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/adventure/gives/${encodeURIComponent(give)}`)) as AdventureGive,
     adventureRemove: async (ref, document) => (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/adventure/${encodeURIComponent(document)}/remove`)) as { removal: string },
     adventureRemoval: async (ref, removal) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/adventure/removals/${encodeURIComponent(removal)}`)) as AdventureRemoval,

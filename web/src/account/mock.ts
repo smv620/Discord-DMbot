@@ -1015,6 +1015,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let loreLooks = 0;
   const adventureRemovals = new Map<string, { document: string; looks: number }>(); // (removing a file of the adventure, #3694 slice C)
   const adventureGone = new Set<string>();
+  const adventureStarts = new Map<string, { ref: string; document: string; looks: number }>(); // (starting a read, #3694 slice E)
+  const adventureReading = new Map<string, number>(); // (a started read's progress: it moves each time the list is read)
   const adventureGives = new Map<string, { ref: string; name: string; size: number; looks: number }>(); // (giving a file, #3694 slice D)
   const adventureGiven: { ref: string; name: string; size: number }[] = [];
   const saidJobs = new Map<string, { text: string; looks: number; job: "read" | "use" | "undo"; edit?: string | undefined; partly?: boolean }>(); // (say a connection in words, #5293)
@@ -3224,7 +3226,44 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         charactersHeld: none ? 0 : 163000,
       };
       const added = adventureGiven.filter((g) => g.ref === ref).map((g, i) => ({ id: `g${i + 1}`, name: g.name, characters: 5000, restored: false, addedAt: Math.floor(Date.now() / 1000), read: null, found: { chapters: 0, places: 0, people: 0, links: 0 } }));
-      return { ...built, documents: [...built.documents, ...added].filter((d) => !adventureGone.has(`${ref}:${d.id}`)) };
+      const sentence = "Reading this file costs about 12 AI credits. You have 480 left this month.";
+      const docs = [...built.documents, ...added].map((d) => {
+        const step = adventureReading.get(`${ref}:${d.id}`);
+        if (step === undefined) return { ...d, estimate: d.read === null && !d.restored ? sentence : d.read?.status === "stopped" ? sentence : null };
+        adventureReading.set(`${ref}:${d.id}`, step + 1);
+        const done = step >= 3;
+        return {
+          ...d,
+          estimate: null,
+          read: { status: done ? ("done" as const) : ("reading" as const), nextChunk: done ? 20 : 5 + step * 5, totalChunks: 20, stopReason: "", skippedParts: 0, updatedAt: Math.floor(Date.now() / 1000) },
+          found: done ? { chapters: 3, places: 2, people: 9, links: 1 } : d.found,
+        };
+      });
+      return { ...built, documents: docs.filter((d) => !adventureGone.has(`${ref}:${d.id}`)) };
+    },
+    async adventureStartRead(ref, document) {
+      calls.push(`adventureStartRead:${ref}:${document}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (document === "d1") throw new ApiError("already-read");
+      if (document === "d3") throw new ApiError("not-readable");
+      const id = `read-${adventureStarts.size + 1}`;
+      adventureStarts.set(id, { ref, document, looks: 0 });
+      return { read: id };
+    },
+    async adventureStarting(ref, read) {
+      calls.push(`adventureStarting:${ref}:${read}`);
+      await reachable();
+      signedIn();
+      const got = adventureStarts.get(read);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { error: "", documentId: got.document, createdAt: at - got.looks, updatedAt: at, serverNow: at };
+      if (got.looks < 2) return { ...base, state: "working" as const };
+      adventureReading.set(`${ref}:${got.document}`, 0); // (the read has started: its progress is in the list from now)
+      return { ...base, state: "done" as const };
     },
     async adventureGive(ref, file, name) {
       calls.push(`adventureGive:${ref}:${name}:${file.size}`);

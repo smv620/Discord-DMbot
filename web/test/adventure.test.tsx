@@ -55,7 +55,7 @@ describe("the panel", () => {
     expect(await screen.findByText("The Glass Orchard.pdf", {}, slow)).toBeTruthy();
     expect(screen.getByText(/about 60 pages, read: 12 chapters, 1 place, 30 people, 4 "this needs that" notes, 2 parts couldn't be read/)).toBeTruthy();
     expect(screen.getByText(/stopped at 25%\. DMbot has used up its reading for this month/)).toBeTruthy();
-    expect(screen.getByText(/give this file again in Discord to use it/)).toBeTruthy();
+    expect(screen.getByText(/give this file again to use it/)).toBeTruthy();
     expect(screen.getByText(w.using(163000, 2000000))).toBeTruthy();
   });
 
@@ -329,5 +329,47 @@ describe("giving a file (#3694 slice D)", () => {
     render(<Adventure api={api} refId="100.cmp1" />);
     await screen.findByText("The Glass Orchard.pdf", {}, slow);
     expect(screen.queryByRole("button", { name: w.give })).toBeNull();
+  });
+});
+
+describe("reading a file now (#3694 slice E)", () => {
+  const open = async () => {
+    const api = mockApi("table");
+    render(<Adventure api={api} refId="100.cmp1" />);
+    await screen.findByText("Second Book.docx", {}, slow);
+    return api;
+  };
+  const readButtons = () => screen.queryAllByRole("button", { name: /^Read it now / });
+
+  it("offers Read it now only on a file that has a cost sentence, and shows the cost before anything is sent", async () => {
+    const api = await open();
+    expect(readButtons()).toHaveLength(1); // (the finished and the restored file have none)
+    fireEvent.click(readButtons()[0] as HTMLElement);
+    expect(screen.getByText(/Reading this file costs about 12 AI credits/)).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("adventureStartRead"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: w.readNo }));
+    expect(screen.queryByText(/Reading this file costs/)).toBeNull();
+    expect(api.calls.some((c) => c.startsWith("adventureStartRead"))).toBe(false);
+  });
+
+  it("starts the read after the yes, and the page then shows how far it is by itself until it is read", async () => {
+    const api = await open();
+    fireEvent.click(readButtons()[0] as HTMLElement);
+    const yes = screen.getByRole("button", { name: w.readYes });
+    fireEvent.click(yes);
+    fireEvent.click(yes); // (a double press sends once)
+    expect(await screen.findByText(w.started, {}, slow)).toBeTruthy();
+    expect(await screen.findByText(w.readingStage, {}, slow)).toBeTruthy(); // (stage, how far, how long: the shared wait)
+    await vi.waitFor(() => expect(screen.queryByText(w.readingStage)).toBeNull(), { timeout: 20_000 });
+    expect(screen.getByText(/read: 3 chapters, 2 places, 9 people/)).toBeTruthy();
+    expect(api.calls.filter((c) => c.startsWith("adventureStartRead"))).toEqual(["adventureStartRead:100.cmp1:d2"]);
+  }, 40_000);
+
+  it("offers no Read it now when the API cannot start a read", async () => {
+    const api = mockApi("table");
+    delete (api as { adventureStarting?: unknown }).adventureStarting;
+    render(<Adventure api={api} refId="100.cmp1" />);
+    await screen.findByText("Second Book.docx", {}, slow);
+    expect(readButtons()).toHaveLength(0);
   });
 });
