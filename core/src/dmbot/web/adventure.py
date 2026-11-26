@@ -16,6 +16,7 @@ import secrets
 from pathlib import PurePath
 from typing import Any
 
+from dmbot import credits
 from dmbot.db import Database
 from dmbot.memory.adventure import CAMPAIGN_MAX_CHARS, DOCUMENTS_MAX
 from dmbot.memory.name_documents import max_bytes_for
@@ -25,9 +26,26 @@ from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
+CHARS_PER_WORD = 5  # a high guess, so the estimate is never below the charge (credits.py)
+
+
+def _estimate(document: dict[str, Any]) -> str | None:
+    """What reading this file will cost, in the card's own sentence ("About 120 AI credits for the
+    adventure."), from the same table the read is metered by (`credits.CREDITS_PER_UNIT`). None for
+    a file with no text (restored from a backup) and for one already read. Counts only."""
+    read = document.get("read")
+    if document["restored"] or (read and read["status"] == "done"):
+        return None
+    words = int(document["characters"]) // CHARS_PER_WORD
+    units = credits.units_of("adventure", words=words)
+    return credits.estimate_words(
+        "adventure", credits.estimate("adventure", units, allowance=0, used=0)
+    )
+
 
 async def held(db: Database, session: Session, ref: str) -> dict[str, Any]:
-    """`{mode, documents: [{id, name, characters, restored, addedAt, read, found}], documentsMax,
+    """`{mode, documents: [{id, name, characters, restored, addedAt, read, found, estimate}],
+    documentsMax,
     charactersMax, charactersHeld}`. `read` is null until a read began, else `{status, nextChunk,
     totalChunks, stopReason, skippedParts, updatedAt}` (`status`: reading, done or stopped).
     `found` is `{chapters, places, people, links}`. `restored`: back from a backup, with no text
@@ -43,7 +61,7 @@ async def held(db: Database, session: Session, ref: str) -> dict[str, Any]:
     got = found["r"] if found else None
     if got is None:
         raise RecapError("not_found")
-    documents = list(got["documents"])
+    documents = [dict(d, estimate=_estimate(d)) for d in got["documents"]]
     return {
         "mode": got["mode"],
         "documents": documents,
@@ -224,6 +242,109 @@ async def giving(db: Database, session: Session, ref: str, give_id: str) -> dict
         cur = await conn.execute(
             "SELECT dmbot_web_adventure_give_read(%s, %s, %s) AS r",
             (guild_id, campaign_id, give_id),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None or got.get("missing"):
+        raise RecapError("not_found")
+    return dict(got)
+
+
+_READ_REFUSALS = {"gone", "not_readable", "already_read", "busy", "too_soon"}
+
+
+async def read(db: Database, session: Session, ref: str, document: str) -> str:
+    """Slice E: queue "Yes, read it" for one file. The page shows the file's estimate (`held`)
+    first and asks the DM; this is the yes. Returns the id `reading` polls. The bot then makes
+    the plan check, the caps and `PlanStore.begin` again, as Discord's button does. Refusals are
+    `RecapError` codes: `not_found` (not a DM, or a malformed id), `gone`, `not_readable` (give
+    the file again), `already_read`, `busy`, `too_soon`."""
+    if not _ID.match(document):
+        raise RecapError("not_found")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_adventure_read(%s, %s, %s) AS r", (guild_id, campaign_id, document)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]) if got["status"] in _READ_REFUSALS else "not_found")
+    return str(got["id"])
+
+
+async def reading(db: Database, session: Session, ref: str, read_id: str) -> dict[str, Any]:
+    """Whether the read has started: `{state: waiting|working|done|failed, error, documentId,
+    createdAt, updatedAt, serverNow}`. `done` means started: from then the read's own progress
+    (stage, how far, when it last moved) is the file's `read` in `held`. `error` is a code
+    (`plan`, `busy`, `not_on`, `not_yours`, `gone`, `not_readable`, `already_read`,
+    `document_full`, `month_full`, `failed`) the page turns into words."""
+    if not _ID.match(read_id):
+        raise RecapError("not_found")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_adventure_read_state(%s, %s, %s) AS r",
+            (guild_id, campaign_id, read_id),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None or got.get("missing"):
+        raise RecapError("not_found")
+    return dict(got)
+
+
+_GUIDE_REFUSALS = {"not_guide", "gone", "bad_job", "busy", "too_soon"}
+
+
+async def guide(
+    db: Database, session: Session, ref: str, document: str, job: str, chapter: str = ""
+) -> str:
+    """Slice F: queue a Guide me job for one file (`read`; `pick` with a chapter id: "I'm in
+    another chapter"; `clear`: back to DMbot's guess). Returns the id `guiding` polls. The answer
+    is made by the bot with the same function as Discord's 🧭. Refusals are `RecapError` codes:
+    `not_found` (not a DM, or a malformed id), `gone`, `not_guide` (the Shared story switch is not
+    on "Guide me"), `bad_job`, `busy`, `too_soon`."""
+    if not _ID.match(document) or (chapter and not _ID.match(chapter)):
+        raise RecapError("not_found")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_adventure_guide(%s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, document, job, chapter),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]) if got["status"] in _GUIDE_REFUSALS else "not_found")
+    return str(got["id"])
+
+
+async def guiding(db: Database, session: Session, ref: str, guide_id: str) -> dict[str, Any]:
+    """A Guide me job's state, and its answer once done: `{state: waiting|working|done|failed,
+    error, job, documentId, answer, createdAt, updatedAt, serverNow}`. `answer` is `{text,
+    picked, chapter: {id, name} | null, chapters: [{id, name}]}` (the book's own names: the DM's
+    page only, never logged). `error` is a code (`not_yours`, `not_guide`, `plan`, `no_chapters`,
+    `gone`, `failed`) the page turns into words."""
+    if not _ID.match(guide_id):
+        raise RecapError("not_found")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_adventure_guide_read(%s, %s, %s) AS r",
+            (guild_id, campaign_id, guide_id),
         )
         found = await cur.fetchone()
     got = found["r"] if found else None
