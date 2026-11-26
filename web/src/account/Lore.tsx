@@ -4,6 +4,7 @@
 // shown back; the page keeps nothing of them. Only a campaign's DM gets a page; the door says so too.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { ADVENTURE_LIVE } from "../content/adventure-switch";
 import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
 import { AI_FEED_LIVE } from "../content/ai-feed-switch";
 import { LORE_PDF_LIVE } from "../content/lore-pdf-switch";
@@ -301,6 +302,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
   }
 
   return (
+    <>
     <form class="stack" onSubmit={send} noValidate>
       {back}
       <p>{words.lead}</p>
@@ -369,5 +371,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
         </p>
       )}
     </form>
+    {ADVENTURE_LIVE && ref && api.adventure && <LazyPanel key={ref} load={() => import("./Adventure")} what="your adventure" props={{ api, refId: ref }} />}
+    </>
   );
 }

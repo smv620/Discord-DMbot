@@ -1419,6 +1419,36 @@ export interface LoreUpload {
   /** The same wait in the shared shape (#3534): its own stage codes, a count with its unit, and the server's word on stalled. */
   progress?: JobProgress | null;
 }
+/** One file of the campaign's Shared story adventure (#3694 slice A; core #5300): counts, times and the file's name only, never its text. */
+export interface AdventureDocument {
+  id: string;
+  name: string;
+  characters: number;
+  /** True when the text is gone (a restored campaign): the file must be given again. */
+  restored: boolean;
+  addedAt: number;
+  read: null | { status: "reading" | "done" | "stopped"; nextChunk: number; totalChunks: number; stopReason: string; skippedParts: number; updatedAt: number };
+  found: { chapters: number; places: number; people: number; links: number };
+}
+export interface AdventureList {
+  mode: string;
+  documents: AdventureDocument[];
+  documentsMax: number;
+  charactersMax: number;
+  charactersHeld: number;
+}
+/** One thing read from the adventure (slice B; core #5305): the book's own words, for the campaign's DMs only. `name` of a link is "From → To". */
+export interface AdventureItem {
+  kind: "chapter" | "place" | "person" | "link";
+  name: string;
+  summary: string;
+  quote: string;
+}
+export interface AdventureRead {
+  total: number;
+  offset: number;
+  items: AdventureItem[];
+}
 /** One thing DMbot read from the DM's words about two names (#5293; core #5298): `sentence` is plain text built from its fields,
  * the same words as Discord, never the AI's own sentence. */
 export interface ConnectionSaidProposal {
@@ -3765,6 +3795,10 @@ export interface AccountApi {
    * bot, and polled with `saidRead`; `saidUse` writes the chosen ones and `saidUndo` takes them all back (both answer at once and are
    * polled the same way). `edit` is the id of the connection being corrected. Refusals: `bad-text`, `bad-choice`, `slow-down` (a read
    * of this campaign is running), `hour-full`, `not-found`. */
+  /** The Shared story adventure's files and how far each read is (#3694 slice A, behind ADVENTURE_LIVE); 404 for anyone but a DM, or while it is off. */
+  adventure?(campaignRef: string): Promise<AdventureList>;
+  /** What was read from the adventure, fifty at a time (slice B). The book's own words: show them on the DM's page only. */
+  adventureRead?(campaignRef: string, offset: number): Promise<AdventureRead>;
   saidSend?(campaignRef: string, input: { a: string; b: string; text: string; edit?: string }): Promise<{ answer: string }>;
   saidRead?(campaignRef: string, answer: string): Promise<ConnectionSaidRead>;
   saidUse?(campaignRef: string, answer: string, use: ConnectionSaidUse): Promise<void>;
@@ -4401,7 +4435,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["saidSend", "saidRead", "saidUse", "saidUndo", "placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "moreNames", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "lookAlikes", "mergeLookAlikes", "lookAlikesApart", "undoLookAlikes", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal", "changeRouteLength", "deedQuestions", "answerDeed", "continuityHits", "askContinuity", "answerContinuity"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["adventure", "adventureRead", "saidSend", "saidRead", "saidUse", "saidUndo", "placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "moreNames", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "lookAlikes", "mergeLookAlikes", "lookAlikesApart", "undoLookAlikes", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal", "changeRouteLength", "deedQuestions", "answerDeed", "continuityHits", "askContinuity", "answerContinuity"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "visitCampaign", "loreAdd", "loreRead", "waitCounts", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
