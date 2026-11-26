@@ -1015,6 +1015,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let loreLooks = 0;
   const adventureRemovals = new Map<string, { document: string; looks: number }>(); // (removing a file of the adventure, #3694 slice C)
   const adventureGone = new Set<string>();
+  const adventureGuides = new Map<string, { ref: string; job: "read" | "pick" | "clear"; document: string; looks: number }>(); // (Guide me, #3694 slice F)
+  const adventurePick = new Map<string, string>();
   const adventureStarts = new Map<string, { ref: string; document: string; looks: number }>(); // (starting a read, #3694 slice E)
   const adventureReading = new Map<string, number>(); // (a started read's progress: it moves each time the list is read)
   const adventureGives = new Map<string, { ref: string; name: string; size: number; looks: number }>(); // (giving a file, #3694 slice D)
@@ -3213,7 +3215,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const at = Math.floor(Date.now() / 1000);
       const none = ref.includes(".no-adventure");
       const built = {
-        mode: ref.includes(".adventure-off") ? "off" : "guide",
+        mode: ref.includes(".adventure-off") ? "off" : ref.includes(".adventure-watch") ? "watch" : "guide",
         documents: none
           ? []
           : [
@@ -3241,12 +3243,53 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       });
       return { ...built, documents: docs.filter((d) => !adventureGone.has(`${ref}:${d.id}`)) };
     },
+    // Guide me (#3694 slice F): a made-up answer; the DM's pick is kept per campaign until cleared.
+    async adventureGuide(ref, document, job, chapter) {
+      calls.push(`adventureGuide:${ref}:${document}:${job}:${chapter ?? "-"}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (ref.includes(".not-guide")) throw new ApiError("not-on");
+      const id = `guide-${adventureGuides.size + 1}`;
+      if (job === "pick" && chapter) adventurePick.set(ref, chapter);
+      if (job === "clear") adventurePick.delete(ref);
+      adventureGuides.set(id, { ref, job, document, looks: 0 });
+      return { guide: id };
+    },
+    async adventureGuiding(ref, guide) {
+      calls.push(`adventureGuiding:${ref}:${guide}`);
+      await reachable();
+      signedIn();
+      const got = adventureGuides.get(guide);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { error: "", job: got.job, documentId: got.document, createdAt: at - got.looks, updatedAt: at, serverNow: at };
+      if (got.looks < 2) return { ...base, state: "working" as const, answer: null };
+      const chapters = [
+        { id: "c1", name: "Made-up chapter one" },
+        { id: "c2", name: "Made-up chapter two" },
+        { id: "c3", name: "Made-up chapter three" },
+      ];
+      const picked = adventurePick.get(ref);
+      const chosen = chapters.find((c) => c.id === picked) ?? null;
+      return {
+        ...base,
+        state: "done" as const,
+        answer: {
+          text: chosen ? `The table is in ${chosen.name} (you said so).\nAhead: a made-up place.` : "The table seems to be in Made-up chapter two.\nAhead: a made-up place.",
+          picked: chosen !== null,
+          chapter: chosen,
+          chapters,
+        },
+      };
+    },
     async adventureStartRead(ref, document) {
       calls.push(`adventureStartRead:${ref}:${document}`);
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      if (document === "d1") throw new ApiError("already-read");
+      if (document === "d1") throw new ApiError("not-readable");
       if (document === "d3") throw new ApiError("not-readable");
       const id = `read-${adventureStarts.size + 1}`;
       adventureStarts.set(id, { ref, document, looks: 0 });
