@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
 // After a session is imported, DMbot reads its names (#5127, the web half of #5091). The import page shows that read in the shared
-// wait shape ("Reading names", part n of m, time running, last move), then one plain line for parts that could not be read,
+// wait shape ("Looking for names", part n of m, time running, last move), then one plain line for pieces that could not be checked,
 // or the stopped line; nothing shows when the reader is absent.
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -101,7 +101,7 @@ const answer = (n: JobProgress | null | undefined, unread?: number): ImportProgr
 });
 
 describe("the name reader of each session", () => {
-  it("shows Reading names with the part, the time running and the last move", async () => {
+  it("shows Looking for names with the part, the time running and the last move", async () => {
     await importing([answer(names())]);
     expect(await screen.findByText(w.names.reading_names!)).toBeTruthy();
     expect(screen.getByText(ww.progress(3, 8, "pieces"), { exact: false })).toBeTruthy();
@@ -110,29 +110,44 @@ describe("the name reader of each session", () => {
   it("a read with 2 unread says so, with the count first", async () => {
     await importing([answer(names({ stage: "names_read", state: "done" }), 2)]);
     expect(await screen.findByText(w.namesUnread(2))).toBeTruthy();
-    expect(w.namesUnread(2)).toBe("2 parts of this session couldn't be read for names.");
+    expect(w.namesUnread(2)).toBe("2 pieces of this session couldn't be checked for names, so some names may be missing. Add any you know with ➕ Add a name on the names panel in Discord.");
   });
 
   it("a read with 1 unread says part, not parts", async () => {
     await importing([answer(names({ stage: "names_read", state: "done" }), 1)]);
     expect(await screen.findByText(w.namesUnread(1))).toBeTruthy();
-    expect(w.namesUnread(1)).toBe("1 part of this session couldn't be read for names.");
+    expect(w.namesUnread(1)).toBe("1 piece of this session couldn't be checked for names, so a name may be missing. Add any you know with ➕ Add a name on the names panel in Discord.");
   });
 
   it("a read with 0 unread says nothing", async () => {
     await importing([answer(names({ stage: "names_read", state: "done" }), 0)]);
-    expect(screen.queryByText(/couldn't be read for names/)).toBeNull();
+    expect(screen.queryByText(/couldn't be checked for names/)).toBeNull();
   });
 
-  it("a stopped reader says the names found are still suggested", async () => {
+  it("a stopped reader says so, with a next step", async () => {
     await importing([answer(names({ stage: "names_stopped", state: "failed" }))]);
     expect(await screen.findByText(w.namesStopped)).toBeTruthy();
+  });
+
+  it("a stopped reader with unread pieces shows the count under its stopped line", async () => {
+    await importing([answer(names({ stage: "names_stopped", state: "failed" }), 2)]);
+    expect(await screen.findByText(w.namesStopped)).toBeTruthy();
+    const stopped = screen.getByText(w.namesStopped);
+    const unread = screen.getByText(w.namesUnread(2));
+    // The count comes after the stopped line (WebDev-lead's ruling: "under the stopped line").
+    expect(stopped.compareDocumentPosition(unread) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("a stalled names read says it has stalled", async () => {
+    await importing([answer(names({ stage: "reading_names", state: "stalled" }))]);
+    expect(await screen.findByText(w.names.reading_names!)).toBeTruthy();
+    expect(screen.getByText(ww.stalled, { exact: false })).toBeTruthy();
   });
 
   it("no names stage shows nothing", async () => {
     await importing([answer(undefined)]);
     expect(screen.queryByText(w.names.reading_names!)).toBeNull();
-    expect(screen.queryByText(/couldn't be read for names/)).toBeNull();
+    expect(screen.queryByText(/couldn't be checked for names/)).toBeNull();
   });
 
   it("none of these lines holds a name from the transcript", async () => {
