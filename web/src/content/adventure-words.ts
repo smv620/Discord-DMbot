@@ -35,6 +35,7 @@ export const adventureWords = {
   removeYes: "Yes, remove it",
   removeNo: "Keep it",
   removing: "Removing the file…",
+  removingFor: (s: number): string => `(${s} seconds so far)`,
   removed: "Removed. DMbot forgot it.",
   removeFailed: "Couldn't remove that. Nothing was changed. Try again in a minute.",
   removeNotYours: "Only this campaign's DMs can do that.",
