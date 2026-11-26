@@ -204,9 +204,13 @@ export const importPage = {
   storyFailed: "The connections couldn't be read for this session.",
   storyFailedDo: "The session itself is imported and safe.",
   // The name reader's stage (#5127, the web half of #5091): the same shared shape as the connections read, and a plain line after it.
-  names: { reading_names: "Reading names" } as Record<string, string>,
-  namesUnread: (n: number): string => `${n === 1 ? "1 part" : `${n} parts`} of this session couldn't be read for names.`,
-  namesStopped: "Reading names stopped. The names found are still suggested.",
+  names: { reading_names: "Looking for names" } as Record<string, string>,
+  // One line for the pieces that could not be checked for names (WebDev-lead's words, #5129): a next step, in the names panel.
+  namesUnread: (n: number): string =>
+    n === 1
+      ? "1 piece of this session couldn't be checked for names, so a name may be missing. Add any you know with ➕ Add a name on the names panel in Discord."
+      : `${n} pieces of this session couldn't be checked for names, so some names may be missing. Add any you know with ➕ Add a name on the names panel in Discord.`,
+  namesStopped: "Looking for names stopped early, so some names may be missing. The session itself is imported and safe. Add any you know with ➕ Add a name on the names panel in Discord.",
   // What the counts of the whole import's progress count (the API's `unit` code) (#2565).
   unit: { sessions: "sessions", parts: "pieces", lines: "lines" } as Record<string, string>,
   // Said when the server calls the import stalled: it can still move, and the files are safe.
