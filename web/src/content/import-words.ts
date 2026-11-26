@@ -9,7 +9,7 @@
 // in the same change. A test ties the two together and fails until both are done.
 import type { RecapsWhy } from "../account/api";
 
-export const IMPORT_LIVE = false;
+export { IMPORT_LIVE } from "./import-switch"; // (the switch is in its own file: #5324)
 
 /** The uploader confirms consent for each speaker, including people who aren't in Discord (#3306; PLAN, "Import
  * sessions → Consent"). Off until the core half (#3305) is deployed: the routes it needs don't exist before that, so
