@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { adventureWords as w } from "../content/adventure-words";
 import AdventureGive from "./AdventureGive";
+import AdventureReadNow, { ReadingWait } from "./AdventureReadNow";
 import { type AccountApi, type AdventureDocument, type AdventureItem, type AdventureList, ApiError } from "./api";
 
 /** Where a file's reading stands, in Discord's words ("not read yet" when it has not been). A count of nothing is left out. */
@@ -31,6 +32,8 @@ export function readLine(d: AdventureDocument): string {
   return w.stopped(percent, w.why[read.stopReason] ?? w.carryOn);
 }
 
+const READING_EVERY_MS = 3000;
+const JUST_STARTED_MS = 30_000;
 const REMOVE_FIRST_MS = 400;
 const REMOVE_EVERY_MS = 1500;
 const REMOVE_LOOKS = 40; // about a minute: a removal is quick
@@ -91,6 +94,16 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
     const timer = setInterval(() => setSeconds((n) => n + 1), 1000);
     return () => clearInterval(timer);
   }, [job?.phase]);
+
+  // While any file is being read the list is read again by itself (the card does the same), so the wait shows how far it is.
+  // A read that has only just been told to start may not show as reading yet, so the list keeps being read for a little while too.
+  const reading = (list?.documents ?? []).some((d) => d.read?.status === "reading");
+  const watchUntil = useRef(0);
+  useEffect(() => {
+    if (!reading && Date.now() > watchUntil.current) return;
+    const timer = setTimeout(() => setTries((n) => n + 1), READING_EVERY_MS);
+    return () => clearTimeout(timer);
+  }, [reading, list, failed]); // (a failed re-read re-arms it too: the wait never freezes)
 
   async function look(offset: number): Promise<void> {
     if (!api.adventureRead || busy.current) return;
@@ -216,6 +229,11 @@ export default function Adventure({ api, refId }: { api: AccountApi; refId: stri
                       {w.pages(d.characters)}
                       {d.restored ? `, ${w.giveAgain}` : `, ${readLine(d)}`}
                     </span>
+                    <ReadingWait doc={d} />
+                    <AdventureReadNow key={`${refId}:${d.id}`} api={api} refId={refId} doc={d} disabled={job?.phase === "working"} onStarted={() => {
+                      watchUntil.current = Date.now() + JUST_STARTED_MS;
+                      setTries((n) => n + 1);
+                    }} />
                     {api.adventureRemove && api.adventureRemoval && confirming !== d.id && job?.phase !== "working" && (
                       <button type="button" class="button secondary" aria-label={`${w.remove} ${d.name}`} onClick={() => setConfirming(d.id)}>
                         {w.remove}
