@@ -157,6 +157,22 @@ class Applying(DatabaseTest):
                 (GUILD, self.campaign.id, name * 32, user, self.picture.id, action, created),
             )
 
+    async def test_a_claim_and_an_end_each_stamp_when_the_choice_last_moved(self) -> None:
+        await self.queue(POSTER, "private", "a", created=4000)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT updated_at FROM picture_actions")
+            self.assertEqual((await cur.fetchone() or {})["updated_at"], 0)  # (never moved)
+        row = await self.actions.take(GUILD)
+        assert row is not None
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT updated_at FROM picture_actions")
+            self.assertEqual((await cur.fetchone() or {})["updated_at"], 5000)  # (claimed)
+        later = PictureActions(self.db, self.store, self.bucket, 5, clock=lambda: 5100.0)
+        await later.finish(GUILD, str(row["id"]), Outcome("done", "ok"))
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT updated_at FROM picture_actions")
+            self.assertEqual((await cur.fetchone() or {})["updated_at"], 5100)  # (ended)
+
     async def test_the_queue_is_applied_in_order_and_answers_are_kept(self) -> None:
         await self.queue(POSTER, "private", "a")
         await self.queue(STRANGER, "delete", "b")

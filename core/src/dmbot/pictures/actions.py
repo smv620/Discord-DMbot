@@ -117,13 +117,13 @@ class PictureActions:
                 (guild_id, now - EXPIRES_S),
             )
             cur = await conn.execute(
-                "UPDATE picture_actions SET state = 'working', claimed_at = %s"
+                "UPDATE picture_actions SET state = 'working', claimed_at = %s, updated_at = %s"
                 " WHERE (guild_id, id) = (SELECT guild_id, id FROM picture_actions"
                 " WHERE guild_id = %s AND (state = 'waiting'"
                 " OR (state = 'working' AND claimed_at < %s)) ORDER BY seq LIMIT 1"
                 " FOR UPDATE SKIP LOCKED)"
                 " RETURNING id, campaign_id, user_id, picture_id, action",
-                (now, guild_id, now - RECLAIM_S),
+                (now, now, guild_id, now - RECLAIM_S),
             )
             row = await cur.fetchone()
         return None if row is None else dict(row)
@@ -131,8 +131,9 @@ class PictureActions:
     async def finish(self, guild_id: int, action_id: str, outcome: Outcome) -> None:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "UPDATE picture_actions SET state = %s, note = %s WHERE guild_id = %s AND id = %s",
-                (outcome.state, outcome.note[:300], guild_id, action_id),
+                "UPDATE picture_actions SET state = %s, note = %s, updated_at = %s"
+                " WHERE guild_id = %s AND id = %s",
+                (outcome.state, outcome.note[:300], int(self._clock()), guild_id, action_id),
             )
 
     async def run_once(self, guild_id: int) -> int:
