@@ -237,7 +237,7 @@ describe("who knows this, on a held connection", () => {
     const panel = await openPanel(pageWith(graph([held({ who: "some", knownBy: holders })])));
     expect(within(panel).getByText(w.whoStateSomeGrouped(["Mara", "Tavin"], ["Oda"], ["Brann"]))).toBeTruthy();
     expect(w.whoStateSomeGrouped(["Mara", "Tavin"], ["Oda"], ["Brann"])).toBe(
-      "Hidden from the party. In the party: Mara and Tavin. Left the party: Oda. Others: Brann.",
+      "Not everyone knows it. In the party: Mara and Tavin. Left the party: Oda. Others: Brann.",
     );
   });
 
