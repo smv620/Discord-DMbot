@@ -27,6 +27,7 @@ FORGET_RECAP = import_module("dmbot.migrations.0495_forget_recap_approval")
 FORGET_MEMBERSHIP = import_module("dmbot.migrations.0497_forget_membership")
 FORGET_LOOKUPS = import_module("dmbot.migrations.0447_member_lookups")
 FORGET_CONNECTIONS = import_module("dmbot.migrations.0633_forget_connection_reads")
+FORGET_ADVENTURE_REMOVALS = import_module("dmbot.migrations.0640_forget_adventure_removals")
 DELETED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.DELETED
     + FORGET_REQUESTS.DELETED
@@ -34,6 +35,7 @@ DELETED: tuple[tuple[str, str], ...] = (
     + FORGET_OWN.DELETED
     + FORGET_MEMBERSHIP.DELETED
     + FORGET_CONNECTIONS.DELETED
+    + FORGET_ADVENTURE_REMOVALS.DELETED
 )
 ZEROED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.ZEROED
@@ -66,6 +68,7 @@ EXPECTED_DELETED: frozenset[tuple[str, str]] = frozenset(
         ("setting_actions", "user_id"),
         ("trait_answers", "user_id"),
         ("upload_undos", "user_id"),
+        ("web_adventure_removals", "user_id"),
         ("web_backups", "user_id"),
         ("web_connection_reads", "user_id"),
         ("web_house_file_actions", "user_id"),
@@ -191,6 +194,10 @@ ROWS: dict[str, str] = {
     "web_line_deletions": (
         "INSERT INTO web_line_deletions (guild_id, id, user_id, created_at, updated_at)"
         " VALUES (%(g)s, %(k)s, %(u)s, 1, 1)"
+    ),
+    "web_adventure_removals": (
+        "INSERT INTO web_adventure_removals (guild_id, campaign_id, id, user_id, document_id,"
+        " created_at, updated_at) VALUES (%(g)s, %(c)s, %(k)s, %(u)s, %(k)s, 1, 1)"
     ),
     "web_connection_reads": (
         "INSERT INTO web_connection_reads (guild_id, campaign_id, id, user_id, first_id,"
