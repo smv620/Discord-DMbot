@@ -114,6 +114,7 @@ NAME_TRANSCRIPTS: Rules = {  # speakers' names: the owner's call with the transc
 NAME_NOT_A_PERSON: Rules = {  # a name of something else, with the reason
     "web_connection_reads": ("who_kind", "use_who"),  # fixed words: everyone, dm, some, keep
     "adventure_documents": ("file_name",),  # an uploaded file's name
+    "web_adventure_gives": ("file_name",),  # the same file's name, while it waits (a day at most)
     "campaigns": ("name", "name_key"),  # the campaign's own name
     "homebrew_entries": ("name", "name_key"),  # the rule's name
     "house_rules": ("source_name",),  # where a rule comes from (a book)
@@ -159,10 +160,12 @@ class EveryPersonColumnHasARule(DatabaseTest):
         part_i = import_module("dmbot.migrations.0497_forget_membership")
         part_j = import_module("dmbot.migrations.0633_forget_connection_reads")
         part_k = import_module("dmbot.migrations.0640_forget_adventure_removals")
+        part_l = import_module("dmbot.migrations.0642_forget_adventure_gives")
         done = {
             *part_a.DELETED, *part_a.ZEROED, *part_b.ZEROED, *part_c.DELETED, *part_d.ZEROED,
             *part_e.DELETED, *part_f.ZEROED, *part_g.DELETED, *part_g.ZEROED, *part_g.MOVES,
-            *part_h.ZEROED, *part_i.DELETED, *part_i.ZEROED, *part_j.DELETED, *part_k.DELETED,
+            *part_h.ZEROED, *part_i.DELETED, *part_i.ZEROED, *part_j.DELETED,
+            *part_k.DELETED, *part_l.DELETED,
         }  # fmt: skip
         deleted_tables = {
             t
@@ -174,6 +177,7 @@ class EveryPersonColumnHasARule(DatabaseTest):
                 *part_i.DELETED,
                 *part_j.DELETED,
                 *part_k.DELETED,
+                *part_l.DELETED,
             )
         }
         async with self.db.unscoped() as conn:

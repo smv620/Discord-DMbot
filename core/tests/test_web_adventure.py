@@ -319,3 +319,81 @@ class Removing(Holding):
                         headers=HEADERS,
                     )
                     self.assertEqual(polled.json()["state"], "waiting")
+
+
+class FakeBucket:
+    def __init__(self) -> None:
+        self.objects: dict[str, bytes] = {}
+
+    async def put(self, key: str, data: bytes) -> None:
+        self.objects[key] = data
+
+    async def delete(self, key: str) -> None:
+        self.objects.pop(key, None)
+
+
+class Giving(Holding):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bucket = FakeBucket()
+
+    async def switch_on(self) -> None:
+        await self.sql("UPDATE campaigns SET story_mode = 'watch' WHERE id = %s", self.one.id)
+        await self.sql(
+            "INSERT INTO shared_confirmations (guild_id, campaign_id, id, user_id, purpose,"
+            " fingerprint, confirmed_at, restored)"
+            " VALUES (%s, %s, 'c1', %s, 'shared_story', %s, 1, false)",
+            GUILD, self.one.id, ALICE.id, "0" * 64,
+        )  # fmt: skip
+
+    async def test_a_dm_gives_a_file_and_it_waits_for_the_bot(self) -> None:
+        await self.switch_on()
+        gid = await web.give(
+            self.web, self.session, self.cref, self.bucket, "The Lost Light.txt", b"Chapter one."
+        )
+        [key] = self.bucket.objects
+        self.assertRegex(key, r"^a/[0-9a-f]{32}\.txt$")
+        got = await web.giving(self.web, self.session, self.cref, gid)
+        self.assertEqual(
+            (got["state"], got["stage"], got["name"]), ("waiting", "waiting", "The Lost Light.txt")
+        )
+        self.assertNotIn(key, repr(got))  # (the staged key never leaves the database)
+
+    async def test_the_switch_and_the_confirmation_come_first_and_nothing_is_kept(self) -> None:
+        with self.assertRaises(RecapError) as caught:
+            await web.give(self.web, self.session, self.cref, self.bucket, "a.txt", b"words")
+        self.assertEqual(caught.exception.code, "not_on")
+        self.assertEqual(self.bucket.objects, {})  # (the staged object is deleted again)
+
+    async def test_a_second_file_while_one_waits_is_busy(self) -> None:
+        await self.switch_on()
+        await web.give(self.web, self.session, self.cref, self.bucket, "a.txt", b"one")
+        with self.assertRaises(RecapError) as caught:
+            await web.give(self.web, self.session, self.cref, self.bucket, "b.txt", b"two")
+        self.assertEqual(caught.exception.code, "busy")
+        self.assertEqual(len(self.bucket.objects), 1)
+
+    async def test_a_player_and_a_file_that_is_not_what_it_says_are_refused(self) -> None:
+        await self.switch_on()
+        with self.assertRaises(RecapError) as caught:
+            await web.give(self.web, await self.bob(), self.cref, self.bucket, "a.txt", b"words")
+        self.assertEqual(caught.exception.code, "not_found")
+        for name, data in (("a.pdf", b"not a pdf"), ("a.exe", b"MZ"), ("a.txt", b""),
+                           ("a.docx", b"%PDF-")):  # fmt: skip
+            with self.assertRaises(RecapError) as bad:
+                await web.give(self.web, self.session, self.cref, self.bucket, name, data)
+            self.assertEqual(bad.exception.code, "bad_file")
+        self.assertEqual(self.bucket.objects, {})
+
+    async def test_no_bucket_says_uploads_are_off(self) -> None:
+        with self.assertRaises(RecapError) as caught:
+            await web.give(self.web, self.session, self.cref, None, "a.txt", b"words")
+        self.assertEqual(caught.exception.code, "uploads_off")
+
+    async def test_another_dm_cannot_read_the_progress(self) -> None:
+        await self.switch_on()
+        gid = await web.give(self.web, self.session, self.cref, self.bucket, "a.txt", b"one")
+        with self.assertRaises(RecapError):
+            await web.giving(self.web, await self.bob(), self.cref, gid)
+        with self.assertRaises(RecapError):
+            await web.giving(self.web, self.session, self.cref, "0" * 32)
