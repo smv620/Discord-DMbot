@@ -87,6 +87,11 @@ class Settings:
     # The same for the beat sheet. Off unless RECAP_STRUCTURED_OUTPUT_BEATS.
     recap_structured_output_beats: bool = False
     gemini_key: str = field(default="", repr=False)
+    # Graph improvement reports posted to the owner's private repository (#3742): the repository as
+    # owner/name and a fine-grained token for that one repository (Discussions: read and write).
+    # Either empty: nothing is posted. The token is never printed or logged.
+    improvements_repo: str = ""
+    improvements_token: str = field(default="", repr=False)
     # How long Undo works on campaign memory; older change-log entries are deleted (#164).
     memory_keep_days: int = 30
     # The owner's own Discord accounts: free access, no caps (#771). Never logged.
@@ -608,6 +613,12 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
         raise ConfigError(
             'DMBOT_STORY_REVEALS_PRECHECK must be 1 (on) or 0 (off), got "' + precheck_raw + '".'
         )
+    improvements_repo = (get("DMBOT_IMPROVEMENTS_REPO") or "").strip()
+    if improvements_repo and (
+        not re.fullmatch(r"[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}", improvements_repo)
+        or any(part in (".", "..") for part in improvements_repo.split("/"))
+    ):
+        raise ConfigError("DMBOT_IMPROVEMENTS_REPO must be owner/name, or empty.")
     card_raw = (get("DMBOT_CARD_SUMMARY") or "0").lower()
     if card_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_CARD_SUMMARY must be 1 (on) or 0 (off), got "' + card_raw + '".')
@@ -868,6 +879,8 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
         recap_structured_output_split=_on_off(get, "RECAP_STRUCTURED_OUTPUT_SPLIT"),
         recap_structured_output_beats=_on_off(get, "RECAP_STRUCTURED_OUTPUT_BEATS"),
         gemini_key=get("GEMINI_API_KEY"),
+        improvements_repo=improvements_repo,
+        improvements_token=get("GITHUB_IMPROVEMENTS_TOKEN"),
         memory_keep_days=keep_days,
         free_users=free_users,
         free_guilds=free_guilds,

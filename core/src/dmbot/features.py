@@ -396,6 +396,8 @@ NOT_A_SWITCH: dict[str, str] = {
     "cleaner_rank_max": "a number: the most ranking calls a session makes (0 is off)",
     "log_level": "how much is logged",
     "memory_keep_days": "a number of days",
+    "improvements_repo": "an address: with it or its secret key empty, nothing is posted (#3742)",
+    "improvements_token": "a secret key, never printed (#3742)",
     "free_users": "the owner's own accounts: never listed",
     "free_guilds": "the owner's own test server: never listed",
     "disk_warn_pct": "a percentage: where the disk check starts to warn (#4075)",

@@ -37,6 +37,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
+import aiohttp
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -366,6 +367,8 @@ from dmbot.memory import (
     voyage,
     waiting_now,
     web_actions,
+    web_adventure_gives,
+    web_adventure_removals,
     web_connection_reads,
     web_report_requests,
     web_sheets,
@@ -378,7 +381,13 @@ from dmbot.memory import scan as name_scan
 from dmbot.memory import (
     sheets as sheets_memory,
 )
-from dmbot.memory.adventure import AdventureSection, AdventureStore
+from dmbot.memory.adventure import (
+    READ_REPLY_BYTES,
+    READ_TIME_S,
+    AdventureSection,
+    AdventureStore,
+    adventure_text,
+)
 from dmbot.memory.background import KINDS as LORE_KINDS
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.backup import MemorySection
@@ -395,12 +404,19 @@ from dmbot.memory.continuity_hits import hit_of as continuity_hit_of
 from dmbot.memory.contradiction_grades import MAJOR, GradeStore
 from dmbot.memory.deed_proposals import DeedProposals
 from dmbot.memory.deed_proposals_backup import DeedProposalsSection
+from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.exposures import (
     ExposureStore,
     dedupe,
     describe,
     find_exposures,
     secret_connections,
+)
+from dmbot.memory.graph_review_post import GitHub
+from dmbot.memory.graph_review_post_run import (
+    GraphReportStore,
+    ReportPoster,
+    aiohttp_transport,
 )
 from dmbot.memory.graph_review_run import GraphReviews
 from dmbot.memory.heard_backup import HeardSection
@@ -1142,6 +1158,11 @@ def _without_stopped(
     return kept_lines, kept_by, [x for x in heard_in if x.user_id in now], kept_read
 
 
+async def _no_one(_people: Collection[int]) -> set[int]:
+    """Nobody has agreed to improve DMbot: with no opt-out store there is no one to quote."""
+    return set()
+
+
 class DMBot(RecapFeatures, commands.AutoShardedBot):
     """One process serving the shards in `settings.shards` (one shard by default).
 
@@ -1325,6 +1346,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             web_connection_reads.ActionStore(recaps.db) if recaps is not None else None
         )
         self._connection_tasks: dict[int, asyncio.Task[None]] = {}  # one running job a server
+        # Removing a Shared story file from the website (#3694 slice C): instant, so no task.
+        self.web_adventure_removals = (
+            web_adventure_removals.RemovalStore(recaps.db) if recaps is not None else None
+        )
+        # Giving a Shared story file from the website (#3694 slice D): reading is slow, so each
+        # one runs as a tracked task, at most one a server.
+        self.web_adventure_gives = (
+            web_adventure_gives.GiveStore(recaps.db) if recaps is not None else None
+        )
+        self._give_tasks: dict[int, asyncio.Task[None]] = {}
         self.peek_notices = PeekNotices(recaps.db) if recaps is not None else None
         self.web_delete_notices = WebDeleteNotices(recaps.db) if recaps is not None else None
         self.web_backups = web_backup.WebBackups(recaps.db) if recaps is not None else None
@@ -1903,6 +1934,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             and improvement is not None
             else None
         )
+        # Posting the stored reports to the owner's private repository (#3742): the store is cheap,
+        # the loop that posts runs only when the repository and its token are both set, so with
+        # either empty nothing is posted and nothing waits. It needs the graph checks (and so the
+        # AI client), which produce the reports in the first place.
+        self.graph_report_store = (
+            GraphReportStore(memory._db)
+            if memory is not None and self.graph_reviews is not None
+            else None
+        )
         self._test_key: bytes | None = None
         self._test_delete_locks: dict[tuple[int, int], asyncio.Lock] = {}
         self._test_pending = 0  # utterances waiting to be saved
@@ -2239,6 +2279,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             *(
                 [self._watched(self._graph_review_loop(), "graph-review")]
                 if self.graph_reviews is not None
+                else []
+            ),
+            *(
+                [self._watched(self._graph_post_loop(), "graph-report-posts")]
+                if self.graph_report_store is not None
+                and self.settings.improvements_repo
+                and self.settings.improvements_token
                 else []
             ),
             *(
@@ -17139,6 +17186,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 with contextlib.suppress(BucketError):
                     await staging.delete(key)
                 gone += 1
+            # The files given for the Shared story adventure from the website (#3694): a row a day
+            # old goes, and its object if the job never finished it. Its own try, so one failure
+            # does not stop the rest.
+            if self.web_adventure_gives is not None:
+                try:
+                    for key in await self.web_adventure_gives.sweep(guild.id):
+                        with contextlib.suppress(BucketError):
+                            await staging.delete(key)
+                        gone += 1
+                except Exception as exc:
+                    log.warning("The adventure file sweep failed: %s", type(exc).__name__)
         if gone:
             log.info("%s staged lore PDFs were cleared", gone)
 
@@ -17580,6 +17638,66 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def names_lookup(self, guild_id: int, campaign_id: str) -> CampaignLookup | None:
         return await self.lookup.get(guild_id, campaign_id) if self.lookup else None
 
+    async def run_web_adventure_gives(self) -> None:
+        """Files given on the website for the Shared story adventure (#3694): read with the same
+        reader as Discord's 📖 and kept with the same call, each as a tracked task, at most one a
+        server, so the poll loop's other website actions do not wait for a long read. The page
+        shows the stage as it moves. Counts and outcome words are logged, never a name."""
+        store, staging, adventure = self.web_adventure_gives, self.maps_staging, self.adventure
+        if store is None or staging is None or adventure is None:
+            return
+        for guild in list(self.guilds):
+            task = self._give_tasks.get(guild.id)
+            if task is not None and not task.done():
+                continue
+            item = await store.claim_next(guild.id)
+            if item is None:
+                continue
+            gid = guild.id
+            started = self._track(
+                self._run_give(adventure, store, staging, gid, item), f"adventure-give-{gid}"
+            )
+            if started is None:  # shutting down: the row is taken again after a restart
+                return
+            self._give_tasks[gid] = started
+
+            def forget(done: asyncio.Task[None], gid: int = gid) -> None:
+                if self._give_tasks.get(gid) is done:
+                    del self._give_tasks[gid]
+
+            started.add_done_callback(forget)
+
+    async def _run_give(
+        self,
+        adventure: AdventureStore,
+        store: web_adventure_gives.GiveStore,
+        staging: Bucket,
+        guild_id: int,
+        item: web_adventure_gives.Item,
+    ) -> None:
+        async def read(name: str, raw: bytes) -> str:
+            async with READING:  # the same limit as the names screen
+                return await read_document(
+                    name, raw, parse=adventure_text, limit_s=READ_TIME_S, max_reply=READ_REPLY_BYTES
+                )
+
+        with log_context(guild_id=guild_id, campaign_id=item.campaign_id):
+            await web_adventure_gives.run_one(adventure, store, staging, read, guild_id, item)
+
+    async def run_web_adventure_removals(self) -> None:
+        """Files removed from the Shared story adventure on the website (#3694): each is the same
+        call as Discord's 🗑, done in order, a few a pass. Outcome words are logged, never a name."""
+        store = self.web_adventure_removals
+        if store is None or self.adventure is None:
+            return
+        for guild in list(self.guilds):
+            for _ in range(5):
+                item = await store.claim_next(guild.id)
+                if item is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
+                    await web_adventure_removals.run_one(self.adventure, store, guild.id, item)
+
     async def run_web_connection_reads(self) -> None:
         """Connections said in words on the website: a read, a Use this or an Undo. Each runs as a
         tracked background task, at most one a server (a read is an AI call, a use writes the
@@ -17631,6 +17749,41 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                             await self.graph_reviews.round(guild.id)
                     except Exception as exc:  # the type only: a database error can quote a row
                         log.warning("Graph checks failed for a server: %s", type(exc).__name__)
+            await asyncio.sleep(60)
+
+    async def _graph_post_loop(self) -> None:
+        """Every minute: the graph improvement reports not yet posted go to the owner's private
+        repository, one a round (#3742). The rules (who may be quoted, whether the campaign still
+        shares) are checked now, at posting time. Counts and error types only in the log; the token
+        is held by the transport and nothing else."""
+        await asyncio.sleep(120)
+        while True:
+            store = self.graph_report_store
+            if store is not None:
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        github = GitHub(
+                            self.settings.improvements_repo,
+                            aiohttp_transport(self.settings.improvements_token, session),
+                        )
+                        poster = ReportPoster(
+                            store,
+                            github,
+                            consenting=self.consent.consenting,
+                            improvement_allowed=self.improvement.allowed
+                            if self.improvement is not None
+                            else _no_one,
+                        )
+                        for guild in list(self.guilds):
+                            try:
+                                with log_context(guild_id=guild.id):
+                                    await poster.round(guild.id)
+                            except Exception as exc:
+                                log.warning(
+                                    "Graph report posts failed for a server: %s", type(exc).__name__
+                                )
+                except Exception as exc:
+                    log.warning("Graph report posting failed: %s", type(exc).__name__)
             await asyncio.sleep(60)
 
     async def _person_key_loop(self) -> None:

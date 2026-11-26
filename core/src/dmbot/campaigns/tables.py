@@ -153,7 +153,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "memory_link_sources": "the upload label a kept connection came from, for the line panel: "
     "provenance of working data: the upload's label and, for the DM's Why, the reader's quote "
     "of up to 240 characters (kept only for an upload the DM confirmed the right to use, shown to "
-    "the DM alone); a restored campaign's connections read as added by hand (#2946, #3606)",
+    "the DM alone; a quote from an upload known to be the DM's own writing may also go to the "
+    "owner's private repository, in a graph improvement report, #3742); a restored campaign's "
+    "connections read as added by hand (#2946, #3606)",
     "after_session_jobs": "a live session's slow after-session reads handed to the worker: ids, "
     "times, a lease and a state, never a word of the session; a working queue made again for "
     "each session (#4905)",
@@ -280,6 +282,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "web_sheet_actions": _WAIT,
     "web_line_fixes": _WAIT,
     "web_connection_reads": _WAIT,
+    "web_adventure_gives": _WAIT,
+    "web_adventure_removals": _WAIT,
     "rule_set_codes": "a share code is a bearer secret; a restored publisher gets a new one "
     "(Supervisor, #2553; PLAN:947)",
     "memory_mentions": "where each name was said, made again as lines are read (PLAN:164)",

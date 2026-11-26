@@ -60,6 +60,7 @@ NOT_DM = "Only this campaign's DMs can do that."
 NO_CAMPAIGN = "That campaign isn't here any more. Open ⚙️ Manage DMbot again."
 NOT_ON = "Turn on Shared story and say you have the right to use the material first."
 GONE_DOC = "That document is already gone."
+NO_TEXT = "DMbot found no text in that file. Check it's the right file."
 
 
 class AdventureError(ValueError):
@@ -200,7 +201,7 @@ class AdventureStore:
         same text is already here, or the campaign would pass its limit."""
         chunks = await asyncio.to_thread(chunks_of, text)  # CPU: off the event loop
         if not chunks:
-            raise AdventureError("DMbot found no text in that file. Check it's the right file.")
+            raise AdventureError(NO_TEXT)
         name = clean_file_name(file_name)
         digest = fingerprint_of(text)
         now = int(self._clock())
