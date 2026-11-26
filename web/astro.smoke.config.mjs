@@ -10,7 +10,7 @@ import base from "./astro.config.mjs";
 // IMPORT_LIVE is on, so the phone-width run needs it flipped here too.
 const SWITCHES = [
   { file: /\/content\/recap-words\.ts$/, names: ["RECAPS_LIVE", "RECAP_AUDIO_LIVE"] },
-  { file: /\/content\/import-words\.ts$/, names: ["IMPORT_LIVE"] },
+  { file: /\/content\/import-switch\.ts$/, names: ["IMPORT_LIVE"] },
 ];
 
 /** @type {import("vite").Plugin} */

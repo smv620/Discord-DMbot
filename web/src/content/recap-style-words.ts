@@ -6,7 +6,7 @@
 // HOW IT TURNS ON: when migration 0290 and CloudDev's bot step that applies the queued changes are deployed and dev1 has
 // added an example on the website and seen it in Discord, the What's new entry "Choose how your recaps sound" moves out of
 // `held` and RECAP_STYLE_LIVE becomes true in the same change; DMBOT_WEB_RECAP_STYLE=1 is set after the bot (GO_LIVE.md).
-export const RECAP_STYLE_LIVE = false;
+export { RECAP_STYLE_LIVE } from "./recap-style-switch"; // (the switch is in its own file: #5324)
 
 /** The recap must-haves list on this page (#3329; docs/RECAP_STANDARD.md). CloudDev-lead's half (#3328: the list in
  * the recap style read, the save and the defaults) is deployed, so the list shows on the page, which is reached by its
