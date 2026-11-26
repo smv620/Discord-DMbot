@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { adventureWords as w } from "../content/adventure-words";
-import { type AccountApi, ApiError, type AdventureGive } from "./api";
+import { type AdventureApi, ApiError, type AdventureGive } from "./api";
 import WorkProgress from "./WorkProgress";
 
 const PDF_MAX = 50 * 1024 * 1024;
@@ -32,7 +32,7 @@ export function whyNot(file: { name: string; size: number }): string {
   return file.size > max ? w.giveBig(max / (1024 * 1024)) : "";
 }
 
-export default function AdventureGive({ api, refId, onKept }: { api: AccountApi; refId: string; onKept: () => void }) {
+export default function AdventureGive({ api, refId, onKept }: { api: AdventureApi; refId: string; onKept: () => void }) {
   const [open, setOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [problem, setProblem] = useState("");

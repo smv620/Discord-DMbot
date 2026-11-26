@@ -1498,6 +1498,26 @@ export interface AdventureRead {
   offset: number;
   items: AdventureItem[];
 }
+/** The calls of the Shared story adventure on the website (#3694, behind ADVENTURE_LIVE), kept apart from `AccountApi` so that their names cost the
+ * first download nothing (`api-adventure.ts`, loaded on demand). Everything is for the campaign's DMs only: 404 for anyone else or while off. */
+export interface AdventureApi {
+  /** The files and how far each read is (slice A; core #5300). */
+  adventure(campaignRef: string): Promise<AdventureList>;
+  /** What was read from the adventure, fifty at a time (slice B). The book's own words: show them on the DM's page only. */
+  adventureRead(campaignRef: string, offset: number): Promise<AdventureRead>;
+  /** Give a file (slice D): the file itself is the body, its name goes in the address. 202 with the give to poll with `adventureGiving`. Refusals: `bad-file`, `not-on`, `too-many-masters` (the 20-file limit), `slow-down` (busy), `too-soon`, `uploads-off`, `not-found`. */
+  adventureGive(campaignRef: string, file: Blob, name: string): Promise<{ give: string }>;
+  adventureGiving(campaignRef: string, give: string): Promise<AdventureGive>;
+  /** Read a file now (slice E): the DM's yes after the cost is shown. 202 with the start to poll; refusals `not-readable`, `slow-down` (busy), `too-soon`, `not-found`. */
+  adventureStartRead(campaignRef: string, document: string): Promise<{ read: string }>;
+  adventureStarting(campaignRef: string, read: string): Promise<AdventureReadStart>;
+  /** Guide me (slice F): `read` asks where the table is, `pick` says which chapter it is in, `clear` goes back to DMbot's guess. Queued for the bot; poll with `adventureGuiding`. Refusals: `not-on` (not on Guide me), `slow-down` (busy), `too-soon`, `not-found`. */
+  adventureGuide(campaignRef: string, document: string, job: "read" | "pick" | "clear", chapter?: string): Promise<{ guide: string }>;
+  adventureGuiding(campaignRef: string, guide: string): Promise<AdventureGuide>;
+  /** Remove a file (slice C): queued for the bot, answered at once with the removal to poll with `adventureRemoval`. */
+  adventureRemove(campaignRef: string, document: string): Promise<{ removal: string }>;
+  adventureRemoval(campaignRef: string, removal: string): Promise<AdventureRemoval>;
+}
 /** One thing DMbot read from the DM's words about two names (#5293; core #5298): `sentence` is plain text built from its fields,
  * the same words as Discord, never the AI's own sentence. */
 export interface ConnectionSaidProposal {
@@ -3846,22 +3866,9 @@ export interface AccountApi {
    * bot, and polled with `saidRead`; `saidUse` writes the chosen ones and `saidUndo` takes them all back (both answer at once and are
    * polled the same way). `edit` is the id of the connection being corrected. Refusals: `bad-text`, `bad-choice`, `slow-down` (a read
    * of this campaign is running), `hour-full`, `not-found`. */
-  /** The Shared story adventure's files and how far each read is (#3694 slice A, behind ADVENTURE_LIVE); 404 for anyone but a DM, or while it is off. */
-  adventure?(campaignRef: string): Promise<AdventureList>;
-  /** What was read from the adventure, fifty at a time (slice B). The book's own words: show them on the DM's page only. */
-  adventureRead?(campaignRef: string, offset: number): Promise<AdventureRead>;
-  /** Give a file (slice D): the file itself is the body, its name goes in the address. 202 with the give to poll with `adventureGiving`. Refusals: `bad-file`, `not-on`, `too-many-masters` (the 20-file limit), `slow-down` (busy), `too-soon`, `uploads-off`, `not-found`. */
-  /** Read a file now (slice E): the DM's yes after the cost is shown. 202 with the start to poll; refusals `not-readable`, `slow-down` (busy), `too-soon`, `not-found`. */
-  /** Guide me (slice F): `read` asks where the table is, `pick` says which chapter it is in, `clear` goes back to DMbot's guess. Queued for the bot; poll with `adventureGuiding`. Refusals: `not-on` (not on Guide me), `slow-down` (busy), `too-soon`, `not-found`. */
-  adventureGuide?(campaignRef: string, document: string, job: "read" | "pick" | "clear", chapter?: string): Promise<{ guide: string }>;
-  adventureGuiding?(campaignRef: string, guide: string): Promise<AdventureGuide>;
-  adventureStartRead?(campaignRef: string, document: string): Promise<{ read: string }>;
-  adventureStarting?(campaignRef: string, read: string): Promise<AdventureReadStart>;
-  adventureGive?(campaignRef: string, file: Blob, name: string): Promise<{ give: string }>;
-  adventureGiving?(campaignRef: string, give: string): Promise<AdventureGive>;
-  /** Remove a file (slice C): queued for the bot, answered at once with the removal to poll with `adventureRemoval`. 404 for a non-DM or while off. */
-  adventureRemove?(campaignRef: string, document: string): Promise<{ removal: string }>;
-  adventureRemoval?(campaignRef: string, removal: string): Promise<AdventureRemoval>;
+  /** The Shared story adventure's calls (#3694), in a file of their own that loads only when the Upload lore page opens "Your adventure": the
+   * method names are not in this first download. Missing from a pretend API without them. */
+  adventureApi?(): Promise<AdventureApi>;
   saidSend?(campaignRef: string, input: { a: string; b: string; text: string; edit?: string }): Promise<{ answer: string }>;
   saidRead?(campaignRef: string, answer: string): Promise<ConnectionSaidRead>;
   saidUse?(campaignRef: string, answer: string, use: ConnectionSaidUse): Promise<void>;
@@ -4359,9 +4366,6 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   no_email: "no-email",
   too_soon: "too-soon",
   bad_file: "bad-file",
-  not_on: "not-on",
-  not_readable: "not-readable",
-  not_guide: "not-on",
   uploads_off: "uploads-off",
   nothing: "nothing",
   not_counted: "not-counted",
@@ -4501,10 +4505,12 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["adventure", "adventureRead", "adventureGuide", "adventureGuiding", "adventureStartRead", "adventureStarting", "adventureGive", "adventureGiving", "adventureRemove", "adventureRemoval", "saidSend", "saidRead", "saidUse", "saidUndo", "placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "moreNames", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "lookAlikes", "mergeLookAlikes", "lookAlikesApart", "undoLookAlikes", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal", "changeRouteLength", "deedQuestions", "answerDeed", "continuityHits", "askContinuity", "answerContinuity"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["saidSend", "saidRead", "saidUse", "saidUndo", "placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "moreNames", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "lookAlikes", "mergeLookAlikes", "lookAlikesApart", "undoLookAlikes", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal", "changeRouteLength", "deedQuestions", "answerDeed", "continuityHits", "askContinuity", "answerContinuity"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "visitCampaign", "loreAdd", "loreRead", "waitCounts", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
+let adventureCalls: Promise<AdventureApi> | null = null;
+
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {
   let area: Promise<Record<string, unknown>> | null = null;
   return Object.fromEntries(
@@ -4664,6 +4670,8 @@ export function httpApi(
     ...lazyArea(ACCOUNT_METHODS, () => import("./api-account"), helpers),
     ...lazyArea(RECAPS_METHODS, () => import("./api-recaps"), helpers),
     ...lazyArea(NAMES_METHODS, () => import("./api-names"), helpers),
+    // The adventure's calls have no names in this first download: one door, and the file loads when it is first used.
+    adventureApi: () => (adventureCalls ??= import("./api-adventure").then((m) => m.default(helpers))),
     ...lazyArea(CAMPAIGN_METHODS, () => import("./api-campaign"), helpers),
   };
 }

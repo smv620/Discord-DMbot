@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { adventureWords as w } from "../content/adventure-words";
-import { type AccountApi, ApiError, type AdventureGuideAnswer } from "./api";
+import { type AdventureApi, ApiError, type AdventureGuideAnswer } from "./api";
 import WorkProgress from "./WorkProgress";
 
 const FIRST_MS = 500;
@@ -16,7 +16,7 @@ const LOOKS = 60;
 
 type Job = "read" | "pick" | "clear";
 
-export default function AdventureGuide({ api, refId, document }: { api: AccountApi; refId: string; document: string }) {
+export default function AdventureGuide({ api, refId, document }: { api: AdventureApi; refId: string; document: string }) {
   const [busy, setBusy] = useState(false);
   const [seen, setSeen] = useState<{ stage: string; startedAt: number; updatedAt: number; serverNow: number } | null>(null);
   const [answer, setAnswer] = useState<AdventureGuideAnswer | null>(null);

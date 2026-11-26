@@ -77,10 +77,11 @@ describe("the panel", () => {
   it("says a failed look failed and offers another try", async () => {
     const api = mockApi("table");
     let tries = 0;
-    api.adventure = async () => {
+    const adv = await api.adventureApi!();
+    adv.adventure = async () => {
       tries += 1;
       if (tries === 1) throw new ApiError("network");
-      return mockApi("table").adventure!("100.cmp1");
+      return (await mockApi("table").adventureApi!()).adventure("100.cmp1");
     };
     render(<Adventure api={api} refId="100.cmp1" />);
     expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.down);
@@ -150,7 +151,7 @@ describe("the panel", () => {
 
   it("offers no Remove when the API cannot remove", async () => {
     const api = mockApi("table");
-    delete (api as { adventureRemoval?: unknown }).adventureRemoval;
+    delete ((await api.adventureApi!()) as { adventureRemoval?: unknown }).adventureRemoval;
     render(<Adventure api={api} refId="100.cmp1" />);
     await screen.findByText("The Glass Orchard.pdf", {}, slow);
     expect(screen.queryAllByRole("button", { name: /^Remove / })).toHaveLength(0);
@@ -167,10 +168,11 @@ describe("the panel", () => {
 
   it("drops a late answer after Hide, so See again starts clean, and a failed Show more keeps what is on screen", async () => {
     const api = mockApi("table");
-    const real = api.adventureRead!.bind(api);
+    const adv = await api.adventureApi!();
+    const real = adv.adventureRead.bind(adv);
     let n = 0;
     let release: () => void = () => {};
-    api.adventureRead = async (ref, offset) => {
+    adv.adventureRead = async (ref, offset) => {
       n += 1;
       if (n === 2) await new Promise<void>((ok) => (release = ok)); // (the second ask is slow)
       if (n === 4) throw new ApiError("network");
@@ -325,7 +327,7 @@ describe("giving a file (#3694 slice D)", () => {
 
   it("offers no Give a file when the API cannot take one", async () => {
     const api = mockApi("table");
-    delete (api as { adventureGiving?: unknown }).adventureGiving;
+    delete ((await api.adventureApi!()) as { adventureGiving?: unknown }).adventureGiving;
     render(<Adventure api={api} refId="100.cmp1" />);
     await screen.findByText("The Glass Orchard.pdf", {}, slow);
     expect(screen.queryByRole("button", { name: w.give })).toBeNull();
@@ -380,7 +382,7 @@ describe("reading a file now (#3694 slice E)", () => {
 
   it("offers no Read it now when the API cannot start a read", async () => {
     const api = mockApi("table");
-    delete (api as { adventureStarting?: unknown }).adventureStarting;
+    delete ((await api.adventureApi!()) as { adventureStarting?: unknown }).adventureStarting;
     render(<Adventure api={api} refId="100.cmp1" />);
     await screen.findByText("Second Book.docx", {}, slow);
     expect(readButtons()).toHaveLength(0);
@@ -443,5 +445,26 @@ describe("Guide me: where is the table (#3694 slice F)", () => {
     cleanup();
     await open("100.cmp1.adventure-watch");
     expect(screen.queryByRole("button", { name: w.guide })).toBeNull();
+  });
+});
+
+describe("the real client's adventure calls (their names are not in the first download)", () => {
+  it("loads on first use, sends the file as it is with its name in the address, and reads the adventure's own refusals", async () => {
+    const { httpApi } = await import("../src/account/api");
+    const seen: { url: string; method: string; body: unknown }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      seen.push({ url, method: String(init.method), body: init.body });
+      if (url.includes("/give")) return new Response(JSON.stringify({ detail: "not_on" }), { status: 409, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ detail: "not_readable" }), { status: 409, headers: { "content-type": "application/json" } });
+    });
+    const api = httpApi("/api");
+    expect((api as { adventure?: unknown }).adventure).toBeUndefined(); // (no adventure names on the main API)
+    const adv = await api.adventureApi!();
+    await expect(adv.adventureGive("100.cmp1", new Blob(["x"]), "Book one.pdf")).rejects.toMatchObject({ kind: "not-on" });
+    expect(seen[0]!.url).toBe("/api/me/campaigns/100.cmp1/adventure/give?name=Book%20one.pdf");
+    await expect(adv.adventureStartRead("100.cmp1", "d1")).rejects.toMatchObject({ kind: "not-readable" });
+    expect(seen[1]!.url).toBe("/api/me/campaigns/100.cmp1/adventure/d1/read");
+    expect(await api.adventureApi!()).toBe(adv); // (loaded once)
+    vi.unstubAllGlobals();
   });
 });
