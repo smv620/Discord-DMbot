@@ -562,3 +562,130 @@ class Guiding(Holding):
                         headers=HEADERS,
                     )
                     self.assertEqual(polled.json()["state"], "waiting")
+
+
+class Matching(Holding):
+    async def switch_on(self) -> None:
+        await self.sql("UPDATE campaigns SET story_mode = 'watch' WHERE id = %s", self.one.id)
+        await self.sql(
+            "INSERT INTO shared_confirmations (guild_id, campaign_id, id, user_id, purpose,"
+            " fingerprint, confirmed_at, restored)"
+            " VALUES (%s, %s, 'c1', %s, 'shared_story', %s, 1, false)",
+            GUILD, self.one.id, ALICE.id, "0" * 64,
+        )  # fmt: skip
+
+    async def finish(self, mid: str, job: str, batches: list[int]) -> None:
+        await self.sql(
+            "UPDATE web_adventure_matches SET state = 'done', batches = %s WHERE id = %s",
+            batches, mid,
+        )  # fmt: skip
+
+    async def test_a_dm_asks_and_the_job_waits_for_the_bot(self) -> None:
+        await self.switch_on()
+        mid = await web.match(self.web, self.session, self.cref, "suggest")
+        got = await web.matching(self.web, self.session, self.cref, mid)
+        self.assertEqual((got["state"], got["job"], got["answer"]), ("waiting", "suggest", {}))
+        self.assertFalse(got["canUndo"])
+
+    async def test_a_decide_needs_one_to_ten_well_formed_picks(self) -> None:
+        await self.switch_on()
+        good = ("a" * 32, "b" * 32, "same")
+        for picks in ([], [good] * 11, [("a" * 32, "b" * 32, "maybe")], [("x", "b" * 32, "same")]):
+            with self.assertRaises(RecapError) as caught:
+                await web.match(self.web, self.session, self.cref, "decide", picks)
+            self.assertEqual(caught.exception.code, "bad_job")
+        await web.match(self.web, self.session, self.cref, "decide", [good])
+
+    async def test_a_suggest_takes_no_picks_and_an_unknown_job_is_refused(self) -> None:
+        await self.switch_on()
+        for job, picks in (("suggest", [("a" * 32, "b" * 32, "same")]), ("dance", None)):
+            with self.assertRaises(RecapError) as caught:
+                await web.match(self.web, self.session, self.cref, job, picks)
+            self.assertEqual(caught.exception.code, "bad_job")
+
+    async def test_it_needs_the_switch_on_and_a_dms_confirmation(self) -> None:
+        with self.assertRaises(RecapError) as caught:
+            await web.match(self.web, self.session, self.cref, "suggest")
+        self.assertEqual(caught.exception.code, "not_on")
+
+    async def test_a_second_job_while_one_is_open_is_busy(self) -> None:
+        await self.switch_on()
+        await web.match(self.web, self.session, self.cref, "suggest")
+        with self.assertRaises(RecapError) as caught:
+            await web.match(self.web, self.session, self.cref, "suggest")
+        self.assertEqual(caught.exception.code, "busy")
+
+    async def test_an_undo_needs_a_finished_decide_that_wrote_something_and_only_once(self) -> None:
+        await self.switch_on()
+        good = ("a" * 32, "b" * 32, "same")
+        mid = await web.match(self.web, self.session, self.cref, "decide", [good])
+        with self.assertRaises(RecapError) as early:  # (not finished yet)
+            await web.match(self.web, self.session, self.cref, "undo", source=mid)
+        self.assertEqual(early.exception.code, "busy")
+        await self.finish(mid, "decide", [])
+        with self.assertRaises(RecapError) as empty:  # (it wrote nothing)
+            await web.match(self.web, self.session, self.cref, "undo", source=mid)
+        self.assertEqual(empty.exception.code, "nothing_to_undo")
+        await self.finish(mid, "decide", [7, 8])
+        got = await web.matching(self.web, self.session, self.cref, mid)
+        self.assertTrue(got["canUndo"])
+        uid = await web.match(self.web, self.session, self.cref, "undo", source=mid)
+        await self.sql("UPDATE web_adventure_matches SET state = 'done' WHERE id = %s", uid)
+        with self.assertRaises(RecapError) as twice:
+            await web.match(self.web, self.session, self.cref, "undo", source=mid)
+        self.assertEqual(twice.exception.code, "nothing_to_undo")
+        self.assertEqual(
+            (await self.rows())[1]["batches"], [7, 8]
+        )  # (the undo carries the decide's batches)
+
+    async def rows(self) -> list[dict[str, Any]]:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT job, batches FROM web_adventure_matches ORDER BY seq")
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def test_a_player_and_bad_ids_are_not_found(self) -> None:
+        await self.switch_on()
+        with self.assertRaises(RecapError) as caught:
+            await web.match(self.web, await self.bob(), self.cref, "suggest")
+        self.assertEqual(caught.exception.code, "not_found")
+        with self.assertRaises(RecapError):
+            await web.match(self.web, self.session, self.cref, "undo", source="nope")
+        mid = await web.match(self.web, self.session, self.cref, "suggest")
+        with self.assertRaises(RecapError):
+            await web.matching(self.web, await self.bob(), self.cref, mid)
+        with self.assertRaises(RecapError):
+            await web.matching(self.web, self.session, self.cref, "0" * 32)
+
+    async def test_the_routes_answer_404_until_the_switch_is_on(self) -> None:
+        await self.switch_on()
+        for on in (False, True):
+            app = create_app(
+                settings(adventure_on=on),
+                self.web,
+                FakeDiscord(),
+                payments=FakeProvider(b"h" * 32, "https://x.example"),
+                clock=lambda: NOW,
+            )
+            token = await sessions.sign_in(self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+            ) as client:
+                client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+                bad = await client.post(
+                    f"/me/campaigns/{self.cref}/adventure/matches",
+                    json={"job": "decide", "picks": "no"},
+                    headers=HEADERS,
+                )
+                self.assertEqual(bad.status_code, 400 if on else 404, bad.text)
+                got = await client.post(
+                    f"/me/campaigns/{self.cref}/adventure/matches",
+                    json={"job": "suggest"},
+                    headers=HEADERS,
+                )
+                self.assertEqual(got.status_code, 202 if on else 404, got.text)
+                if on:
+                    polled = await client.get(
+                        f"/me/campaigns/{self.cref}/adventure/matches/{got.json()['match']}",
+                        headers=HEADERS,
+                    )
+                    self.assertEqual(polled.json()["state"], "waiting")

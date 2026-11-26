@@ -351,3 +351,67 @@ async def guiding(db: Database, session: Session, ref: str, guide_id: str) -> di
     if got is None or got.get("missing"):
         raise RecapError("not_found")
     return dict(got)
+
+
+_MATCH_REFUSALS = {"not_on", "bad_job", "nothing_to_undo", "busy", "too_soon"}
+
+
+async def match(
+    db: Database,
+    session: Session,
+    ref: str,
+    job: str,
+    picks: list[tuple[str, str, str]] | None = None,
+    source: str = "",
+) -> str:
+    """Slice G1: queue a Match to files job (`suggest`; `decide` with up to ten
+    `(book entry id, table entry id, "same" | "not_same")`; `undo` of an earlier decide job's id).
+    Returns the id `matching` polls. The bot does it with the calls Discord's 🔗 makes. Refusals are
+    `RecapError` codes: `not_found` (not a DM, or a malformed id), `not_on` (the Shared story
+    switch is off, or no DM confirmed the right to use the material), `bad_job`,
+    `nothing_to_undo`, `busy`, `too_soon`."""
+    if source and not _ID.match(source):
+        raise RecapError("not_found")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    from psycopg.types.json import Jsonb  # (a database type: kept out of the module's top)
+
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_adventure_match(%s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, job, Jsonb([list(p) for p in picks or []]), source),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]) if got["status"] in _MATCH_REFUSALS else "not_found")
+    return str(got["id"])
+
+
+async def matching(db: Database, session: Session, ref: str, match_id: str) -> dict[str, Any]:
+    """A Match to files job's state, and its answer once done: `{state: waiting|working|done|
+    failed, error, job, canUndo, answer, createdAt, updatedAt, serverNow}`. `answer` is, for
+    `suggest`, `{pairs: [{planId, planName, planKind, entityId, entityName}]}`; for `decide`,
+    `{written, refusal}` (`refusal` is the store's plain words for the first pair it would not
+    take, "" when none); for `undo`, `{undone, note}` (`note`: "", `too_late` or `changed_since`).
+    The names are the book's and the table's own: the DM's page only, never logged. `canUndo` is
+    true on a done `decide` that wrote something: pass its id as `source` to `match` with `undo`.
+    `error` is a code (`not_yours`, `not_on`, `failed`) the page turns into words."""
+    if not _ID.match(match_id):
+        raise RecapError("not_found")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_adventure_match_read(%s, %s, %s) AS r",
+            (guild_id, campaign_id, match_id),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None or got.get("missing"):
+        raise RecapError("not_found")
+    return dict(got)
