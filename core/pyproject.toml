@@ -16,11 +16,7 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "argon2-cffi>=23.1",  # the admin password's hash (#772)
     "psycopg-pool>=3.2",
-    # Reading a PDF's text for a names list (6.x limits decompression). Held below 7.2: pypdf 7.2.0
-    # (released 2026-11-26) reads a PDF whose words are drawn one by one as separate pieces with no
-    # line breaks, and `tests/test_pdf_word_lines.py` fails on it (3 tests); 7.1.1 passes. Kept
-    # until the reader is adapted to the new version (#5342).
-    "pypdf>=6.1,<7.2",
+    "pypdf>=6.1",  # reading a PDF's text for a names list (6.x limits decompression)
     # The website's API (python -m dmbot.web, #435): its own container, same image.
     "fastapi>=0.115",
     "uvicorn>=0.30",
