@@ -1015,6 +1015,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let loreLooks = 0;
   const adventureRemovals = new Map<string, { document: string; looks: number }>(); // (removing a file of the adventure, #3694 slice C)
   const adventureGone = new Set<string>();
+  const adventureMatches = new Map<string, { ref: string; body: Parameters<AdventureApi["adventureMatch"]>[1]; looks: number }>(); // (match names, #3694 slice G1)
+  const adventureMatched = new Set<string>();
   const adventureGuides = new Map<string, { ref: string; job: "read" | "pick" | "clear"; document: string; looks: number }>(); // (Guide me, #3694 slice F)
   const adventurePick = new Map<string, string>();
   const adventureStarts = new Map<string, { ref: string; document: string; looks: number }>(); // (starting a read, #3694 slice E)
@@ -2002,6 +2004,44 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           chapters,
         },
       };
+    },
+    // Match names (#3694 slice G1): two made-up pairs; answers are kept per campaign, and a save of a pair named "Gate" is refused as already linked.
+    async adventureMatch(ref, body) {
+      calls.push(`adventureMatch:${ref}:${body.job}${body.job === "decide" ? `:${body.picks.map((p) => `${p[0]}>${p[1]}=${p[2]}`).join(",")}` : ""}${body.job === "undo" ? `:${body.source}` : ""}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (ref.includes(".match-busy")) throw new ApiError("slow-down");
+      const id = `match-${adventureMatches.size + 1}`;
+      adventureMatches.set(id, { ref, body, looks: 0 });
+      return { match: id };
+    },
+    async adventureMatching(ref, match) {
+      calls.push(`adventureMatching:${ref}:${match}`);
+      await reachable();
+      signedIn();
+      const got = adventureMatches.get(match);
+      if (!got) throw new ApiError("not-found");
+      got.looks += 1;
+      const at = Math.floor(Date.now() / 1000);
+      const base = { error: "", job: got.body.job, canUndo: false, createdAt: at - got.looks, updatedAt: at, serverNow: at };
+      if (got.looks < 2) return { ...base, state: "working" as const, answer: null };
+      if (got.body.job === "suggest") {
+        const left = [
+          { planId: "b1", planName: "Captain Varn", planKind: "character", entityId: "e1", entityName: "Varn" },
+          { planId: "b2", planName: "The Salt Gate", planKind: "place", entityId: "e2", entityName: "Gate" },
+        ].filter((p) => !adventureMatched.has(`${ref}:${p.planId}`));
+        return { ...base, state: "done" as const, answer: { pairs: ref.includes(".match-none") ? [] : left } };
+      }
+      if (got.body.job === "decide") {
+        const picks = got.body.picks;
+        const stopAt = picks.findIndex((p) => p[0] === "b2" && p[2] === "same" && ref.includes(".match-taken"));
+        const written = stopAt === -1 ? picks.length : stopAt;
+        for (const p of picks.slice(0, written)) adventureMatched.add(`${ref}:${p[0]}`);
+        return { ...base, state: "done" as const, canUndo: written > 0, answer: { written, refusal: stopAt === -1 ? "" : "taken_book", at: stopAt === -1 ? null : stopAt } };
+      }
+      for (const key of [...adventureMatched].filter((k) => k.startsWith(`${ref}:`))) adventureMatched.delete(key);
+      return { ...base, state: "done" as const, answer: { undone: 1, note: ref.includes(".match-late") ? "too_late" : "" } };
     },
     async adventureStartRead(ref, document) {
       calls.push(`adventureStartRead:${ref}:${document}`);

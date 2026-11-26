@@ -1493,6 +1493,26 @@ export interface AdventureGuide {
   updatedAt: number;
   serverNow: number;
 }
+/** Matching the adventure's names to the names DMbot remembers (#3694 slice G1; core #5318): the DM says which are the same, DMbot never guesses. */
+export interface AdventureMatchPair {
+  planId: string;
+  planName: string;
+  planKind: string;
+  entityId: string;
+  entityName: string;
+}
+export type AdventureMatchPick = [bookId: string, tableId: string, answer: "same" | "not_same"];
+export interface AdventureMatch {
+  state: "waiting" | "working" | "done" | "failed";
+  error: string;
+  job: "suggest" | "decide" | "undo";
+  canUndo: boolean;
+  /** `suggest`: the pairs; `decide`: how many were written and why the job stopped (a code, "" if it did not) and at which pick; `undo`: how many were taken back and a note (`too_late`, `changed_since` or ""). */
+  answer: { pairs?: AdventureMatchPair[]; written?: number; refusal?: string; at?: number | null; undone?: number; note?: string } | null;
+  createdAt: number;
+  updatedAt: number;
+  serverNow: number;
+}
 export interface AdventureRead {
   total: number;
   offset: number;
@@ -1514,6 +1534,9 @@ export interface AdventureApi {
   /** Guide me (slice F): `read` asks where the table is, `pick` says which chapter it is in, `clear` goes back to DMbot's guess. Queued for the bot; poll with `adventureGuiding`. Refusals: `not-on` (not on Guide me), `slow-down` (busy), `too-soon`, `not-found`. */
   adventureGuide(campaignRef: string, document: string, job: "read" | "pick" | "clear", chapter?: string): Promise<{ guide: string }>;
   adventureGuiding(campaignRef: string, guide: string): Promise<AdventureGuide>;
+  /** Match names (slice G1): `suggest` lists the pairs, `decide` writes the DM's answers (1 to 10), `undo` takes back a decide (its job id as `source`). Queued for the bot; poll with `adventureMatching`. Refusals: `not-on`, `slow-down` (busy), `too-soon`, `not-found`. */
+  adventureMatch(campaignRef: string, body: { job: "suggest" } | { job: "decide"; picks: AdventureMatchPick[] } | { job: "undo"; source: string }): Promise<{ match: string }>;
+  adventureMatching(campaignRef: string, match: string): Promise<AdventureMatch>;
   /** Remove a file (slice C): queued for the bot, answered at once with the removal to poll with `adventureRemoval`. */
   adventureRemove(campaignRef: string, document: string): Promise<{ removal: string }>;
   adventureRemoval(campaignRef: string, removal: string): Promise<AdventureRemoval>;
