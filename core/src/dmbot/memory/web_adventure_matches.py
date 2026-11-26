@@ -4,10 +4,14 @@
 functions that need the bot are passed in, which keeps this module free of Discord. Nothing here
 changes `memory/book_links.py`: it only calls what is there.
 
-Jobs: `suggest` (the pairs worth asking about), `decide` (the DM's Same or Not the same for up to
-ten pairs: one `decide` call for each, each its own change with its own Undo, and the job stops at
-the first refusal, telling how many were written, which pick stopped and a code for why) and
-`undo` (take back a `decide` job's changes, newest first, stopping at the first that is too late).
+Jobs: `options` (the book entries one table entry could be, and the ones it is:
+`book_links.options_for` and `linked`), `pick` and `unpick` (the DM's word that a table entry is,
+or is no longer, a book entry: `book_links.decide` of one pair as Same, and `book_links.unlink`;
+each one change with its own Undo), `suggest` (the pairs worth asking about), `decide` (the DM's
+Same or Not the same for up to ten pairs: one `decide` call for each, each its own change with its
+own Undo, and the job stops at the first refusal, telling how many were written, which pick
+stopped and a code for why) and `undo` (take back the changes of an earlier write job, newest
+first, stopping at the first that is too late).
 
 Every job is checked again here (still a DM, the Shared story switch on with a DM's confirmation).
 The answer holds ids and names from the DM's book and table: kept a day at most, read back only by
@@ -32,6 +36,7 @@ RETAKE_AFTER_S = 600  # the door's own limit for a claim that went quiet
 KEEP_FOR_S = 86400  # as long as the website reads an answer back
 
 SUGGEST, DECIDE, UNDO = "suggest", "decide", "undo"
+OPTIONS, PICK, UNPICK = "options", "pick", "unpick"
 
 NOT_YOURS = "not_yours"  # no longer a DM of the campaign
 NOT_ON = "not_on"  # the switch is off, or no DM confirmed the right to use the material
@@ -48,6 +53,7 @@ _REFUSALS = {
     TAKEN_TABLE: "taken_table",
 }
 
+GONE_ENTRY = "gone"  # the table entry is not there any more
 TOO_LATE = "too_late"  # an undo that is past its time
 CHANGED_SINCE = "changed_since"  # an undo of something changed again after
 
@@ -61,6 +67,9 @@ class Item:
     picks: tuple[tuple[str, str, str], ...]
     batches: tuple[int, ...]
     claimed_at: int
+    entity_id: str = ""
+    plan_id: str = ""
+    skip: int = 0
 
 
 class MatchStore:
@@ -79,7 +88,8 @@ class MatchStore:
                 " ORDER BY seq LIMIT 1 FOR UPDATE SKIP LOCKED)"
                 " UPDATE web_adventure_matches a SET state = 'working', claimed_at = %s,"
                 " updated_at = %s FROM pick WHERE a.guild_id = pick.guild_id AND a.id = pick.id"
-                " RETURNING a.id, a.campaign_id, a.user_id, a.job, a.picks, a.batches",
+                " RETURNING a.id, a.campaign_id, a.user_id, a.job, a.picks, a.batches, a.entity_id,"
+                " a.plan_id, a.skip",
                 (guild_id, now_ms - RETAKE_AFTER_S * 1000, now_ms, now),
             )
             row = await cur.fetchone()
@@ -89,6 +99,7 @@ class MatchStore:
             row["id"], row["campaign_id"], int(row["user_id"]), row["job"],
             tuple((str(p[0]), str(p[1]), str(p[2])) for p in row["picks"]),
             tuple(int(b) for b in row["batches"]), now_ms,
+            row["entity_id"], row["plan_id"], int(row["skip"]),
         )  # fmt: skip
 
     async def finish(
@@ -143,6 +154,12 @@ class Host:
     suggest: Callable[[int, str], Awaitable[list[dict[str, str]]]]
     decide: Callable[[int, str, tuple[str, str, str], int], Awaitable[int | None]]
     undo: Callable[[int, str, int], Awaitable[object]]
+    # `options(guild, campaign, entity, offset)`: the entry, what it is linked to and what it could
+    # be (plain dicts; None when the entry is not there any more). `unpick(guild, campaign, plan,
+    # entity)`: `book_links.unlink`, giving the change's batch (None when there was nothing to take
+    # off).
+    options: Callable[[int, str, str, int], Awaitable[dict[str, Any] | None]] | None = None
+    unpick: Callable[[int, str, str, str], Awaitable[int | None]] | None = None
 
 
 async def run_one(host: Host, store: MatchStore, guild_id: int, item: Item) -> str:
@@ -156,6 +173,11 @@ async def run_one(host: Host, store: MatchStore, guild_id: int, item: Item) -> s
                 answer = {"pairs": await host.suggest(guild_id, item.campaign_id)}
             elif item.job == DECIDE:
                 answer, batches = await _decide(host, guild_id, item)
+            elif item.job == OPTIONS:
+                answer = await _options(host, guild_id, item)
+                error = "" if answer is not None else GONE_ENTRY
+            elif item.job in (PICK, UNPICK):
+                answer, batches = await _entry_write(host, guild_id, item)
             else:
                 answer = await _undo(host, guild_id, item)
     except Exception as exc:  # the type only: nothing here may quote the book
@@ -195,3 +217,30 @@ async def _undo(host: Host, guild_id: int, item: Item) -> dict[str, Any]:
             break
         undone += 1
     return {"undone": undone, "note": note}
+
+
+async def _options(host: Host, guild_id: int, item: Item) -> dict[str, Any] | None:
+    if host.options is None:
+        raise MemoryRuleError("no options")
+    return await host.options(guild_id, item.campaign_id, item.entity_id, item.skip)
+
+
+async def _entry_write(host: Host, guild_id: int, item: Item) -> tuple[dict[str, Any], list[int]]:
+    """One table entry's pick or unpick: one change, so one batch for the Undo. A refusal is a
+    code, as for `decide`; an unpick with nothing to take off writes nothing."""
+    written, batch, refusal = 0, None, ""
+    try:
+        if item.job == PICK:
+            pick = (item.plan_id, item.entity_id, "same")
+            batch = await host.decide(guild_id, item.campaign_id, pick, item.user_id)
+            written = 1
+        else:
+            if host.unpick is None:
+                raise MemoryRuleError("no unpick")
+            batch = await host.unpick(guild_id, item.campaign_id, item.plan_id, item.entity_id)
+            written = 0 if batch is None else 1
+    except MemoryRuleError as exc:
+        refusal = _REFUSALS.get(str(exc), FAILED)
+    return {"written": written, "refusal": refusal, "at": 0 if refusal else None}, (
+        [] if batch is None else [batch]
+    )

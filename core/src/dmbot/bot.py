@@ -17746,7 +17746,40 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         async def undo(guild_id: int, campaign_id: str, batch: int) -> object:
             return await memory.undo(guild_id, campaign_id, batch)
 
-        host = web_adventure_matches.Host(check, suggest, decide, undo)
+        async def options(
+            guild_id: int, campaign_id: str, entity_id: str, offset: int
+        ) -> dict[str, Any] | None:
+            entity = await memory.entity(guild_id, campaign_id, entity_id)
+            if entity is None:
+                return None
+            current = await book_links_model.linked(memory, guild_id, campaign_id, entity_id)
+            found, total = await book_links_model.options_for(
+                memory, guild_id, campaign_id, entity_id, offset
+            )
+            return {
+                "entity": {"id": entity_id, "name": entity.name},
+                "linked": [
+                    {"planId": x.plan_id, "name": x.name, "kind": x.kind, "chapter": x.chapter}
+                    for x in current
+                ],
+                "options": [
+                    {"planId": x.plan_id, "name": x.name, "kind": x.kind, "chapter": x.chapter}
+                    for x in found
+                ],
+                "total": total,
+                "offset": offset,
+                "pageSize": book_links_model.PICK_MAX,
+            }
+
+        async def unpick(
+            guild_id: int, campaign_id: str, plan_id: str, entity_id: str
+        ) -> int | None:
+            written = await book_links_model.unlink(
+                memory, guild_id, campaign_id, plan_id, entity_id
+            )
+            return written.batch
+
+        host = web_adventure_matches.Host(check, suggest, decide, undo, options, unpick)
         for guild in list(self.guilds):
             for _ in range(5):
                 item = await store.claim_next(guild.id)
