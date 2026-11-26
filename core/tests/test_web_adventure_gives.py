@@ -77,6 +77,7 @@ class TheChecks(unittest.TestCase):
     def test_an_upper_case_ending_is_still_checked_by_its_bytes(self) -> None:
         self.assertFalse(web.sniff("BOOK.PDF", b"not a pdf"))
         self.assertTrue(web.sniff("BOOK.PDF", b"%PDF-1.4"))
+        self.assertEqual(web.max_bytes("BOOK.PDF"), web.PDF_MAX_BYTES)
 
 
 class Gives(DatabaseTest):
