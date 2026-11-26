@@ -571,15 +571,72 @@ def know_lines(
     return entries, links
 
 
+def preview_line(
+    known: dict[str, Any], characters: Collection[str], *, common: bool = False
+) -> str:
+    """The one line `party_icons.line` gives for a statement these characters would know, against
+    the party as it is now: the preview of a pick before the DM presses (#5332), worded by the
+    same function as the line on every other surface, so the two cannot differ. Only characters
+    the door lists are counted (an id it does not know is ignored, never named)."""
+    data, _who = _knowers(known)
+    viewers = {str(v["id"]): (str(v["name"]), str(v.get("kind", "npc"))) for v in known["viewers"]}
+    members = [
+        (c, viewers[c][0]) for c in party_ids(known, set(data.player_characters)) if c in viewers
+    ]
+    why = {str(k): str(v) for k, v in dict(known.get("leftWhy", {})).items()}
+    left = {
+        str(c): (viewers[str(c)][0], why.get(str(c), "left"))
+        for c in known.get("leftParty", ())
+        if str(c) in viewers
+    }
+    npcs = {c: v[0] for c, v in viewers.items() if v[1] == "npc"}
+    outsiders = party_icons.ordered_outsiders(left, npcs)
+    holders = [str(c) for c in characters if str(c) in viewers]
+    return party_icons.line(holders, members, common=common, outsiders=outsiders)
+
+
+async def know_line_of(db: Database, session: Session, ref: str, body: object) -> dict[str, Any]:
+    """`{"characters": [ids], "common": bool}` in, `{"line": "✅ The whole party knows"}` out: what
+    the one line would say if exactly these characters knew a statement (or, with `common`,
+    everyone, 🌍). For a DM of the campaign only (`not_found` for anyone else), at most 50 ids.
+    Nothing is read but the party and the names, and nothing is stored or logged."""
+    characters = body.get("characters", []) if isinstance(body, dict) else None
+    common = body.get("common", False) if isinstance(body, dict) else None
+    if (
+        not isinstance(characters, list)
+        or len(characters) > 50
+        or not all(isinstance(c, str) and ID_PATTERN.fullmatch(c) for c in characters)
+        or not isinstance(common, bool)
+    ):
+        raise RecapError("bad_target")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_knowers_data(%s, %s) AS k", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    if found is None or found["k"] is None or not dict(found["k"])["isDm"]:
+        raise RecapError("not_found")
+    return {"line": preview_line(dict(found["k"]), characters, common=common)}
+
+
 def link_holders(
     known: dict[str, Any],
     shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
 ) -> dict[str, list[dict[str, str]]]:
     """For each connection, the characters who know it, player characters and NPCs alike, as
-    {id, name} by name (the DM's own view, so the campaign's own names): the "Who knows this?"
-    control's current answer (#2999). Only characters the door lists as confirmed are named."""
+    {id, name, status} (the DM's own view, so the campaign's own names): the "Who knows this?"
+    control's current answer (#2999). Only characters the door lists as confirmed are named. The
+    order is Discord's (`who_knows.pick_choices`, #5332): the party now first in the party list's
+    order, then characters who left (by name; `status` "left"), then everyone else (NPCs, by name;
+    "npc"); `status` is "party" for the first group."""
     data, who = shared or _knowers(known)
     names = {str(v["id"]): str(v["name"]) for v in known["viewers"]}
+    party = party_ids(known, set(data.player_characters))
+    in_party = {c: n for n, c in enumerate(party)}
+    gone = {str(c) for c in known.get("leftParty", ())} - set(in_party)
     out: dict[str, list[dict[str, str]]] = {}
     for link in data.connections:
         raw = data.knowers.get((gate.CONNECTION, str(link)), {})
@@ -588,7 +645,11 @@ def link_holders(
         for c in who(gate.CONNECTION, str(link)):
             if c not in names:
                 continue
-            holder = {"id": c, "name": names[c]}
+            holder = {
+                "id": c,
+                "name": names[c],
+                "status": "party" if c in in_party else "left" if c in gone else "npc",
+            }
             # DMbot's guess (#3940, #4968): an NPC's own row below 1.0 (never a player character's,
             # and never a character who knows only through a group's row), "sure" at the guess's
             # top step and "likely" below it. A DM's save of the list that showed it keeps it.
@@ -596,7 +657,15 @@ def link_holders(
             if sure is not None and sure < 1.0 and c not in data.player_characters:
                 holder["guess"] = "sure" if sure >= knowers.GUESS_SURE else "likely"
             holders.append(holder)
-        out[str(link)] = sorted(holders, key=lambda h: (h["name"].casefold(), h["id"]))
+        out[str(link)] = sorted(
+            holders,
+            key=lambda h: (
+                0 if h["status"] == "party" else 1 if h["status"] == "left" else 2,
+                in_party.get(h["id"], 0),  # (the party's own order; the rest by name below)
+                h["name"].casefold(),
+                h["id"],
+            ),
+        )
     return out
 
 
