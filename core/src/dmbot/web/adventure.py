@@ -26,8 +26,6 @@ from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
-CHARS_PER_WORD = 5  # a high guess, so the estimate is never below the charge (credits.py)
-
 
 def _estimate(document: dict[str, Any]) -> str | None:
     """What reading this file will cost, in the card's own sentence ("About 120 AI credits for the
@@ -36,11 +34,7 @@ def _estimate(document: dict[str, Any]) -> str | None:
     read = document.get("read")
     if document["restored"] or (read and read["status"] == "done"):
         return None
-    words = int(document["characters"]) // CHARS_PER_WORD
-    units = credits.units_of("adventure", words=words)
-    return credits.estimate_words(
-        "adventure", credits.estimate("adventure", units, allowance=0, used=0)
-    )
+    return credits.adventure_estimate_words(int(document["characters"]))
 
 
 async def held(db: Database, session: Session, ref: str) -> dict[str, Any]:
@@ -393,15 +387,18 @@ async def match(
 
 async def matching(db: Database, session: Session, ref: str, match_id: str) -> dict[str, Any]:
     """A Match to files job's state, and its answer once done: `{state: waiting|working|done|
-    failed, error, job, canUndo, answer, createdAt, updatedAt, serverNow}`. `answer` is, for
-    `suggest`, `{pairs: [{planId, planName, planKind, entityId, entityName}]}`; for `decide`,
-    `{written, refusal, at}` (`refusal` is a code for the first pair it would not take: `gone`,
-    `clash`, `twice`, `taken_book`, `taken_table` or `failed`, "" when none, and `at` is that
-    pick's index in the list sent, null when none); for `undo`, `{undone, note}` (`note`: "",
-    `too_late` or `changed_since`).
+    failed, error, job, canUndo, answer, createdAt, updatedAt, serverNow}`. `answer` is:
+    - `suggest`: `{pairs: [{planId, planName, planKind, entityId, entityName}]}`;
+    - `decide`, `pick` and `unpick`: `{written, refusal, at}`, where `refusal` is a code for the
+      first pair it would not take (`gone`, `clash`, `twice`, `taken_book`, `taken_table` or
+      `failed`, "" when none) and `at` is that pick's index in the list sent, null when none;
+    - `options`: `{entity: {id, name}, linked: [{planId, name, kind, chapter}], options: [{planId,
+      name, kind, chapter}], total, offset, pageSize}`;
+    - `undo`: `{undone, note}` (`note`: "", `too_late` or `changed_since`).
     The names are the book's and the table's own: the DM's page only, never logged. `canUndo` is
-    true on a done `decide` that wrote something: pass its id as `source` to `match` with `undo`.
-    `error` is a code (`not_yours`, `not_on`, `failed`) the page turns into words."""
+    true on a done `decide`, `pick` or `unpick` that wrote something: pass its id as `source` to
+    `match` with `undo`. `error` is a code (`not_yours`, `not_on`, `gone`, `failed`) the page turns
+    into words (`gone`: the table entry is not there any more)."""
     if not _ID.match(match_id):
         raise RecapError("not_found")
     guild_id, campaign_id = _parse(ref)
@@ -417,3 +414,39 @@ async def matching(db: Database, session: Session, ref: str, match_id: str) -> d
     if got is None or got.get("missing"):
         raise RecapError("not_found")
     return dict(got)
+
+
+ENTRY_JOBS = ("options", "pick", "unpick")
+
+
+async def match_entry(
+    db: Database,
+    session: Session,
+    ref: str,
+    job: str,
+    entity: str,
+    plan: str = "",
+    skip: int = 0,
+) -> str:
+    """Slice G2: queue a job for one table entry (Discord's "Same as in the book…" on a name's
+    card): `options` (the book entries it could be, 25 a page from `skip`, and the ones it is),
+    `pick` (it is this book entry, `plan`) or `unpick` (it is no longer). Returns the id `matching`
+    polls, as for `match`; a pick or an unpick writes one change, which the `undo` job takes back
+    (`canUndo`). Refusals are `RecapError` codes as for `match`."""
+    if not _ID.match(entity) or (plan and not _ID.match(plan)):
+        raise RecapError("not_found")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_adventure_match_entry(%s, %s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, job, entity, plan, skip),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]) if got["status"] in _MATCH_REFUSALS else "not_found")
+    return str(got["id"])

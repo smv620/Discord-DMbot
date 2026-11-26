@@ -2,11 +2,11 @@
 // website"). One list, used by the tabs on every campaign page and by the campaign's own Overview page, so the
 // two never disagree. The parts are named for what a DM is doing: read the story, add to it, set the rules.
 import { campaignPage as words } from "../content/campaign-page";
-import { IMPORT_LIVE } from "../content/import-words";
+import { IMPORT_LIVE } from "../content/import-switch";
 import { MAPS_LIVE } from "../content/maps-switch";
 import { PICTURES_LIVE } from "../content/pictures-switch";
-import { LORE_LIVE } from "../content/lore-words";
-import { RECAP_STYLE_LIVE } from "../content/recap-style-words";
+import { LORE_LIVE } from "../content/lore-switch";
+import { RECAP_STYLE_LIVE } from "../content/recap-style-switch";
 import { RECAPS_LIVE } from "../content/recap-words";
 
 export type CampaignGroup = "overview" | "story" | "add" | "rules" | "settings";
