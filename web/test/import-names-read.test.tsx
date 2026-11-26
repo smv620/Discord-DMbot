@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 // @vitest-environment happy-dom
 // After a session is imported, DMbot reads its names (#5127, the web half of #5091). The import page shows that read in the shared
-// wait shape ("Reading names", part n of m, time running, last move), then one plain line for parts that could not be read,
+// wait shape ("Looking for names", part n of m, time running, last move), then one plain line for pieces that could not be checked,
 // or the stopped line; nothing shows when the reader is absent.
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -101,7 +101,7 @@ const answer = (n: JobProgress | null | undefined, unread?: number): ImportProgr
 });
 
 describe("the name reader of each session", () => {
-  it("shows Reading names with the part, the time running and the last move", async () => {
+  it("shows Looking for names with the part, the time running and the last move", async () => {
     await importing([answer(names())]);
     expect(await screen.findByText(w.names.reading_names!)).toBeTruthy();
     expect(screen.getByText(ww.progress(3, 8, "pieces"), { exact: false })).toBeTruthy();
@@ -132,10 +132,13 @@ describe("the name reader of each session", () => {
   it("a stopped reader with unread pieces shows the count under its stopped line", async () => {
     await importing([answer(names({ stage: "names_stopped", state: "failed" }), 2)]);
     expect(await screen.findByText(w.namesStopped)).toBeTruthy();
-    expect(screen.getByText(w.namesUnread(2))).toBeTruthy();
+    const stopped = screen.getByText(w.namesStopped);
+    const unread = screen.getByText(w.namesUnread(2));
+    // The count comes after the stopped line (WebDev-lead's ruling: "under the stopped line").
+    expect(stopped.compareDocumentPosition(unread) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("a stalled names read says it has stalled, while the page stays open", async () => {
+  it("a stalled names read says it has stalled", async () => {
     await importing([answer(names({ stage: "reading_names", state: "stalled" }))]);
     expect(await screen.findByText(w.names.reading_names!)).toBeTruthy();
     expect(screen.getByText(ww.stalled, { exact: false })).toBeTruthy();

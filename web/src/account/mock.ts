@@ -2636,7 +2636,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
             reason: null,
             stage: "done" as const,
             clock: null,
-            // The reader stopped early (#5127): the names found so far are still suggested.
+            // The reader stopped early (#5127): some names may be missing; the session itself is safe.
             names: {
               stage: "names_stopped" as const,
               done: 2,
