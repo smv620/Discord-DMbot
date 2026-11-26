@@ -6,7 +6,7 @@ changes `memory/book_links.py`: it only calls what is there.
 
 Jobs: `suggest` (the pairs worth asking about), `decide` (the DM's Same or Not the same for up to
 ten pairs: one `decide` call for each, each its own change with its own Undo, and the job stops at
-the first refusal, telling what was written and the store's own plain words for the refusal) and
+the first refusal, telling how many were written, which pick stopped and a code for why) and
 `undo` (take back a `decide` job's changes, newest first, stopping at the first that is too late).
 
 Every job is checked again here (still a DM, the Shared story switch on with a DM's confirmation).
@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory.book_links import CLASH, GONE, TAKEN_BOOK, TAKEN_TABLE, TWICE
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 
 log = logging.getLogger(__name__)
@@ -36,6 +37,16 @@ NOT_YOURS = "not_yours"  # no longer a DM of the campaign
 NOT_ON = "not_on"  # the switch is off, or no DM confirmed the right to use the material
 NOT_AVAILABLE = "not_available"  # the bot has no memory just now
 FAILED = "failed"  # anything else, including a bug
+
+# What a refused pick says, as the website's own codes: `book_links`' sentences are Discord's words
+# and stay there (the page has its own, and a change to a Discord sentence cannot change them).
+_REFUSALS = {
+    GONE: "gone",
+    CLASH: "clash",
+    TWICE: "twice",
+    TAKEN_BOOK: "taken_book",
+    TAKEN_TABLE: "taken_table",
+}
 
 TOO_LATE = "too_late"  # an undo that is past its time
 CHANGED_SINCE = "changed_since"  # an undo of something changed again after
@@ -157,17 +168,17 @@ async def run_one(host: Host, store: MatchStore, guild_id: int, item: Item) -> s
 
 async def _decide(host: Host, guild_id: int, item: Item) -> tuple[dict[str, Any], list[int]]:
     """One `decide` for each pick, each its own change; stop at the first refusal."""
-    written, batches, refusal = 0, [], ""
-    for pick in item.picks:
+    written, batches, refusal, at = 0, [], "", None
+    for index, pick in enumerate(item.picks):
         try:
             batch = await host.decide(guild_id, item.campaign_id, pick, item.user_id)
         except MemoryRuleError as exc:
-            refusal = str(exc)  # the store's plain words: no name of the book or the table in it
+            refusal, at = _REFUSALS.get(str(exc), FAILED), index  # a code, never Discord's words
             break
         written += 1
         if batch is not None:
             batches.append(batch)
-    return {"written": written, "refusal": refusal}, batches
+    return {"written": written, "refusal": refusal, "at": at}, batches
 
 
 async def _undo(host: Host, guild_id: int, item: Item) -> dict[str, Any]:

@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.campaigns import CampaignStore
+from dmbot.memory import book_links as links
 from dmbot.memory import web_adventure_matches as bot
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from tests.pg import DatabaseTest
@@ -31,6 +32,7 @@ class Matches(DatabaseTest):
         self.calls: list[tuple[Any, ...]] = []
         self.checked: str | None = None
         self.refuse_at: int | None = None  # the pick (by index) the store will not take
+        self.refusal = "That name is already linked to another."
         self.late_at: set[int] = set()  # the batches that are too late to undo
         self.changed_at: set[int] = set()
 
@@ -51,7 +53,7 @@ class Matches(DatabaseTest):
         ) -> int | None:
             number = sum(1 for c in self.calls if c[0] == "decide")
             if self.refuse_at == number:
-                raise MemoryRuleError("That name is already linked to another.")
+                raise MemoryRuleError(self.refusal)
             self.calls.append(("decide", pick, user_id))
             return 100 + number
 
@@ -108,7 +110,7 @@ class Matches(DatabaseTest):
         item = await self.queue("2" * 32, "decide", self.picks(3))
         self.assertEqual(await bot.run_one(self.host(), self.store, GUILD, item), "")
         got = await self.row("2" * 32)
-        self.assertEqual(got["answer"], {"written": 3, "refusal": ""})
+        self.assertEqual(got["answer"], {"written": 3, "refusal": "", "at": None})
         self.assertEqual(got["batches"], [100, 101, 102])
         self.assertEqual([c[0] for c in self.calls], ["decide"] * 3)
         self.assertEqual(self.calls[0][2], DM)
@@ -118,11 +120,28 @@ class Matches(DatabaseTest):
         item = await self.queue("3" * 32, "decide", self.picks(3))
         self.assertEqual(await bot.run_one(self.host(), self.store, GUILD, item), "")
         got = await self.row("3" * 32)
-        self.assertEqual(
-            got["answer"], {"written": 1, "refusal": "That name is already linked to another."}
-        )
+        self.assertEqual(got["answer"], {"written": 1, "refusal": "failed", "at": 1})
         self.assertEqual(got["batches"], [100])  # (the one written can still be undone)
         self.assertEqual(len(self.calls), 1)
+
+    async def test_each_refusal_is_a_code_and_the_answer_holds_no_sentence(self) -> None:
+        cases = {
+            links.GONE: "gone",
+            links.CLASH: "clash",
+            links.TWICE: "twice",
+            links.TAKEN_BOOK: "taken_book",
+            links.TAKEN_TABLE: "taken_table",
+            "Some other sentence the store may say one day.": "failed",
+        }
+        for n, (sentence, code) in enumerate(cases.items()):
+            self.calls.clear()
+            self.refuse_at, self.refusal = 0, sentence
+            rid = f"{n + 10:x}" * 16 + f"{n + 10:x}" * 16
+            item = await self.queue(rid[:32], "decide", self.picks(2))
+            await bot.run_one(self.host(), self.store, GUILD, item)
+            got = (await self.row(rid[:32]))["answer"]
+            self.assertEqual(got, {"written": 0, "refusal": code, "at": 0})
+            self.assertNotIn(sentence, repr(got))
 
     async def test_an_undo_takes_the_batches_back_newest_first(self) -> None:
         item = await self.queue("4" * 32, "undo", batches=[100, 101, 102])

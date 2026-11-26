@@ -395,8 +395,10 @@ async def matching(db: Database, session: Session, ref: str, match_id: str) -> d
     """A Match to files job's state, and its answer once done: `{state: waiting|working|done|
     failed, error, job, canUndo, answer, createdAt, updatedAt, serverNow}`. `answer` is, for
     `suggest`, `{pairs: [{planId, planName, planKind, entityId, entityName}]}`; for `decide`,
-    `{written, refusal}` (`refusal` is the store's plain words for the first pair it would not
-    take, "" when none); for `undo`, `{undone, note}` (`note`: "", `too_late` or `changed_since`).
+    `{written, refusal, at}` (`refusal` is a code for the first pair it would not take: `gone`,
+    `clash`, `twice`, `taken_book`, `taken_table` or `failed`, "" when none, and `at` is that
+    pick's index in the list sent, null when none); for `undo`, `{undone, note}` (`note`: "",
+    `too_late` or `changed_since`).
     The names are the book's and the table's own: the DM's page only, never logged. `canUndo` is
     true on a done `decide` that wrote something: pass its id as `source` to `match` with `undo`.
     `error` is a code (`not_yours`, `not_on`, `failed`) the page turns into words."""
