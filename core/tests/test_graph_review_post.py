@@ -82,13 +82,8 @@ class TheRules(unittest.TestCase):
     def test_a_report_with_no_stored_verdicts_is_never_posted(self) -> None:
         self.assertEqual(render(stored(verdicts=None)), gp.Held(gp.NO_VERDICTS))
 
-    def test_lore_is_quoted_only_from_the_dms_own_writing(self) -> None:
-        for kinds, quoted in (
-            (["own_writing"], True),
-            (["own_writing", "unknown"], False),  # one unknown source is enough to say nothing
-            (["unknown"], False),
-            ([], False),
-        ):
+    def test_a_lore_passage_is_never_quoted_whatever_its_upload_says(self) -> None:
+        for kinds in (["own_writing"], ["own_writing", "unknown"], ["unknown"], []):
             with self.subTest(kinds=kinds):
                 post = render(
                     stored(
@@ -101,11 +96,17 @@ class TheRules(unittest.TestCase):
                     )
                 )
                 assert isinstance(post, gp.Post)
-                self.assertEqual("silver key" in post.body, quoted)
-                self.assertEqual(gp.GENERIC_LORE in post.body, not quoted)
+                self.assertNotIn("silver key", post.body)
+                self.assertIn(gp.GENERIC_LORE, post.body)
 
-    def test_a_quote_from_a_line_and_a_lore_passage_needs_both_to_pass(self) -> None:
-        mixed = verdict(sources=["line", "lore"], speaker_ids=[ALICE], upload_kinds=["unknown"])
+    def test_a_line_from_someone_who_still_agrees_is_still_quoted_and_the_fix_posts(self) -> None:
+        post = render(stored(verdict(sources=["line"], speaker_ids=[ALICE])))
+        assert isinstance(post, gp.Post)
+        self.assertIn("Mara has served Tavin since the fire", post.body)
+        self.assertIn("Mara serves Tavin", post.body)  # (the fix's own words, from the structure)
+
+    def test_a_quote_from_a_line_and_a_lore_passage_is_held_because_of_the_lore(self) -> None:
+        mixed = verdict(sources=["line", "lore"], speaker_ids=[ALICE], upload_kinds=["own_writing"])
         post = render(stored(mixed))
         assert isinstance(post, gp.Post)
         self.assertNotIn("served Tavin", post.body)
