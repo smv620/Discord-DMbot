@@ -104,15 +104,15 @@ class Estimates(unittest.TestCase):
             self.assertGreaterEqual(est * 1000, words * credits.CREDITS_PER_UNIT["lore"])
 
     def test_adventure_estimate_is_the_priced_figure_and_never_below_it(self) -> None:
-        # (the one sentence the website's list and Discord's "Read it now?" both show, #5316)
-        want = credits.estimate_words(
-            "adventure",
-            credits.estimate(
-                "adventure", credits.units_of("adventure", words=1200), allowance=0, used=0
-            ),
+        # (the one sentence the website's list and Discord's "Read it now?" both show, #5316: six
+        # thousand characters are 1,200 words at five characters a word, which is 1.2 units and 72
+        # credits; the literal sentence is checked so a shared slip in the figure still fails)
+        self.assertEqual(
+            credits.adventure_estimate_words(6000), "About 72 AI credits for the adventure."
         )
-        self.assertEqual(credits.adventure_estimate_words(6000), want)
-        self.assertTrue(credits.adventure_estimate_words(0).startswith("About 0 AI credits"))
+        self.assertEqual(
+            credits.adventure_estimate_words(0), "About 0 AI credits for the adventure."
+        )
 
     def test_a_lore_text_is_estimated_from_the_models_prices_in_credits(self) -> None:
         from dmbot.memory.background import estimate_cents

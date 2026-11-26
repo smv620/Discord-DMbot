@@ -807,7 +807,11 @@ class Card(Setup):
         await self.card()
         ask = self.pressing()
         await ui.ReadButton(self.a.id).callback(ask)
-        self.assertIn(credits.adventure_estimate_words(doc.characters), ask.sent["content"])
+        sentence = credits.adventure_estimate_words(doc.characters)
+        self.assertIn(
+            f"chapters, places and people.\n{sentence}\nIt can take a few minutes",
+            ask.sent["content"],
+        )
 
     async def test_yes_starts_one_read_and_the_card_shows_it(self) -> None:
         doc = await self.book()
