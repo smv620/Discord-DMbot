@@ -507,6 +507,16 @@ describe("following a waiting action by its id (#3355, route 6)", () => {
     expect(within(tileFor("A map of the Brass Ford")).queryByText(w.workingStage)).toBeNull();
   });
 
+  it("a look that worked and then fails goes back to the page's own wait", async () => {
+    const api = followApi([{ state: "working" }]);
+    await press(api);
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.workingStage)).toBeTruthy();
+    (api.pictureActionLook as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("down"));
+    await passTime(WAITING_RECHECK_MS);
+    expect(within(tileFor("A map of the Brass Ford")).queryByText(w.workingStage)).toBeNull();
+    expect(within(tileFor("A map of the Brass Ford")).getByText(w.waitingStage)).toBeTruthy();
+  });
+
   it("a look that fails changes nothing: the wait stays and the list read goes on", async () => {
     const api = followApi([{ state: "working" }]);
     (api.pictureActionLook as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("down"));

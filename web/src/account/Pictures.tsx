@@ -76,6 +76,7 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
   const [since, setSince] = useState<Record<string, number>>({});
   // The action ids the API gave for waiting tiles, and the last look at each (#3355): the wait then shows the API's own stage and times.
   const actionIds = useRef<Record<string, string | number>>({});
+  const lookBusy = useRef(false);
   const [looks, setLooks] = useState<Record<string, PictureActionLook>>({});
   // One rhythm for every waiting tile: the list is read again every WAITING_RECHECK_MS while any tile waits (#3322).
   const rhythm = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -114,22 +115,36 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
   }
   /** One look at each waiting action that has an id (#3355). A look that fails changes nothing: the list read still ends the wait. */
   async function lookAtActions(): Promise<void> {
-    if (!ref || !api.pictureActionLook) return;
+    if (!ref || !api.pictureActionLook || lookBusy.current) return; // one round of looks at a time
+    lookBusy.current = true;
+    try {
+      await lookRound(ref, api.pictureActionLook.bind(api));
+    } finally {
+      lookBusy.current = false;
+    }
+  }
+  async function lookRound(ref: string, look: NonNullable<AccountApi["pictureActionLook"]>): Promise<void> {
     for (const [code, id] of Object.entries(actionIds.current)) {
       try {
-        const look = await api.pictureActionLook(ref, id);
+        const got = await look(ref, id);
         if (!mounted.current || actionIds.current[code] !== id) continue;
-        if (look.state === "refused" || look.state === "failed") {
-          const { [code]: _gone, ...rest } = waitingNow.current;
-          setProblem(code, look.note || words.actionFailed);
+        const rest = { ...waitingNow.current };
+        delete rest[code];
+        if (got.state === "refused" || got.state === "failed") {
+          setProblem(code, got.note || words.actionFailed);
           setWaitingState(rest);
-        } else if (look.state === "done") {
-          const { [code]: _gone, ...rest } = waitingNow.current;
+        } else if (got.state === "done") {
           setWaitingState(rest);
           void readFirst(appliedRef.current, true);
-        } else setLooks((old) => ({ ...old, [code]: look }));
+        } else setLooks((old) => ({ ...old, [code]: got }));
       } catch {
-        // The list read goes on.
+        // A look that fails drops the last look, so the tile goes back to the page's own clock and stuck notice while the list read goes on.
+        setLooks((old) => {
+          if (!(code in old)) return old;
+          const next = { ...old };
+          delete next[code];
+          return next;
+        });
       }
     }
   }
@@ -209,7 +224,13 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
     };
   }, []);
   // A different campaign's list must not be read by a rhythm started for this one.
-  useEffect(() => stopRhythm, [api, ref]);
+  useEffect(() => {
+    return () => {
+      stopRhythm();
+      actionIds.current = {};
+      setLooks({});
+    };
+  }, [api, ref]);
 
   if (!PICTURES_LIVE || !api.pictures) return <p class="muted">{words.notOpen}</p>;
 
@@ -258,7 +279,15 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
       const result = await api.pictureAction(ref, tile.code, action);
       if (!mounted.current) return; // the page was left while the action was on its way
       if (result.state === "waiting") {
+        // An older server sends no id: an id left from an earlier action on this tile must not end this wait.
         if (result.id !== undefined) actionIds.current[tile.code] = result.id;
+        else delete actionIds.current[tile.code];
+        setLooks((old) => {
+          if (!(tile.code in old)) return old;
+          const next = { ...old };
+          delete next[tile.code];
+          return next;
+        });
         setWaitingState({ ...waitingNow.current, [tile.code]: action });
         void lookAtActions();
         void readFirst(appliedRef.current);
