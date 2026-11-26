@@ -1363,6 +1363,7 @@ async def _read_background(
             not in (
                 "quote_widened",
                 "quote_reach",
+                "quote_heading",
                 "feeling_demoted",
                 "hand_over_dropped",
                 "hand_over_added",

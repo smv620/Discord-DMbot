@@ -538,6 +538,11 @@ def _third_name(span: str, others: Collection[str], ends: Collection[str]) -> bo
     return False
 
 
+HEADING_WORDS = 8  # a section title is a short line: a name, maybe "(Elf Hunter)"
+HEADING_REACH_WORDS = 120  # the most words between a title and a quote: the section's opening
+# A possessive opening the sentence is the one that means the section's character ("His elder
+# brother, Kell, ..."); "he" or "she", or a "his" mid-sentence, may mean someone the text named.
+_TITLE_PRONOUN = re.compile(r"\s*[\"'“‘(]?(?:his|her|their)\b", re.I)
 MIN_BORROWED_WORDS = 3  # the paragraph before must end in at least this many words to lend
 LONG_QUOTE_WORDS = 2 * QUOTE_WORDS  # a widened quote's most, when 20 cannot hold both ends
 
@@ -618,6 +623,8 @@ def _widen(
                         lost["quote_prev_paragraph"] += 1  # (the window really reaches into it)
                 return window
         if others is None or borrowed:
+            if titled := _titled(piece, paragraph, start, end, a, b, holds, lost, others, ends):
+                return titled
             continue
         for back in range(2, REACH_SENTENCES + 1):
             if len(starts) < back + 1:
@@ -633,7 +640,101 @@ def _widen(
                 if lost is not None:
                     lost["quote_reach"] += 1
                 return tokens
+        if titled := _titled(piece, paragraph, start, end, a, b, holds, lost, others, ends):
+            return titled
     return None
+
+
+def _titled(
+    piece: str,
+    paragraph: int,
+    start: int,
+    end: int,
+    a: str,
+    b: str,
+    holds: Callable[[str, str], bool],
+    lost: Dropped | None,
+    others: Collection[str] | None,
+    ends: Collection[str],
+) -> list[str] | None:
+    """`_heading_window`, counted as `quote_heading` when it gives a window (one place for both of
+    `_widen`'s paths to it)."""
+    window = _heading_window(piece, paragraph, start, end, a, b, holds, others, ends)
+    if window is not None and lost is not None:
+        lost["quote_heading"] += 1
+    return window
+
+
+_TITLE_MARKS = "#*-•_ \t"  # a title's own marks (markdown "## ", "**", a bullet): never quoted
+_TITLE_CLOSE = "\"'”’)]"  # closing marks that may follow a sentence's stop
+
+
+def _section_title(piece: str, paragraph: int) -> tuple[int, int] | None:
+    """Where the nearest section title above `paragraph` stands (start, end of the line), or None.
+    A title is a short line (`HEADING_WORDS`) that does not end like a sentence (even behind a
+    closing quote or bracket) and is no table row ("Tavin (the rogue) | NPC"): "Tor Vane (Elf
+    Hunter)", "## Tor Vane". Lines of the story on the way up are passed over, and blank lines
+    (of any white space) are skipped; the walk stops once `HEADING_REACH_WORDS` of the section lie
+    behind it, so a long document is never read back to its start."""
+    upto, behind = paragraph, 0
+    while upto > 0:
+        line_start = max(piece.rfind(c, 0, upto - 1) for c in "\n\r\u2028\u2029\x85") + 1
+        line = piece[line_start:upto].strip()
+        upto = line_start
+        if not line:
+            continue
+        words = line.strip(_TITLE_MARKS).split()
+        stop = line.rstrip(_TITLE_CLOSE)
+        if words and len(words) <= HEADING_WORDS and "|" not in line and stop[-1:] not in ".!?:;,":
+            return line_start, line_start + len(piece[line_start:].split("\n", 1)[0].rstrip())
+        behind += len(words)
+        if behind > HEADING_REACH_WORDS:
+            return None
+    return None
+
+
+def _heading_window(
+    piece: str,
+    paragraph: int,
+    start: int,
+    end: int,
+    a: str,
+    b: str,
+    holds: Callable[[str, str], bool],
+    others: Collection[str] | None = None,
+    ends: Collection[str] = (),
+) -> list[str] | None:
+    """The owner's case 1 on #2790: a section titled "Tor Vane (Elf Hunter)" then says "His elder
+    brother, Kell, vanished ... His younger sister, Mira, ..."; "his" means the section's
+    character. When the sentence the quote starts in opens with "his", "her" or "their", the
+    nearest section title above holds one of the two ends, the quote is still in the section's
+    opening (`HEADING_REACH_WORDS`), and no other name stands between the title and the quote's
+    end (`others`: then the pronoun may mean that one, and the who-is-it check decides, as for a
+    reach, #2757), the quote becomes the title, "…", and the quote's own words: both names are
+    then in the quoted words, and the DM confirms the line as every other. The "…" marks the one
+    kind of kept quote that is not a single run of the text. None when any of that is missing.
+    The lore prompt asks the AI for the same reading; this keeps what it writes."""
+    sentence_start = max(
+        [0, *(m.end() for m in _SENTENCE_END.finditer(piece, 0, start + 1))]
+        + [m.end() for m in _BREAK.finditer(piece, 0, start)]
+    )
+    if not _TITLE_PRONOUN.match(piece, sentence_start):
+        return None
+    found = _section_title(piece, paragraph)
+    if found is None:
+        return None
+    if len(piece[found[1] : start].split()) > HEADING_REACH_WORDS:
+        return None
+    if others is not None and _third_name(piece[found[1] : end], others, ends):
+        return None  # (the pronoun may mean that name: the who-is-it check decides)
+    title = piece[found[0] : found[1]].strip().strip(_TITLE_MARKS)
+    if not (holds(_squash(title), a) or holds(_squash(title), b)):
+        return None  # (the title must name one of the two: the quote alone names the other)
+    window = [*title.split(), "…", *piece[start:end].split()]
+    said = _squash(" ".join(window))
+    if not (holds(said, a) and holds(said, b)) or len(" ".join(window)) > REACH_CHARS:
+        return None  # (both names, and short enough that the stored quote keeps them both)
+    return window
 
 
 def _spellings(
