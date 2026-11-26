@@ -209,6 +209,7 @@ NOT_STAMPED: dict[str, str] = {
             "web_backups",
             "web_house_file_actions",
             "web_connection_reads",
+            "web_adventure_removals",
             "web_line_fixes",
             "web_peeks",
             "web_recap_style_actions",

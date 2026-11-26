@@ -8,6 +8,8 @@ from typing import Any, cast
 
 import httpx
 
+from dmbot.memory import web_adventure_removals as bot
+from dmbot.memory.adventure import AdventureStore
 from dmbot.web import adventure as web
 from dmbot.web import sessions
 from dmbot.web.app import create_app
@@ -217,3 +219,103 @@ class ReadList(Holding):
             self.assertEqual(got.status_code, 200 if on else 404, got.text)
             if on:
                 self.assertEqual(got.json()["items"][0]["name"], "The Harbour")
+
+
+class Removing(Holding):
+    async def rows(self) -> list[dict[str, Any]]:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT document_id, state, error, user_id FROM web_adventure_removals"
+            )
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def test_a_dm_queues_a_removal_and_the_bot_does_it_as_discord_does(self) -> None:
+        doc = "a" * 32
+        await self.give(doc, "The Lost Light.pdf")
+        await self.node("1" * 32, doc, "chapter", "The Harbour")
+        rid = await web.remove(self.web, self.session, self.cref, doc)
+        first = await web.removal(self.web, self.session, self.cref, rid)
+        self.assertEqual(first["state"], "waiting")
+        self.assertEqual((await self.rows())[0]["user_id"], ALICE.id)
+        store = bot.RemovalStore(self.db)
+        item = await store.claim_next(GUILD)
+        assert item is not None
+        self.assertEqual(await bot.run_one(AdventureStore(self.db), store, GUILD, item), "")
+        got = await web.removal(self.web, self.session, self.cref, rid)
+        self.assertEqual((got["state"], got["error"]), ("done", ""))
+        held = await web.held(self.web, self.session, self.cref)
+        self.assertEqual(held["documents"], [])  # the file, its nodes and links went with it
+        self.assertEqual((await web.read_nodes(self.web, self.session, self.cref))["total"], 0)
+
+    async def test_asking_twice_while_one_is_open_gives_the_same_removal(self) -> None:
+        await self.give("b" * 32, "Book.pdf")
+        first = await web.remove(self.web, self.session, self.cref, "b" * 32)
+        again = await web.remove(self.web, self.session, self.cref, "b" * 32)
+        self.assertEqual((first, len(await self.rows())), (again, 1))
+
+    async def test_a_player_a_missing_file_and_a_bad_id_are_all_not_found(self) -> None:
+        await self.give("c" * 32, "Book.pdf")
+        for who, doc in ((await self.bob(), "c" * 32), (self.session, "d" * 32),
+                         (self.session, "not-an-id")):  # fmt: skip
+            with self.assertRaises(RecapError) as caught:
+                await web.remove(self.web, who, self.cref, doc)
+            self.assertEqual(caught.exception.code, "not_found")
+        self.assertEqual(await self.rows(), [])
+
+    async def test_another_campaigns_file_cannot_be_removed(self) -> None:
+        await self.give("e" * 32, "Theirs.pdf", campaign=self.two.id)
+        with self.assertRaises(RecapError):
+            await web.remove(self.web, self.session, self.cref, "e" * 32)
+
+    async def test_a_removal_is_read_back_by_a_dm_of_the_campaign_only(self) -> None:
+        await self.give("f" * 32, "Book.pdf")
+        rid = await web.remove(self.web, self.session, self.cref, "f" * 32)
+        with self.assertRaises(RecapError):
+            await web.removal(self.web, await self.bob(), self.cref, rid)
+        with self.assertRaises(RecapError):
+            await web.removal(self.web, self.session, self.cref, "0" * 32)
+
+    async def test_a_dm_who_stopped_being_one_is_refused_by_the_bot(self) -> None:
+        await self.give("9" * 32, "Book.pdf")
+        rid = await web.remove(self.web, self.session, self.cref, "9" * 32)
+        await self.sql("DELETE FROM campaign_dms WHERE campaign_id = %s", self.one.id)
+        store = bot.RemovalStore(self.db)
+        item = await store.claim_next(GUILD)
+        assert item is not None
+        self.assertEqual(
+            await bot.run_one(AdventureStore(self.db), store, GUILD, item), "not_yours"
+        )
+        self.assertEqual((await self.rows())[0]["state"], "failed")
+        self.assertIsNotNone(rid)
+
+    async def test_the_sweep_drops_a_day_old_row(self) -> None:
+        await self.give("7" * 32, "Book.pdf")
+        await web.remove(self.web, self.session, self.cref, "7" * 32)
+        store = bot.RemovalStore(self.db, clock=lambda: 10**10)
+        self.assertEqual(await store.sweep(GUILD), 1)
+
+    async def test_the_routes_answer_404_until_the_switch_is_on(self) -> None:
+        await self.give("6" * 32, "Book.pdf")
+        for on in (False, True):
+            app = create_app(
+                settings(adventure_on=on),
+                self.web,
+                FakeDiscord(),
+                payments=FakeProvider(b"h" * 32, "https://x.example"),
+                clock=lambda: NOW,
+            )
+            token = await sessions.sign_in(self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+            ) as client:
+                client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+                got = await client.post(
+                    f"/me/campaigns/{self.cref}/adventure/{'6' * 32}/remove", headers=HEADERS
+                )
+                self.assertEqual(got.status_code, 202 if on else 404, got.text)
+                if on:
+                    polled = await client.get(
+                        f"/me/campaigns/{self.cref}/adventure/removals/{got.json()['removal']}",
+                        headers=HEADERS,
+                    )
+                    self.assertEqual(polled.json()["state"], "waiting")
