@@ -5155,10 +5155,12 @@ def create_app(
         except RecapError:
             raise HTTPException(status_code=404, detail="not_found") from None
 
-    # Match to files (#3694 slice G1): queued for the bot, which does what Discord's 🔗 does. The
-    # body is `{"job": "suggest"}`, `{"job": "decide", "picks": [[book id, table id, "same" |
-    # "not_same"], ...]}` (at most ten) or `{"job": "undo", "source": <a decide job's id>}`. Poll
-    # `.../adventure/matches/{id}`. The answer holds the book's and the table's names: a DM only.
+    # Match to files (#3694 G1, G2): queued for the bot, which does what Discord's 🔗 does.
+    # The body is `{"job": "suggest"}`; `{"job": "decide", "picks": [[book id, table id, "same" |
+    # "not_same"], ...]}` (at most ten); `{"job": "undo", "source": <a write job's id>}`; or, for
+    # one table entry, `{"job": "options", "entity": id, "skip": n}` and `{"job": "pick" |
+    # "unpick", "entity": id, "plan": id}`. Poll `.../adventure/matches/{id}`. The answer holds the
+    # book's and the table's names: a DM only.
     match_refusals = {
         "not_on": (409, "not_on"),
         "bad_job": (400, "bad_job"),
@@ -5173,6 +5175,21 @@ def create_app(
         if not settings.adventure_on:
             raise HTTPException(status_code=404, detail="not_found")
         job, source, raw = body.get("job"), body.get("source", ""), body.get("picks", [])
+        if job in adventure.ENTRY_JOBS:  # one table entry: options, pick or unpick (slice G2)
+            entity, plan, skip = body.get("entity"), body.get("plan", ""), body.get("skip", 0)
+            if (
+                not isinstance(entity, str)
+                or not isinstance(plan, str)
+                or not isinstance(skip, int)
+                or isinstance(skip, bool)
+            ):
+                raise HTTPException(status_code=400, detail="bad_job")
+            try:
+                made = await adventure.match_entry(db, session, ref, str(job), entity, plan, skip)
+            except RecapError as err:
+                status, detail = match_refusals.get(err.code, (404, "not_found"))
+                raise HTTPException(status_code=status, detail=detail) from None
+            return {"match": made}
         picks: list[tuple[str, str, str]] = []
         if not isinstance(job, str) or not isinstance(source, str) or not isinstance(raw, list):
             raise HTTPException(status_code=400, detail="bad_job")

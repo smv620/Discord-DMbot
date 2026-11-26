@@ -33,6 +33,15 @@ class Matches(DatabaseTest):
         self.checked: str | None = None
         self.refuse_at: int | None = None  # the pick (by index) the store will not take
         self.refusal = "That name is already linked to another."
+        self.entry: dict[str, Any] | None = {
+            "entity": {"id": ENTITY, "name": "Varn"},
+            "linked": [],
+            "options": [{"planId": PLAN, "name": "Captain Varn", "kind": "person", "chapter": ""}],
+            "total": 1,
+            "offset": 0,
+            "pageSize": 25,
+        }
+        self.unpicked: int | None = 55
         self.late_at: set[int] = set()  # the batches that are too late to undo
         self.changed_at: set[int] = set()
 
@@ -65,7 +74,17 @@ class Matches(DatabaseTest):
             self.calls.append(("undo", batch))
             return None
 
-        return bot.Host(check, suggest, decide, undo)
+        async def options(
+            guild_id: int, campaign_id: str, entity: str, offset: int
+        ) -> dict[str, Any] | None:
+            self.calls.append(("options", entity, offset))
+            return self.entry
+
+        async def unpick(guild_id: int, campaign_id: str, plan: str, entity: str) -> int | None:
+            self.calls.append(("unpick", plan, entity))
+            return self.unpicked
+
+        return bot.Host(check, suggest, decide, undo, options, unpick)
 
     async def queue(
         self,
@@ -73,15 +92,19 @@ class Matches(DatabaseTest):
         job: str,
         picks: list[list[str]] | None = None,
         batches: list[int] | None = None,
+        *,
+        entity: str = "",
+        plan: str = "",
+        skip: int = 0,
     ) -> bot.Item:
         from psycopg.types.json import Jsonb
 
         await self.sql(
             "INSERT INTO web_adventure_matches (guild_id, campaign_id, id, user_id, job, picks,"
-            " source_id, batches, created_at, updated_at)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 1, 1)",
+            " source_id, batches, entity_id, plan_id, skip, created_at, updated_at)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 1, 1)",
             GUILD, self.campaign, rid, DM, job, Jsonb(picks or []),
-            "f" * 32 if job == "undo" else "", batches or [],
+            "f" * 32 if job == "undo" else "", batches or [], entity, plan, skip,
         )  # fmt: skip
         item = await self.store.claim_next(GUILD)
         assert item is not None
@@ -142,6 +165,49 @@ class Matches(DatabaseTest):
             got = (await self.row(rid[:32]))["answer"]
             self.assertEqual(got, {"written": 0, "refusal": code, "at": 0})
             self.assertNotIn(sentence, repr(got))
+
+    async def test_options_keeps_the_entry_what_it_is_and_what_it_could_be(self) -> None:
+        item = await self.queue("a" * 32, "options", entity=ENTITY, skip=25)
+        self.assertEqual(await bot.run_one(self.host(), self.store, GUILD, item), "")
+        self.assertEqual(self.calls, [("options", ENTITY, 25)])
+        got = await self.row("a" * 32)
+        self.assertEqual((got["state"], got["answer"]), ("done", self.entry))
+
+    async def test_an_entry_that_is_gone_says_so_and_keeps_nothing(self) -> None:
+        self.entry = None
+        item = await self.queue("b" * 32, "options", entity=ENTITY)
+        self.assertEqual(await bot.run_one(self.host(), self.store, GUILD, item), "gone")
+        self.assertEqual((await self.row("b" * 32))["answer"], {})
+
+    async def test_a_pick_is_one_same_with_its_own_batch_for_the_undo(self) -> None:
+        item = await self.queue("c" * 32, "pick", entity=ENTITY, plan=PLAN)
+        self.assertEqual(await bot.run_one(self.host(), self.store, GUILD, item), "")
+        self.assertEqual(self.calls, [("decide", (PLAN, ENTITY, "same"), DM)])
+        got = await self.row("c" * 32)
+        self.assertEqual(got["answer"], {"written": 1, "refusal": "", "at": None})
+        self.assertEqual(got["batches"], [100])
+
+    async def test_a_pick_the_store_refuses_is_a_code_and_writes_nothing(self) -> None:
+        self.refuse_at, self.refusal = 0, links.TAKEN_BOOK
+        item = await self.queue("d" * 32, "pick", entity=ENTITY, plan=PLAN)
+        self.assertEqual(await bot.run_one(self.host(), self.store, GUILD, item), "")
+        got = await self.row("d" * 32)
+        self.assertEqual(got["answer"], {"written": 0, "refusal": "taken_book", "at": 0})
+        self.assertEqual(got["batches"], [])
+
+    async def test_an_unpick_takes_the_link_off_and_none_to_take_off_writes_nothing(
+        self,
+    ) -> None:
+        item = await self.queue("e" * 32, "unpick", entity=ENTITY, plan=PLAN)
+        self.assertEqual(await bot.run_one(self.host(), self.store, GUILD, item), "")
+        self.assertEqual(self.calls, [("unpick", PLAN, ENTITY)])
+        got = await self.row("e" * 32)
+        self.assertEqual((got["answer"]["written"], got["batches"]), (1, [55]))
+        self.unpicked = None
+        item = await self.queue("f" * 32, "unpick", entity=ENTITY, plan=PLAN)
+        await bot.run_one(self.host(), self.store, GUILD, item)
+        got = await self.row("f" * 32)
+        self.assertEqual((got["answer"]["written"], got["batches"]), (0, []))
 
     async def test_an_undo_takes_the_batches_back_newest_first(self) -> None:
         item = await self.queue("4" * 32, "undo", batches=[100, 101, 102])
