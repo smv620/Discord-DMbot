@@ -53,7 +53,7 @@ describe("the game master's actions", () => {
   it("a done action answers state done, and deleting pic-5 answers waiting and the picture is gone", async () => {
     const api = mockApi("table");
     expect(await api.pictureAction!(REF, "pic-3", "make-public")).toEqual({ state: "done", note: "" });
-    expect(await api.pictureAction!(REF, "pic-5", "delete")).toEqual({ state: "waiting", note: "" });
+    expect(await api.pictureAction!(REF, "pic-5", "delete")).toEqual({ state: "waiting", note: "", id: "act-5" });
     expect(codes(await api.pictures!(REF, {}))).not.toContain("pic-5");
   });
 
@@ -125,6 +125,16 @@ describe("the real client", () => {
       'POST /me/campaigns/100.cmp1/pictures/pic-2 {"action":"permanent"}',
       'POST /me/campaigns/100.cmp1/pictures/pic-2 {"action":"delete"}',
     ]);
+  });
+
+  it("follows a waiting action at its own address, the id kept as given", async () => {
+    const seen: string[] = [];
+    const api = httpApi("https://api.example", (async (url: string, init?: RequestInit) => {
+      seen.push(`${init?.method ?? "GET"} ${new URL(url).pathname}`);
+      return new Response(JSON.stringify({ id: "act 1", state: "working" }), { status: 200 });
+    }) as typeof fetch);
+    await expect(api.pictureActionLook!(REF, "act 1")).resolves.toMatchObject({ state: "working" });
+    expect(seen).toEqual(["GET /me/campaigns/100.cmp1/pictures/actions/act%201"]);
   });
 
   it("a 202 answers state waiting and a 200 answers state done, and a 409 permanent-full keeps its note", async () => {

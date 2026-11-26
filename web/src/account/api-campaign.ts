@@ -3,6 +3,7 @@
 // in `CAMPAIGN_METHODS` there, and a test keeps the two in step.
 import type {
   PictureAction,
+  PictureActionLook,
   PictureActionResult,
   PictureItem,
   PictureList,
@@ -140,6 +141,8 @@ export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Parti
         false,
         pictureErrorKinds,
       )) as PictureActionResult,
+    pictureActionLook: async (campaignRef, id) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/pictures/actions/${encodeURIComponent(String(id))}`)) as PictureActionLook,
     sessionNotes: async (campaignRef, at) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/session-notes/${at}`)) as SessionNotes,
     transcript: async (campaignRef, number, version, offset = 0) =>
