@@ -43,8 +43,10 @@ class WhoKnowsOnTheWeb(Web):
         got = await self.graph(hops=2)
         some = self.link_of(got, "mira-heir")
         self.assertEqual(some["who"], "some")
+        # (both are in the party, so Discord's order is the party list's, which breaks a tie of
+        # joining times by id: the ids are random here, so the test compares them as a set)
         self.assertEqual(
-            some["knownBy"],
+            sorted(some["knownBy"], key=lambda h: h["name"]),
             [
                 {"id": self.rook, "name": "Rook", "status": "party"},
                 {"id": self.tavin, "name": "Tavin", "status": "party"},
@@ -171,7 +173,7 @@ class AfterTheCharacterChanges(WhoKnowsOnTheWeb):
         await self.knowers(self.secret_link, self.rook, self.tavin)
         await self.sql("UPDATE memory_entities SET role = 'npc' WHERE id = %s", self.tavin)
         some = self.link_of(await self.graph(hops=2), "mira-heir")
-        self.assertEqual([k["name"] for k in some["knownBy"]], ["Rook", "Tavin"])
+        self.assertEqual(sorted(k["name"] for k in some["knownBy"]), ["Rook", "Tavin"])
 
     async def test_a_connection_only_an_npc_knows_is_held_by_some_not_the_dm(self) -> None:
         await self.knowers(self.secret_link, self.tavin)
