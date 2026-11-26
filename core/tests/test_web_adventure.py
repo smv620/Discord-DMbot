@@ -143,3 +143,77 @@ class Holding(WithChecks):
             self.assertEqual(got.status_code, 200 if on else 404, got.text)
             if on:
                 self.assertEqual([d["name"] for d in got.json()["documents"]], ["Mine.pdf"])
+
+
+class ReadList(Holding):
+    async def link(self, rid: str, doc: str, a: str, b: str, need: str) -> None:
+        await self.sql(
+            "INSERT INTO plan_links (guild_id, campaign_id, id, document_id, from_id, to_id, need,"
+            " quote, chunk_ids, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s, 'q', '{}', 1)",
+            GUILD, self.one.id, rid, doc, a, b, need,
+        )  # fmt: skip
+
+    async def test_the_list_is_the_cards_order_chapters_places_people_then_links(self) -> None:
+        doc = "a" * 32
+        await self.give(doc, "Book.pdf")
+        await self.node("3" * 32, doc, "person", "Captain Varn")
+        await self.node("2" * 32, doc, "place", "Saltmere")
+        await self.node("1" * 32, doc, "chapter", "The Harbour")
+        await self.link("4" * 32, doc, "1" * 32, "3" * 32, "alive")
+        got = await web.read_nodes(self.web, self.session, self.cref)
+        self.assertEqual(got["total"], 4)
+        self.assertEqual(
+            [(i["kind"], i["name"], i["summary"]) for i in got["items"]],
+            [("chapter", "The Harbour", SECRET), ("place", "Saltmere", SECRET),
+             ("person", "Captain Varn", SECRET), ("link", "The Harbour → Captain Varn", "alive")],
+        )  # fmt: skip
+
+    async def test_pages_are_fifty_lines_and_run_on_into_the_links(self) -> None:
+        doc = "b" * 32
+        await self.give(doc, "Big.pdf")
+        for n in range(49):
+            await self.node(f"{n:032x}", doc, "place", f"Place {n:02d}")
+        await self.node("e" * 32, doc, "chapter", "Chapter")
+        await self.link("f" * 32, doc, "e" * 32, f"{0:032x}", "open")
+        await self.link("d" * 32, doc, "e" * 32, f"{1:032x}", "")
+        first = await web.read_nodes(self.web, self.session, self.cref)
+        self.assertEqual((first["total"], len(first["items"])), (52, 50))
+        self.assertEqual(first["items"][-1]["kind"], "place")
+        second = await web.read_nodes(self.web, self.session, self.cref, 50)
+        self.assertEqual([i["kind"] for i in second["items"]], ["link", "link"])
+        past = await web.read_nodes(self.web, self.session, self.cref, 500)
+        self.assertEqual(past["items"], [])
+
+    async def test_only_a_dm_of_the_campaign_reads_it(self) -> None:
+        doc = "c" * 32
+        await self.give(doc, "Mine.pdf")
+        await self.node("1" * 32, doc, "chapter", "The Harbour")
+        with self.assertRaises(RecapError):
+            await web.read_nodes(self.web, await self.bob(), self.cref)
+
+    async def test_another_campaigns_book_is_never_in_it(self) -> None:
+        await self.give("d" * 32, "Theirs.pdf", campaign=self.two.id)
+        got = await web.read_nodes(self.web, self.session, self.cref)
+        self.assertEqual((got["total"], got["items"]), (0, []))
+
+    async def test_the_route_answers_404_until_the_switch_is_on(self) -> None:
+        doc = "e" * 32
+        await self.give(doc, "Mine.pdf")
+        await self.node("1" * 32, doc, "chapter", "The Harbour")
+        for on in (False, True):
+            app = create_app(
+                settings(adventure_on=on),
+                self.web,
+                FakeDiscord(),
+                payments=FakeProvider(b"h" * 32, "https://x.example"),
+                clock=lambda: NOW,
+            )
+            token = await sessions.sign_in(self.web, cast(Any, ALICE), [THURSDAY], now=NOW, days=30)
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=app), base_url="https://web-api.internal.test"
+            ) as client:
+                client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+                got = await client.get(f"/me/campaigns/{self.cref}/adventure/read", headers=HEADERS)
+            self.assertEqual(got.status_code, 200 if on else 404, got.text)
+            if on:
+                self.assertEqual(got.json()["items"][0]["name"], "The Harbour")
