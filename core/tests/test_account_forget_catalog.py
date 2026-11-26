@@ -161,11 +161,15 @@ class EveryPersonColumnHasARule(DatabaseTest):
         part_j = import_module("dmbot.migrations.0633_forget_connection_reads")
         part_k = import_module("dmbot.migrations.0640_forget_adventure_removals")
         part_l = import_module("dmbot.migrations.0642_forget_adventure_gives")
+        part_m = import_module("dmbot.migrations.0644_forget_adventure_reads")
+        part_n = import_module("dmbot.migrations.0646_forget_adventure_guides")
+        part_o = import_module("dmbot.migrations.0648_forget_adventure_matches")
         done = {
             *part_a.DELETED, *part_a.ZEROED, *part_b.ZEROED, *part_c.DELETED, *part_d.ZEROED,
             *part_e.DELETED, *part_f.ZEROED, *part_g.DELETED, *part_g.ZEROED, *part_g.MOVES,
             *part_h.ZEROED, *part_i.DELETED, *part_i.ZEROED, *part_j.DELETED,
-            *part_k.DELETED, *part_l.DELETED,
+            *part_k.DELETED, *part_l.DELETED, *part_m.DELETED,
+            *part_n.DELETED, *part_o.DELETED,
         }  # fmt: skip
         deleted_tables = {
             t
@@ -178,6 +182,9 @@ class EveryPersonColumnHasARule(DatabaseTest):
                 *part_j.DELETED,
                 *part_k.DELETED,
                 *part_l.DELETED,
+                *part_m.DELETED,
+                *part_n.DELETED,
+                *part_o.DELETED,
             )
         }
         async with self.db.unscoped() as conn:

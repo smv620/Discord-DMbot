@@ -5078,6 +5078,117 @@ def create_app(
         except RecapError:
             raise HTTPException(status_code=404, detail="not_found") from None
 
+    # "Yes, read it" for one file (#3694 slice E): queued for the bot, which makes the plan check
+    # and starts the read as Discord's button does. Poll `.../adventure/reads/{id}` for whether it
+    # started; the read's own progress is the file's `read` in the adventure list.
+    read_refusals = {
+        "gone": (404, "not_found"),
+        "not_readable": (409, "not_readable"),
+        "already_read": (409, "already_read"),
+        "busy": (409, "busy"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/adventure/{document}/read", status_code=202)
+    async def me_adventure_read_start(ref: str, document: str, signed: Signed) -> dict[str, str]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return {"read": await adventure.read(db, session, ref, document)}
+        except RecapError as err:
+            status, detail = read_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/adventure/reads/{read_id}")
+    async def me_adventure_reading(ref: str, read_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await adventure.reading(db, session, ref, read_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    # Guide me for one file (#3694 slice F): queued for the bot, which answers with the same
+    # function as Discord's 🧭. `job` is `read`, `pick` (with `chapter`) or `clear`. Poll
+    # `.../adventure/guides/{id}`. The answer is the book's own names: a DM only, never logged.
+    guide_refusals = {
+        "gone": (404, "not_found"),
+        "not_guide": (409, "not_guide"),
+        "bad_job": (400, "bad_job"),
+        "busy": (409, "busy"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/adventure/{document}/guide", status_code=202)
+    async def me_adventure_guide(
+        ref: str, document: str, signed: Signed, job: str = "read", chapter: str = ""
+    ) -> dict[str, str]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return {"guide": await adventure.guide(db, session, ref, document, job, chapter)}
+        except RecapError as err:
+            status, detail = guide_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/adventure/guides/{guide_id}")
+    async def me_adventure_guiding(ref: str, guide_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await adventure.guiding(db, session, ref, guide_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
+    # Match to files (#3694 slice G1): queued for the bot, which does what Discord's 🔗 does. The
+    # body is `{"job": "suggest"}`, `{"job": "decide", "picks": [[book id, table id, "same" |
+    # "not_same"], ...]}` (at most ten) or `{"job": "undo", "source": <a decide job's id>}`. Poll
+    # `.../adventure/matches/{id}`. The answer holds the book's and the table's names: a DM only.
+    match_refusals = {
+        "not_on": (409, "not_on"),
+        "bad_job": (400, "bad_job"),
+        "nothing_to_undo": (409, "nothing_to_undo"),
+        "busy": (409, "busy"),
+        "too_soon": (429, "too_soon"),
+    }
+
+    @app.post("/me/campaigns/{ref}/adventure/matches", status_code=202)
+    async def me_adventure_match(ref: str, body: dict[str, Any], signed: Signed) -> dict[str, str]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        job, source, raw = body.get("job"), body.get("source", ""), body.get("picks", [])
+        picks: list[tuple[str, str, str]] = []
+        if not isinstance(job, str) or not isinstance(source, str) or not isinstance(raw, list):
+            raise HTTPException(status_code=400, detail="bad_job")
+        for item in raw:
+            if (
+                not isinstance(item, list)
+                or len(item) != 3
+                or not all(isinstance(part, str) for part in item)
+            ):
+                raise HTTPException(status_code=400, detail="bad_job")
+            picks.append((item[0], item[1], item[2]))
+        try:
+            return {"match": await adventure.match(db, session, ref, job, picks, source)}
+        except RecapError as err:
+            status, detail = match_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/adventure/matches/{match_id}")
+    async def me_adventure_matching(ref: str, match_id: str, signed: Signed) -> dict[str, Any]:
+        session, _token = signed
+        if not settings.adventure_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await adventure.matching(db, session, ref, match_id)
+        except RecapError:
+            raise HTTPException(status_code=404, detail="not_found") from None
+
     # A connection said in the DM's own words (#2940 slice C): queued for the bot, which reads it,
     # shows proposals, and writes only what the DM confirms. 404 while DMBOT_WEB_CONNECTION_SAID is
     # off. The DM's words are never logged.
