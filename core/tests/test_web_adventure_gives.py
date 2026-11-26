@@ -165,3 +165,29 @@ class Gives(DatabaseTest):
         await self.queue("c" * 32)
         late = bot.GiveStore(self.db, clock=lambda: 10.0**9)
         self.assertEqual(await late.sweep(GUILD), [KEY])
+
+    async def test_a_bucket_that_cannot_delete_does_not_fail_the_job(self) -> None:
+        # (the object is left to the bucket's own one-day rule; the file is kept all the same)
+        class CannotDelete(FakeStaging):
+            async def delete(self, key: str) -> None:
+                raise BucketError("x")
+
+        out = await self.give("d" * 32, CannotDelete({KEY: BOOK.encode()}))
+        self.assertEqual(out.error, "")
+        got = await self.row("d" * 32)
+        self.assertEqual(got["state"], "done")
+        [doc] = await self.adventure.documents(GUILD, self.campaign)
+        self.assertEqual(doc.file_name, "Book.txt")
+
+    async def test_an_unexpected_reader_error_ends_the_row_as_failed(self) -> None:
+        async def broken(name: str, raw: bytes) -> str:
+            raise RuntimeError("the words of the book")
+
+        with self.assertLogs("dmbot.memory.web_adventure_gives", level="WARNING") as logged:
+            out = await self.give("e" * 32, FakeStaging({KEY: BOOK.encode()}), broken)
+        self.assertEqual(out.error, "failed")
+        got = await self.row("e" * 32)
+        self.assertEqual((got["state"], got["object_key"]), ("failed", ""))
+        self.assertEqual(await self.adventure.documents(GUILD, self.campaign), [])
+        self.assertIn("RuntimeError", "".join(logged.output))
+        self.assertNotIn("the words of the book", "".join(logged.output))
