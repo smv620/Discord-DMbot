@@ -3,7 +3,7 @@
 import type { AdventureApi, AdventureMatch, ApiErrorKind, AdventureGive, AdventureGuide, AdventureList, AdventureRead, AdventureReadStart, AdventureRemoval, ApiHelpers } from "./api";
 
 // The refusals only these calls know, worded by the page: kept here so the first download does not carry them.
-const kinds: Record<string, ApiErrorKind> = { not_on: "not-on", not_guide: "not-on", not_readable: "not-readable" };
+const kinds: Record<string, ApiErrorKind> = { not_on: "not-on", not_guide: "not-on", not_readable: "not-readable", nothing_to_undo: "nothing-to-undo" };
 
 export default function adventureArea({ call: send }: ApiHelpers): AdventureApi {
   const call = (method: "GET" | "POST", path: string, body?: unknown, raw?: Blob): Promise<unknown> => send(method, path, body, false, raw, false, kinds);

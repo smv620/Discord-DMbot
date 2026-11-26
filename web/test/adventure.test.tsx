@@ -501,7 +501,7 @@ describe("Match names (#3694 slice G1)", () => {
     expect(callsOf(api)[1]).toBe("adventureMatch:100.cmp1:decide:b1>e1=same,b2>e2=not_same");
     expect(screen.queryByText(/Captain Varn/)).toBeNull(); // (answered pairs leave the list)
     fireEvent.click(screen.getByRole("button", { name: w.matchUndo }));
-    expect(await screen.findByText(w.matchUndone, {}, slow)).toBeTruthy();
+    expect(await screen.findByText(w.matchUndoneLook, {}, slow)).toBeTruthy();
     expect(callsOf(api)[2]).toBe("adventureMatch:100.cmp1:undo:match-2");
   }, 60_000);
 
@@ -527,6 +527,8 @@ describe("Match names (#3694 slice G1)", () => {
     fireEvent.click(screen.getByRole("button", { name: w.matchSave }));
     expect((await screen.findByRole("alert", {}, slow)).textContent).toBe(w.matchRefusals.taken_book);
     expect(await screen.findByText(w.matchSaved(1), {}, slow)).toBeTruthy(); // (the pick before it was written)
+    expect(screen.queryByText(/Captain Varn/)).toBeNull(); // (the written pair leaves the list)
+    expect(pairLegend("The Salt Gate")).toBeTruthy(); // (the pair that stopped the save stays, to be looked at again)
     expect(callsOf(api)).toHaveLength(2);
   }, 60_000);
 
@@ -537,4 +539,20 @@ describe("Match names (#3694 slice G1)", () => {
     fireEvent.click(screen.getByRole("button", { name: w.matchHide }));
     expect(screen.getByRole("button", { name: w.match })).toBeTruthy();
   }, 30_000);
+});
+
+describe("Match names: the undo's own note (#3694 slice G1)", () => {
+  it("says it was too late when core says so, and a second look is offered", async () => {
+    const api = mockApi("table");
+    render(<Adventure api={api} refId="100.cmp1.match-late" />);
+    await screen.findByText("The Glass Orchard.pdf", {}, slow);
+    fireEvent.click(screen.getByRole("button", { name: w.match }));
+    await screen.findByText(/Captain Varn/, {}, slow);
+    fireEvent.click(screen.getAllByRole("radio", { name: w.matchSame })[0] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: w.matchSave }));
+    await screen.findByText(w.matchSaved(1), {}, slow);
+    fireEvent.click(screen.getByRole("button", { name: w.matchUndo }));
+    expect(await screen.findByText(w.matchUndoNotes.too_late as string, {}, slow)).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.matchAgain })).toBeTruthy();
+  }, 60_000);
 });

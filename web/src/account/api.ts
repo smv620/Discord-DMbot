@@ -3331,6 +3331,7 @@ export type ApiErrorKind =
   | "not-in-party" // a leave of someone not in the party now (#4778 a2)
   | "already-back" // a return of someone already back (#4778 a2)
   | "not-a-pc" // a character that is not a player character now (#4778 a2)
+  | "nothing-to-undo" // the adventure match has nothing to take back (#3694 slice G1)
   | "not-readable" // the file has no text to read, or its text is gone (#3694 slice E; a file read already has no Read button, so that rare refusal reads as the general one)
   | "not-on" // Shared story is not on, or the right to use the material is not on record (#3694 slice D)
   | "bad-file" // a sent map is not a PNG, JPEG or WebP picture the page can use, or is too big (#4347)

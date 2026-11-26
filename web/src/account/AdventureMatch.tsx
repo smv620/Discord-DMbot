@@ -45,7 +45,7 @@ export default function AdventureMatchPanel({ api, refId }: { api: AdventureApi;
   }, [busy]);
 
   /** Queue one ask and poll it to its end; `done` gets the finished job (with its id), or null after the problem has been shown. */
-  async function run(body: Body, done: (got: AdventureMatch, id: string) => void): Promise<void> {
+  async function run(body: Body, done: (got: AdventureMatch, id: string) => void, slow: string = w.matchSlow): Promise<void> {
     if (sending.current) return;
     sending.current = true;
     const mine = epoch.current;
@@ -81,14 +81,14 @@ export default function AdventureMatchPanel({ api, refId }: { api: AdventureApi;
             return;
           }
         } catch (error) {
-          if (error instanceof ApiError && (error.kind === "not-found" || error.kind === "signed-out")) return stop(w.matchSlow);
+          if (error instanceof ApiError && (error.kind === "not-found" || error.kind === "signed-out")) return stop(slow);
           errors += 1;
-          if (errors >= 3) return stop(w.matchSlow);
+          if (errors >= 3) return stop(slow);
         }
       }
-      stop(w.matchSlow);
+      stop(slow);
     } finally {
-      sending.current = false;
+      if (here()) sending.current = false;
     }
   }
 
@@ -115,17 +115,18 @@ export default function AdventureMatchPanel({ api, refId }: { api: AdventureApi;
       setSaid(written > 0 ? w.matchSaved(written) : w.matchSavedNone);
       setProblem(refusal ? (w.matchRefusals[refusal] ?? w.matchRefusals.failed ?? "") : "");
       setUndoOf(got.canUndo ? id : null);
-      // The answered pairs are gone from the list: what was written, and what was refused, are looked at again by the next look.
-      setPairs((now) => (now ?? []).filter((p) => !picks.some(([b, t]) => b === p.planId && t === p.entityId)));
+      // Only the pairs that were written leave the list (the first `written` picks, in the order sent): the one that stopped the save, and any after it, stay.
+      const gone = picks.slice(0, written);
+      setPairs((now) => (now ?? []).filter((p) => !gone.some(([b, t]) => b === p.planId && t === p.entityId)));
       setTimeout(() => headBox.current?.focus(), 0);
-    });
+    }, w.matchSlowSave);
   }
 
   function undo(): void {
     if (!undoOf) return;
     void run({ job: "undo", source: undoOf }, (got) => {
       const note = got.answer?.note ?? "";
-      setSaid(note ? (w.matchUndoNotes[note] ?? w.matchUndone) : w.matchUndone);
+      setSaid(note ? (w.matchUndoNotes[note] ?? w.matchUndone) : w.matchUndoneLook);
       setUndoOf(null);
       setTimeout(() => headBox.current?.focus(), 0);
     });
@@ -170,11 +171,12 @@ export default function AdventureMatchPanel({ api, refId }: { api: AdventureApi;
               {problem}
             </p>
           )}
-          {said && <p role="status">{said}</p>}
+          <p role="status">{said}</p>
           {!busy && pairs !== null && shown.length === 0 && !said && <p>{w.matchNothing}</p>}
           {!busy && shown.length > 0 && (
             <div class="stack">
               <p class="small muted">{w.matchHow}</p>
+              {(pairs ?? []).length > PICKS_MAX && <p class="small muted">{w.matchFirst(PICKS_MAX)}</p>}
               <ul class="stack">
                 {shown.map((p) => {
                   const key = keyOf(p);
