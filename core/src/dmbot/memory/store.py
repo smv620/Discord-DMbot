@@ -11387,6 +11387,22 @@ def companion_refusal(message: str) -> str | None:
     )
 
 
+# The three companion refusals as short codes (#5165 part 3): the website's queue records the code
+# in the answer row and the answer read turns it back into the store's own sentence, so the page
+# never shows a raw exception and never has its own copy of the words.
+COMPANION_CODES = {
+    "not_npc": COMPANION_NOT_NPC,
+    "party_source": COMPANION_PARTY_SOURCE,
+    "target": COMPANION_TARGET,
+}
+
+
+def companion_code(message: str) -> str | None:
+    """Which companion refusal this is (`not_npc`, `party_source` or `target`), or None for any
+    other refusal."""
+    return next((code for code, words in COMPANION_CODES.items() if words == message), None)
+
+
 def companion_end(entity: Entity) -> dict[str, Any]:
     """An entry as the companion check reads it (#5164)."""
     return {"type": entity.type, "role": entity.role, "party": entity.party}
