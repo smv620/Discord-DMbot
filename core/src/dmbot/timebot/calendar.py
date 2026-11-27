@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from dmbot.timebot import layout as layout_mod
-from dmbot.timebot.clock import MINUTES_PER_DAY, day_of
+from dmbot.timebot.clock import MINUTES_PER_DAY, clock_time, day_of, day_part, time_of_day
 
 DAYS = "days"  # "Day 12": the default, no setting needed
 HARPTOS = "harptos"
@@ -174,12 +174,14 @@ class Calendar:
         elif self.layout is not None or self.layout_start is not None:
             raise ValueError("calendar")
 
-    def words(self, minute: int) -> str:
-        """The date of this game minute: Day N, the Harptos date, or the custom calendar's."""
+    def words(self, minute: int, *, weekday: bool = False) -> str:
+        """The date of this game minute: Day N, the Harptos date, or the custom calendar's. With
+        `weekday`, a calendar that has weekdays puts the weekday first (the DM's full clock card
+        only); any other says what it always did."""
         if self.kind == CUSTOM and self.layout is not None and self.layout_start is not None:
             if type(minute) is not int or minute < 0:
                 raise ValueError("minute")
-            return self.layout.words(day_of(minute), self.layout_start)
+            return self.layout.words(day_of(minute), self.layout_start, weekday=weekday)
         return date_words(minute, self.kind, self.start)
 
 
@@ -218,3 +220,27 @@ def from_door(got: Mapping[str, object]) -> Calendar:
     except ValueError:  # (e.g. a leap day in a common year)
         return Calendar()
     return Calendar()
+
+
+# -- the clock's lines, the date part always `Calendar.words` -----------------------------------
+# One printed form everywhere ("Summer 5th, 1201 AR, afternoon (14:30)"): a line built by hand would
+# drift from the golden Harptos form. With no calendar they are the clock's own "Day 5, ..." lines
+# (`clock.label`, `short_label`), so a campaign that never set one sees what it always saw.
+
+
+def label(minute: int, calendar: Calendar | None = None) -> str:
+    """ "Summer 5th, 1201 AR, afternoon (14:30)": the DM's pinned message, with the weekday first
+    where the calendar has them."""
+    when = (calendar or Calendar()).words(minute, weekday=True)
+    t = time_of_day(minute)
+    return f"{when}, {day_part(minute)} ({t // 60}:{t % 60:02d})"
+
+
+def short_label(minute: int, calendar: Calendar | None = None) -> str:
+    """ "Summer 5th, 1201 AR, afternoon": the players' clock, with no exact time."""
+    return f"{(calendar or Calendar()).words(minute)}, {day_part(minute)}"
+
+
+def exact_label(minute: int, calendar: Calendar | None = None) -> str:
+    """ "Summer 5th, 1201 AR, 14:30": the DM's line for one group."""
+    return f"{(calendar or Calendar()).words(minute)}, {clock_time(minute)}"

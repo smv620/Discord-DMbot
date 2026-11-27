@@ -17,6 +17,7 @@ from dmbot.campaigns import CampaignError
 from dmbot.dm_screen import clock as ui
 from dmbot.timebot import clock as game
 from dmbot.timebot import combat_phrases as phrases
+from dmbot.timebot.calendar import Calendar
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.store import ClockStore
 from tests.test_timebot import (
@@ -176,7 +177,13 @@ class Wiring(unittest.TestCase):
         fight = game.combat_start(Clock(NOON4, 0))
         assert fight is not None
         for clock in (Clock(NOON4, 0), fight):
-            out = ui.small(ui.players_view(SimpleNamespace(clock=clock, split=False, groups=())))  # type: ignore[arg-type]
+            out = ui.small(
+                ui.players_view(
+                    SimpleNamespace(  # type: ignore[arg-type]
+                        clock=clock, split=False, groups=(), calendar=Calendar()
+                    )
+                )
+            )
             self.assertNotIn("Combat", out)
             self.assertNotIn("round", out)
             self.assertEqual(out, f"-# 🕰️ {game.short_label(NOON4)}")

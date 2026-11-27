@@ -23,7 +23,9 @@ from typing import Any
 
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.dm_screen import levels
+from dmbot.timebot import calendar as calendar_mod
 from dmbot.timebot import clock as game
+from dmbot.timebot.calendar import Calendar
 from dmbot.timebot.split import Group
 from dmbot.timebot.store import Stored
 
@@ -33,16 +35,18 @@ TICK_S = 60  # how often the loop looks; the gap itself is the level's
 LINE_MAX = MESSAGE_MAX - 100  # a split party has at most a few short names
 
 
-def when(minute: int) -> str:
+def when(minute: int, calendar: Calendar | None = None) -> str:
     """ "Day 4, afternoon (14:30)": the clock's own words, day first as on the players' clock
-    ("Day 5, morning"), with the exact time as on the DM's."""
-    return f"Day {game.day_of(minute)}, {game.day_part(minute)} ({game.clock_time(minute)})"
+    ("Day 5, morning"), with the exact time as on the DM's. The date is the campaign's calendar's
+    ("Summer 5th, 1201 AR, afternoon (14:30)"), the one printed form."""
+    date = calendar_mod.short_label(minute, calendar)
+    return f"{date} ({game.clock_time(minute)})"
 
 
-def _group(group: Group) -> str:
+def _group(group: Group, calendar: Calendar | None = None) -> str:
     name = group.name
     words = name if name.casefold().startswith("the ") else f"the {name}"
-    return f"{words} group, {when(group.clock.minute)}"
+    return f"{words} group, {when(group.clock.minute, calendar)}"
 
 
 def line(stored: Stored) -> str:
@@ -50,8 +54,8 @@ def line(stored: Stored) -> str:
     one message is cut between groups and ends "+N more", never in the middle of a word."""
     head = "🕰️ Where we are: "
     if not stored.split:
-        return f"{head}{when(stored.clock.minute)}."
-    parts = [_group(g) for g in stored.groups]
+        return f"{head}{when(stored.clock.minute, stored.calendar)}."
+    parts = [_group(g, stored.calendar) for g in stored.groups]
     text = head + "; ".join(parts) + "."
     if len(text) <= LINE_MAX:
         return text

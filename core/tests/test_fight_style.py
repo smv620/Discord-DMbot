@@ -15,6 +15,7 @@ from dmbot.dm_screen import clock as clock_ui
 from dmbot.fight_style import StyleState, hear
 from dmbot.memory import fight_prompt
 from dmbot.memory.sheet_store import CharacterSheet, FightPlayer
+from dmbot.timebot.calendar import Calendar
 from dmbot.timebot.clock import Clock
 from tests import speed
 from tests import test_fightbot as tf
@@ -192,7 +193,11 @@ class Phrase(unittest.TestCase):
         calm = clock_ui.clock_text(Clock(0, 0), None, None, "Initiative, as heard: by side")
         self.assertNotIn("Initiative", calm)
         told = clock_ui.small(
-            clock_ui.players_view(SimpleNamespace(clock=fighting, split=False, groups=()))  # type: ignore[arg-type]
+            clock_ui.players_view(
+                SimpleNamespace(  # type: ignore[arg-type]
+                    clock=fighting, split=False, groups=(), calendar=Calendar()
+                )
+            )
         )
         self.assertNotIn("Initiative", told)  # players never see it
 
@@ -259,7 +264,7 @@ class Timed(Ground):
         self.assertEqual(table.fight.order_seen, [("m", "goblin 1"), ("p", 11), ("m", "goblin 2")])
         self.now += 130
         bot.clocks.get = AsyncMock(
-            return_value=SimpleNamespace(clock=Clock(0, 0, None, 2, 0))
+            return_value=SimpleNamespace(clock=Clock(0, 0, None, 2, 0), calendar=Calendar())
         )  # round 2
         await self.tick(bot, table)  # the new round ends round one's moments
         before = self.calls(bot)
@@ -355,7 +360,9 @@ class Timed(Ground):
         self.dm_says(table, "goblin one, its turn")
         self.assertEqual(table.fight.style.declarations, "unknown")
         self.now += 30
-        bot.clocks.get = AsyncMock(return_value=SimpleNamespace(clock=Clock(0, 0, None, 2, 0)))
+        bot.clocks.get = AsyncMock(
+            return_value=SimpleNamespace(clock=Clock(0, 0, None, 2, 0), calendar=Calendar())
+        )
         await self.tick(bot, table)
         self.assertEqual(table.fight.style.declarations, "no")
         self.assertEqual(table.fight.style.set_by["declarations"], "inferred")
@@ -368,7 +375,9 @@ class Timed(Ground):
         table, bot = self.primed([11])
         self.dm_says(table, "players go first")
         table.fight.style.infer_no_declarations()
-        bot.clocks.get = AsyncMock(return_value=SimpleNamespace(clock=Clock(0, 0)))  # fight over
+        bot.clocks.get = AsyncMock(
+            return_value=SimpleNamespace(clock=Clock(0, 0), calendar=Calendar())
+        )  # fight over
         await self.tick(bot, table)
         self.assertEqual(table.fight.style.order, "side")
         self.assertEqual(table.fight.style.declarations, "unknown")
@@ -417,7 +426,9 @@ class Timed(Ground):
     async def test_a_change_of_style_tells_the_dm_screen_to_refresh(self) -> None:
         table, bot = self.primed([11])
         bot.fight_style_changed = AsyncMock()
-        bot.clocks.get = AsyncMock(return_value=SimpleNamespace(clock=Clock(0, 0)))  # fight over
+        bot.clocks.get = AsyncMock(
+            return_value=SimpleNamespace(clock=Clock(0, 0), calendar=Calendar())
+        )  # fight over
         self.dm_says(table, "players go first")
         table.fight.style.infer_no_declarations()
         await self.tick(bot, table)

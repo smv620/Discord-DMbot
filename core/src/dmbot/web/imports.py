@@ -1063,6 +1063,7 @@ async def progress(
             r["file"]: r
             for r in await import_clock.read_rows(conn, c.guild_id, c.campaign_id, import_id)
         }
+        calendar = await import_clock.read_calendar(conn, c.guild_id, c.campaign_id)
         # How many names of each kind still wait for "Add all" (#5276): counts only, a DM's alone
         cur = await conn.execute(
             "SELECT dmbot_web_import_waiting(%s, %s, %s) AS r",
@@ -1098,7 +1099,7 @@ async def progress(
                 "namesCut": int(s.get("namesCut") or 0),
                 "progress": part,
                 # The offer to set the game clock where this session ended (#3199), or None.
-                "clock": import_clock.shown(clocks.get(s["file"])),
+                "clock": import_clock.shown(clocks.get(s["file"]), calendar),
                 # The story read (the connections found in what was said) in the same shape, or
                 # None when it has not started (#3307).
                 "story": _story_shape(s.get("story"), now),

@@ -38,8 +38,10 @@ from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import CampaignError
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import optional
+from dmbot.timebot import calendar as calendar_mod
 from dmbot.timebot import clock as game
 from dmbot.timebot import durations, effects, split, where_are_we
+from dmbot.timebot.calendar import Calendar
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.store import GONE as GROUP_GONE
 from dmbot.timebot.store import MOVED_ON, ClockStore, Rejoined, Stored
@@ -128,10 +130,14 @@ def clock_text(
     act on."""
     if stored is not None and stored.split and stored.picked_group is not None:
         head = (
-            f"🕰️ **{split.dm_line(stored.groups)}**\nButtons act on **{stored.picked_group.name}**."
+            f"🕰️ **{split.dm_line(stored.groups, stored.calendar)}**\n"
+            f"Buttons act on **{stored.picked_group.name}**."
         )
     else:
-        head = f"🕰️ **{game.label(clock.minute)}**"
+        # (the date in the campaign's calendar, with the weekday where it has them, #5364)
+        head = (
+            f"🕰️ **{calendar_mod.label(clock.minute, None if stored is None else stored.calendar)}**"
+        )
     fight = game.combat_label(clock)
     # (#1771) how FightBot heard the table run initiative: the DM's line only, in a fight only
     heard = [style_line] if fight and style_line else []
@@ -175,7 +181,12 @@ async def render(
         if stored is not None and stored.split
         else None
     )
-    return clock_text(clock, effects.lines(running, clock.minute, groups), stored, style_line)
+    return clock_text(
+        clock,
+        effects.lines(running, clock.minute, groups, None if stored is None else stored.calendar),
+        stored,
+        style_line,
+    )
 
 
 @dataclass(slots=True)
@@ -256,6 +267,7 @@ async def press(
     store: ClockStore = client.clocks
     tired_on = action in TIME_MOVING and await _tired_rule_on(client, guild_id, campaign_id)
     result = Result(None, None)
+    calendar = await store.calendar(guild_id, campaign_id) if tired_on else None
 
     def change(current: Clock | None) -> Clock | None:
         new = _apply(action, current, set_to, minutes)
@@ -263,7 +275,7 @@ async def press(
             return None
         if tired_on and game.tired_due(new):
             new = game.told_tired(new)
-            result.lines.append(tired_line(new))
+            result.lines.append(tired_line(new, calendar))
         return new
 
     before, after, group = await store.change_named(
@@ -304,13 +316,14 @@ async def press(
     return result
 
 
-def tired_line(clock: Clock) -> str:
+def tired_line(clock: Clock, calendar: Calendar | None = None) -> str:
     """The 24-hours-without-a-rest line, with its source: an optional rule, so a DM decides
     whether it applies."""
     rule = optional.rule(NO_REST_RULE)
     source = rule.source if rule else "an optional rule"
     return (
-        f"😴 Check: 24 hours since the last long rest ({game.short_label(clock.last_long_rest)}). "
+        "😴 Check: 24 hours since the last long rest "
+        f"({calendar_mod.short_label(clock.last_long_rest, calendar)}). "
         f"Optional rule, {source}. Your call."
     )
 
@@ -398,7 +411,12 @@ MARK = "🕰️"
 SMALL = "-# "  # Discord's small text
 SCAN = 50  # recent messages looked at for DMbot's last clock line (a busier chat may post it again)
 SPLIT_HEAD = "The party is split"
-_VIEW = re.compile(r"Day \d+, [a-z -]+")
+# One clock view: a date in the campaign's calendar ("Day 5", "Summer 5th, 1201 AR", "Midwinter,
+# 1201 AR"), a comma, and one of the fourteen words for the time of day. It starts a line or a
+# sentence ("Long rest done. Day 6, dawn."): a date has no full stop of its own.
+_VIEW = re.compile(
+    r"(?:^|(?<=\. ))[^.\n]+, (?:" + "|".join(map(re.escape, game.DAY_PART_WORDS)) + r")(?=\.|$)"
+)
 
 
 def players_view(stored: Stored) -> list[str]:
@@ -406,8 +424,8 @@ def players_view(stored: Stored) -> list[str]:
     else (no exact time, no timer, no button, no fight: those are the DM's), or while the party is
     split one line per group in the same words."""
     if not stored.split:
-        return [game.short_label(stored.clock.minute)]
-    return [SPLIT_HEAD, *split.players_lines(stored.groups)]
+        return [calendar_mod.short_label(stored.clock.minute, stored.calendar)]
+    return [SPLIT_HEAD, *split.players_lines(stored.groups, stored.calendar)]
 
 
 def small(lines: list[str]) -> str:
@@ -501,13 +519,15 @@ async def show_players(client: Any, campaign: Campaign, stored: Stored | None = 
         log.exception("Couldn't update the players' clock")
 
 
-def players_line(action: str, before: Clock | None, after: Clock) -> str | None:
+def players_line(
+    action: str, before: Clock | None, after: Clock, calendar: Calendar | None = None
+) -> str | None:
     """The one short line the players get: a rest finishing, or a new day beginning. Only
     for time moving forward by the DM's buttons or words; setting the time is a correction
     and says nothing."""
     if before is None or after.minute <= before.minute or action == "set":
         return None
-    when = game.short_label(after.minute)
+    when = calendar_mod.short_label(after.minute, calendar)
     if action in ("short", "long"):
         return f"{'Short' if action == 'short' else 'Long'} rest done. {when}."
     if game.day_of(after.minute) > game.day_of(before.minute):
@@ -527,14 +547,20 @@ async def update_players(
             return
         fresh = await client.campaigns.get(campaign.guild_id, campaign.id) or campaign
         after = result.after or stored.clock
-        line = players_line(action, result.before, after) if announce else None
+        line = players_line(action, result.before, after, stored.calendar) if announce else None
         if line is None:
             await show_players(client, fresh, stored)
             return
         if result.group is not None:
             line = f"{result.group.name}: {line}"  # (#1607) which part of the party
         async with _players_locks.setdefault(campaign.id, asyncio.Lock()):
-            await put_line(client, fresh, [line], game.short_label(after.minute), plain=False)
+            await put_line(
+                client,
+                fresh,
+                [line],
+                calendar_mod.short_label(after.minute, stored.calendar),
+                plain=False,
+            )
     except Exception:
         log.exception("Couldn't tell the players about the clock")
 
@@ -789,7 +815,10 @@ async def _run_press(
         # The form saved: the DM's own screen shows nothing else, so say where the clock is.
         await _reply(
             interaction,
-            SET_DONE.format(label=game.short_label(result.after.minute), where=message.jump_url)
+            SET_DONE.format(
+                label=calendar_mod.short_label(result.after.minute, stored.calendar),
+                where=message.jump_url,
+            )
             + players_see(campaign),
         )
     # The players hear a finished rest or a new day in the chat channel (#2877); a fight's rounds
@@ -799,7 +828,7 @@ async def _run_press(
         await say(  # one line with Undo, like what is heard at the table (#1127)
             client,
             campaign,
-            [combat_note(action, result.before, result.after), *result.lines],
+            [combat_note(action, result.before, result.after, stored.calendar), *result.lines],
             combat_undo=combat_undo_id(result.before, result.after, result.group),
         )
     else:
@@ -809,7 +838,7 @@ async def _run_press(
     await timers.announce_due(client, campaign, result.after.minute)
     if result.before is not None and action in ("short", "long", "dawn"):
         # The DM who pressed sees the clock change; the note with Undo is for them alone.
-        note = rest_note(action, result.after)
+        note = rest_note(action, result.after, calendar=stored.calendar)
         view = discord.ui.View(timeout=None)
         view.add_item(
             ClockUndoButton(campaign.id, undo_id(result.before, result.after, result.group))
@@ -827,9 +856,13 @@ NO_COMBAT_CHANGE = {
 }
 
 
-def combat_note(action: str, before: Clock, after: Clock) -> str:
+def combat_note(action: str, before: Clock, after: Clock, calendar: Calendar | None = None) -> str:
     """The one DM-screen line for a combat change (#1127)."""
-    moved = f" Now {game.short_label(after.minute)}." if after.minute != before.minute else ""
+    moved = (
+        f" Now {calendar_mod.short_label(after.minute, calendar)}."
+        if after.minute != before.minute
+        else ""
+    )
     if action == "cstart":
         return "⚔️ Combat starts. Round 1."
     if action == "cend":
@@ -838,18 +871,21 @@ def combat_note(action: str, before: Clock, after: Clock) -> str:
     return f"⚔️ Round {after.combat_round}.{moved}"
 
 
-def rest_note(action: str, clock: Clock, minutes: int | None = None) -> str:
+def rest_note(
+    action: str, clock: Clock, minutes: int | None = None, calendar: Calendar | None = None
+) -> str:
+    now = calendar_mod.short_label(clock.minute, calendar)
     if action == "dawn":
-        return f"🌅 Skipped to dawn. Now {game.short_label(clock.minute)}."
+        return f"🌅 Skipped to dawn. Now {now}."
     if action in DAY_SKIPS and minutes is not None:
         counted = "counted as rested" if action == "days" else "no rest counted"
         later = durations.words(minutes)
-        return f"⏩ {later} later ({counted}). Now {game.short_label(clock.minute)}."
+        return f"⏩ {later} later ({counted}). Now {now}."
     if action == "advance" and minutes is not None:
         later = durations.words(minutes).capitalize()
-        return f"⏩ {later} later. Now {game.short_label(clock.minute)}."
+        return f"⏩ {later} later. Now {now}."
     kind, emoji = ("Short", "🛌") if action == "short" else ("Long", "🌙")
-    return f"{emoji} {kind} rest. Now {game.short_label(clock.minute)}."
+    return f"{emoji} {kind} rest. Now {now}."
 
 
 async def _show_here(
@@ -1016,7 +1052,8 @@ class ClockButton(
             await _reply(interaction, split.NOT_SPLIT)
         else:
             times = [
-                f"{g.name}: {split.exact_label(g.clock.minute)}" + (" (latest)" if i == 0 else "")
+                f"{g.name}: {split.exact_label(g.clock.minute, stored.calendar)}"
+                + (" (latest)" if i == 0 else "")
                 for i, g in enumerate(split.latest_first(stored.groups))
             ]
             await interaction.response.send_message(
@@ -1320,9 +1357,17 @@ class _RejoinChoice(discord.ui.Button["RejoinView"]):
             done = None
             await _reply(interaction, FAILED)
         if done is not None:
+            client: Any = interaction.client
+            guild = interaction.guild
+            calendar = (
+                await client.clocks.calendar(guild.id, self.campaign_id)
+                if guild is not None
+                else None
+            )
             with contextlib.suppress(discord.HTTPException):
                 await interaction.edit_original_response(
-                    content=f"🤝 Together again at {split.exact_label(done.clock.minute)}."
+                    content="🤝 Together again at "
+                    f"{split.exact_label(done.clock.minute, calendar)}."
                 )
 
 
@@ -1359,7 +1404,9 @@ async def run_rejoin(
             client,
             campaign,
             [
-                REJOINED.format(when=split.exact_label(done.clock.minute), name=done.kept.name)
+                REJOINED.format(
+                    when=split.exact_label(done.clock.minute, stored.calendar), name=done.kept.name
+                )
                 + (
                     f" {_names_in_words(done.dropped_fights)}: a fight there was dropped."
                     if done.dropped_fights
@@ -1816,8 +1863,19 @@ class ClockUndoButton(
             await show(client, campaign, stored)
             fresh = await client.campaigns.get(guild.id, campaign.id) or campaign
             who = f"{acted.name} is" if acted is not None else "it is"
-            await correct_players(client, fresh, f"{who} back to {game.short_label(after.minute)}.")
+            await correct_players(
+                client,
+                fresh,
+                f"{who} back to {calendar_mod.short_label(after.minute, stored.calendar)}.",
+            )
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
-                content=f"↩️ Undone. Back to {game.short_label(self.before)}.", view=None
+                content=(
+                    "↩️ Undone. Back to "
+                    + calendar_mod.short_label(
+                        self.before, None if stored is None else stored.calendar
+                    )
+                    + "."
+                ),
+                view=None,
             )

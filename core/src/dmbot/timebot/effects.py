@@ -14,7 +14,9 @@ from typing import Any, ClassVar
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
+from dmbot.timebot import calendar as calendar_mod
 from dmbot.timebot import clock as game
+from dmbot.timebot.calendar import Calendar
 from dmbot.timebot.durations import words
 from dmbot.timebot.store import NOT_A_DM
 
@@ -42,13 +44,16 @@ class Effect:
     # Split party (#1607): the group it counts on (None: the one clock, or the first group)
     group: int | None = None
 
-    def line(self, now: int, group_name: str | None = None) -> str:
+    def line(
+        self, now: int, group_name: str | None = None, calendar: Calendar | None = None
+    ) -> str:
         who = f" on {self.target}" if self.target else ""
         mind = " 🧠" if self.concentration else ""
         where = f" ({group_name})" if group_name else ""
         if self.ends <= now:
             return f"⏳ {self.name}{who}{where}: likely ended{mind}"
-        return f"⏳ {self.name}{who}{where}: until {game.short_label(self.ends)}{mind}"
+        until = calendar_mod.short_label(self.ends, calendar)
+        return f"⏳ {self.name}{who}{where}: until {until}{mind}"
 
     def ended_line(self, group_name: str | None = None) -> str:
         who = f" on {self.target}" if self.target else ""
@@ -278,6 +283,7 @@ def lines(
     effects: Sequence[Effect],
     now: int,
     groups: Mapping[int, tuple[str, int]] | None = None,
+    calendar: Calendar | None = None,
 ) -> list[str]:
     """The clock message's lines: at most SHOWN, the soonest first, and how many more. While
     the party is split `groups` maps a position to (name, minute): each timer is judged on its
@@ -285,9 +291,9 @@ def lines(
 
     def one(e: Effect) -> str:
         if not groups:
-            return e.line(now)
+            return e.line(now, calendar=calendar)
         name, minute = groups.get(e.group or 1, (None, now))
-        return e.line(minute, name)
+        return e.line(minute, name, calendar)
 
     shown = [one(e) for e in effects[:SHOWN]]
     if len(effects) > SHOWN:

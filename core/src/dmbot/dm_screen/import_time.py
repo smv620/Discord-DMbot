@@ -26,7 +26,7 @@ from dmbot.campaigns import CampaignError
 from dmbot.dm_screen import clock as clock_screen
 from dmbot.dm_screen import effects as timer_screen
 from dmbot.mentions import NO_PINGS
-from dmbot.timebot import clock as game
+from dmbot.timebot import calendar as calendar_mod
 from dmbot.transcript import import_clock as clock_offers
 
 log = logging.getLogger(__name__)
@@ -230,7 +230,7 @@ async def set_clock(client: Any, campaign: Any, minute: int, user_id: int) -> Mo
             client,
             campaign,
             [
-                f"🕰️ Clock set to {game.short_label(result.after.minute)} "
+                f"🕰️ Clock set to {calendar_mod.short_label(result.after.minute, before.calendar)} "
                 "(where the imported session ended).",
                 *result.lines,
             ],
@@ -238,7 +238,11 @@ async def set_clock(client: Any, campaign: Any, minute: int, user_id: int) -> Mo
         )
     except Exception:
         log.exception("The clock was set, but showing it failed")
-    return Moved(SET, f"Clock set to {game.short_label(result.after.minute)}.", clock_offers.SET)
+    return Moved(
+        SET,
+        f"Clock set to {calendar_mod.short_label(result.after.minute, before.calendar)}.",
+        clock_offers.SET,
+    )
 
 
 async def _reply(interaction: discord.Interaction, text: str) -> None:

@@ -7069,7 +7069,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self,
             campaign,
             [
-                clock_screen.rest_note(said.action, result.after, said.minutes),
+                clock_screen.rest_note(said.action, result.after, said.minutes, stored.calendar),
                 # What was heard, so the DM can tell a misheard line from a real one: dropped
                 # (the clock change stays) if consent was withdrawn during the awaits (#1173).
                 *self._heard_quote(table, user_id, line),
@@ -7159,7 +7159,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self,
             campaign,
             [
-                clock_screen.combat_note(action, result.before, result.after),
+                clock_screen.combat_note(action, result.before, result.after, stored.calendar),
                 *self._heard_quote(table, user_id, line),
                 *result.lines,
             ],

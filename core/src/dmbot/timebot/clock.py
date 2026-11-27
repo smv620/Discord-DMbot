@@ -80,6 +80,11 @@ _DAY_PARTS: tuple[tuple[int, str], ...] = (
 )
 
 
+DAY_PART_WORDS = tuple(
+    dict.fromkeys(name for _, name in sorted(_DAY_PARTS, key=lambda p: -len(p[1])))
+)
+
+
 def day_part(minute: int) -> str:
     """The approximate word for the time of day: one of exactly 14, for the players' clock
     ("Day 5, morning") and, with the exact time, the DM's."""

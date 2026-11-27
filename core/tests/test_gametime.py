@@ -19,6 +19,7 @@ from dmbot.db import Database, drop_schema
 from dmbot.dm_screen import clock as ui
 from dmbot.schema import MIGRATIONS
 from dmbot.timebot import clock as game
+from dmbot.timebot.calendar import Calendar
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.store import ClockSection, ClockStore
 from tests.pg import TEST_URL, DatabaseTest
@@ -31,7 +32,7 @@ NOON4 = game.from_day_and_time(4, 12)
 
 def stored_at(clock: Clock) -> Any:
     """Just what the players' view reads of a stored clock."""
-    return SimpleNamespace(clock=clock, split=False, groups=())
+    return SimpleNamespace(clock=clock, split=False, groups=(), calendar=Calendar())
 
 
 class DayPart(unittest.TestCase):
@@ -564,7 +565,7 @@ class NoSecondClock(PlayersClock):
 
     async def test_the_form_answers_discord_before_it_reads_the_clock(self) -> None:
         order: list[str] = []
-        stored = SimpleNamespace(clock=Clock(NOON4, NOON4))
+        stored = SimpleNamespace(clock=Clock(NOON4, NOON4), calendar=Calendar())
 
         async def read(*_a: Any) -> Any:
             order.append("read")
