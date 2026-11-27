@@ -134,15 +134,42 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
   const fixed = inFixedOrder(mergeUnknown(campaign.kinds)).filter((k) => kindWords(k.kind).how !== "hidden");
   const adjusted = inFixedOrder(mergeUnknown(counted));
   const shownCount = (kind: string): number => adjusted.find((a) => a.kind === kind)?.count ?? 0;
-  // A kind whose last item was answered goes from the list once its panel is closed, never while it is open (the panel and its "all done"
-  // note must not vanish under the DM), and the walk's current part stays too.
-  const kinds = fixed.map((k) => ({ ...k, count: shownCount(k.kind) })).filter((k) => k.count > 0 || open.has(k.kind));
+  // A kind whose last item was answered goes from the list at once (#5356). The group's list is hosted under the first line still shown
+  // (`shownLead`), so it moves to the next line of its group rather than vanishing while its other kinds still wait; the walk's parts
+  // and their leads stay from the bot's own list (`lead`), so a part never slides out from under the walk.
+  const kinds = fixed.map((k) => ({ ...k, count: shownCount(k.kind) })).filter((k) => k.count > 0);
   // The first line of each group carries its toggle and panel; the others say they are answered with it.
   const lead = new Map<string, string>();
   for (const k of fixed) {
     const g = groupOf(k.kind);
     if (g !== null && howFor(k.kind, api) === "here" && !lead.has(g)) lead.set(g, k.kind);
   }
+  const shownLead = new Map<string, string>();
+  for (const k of kinds) {
+    const g = groupOf(k.kind);
+    if (g !== null && howFor(k.kind, api) === "here" && !shownLead.has(g)) shownLead.set(g, k.kind);
+  }
+  // The line an answered kind leaves: its list moves to the next line of its group, or, with the whole group answered, closes and says so.
+  const [allAnswered, setAllAnswered] = useState<string | null>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    const gone = [...open].filter((kind) => fixed.some((f) => f.kind === kind) && !kinds.some((k) => k.kind === kind));
+    if (gone.length === 0) return;
+    setOpen((was) => {
+      const next = new Set(was);
+      for (const kind of gone) {
+        next.delete(kind);
+        const heir = shownLead.get(groupOf(kind) ?? "");
+        if (heir !== undefined) next.add(heir);
+      }
+      return next;
+    });
+    const done = gone.filter((kind) => !shownLead.has(groupOf(kind) ?? ""));
+    if (done.length > 0) {
+      setAllAnswered(words.kindDone(kindWords(done[0] ?? "").label));
+      headingRef.current?.focus(); // (the list that held focus has closed)
+    }
+  }, [answeredHere]);
   // The walk (#4193): one button through everything that can be answered here, in the fixed order, a part at a time. Its parts are
   // the panels that open here (the first kind of each group stands for the group, with the whole group's count).
   const parts = [...lead.entries()].map(([group, kind]) => ({
@@ -206,10 +233,15 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
   const old = campaign.countedAt === null || serverNow - campaign.countedAt > CATCHING_UP_SECONDS;
   return (
     <section class="panel stack" aria-labelledby={`q-${campaign.ref}`}>
-      <h2 id={`q-${campaign.ref}`}>
+      <h2 id={`q-${campaign.ref}`} tabIndex={-1} ref={headingRef}>
         <a href={campaignHref(campaign.ref)}>{campaign.name}</a>
       </h2>
       {old && <p class="small muted" role="status">{words.catchingUp}</p>}
+      {allAnswered !== null && (
+        <p class="small" role="status">
+          {allAnswered}
+        </p>
+      )}
       {guesses > 0 && (
         <p>
           {matchWords.countOf(guesses)}{" "}
@@ -275,8 +307,8 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                   <strong>{here !== null && Object.hasOwn(here, k.kind) && k.count > (here[k.kind] ?? 0) ? words.kindLineSplit(w.label, k.count, here[k.kind] ?? 0) : words.kindLine(w.label, k.count)}</strong>
                   {k.kind === "more_names" && MORE_NAMES_LIVE && api.moreNames !== undefined ? (
                     <MoreNames api={api} campaignRef={campaign.ref} />
-                  ) : howFor(k.kind, api) === "here" && lead.get(groupOf(k.kind) ?? "") !== k.kind ? (
-                    <span class="small muted">{words.answeredWith(kindWords(lead.get(groupOf(k.kind) ?? "") ?? "").label)}</span>
+                  ) : howFor(k.kind, api) === "here" && shownLead.get(groupOf(k.kind) ?? "") !== k.kind ? (
+                    <span class="small muted">{words.answeredWith(kindWords(shownLead.get(groupOf(k.kind) ?? "") ?? "").label)}</span>
                   ) : howFor(k.kind, api) === "here" ? (
                     <>
                       <button
