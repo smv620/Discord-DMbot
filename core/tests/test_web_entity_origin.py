@@ -17,7 +17,7 @@ from dmbot.transcript.store import TranscriptStore
 from dmbot.web import graph_cleanup
 from dmbot.web.recaps import _scoped
 from tests.agreed import agree
-from tests.test_scenes import ALICE, DM_ID, Base
+from tests.test_scenes import ALICE, BOB_ID, DM_ID, Base
 
 START = 1_700_000_000
 LINE_MS = START * 1000 + 2_000
@@ -93,50 +93,20 @@ class TheDoor(Base):
         other = (await self.campaigns.create(self.g, "Elsewhere", 7)).id
         self.assertIsNone(await self.origin(self.session, other, self.mira))
 
-    async def test_a_kept_threads_lines_are_read_now_and_only_for_those_who_agree(self) -> None:
-        await agree(self.db, self.g, DM_ID, ALICE)
+    async def keep_thread_of(self, *speakers: int) -> str:
+        """A session thread kept from one line of each speaker, as the DM's keep makes it."""
+        for who in speakers:
+            await agree(self.db, self.g, DM_ID, who)
         sid = await TranscriptStore(self.db).open_session(self.g, self.one.id, START)
+        starts = tuple(LINE_MS + n for n in range(len(speakers)))
         await TranscriptStore(self.db).add_lines(
-            self.g,
-            sid,
-            [Heard(LINE_MS, ALICE, "x", "We'll find him."), Heard(LINE_MS + 1, 99, "x", "Hidden.")],
+            self.g, sid, [Heard(ms, who, "x", f"Line {who}.") for ms, who in zip(starts, speakers)]
         )
         store = ThreadSuggestionStore(self.db)
         job = tr.Suggestion(
             "quest", "Find Gnashwater", "find him", "",
             ((tr.TARGET, self.mira),), tr.STATE["quest"],
-            line_starts=(LINE_MS, LINE_MS + 1), speaker_ids=(ALICE, 99),
-        )  # fmt: skip
-        await store.offer(
-            self.g, self.one.id, [job], "the session", 5, session_id=sid, session_at=START
-        )
-        (w,) = await store.waiting(self.g, self.one.id)
-        kept = await self.memory.keep_thread(
-            self.g, self.one.id, w.name, w.kind, w.state, aim=w.aim, parts=list(w.parts),
-            source=DM, suggestion_id=w.id,
-        )  # fmt: skip
-        (thread,) = await self.memory.threads(self.g, self.one.id)
-        self.assertIsNotNone(kept.batch)
-        got = await self.origin(self.session, self.one.id, thread.thread.id)
-        self.assertEqual(got["thread"]["lines"], ["We'll find him."])  # (99 never agreed)
-        self.assertEqual(got["thread"]["session"], 1)
-
-    async def test_a_speaker_who_agreed_to_older_terms_is_not_read(self) -> None:
-        await agree(self.db, self.g, DM_ID, ALICE)
-        async with self.db.guild(self.g) as conn:  # (their consent is for an older wording)
-            await conn.execute(
-                "UPDATE consent SET terms_version = %s WHERE guild_id = %s AND user_id = %s",
-                (TERMS_VERSION - 1, self.g, ALICE),
-            )
-        sid = await TranscriptStore(self.db).open_session(self.g, self.one.id, START)
-        await TranscriptStore(self.db).add_lines(
-            self.g, sid, [Heard(LINE_MS, ALICE, "x", "We'll find him.")]
-        )
-        store = ThreadSuggestionStore(self.db)
-        job = tr.Suggestion(
-            "quest", "Find Gnashwater", "find him", "",
-            ((tr.TARGET, self.mira),), tr.STATE["quest"],
-            line_starts=(LINE_MS,), speaker_ids=(ALICE,),
+            line_starts=starts, speaker_ids=tuple(speakers),
         )  # fmt: skip
         await store.offer(
             self.g, self.one.id, [job], "the session", 5, session_id=sid, session_at=START
@@ -147,6 +117,25 @@ class TheDoor(Base):
             source=DM, suggestion_id=w.id,
         )  # fmt: skip
         (thread,) = await self.memory.threads(self.g, self.one.id)
-        got = await self.origin(self.session, self.one.id, thread.thread.id)
+        return thread.thread.id
+
+    async def test_a_kept_threads_lines_are_read_now_and_only_for_those_who_agree(self) -> None:
+        thread = await self.keep_thread_of(ALICE, BOB_ID)
+        async with self.db.guild(self.g) as conn:  # (Bob stopped being recorded since)
+            await conn.execute(
+                "DELETE FROM consent WHERE guild_id = %s AND user_id = %s", (self.g, BOB_ID)
+            )
+        got = await self.origin(self.session, self.one.id, thread)
+        self.assertEqual(got["thread"]["lines"], [f"Line {ALICE}."])
+        self.assertEqual(got["thread"]["session"], 1)
+
+    async def test_a_speaker_who_agreed_to_older_terms_is_not_read(self) -> None:
+        thread = await self.keep_thread_of(ALICE)
+        async with self.db.guild(self.g) as conn:  # (their consent is for an older wording)
+            await conn.execute(
+                "UPDATE consent SET terms_version = %s WHERE guild_id = %s AND user_id = %s",
+                (TERMS_VERSION - 1, self.g, ALICE),
+            )
+        got = await self.origin(self.session, self.one.id, thread)
         self.assertEqual(got["thread"]["lines"], [])
         self.assertTrue(got["thread"]["removed"])
