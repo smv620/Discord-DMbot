@@ -194,8 +194,10 @@ class Phrase(unittest.TestCase):
         self.assertNotIn("Initiative", calm)
         told = clock_ui.small(
             clock_ui.players_view(
-                SimpleNamespace(clock=fighting, split=False, groups=(), calendar=Calendar())
-            )  # type: ignore[arg-type]
+                SimpleNamespace(  # type: ignore[arg-type]
+                    clock=fighting, split=False, groups=(), calendar=Calendar()
+                )
+            )
         )
         self.assertNotIn("Initiative", told)  # players never see it
 

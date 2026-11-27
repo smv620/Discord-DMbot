@@ -179,9 +179,11 @@ class Wiring(unittest.TestCase):
         for clock in (Clock(NOON4, 0), fight):
             out = ui.small(
                 ui.players_view(
-                    SimpleNamespace(clock=clock, split=False, groups=(), calendar=Calendar())
+                    SimpleNamespace(  # type: ignore[arg-type]
+                        clock=clock, split=False, groups=(), calendar=Calendar()
+                    )
                 )
-            )  # type: ignore[arg-type]
+            )
             self.assertNotIn("Combat", out)
             self.assertNotIn("round", out)
             self.assertEqual(out, f"-# 🕰️ {game.short_label(NOON4)}")
