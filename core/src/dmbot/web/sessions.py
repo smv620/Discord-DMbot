@@ -100,7 +100,8 @@ async def sign_in(
         try:
             await conn.execute(
                 "INSERT INTO web_users (user_id, email, created_at, last_sign_in_at, display_name,"
-                " last_guilds) VALUES (%s, %s, %s, %s, %s, %s::jsonb)"
+                " last_guilds, last_guilds_at, last_guilds_user)"
+                " VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s)"
                 " ON CONFLICT (user_id) DO UPDATE"
                 # An address the person chose on the account page outlives Discord sign-ins (#2349).
                 " SET email = CASE WHEN web_users.email_chosen_at IS NULL AND NOT %s"
@@ -108,8 +109,9 @@ async def sign_in(
                 " last_sign_in_at = EXCLUDED.last_sign_in_at,"
                 " display_name = EXCLUDED.display_name,"
                 # What an email sign-in will see (#5351): this Discord sign-in's own server list.
-                " last_guilds = EXCLUDED.last_guilds",
-                (user.id, email, now, now, user.name, guilds_json, keep),
+                " last_guilds = EXCLUDED.last_guilds, last_guilds_at = EXCLUDED.last_guilds_at,"
+                " last_guilds_user = EXCLUDED.last_guilds_user",
+                (user.id, email, now, now, user.name, guilds_json, now, user.id, keep),
             )
         except psycopg.errors.RaiseException as exc:
             # The database refuses a new account for an ID that moved away.
@@ -134,8 +136,20 @@ def unmanaged(remembered: object) -> list[dict[str, object]]:
     return [
         {"id": str(g["id"]), "name": str(g["name"]), "manage": False}
         for g in remembered
-        if isinstance(g, dict) and "id" in g and "name" in g
+        if isinstance(g, dict) and "name" in g and str(g.get("id", "")).isdigit()
     ]
+
+
+def email_session_servers(
+    remembered: object, taken_at: object, *, now: int, days: int
+) -> tuple[list[dict[str, object]], int]:
+    """The servers an email session gets and when it ends (#5351; pure). The remembered list is used
+    only while it is younger than one session length; the session then ends no later than that
+    Discord session would have. An older list, or none, gives no servers and a normal expiry."""
+    length = days * 86400
+    if not isinstance(taken_at, int) or isinstance(taken_at, bool) or now - taken_at >= length:
+        return [], now + length
+    return unmanaged(remembered), min(now + length, taken_at + length)
 
 
 async def sign_in_by_email(db: Database, user_id: int, *, now: int, days: int) -> str:
@@ -143,18 +157,26 @@ async def sign_in_by_email(db: Database, user_id: int, *, now: int, days: int) -
     cookie, same length as a Discord sign-in. There is no Discord token here, so the session
     has no server list of its own, so it takes the one from their last Discord sign-in, with
     `manage` turned off (#5351): they can open their campaigns, but adding DMbot to a server and
-    anything a server manager does needs a Discord sign-in. With no earlier Discord sign-in the list
-    is empty. The name is the one they last signed in with."""
+    anything a server manager does needs a Discord sign-in. The list never outlives a Discord
+    session: it is copied only while it is younger than one session length, and the email session
+    ends when that Discord session would have, so someone removed from a server cannot keep it
+    through repeated email sign-ins. With no recent Discord sign-in the list is empty. The name is
+    the one they last signed in with."""
     token = secrets.token_urlsafe(32)
     async with db.user(user_id) as conn:
         cur = await conn.execute(
             "UPDATE web_users SET last_sign_in_at = %s WHERE user_id = %s"
-            " RETURNING display_name, last_guilds",
+            " RETURNING display_name, last_guilds, last_guilds_at, last_guilds_user",
             (now, user_id),
         )
         row = await cur.fetchone()
         if row is None:
             raise LookupError("no such account")
+        # (a list taken by another Discord account, as after an account move, is not this person's)
+        taken_at = row["last_guilds_at"] if row["last_guilds_user"] == user_id else None
+        servers, expires_at = email_session_servers(
+            row["last_guilds"], taken_at, now=now, days=days
+        )
         await conn.execute(
             "INSERT INTO web_sessions (id_hash, user_id, created_at, expires_at, guilds,"
             " display_name) VALUES (%s, %s, %s, %s, %s::jsonb, %s)",
@@ -162,8 +184,8 @@ async def sign_in_by_email(db: Database, user_id: int, *, now: int, days: int) -
                 hash_token(token),
                 user_id,
                 now,
-                now + days * 86400,
-                json.dumps(unmanaged(row["last_guilds"])),
+                expires_at,
+                json.dumps(servers),
                 row["display_name"] or "",
             ),
         )

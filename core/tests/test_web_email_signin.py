@@ -8,6 +8,7 @@ import asyncio
 import re
 import unittest
 from email.message import EmailMessage
+from typing import ClassVar
 
 import httpx
 
@@ -696,6 +697,41 @@ class EmailSignIn(DatabaseTest):
         assert found is not None
         self.assertEqual(found.guilds, ())
 
+    async def test_a_list_taken_by_another_discord_account_is_not_copied(self) -> None:
+        """An account move renames the row's user_id and keeps its other columns (#5351 review)."""
+        from dmbot.web import sessions
+
+        await self.account(ALICE)
+        async with self.db.user(ALICE.id) as conn:
+            await conn.execute(
+                "UPDATE web_users SET last_guilds_user = %s WHERE user_id = %s",
+                (ALICE.id + 1, ALICE.id),
+            )
+        token = await sessions.sign_in_by_email(self.web, ALICE.id, now=self.now, days=30)
+        found = await sessions.find(self.web, token, now=self.now)
+        assert found is not None
+        self.assertEqual(found.guilds, ())
+
+    async def test_an_old_remembered_list_is_not_copied(self) -> None:
+        from dmbot.web import sessions
+
+        await self.account(ALICE)
+        later = self.now + 31 * 86400
+        token = await sessions.sign_in_by_email(self.web, ALICE.id, now=later, days=30)
+        found = await sessions.find(self.web, token, now=later)
+        assert found is not None
+        self.assertEqual(found.guilds, ())
+
+    async def test_an_email_session_ends_when_the_discord_session_would_have(self) -> None:
+        from dmbot.web import sessions
+
+        await self.account(ALICE)
+        later = self.now + 10 * 86400
+        token = await sessions.sign_in_by_email(self.web, ALICE.id, now=later, days=30)
+        found = await sessions.find(self.web, token, now=later)
+        assert found is not None
+        self.assertEqual(found.expires_at, self.now + 30 * 86400)
+
     async def test_a_later_discord_sign_in_refreshes_the_remembered_servers(self) -> None:
         from dmbot.web import sessions
         from dmbot.web.discord import DiscordGuild
@@ -710,6 +746,42 @@ class EmailSignIn(DatabaseTest):
         self.assertEqual([g.manage for g in found.guilds], [False])
 
 
+class EmailSessionServers(unittest.TestCase):
+    """What an email session gets, and when it ends (#5351): pure."""
+
+    SERVERS: ClassVar[list[dict[str, object]]] = [{"id": "7", "name": "Thursday", "manage": True}]
+    DAY = 86400
+
+    def test_a_recent_list_is_copied_and_the_session_ends_with_the_discord_one(self) -> None:
+        from dmbot.web.sessions import email_session_servers
+
+        servers, ends = email_session_servers(self.SERVERS, 1000, now=1000 + 10 * self.DAY, days=30)
+        self.assertEqual(servers, [{"id": "7", "name": "Thursday", "manage": False}])
+        self.assertEqual(ends, 1000 + 30 * self.DAY)  # not now + 30 days
+
+    def test_a_list_taken_just_now_gives_a_full_session(self) -> None:
+        from dmbot.web.sessions import email_session_servers
+
+        _, ends = email_session_servers(self.SERVERS, 5000, now=5000, days=30)
+        self.assertEqual(ends, 5000 + 30 * self.DAY)
+
+    def test_a_list_as_old_as_a_session_is_not_used(self) -> None:
+        from dmbot.web.sessions import email_session_servers
+
+        servers, ends = email_session_servers(self.SERVERS, 0, now=30 * self.DAY, days=30)
+        self.assertEqual((servers, ends), ([], 60 * self.DAY))  # (a normal expiry)
+        older, _ = email_session_servers(self.SERVERS, 0, now=90 * self.DAY, days=30)
+        self.assertEqual(older, [])
+
+    def test_no_discord_sign_in_gives_no_servers_and_a_normal_expiry(self) -> None:
+        from dmbot.web.sessions import email_session_servers
+
+        self.assertEqual(
+            email_session_servers([], None, now=100, days=30), ([], 100 + 30 * self.DAY)
+        )
+        self.assertEqual(email_session_servers(self.SERVERS, None, now=100, days=30)[0], [])
+
+
 class UnmanagedServers(unittest.TestCase):
     """The remembered list as an email session keeps it (#5351): pure."""
 
@@ -718,6 +790,9 @@ class UnmanagedServers(unittest.TestCase):
 
         got = unmanaged([{"id": "7", "name": "Thursday", "manage": True}])
         self.assertEqual(got, [{"id": "7", "name": "Thursday", "manage": False}])
+        self.assertEqual(
+            unmanaged([{"id": "x7", "name": "Odd"}]), []
+        )  # (an id that is not a number)
 
     def test_anything_that_is_not_a_server_list_is_empty(self) -> None:
         from dmbot.web.sessions import unmanaged
