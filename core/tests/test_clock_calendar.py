@@ -262,6 +262,26 @@ class OwnCalendar(ClockCase):
                     with self.assertRaises(Exception):  # noqa: B017 (a check violation)
                         await conn.execute(statement)
 
+    async def test_a_stored_definition_that_no_longer_reads_is_day_n_and_never_stops_the_clock(
+        self,
+    ) -> None:
+        await self.clocks.change(GUILD_A, self.a.id, DM, lambda _c: Clock(5 * MINUTES_PER_DAY, 0))
+        for definition in (
+            '{"layout": {}, "weekday": 0}',  # (a layout with nothing in it)
+            '{"weekday": 0}',
+            '{"layout": 5, "weekday": 0}',
+        ):
+            with self.subTest(definition):
+                async with self.db.guild(GUILD_A) as conn:
+                    await conn.execute(
+                        "UPDATE game_clocks SET calendar_kind = 'custom', calendar_year = 1201,"
+                        " calendar_ordinal = 5, calendar_def = %s::jsonb",
+                        (definition,),
+                    )
+                got = await self.clocks.calendar(GUILD_A, self.a.id)
+                self.assertEqual(got.words(5 * MINUTES_PER_DAY), "Day 6")
+                self.assertIsNotNone(await self.clocks.get(GUILD_A, self.a.id))  # (the clock reads)
+
     async def test_a_clock_row_from_before_keeps_its_calendar(self) -> None:
         await self.clocks.change(GUILD_A, self.a.id, DM, lambda _c: Clock(0, 0))
         await self.set_flame(GUILD_A, self.a.id, DM)

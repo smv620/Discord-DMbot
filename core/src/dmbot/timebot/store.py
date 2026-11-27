@@ -12,6 +12,7 @@ split, which is the clock again at Rejoin.
 
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 from collections.abc import Callable, Mapping
@@ -29,6 +30,8 @@ from dmbot.timebot.calendar import Calendar, DayOne
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.layout import Layout
 from dmbot.timebot.split import Group
+
+log = logging.getLogger(__name__)
 
 NOT_A_DM = "Only this campaign's DMs can use the clock."
 DAMAGED = "That backup file's game clock is damaged, so nothing was restored."
@@ -292,6 +295,9 @@ class ClockStore:
             ValueError,
             TypeError,
         ):  # (a date the calendar has not got, e.g. a leap day in a common year)
+            # A bad calendar must never stop the clock: it reads as plain Day N, and the log says
+            # only that it happened (never the definition's words).
+            log.warning("A campaign's calendar no longer reads; the clock says Day N")
             return Calendar()
 
     async def set_custom_calendar(
