@@ -38,8 +38,9 @@ from dmbot.memory.link_words import (
     reads_both_ways,
 )
 from dmbot.memory.standing import dm_line_word
+from dmbot.memory.store import COMPANION_CODES
 from dmbot.memory.voice import split_effect_note
-from dmbot.memory.web_actions import RETAKE_AFTER_S
+from dmbot.memory.web_actions import COMPANION_ERROR, RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
 from dmbot.web import (
     all_names,
@@ -1554,9 +1555,13 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         # how far it has got while it works (#2921: the stage, the wait and "12 of 50")
         total = int(got.get("progressTotal") or 0)
         keeping = got["action"] == "backstory-keep-all"
+        # a keep the companion rule refused (#5165 part 3): the error is the one word `companion`
+        # and `why` is the store's own sentence for that rule, never the raw refusal
+        error, why = companion_refusal_words(str(got["error"] or ""))
         return {
             "state": got["state"],
-            "error": got["error"],
+            "error": error or got["error"],
+            **({"why": why} if why else {}),
             "edge": None,
             "removed": False,
             "kept": int(got["resultId"]) if keeping and got["resultId"] else None,
@@ -1750,6 +1755,14 @@ def _can_be_secret(row: dict[str, Any]) -> bool:
         split_effect_note(str(row.get("details") or ""))[0], (), str(row["how"]),
     )  # fmt: skip
     return condition_of(said) is None
+
+
+def companion_refusal_words(error: str) -> tuple[str, str]:
+    """(`companion`, the rule's sentence) for an answer row's `companion_<rule>` error, else
+    ("", "")."""
+    code = error.removeprefix(COMPANION_ERROR) if error.startswith(COMPANION_ERROR) else ""
+    words = COMPANION_CODES.get(code, "")
+    return ("companion", words) if words else ("", "")
 
 
 def companion_means(*, predicate: str = "", relationship: str = "") -> dict[str, str]:

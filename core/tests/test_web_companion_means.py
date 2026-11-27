@@ -26,3 +26,37 @@ class TheCompanionMeans(unittest.TestCase):
         self.assertEqual(companion_means(predicate="knows"), {})
         self.assertEqual(companion_means(relationship="knows"), {})
         self.assertEqual(companion_means(), {})
+
+
+class TheRefusalCodes(unittest.TestCase):
+    """A keep the companion rule refused is answered with a code, and the answer read sends the
+    store's own sentence for it (#5165 part 3)."""
+
+    def test_each_rule_has_a_code_and_its_sentence(self) -> None:
+        from dmbot.memory.store import (
+            COMPANION_NOT_NPC,
+            COMPANION_PARTY_SOURCE,
+            COMPANION_TARGET,
+            companion_code,
+        )
+
+        self.assertEqual(companion_code(COMPANION_NOT_NPC), "not_npc")
+        self.assertEqual(companion_code(COMPANION_PARTY_SOURCE), "party_source")
+        self.assertEqual(companion_code(COMPANION_TARGET), "target")
+        self.assertIsNone(companion_code("Something else."))
+
+    def test_the_answer_says_companion_and_the_rules_sentence(self) -> None:
+        from dmbot.memory.store import COMPANION_PARTY_SOURCE
+        from dmbot.memory.web_actions import COMPANION_ERROR
+        from dmbot.web.relationships import companion_refusal_words
+
+        self.assertEqual(
+            companion_refusal_words(COMPANION_ERROR + "party_source"),
+            ("companion", COMPANION_PARTY_SOURCE),
+        )
+
+    def test_any_other_error_is_left_alone(self) -> None:
+        from dmbot.web.relationships import companion_refusal_words
+
+        for error in ("", "bad_target", "companion_made_up", "companion_"):
+            self.assertEqual(companion_refusal_words(error), ("", ""))
