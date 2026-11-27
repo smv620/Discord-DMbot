@@ -389,7 +389,7 @@ class OnTheCalendar(unittest.TestCase):
             {"kind": cal.HARPTOS, "start": cal.day_one(1492, "Hammer", 1), "layout": seasons},
         ):
             with self.subTest(str(kwargs)[:50]), self.assertRaises(ValueError):
-                cal.Calendar(**kwargs)  # type: ignore[arg-type]
+                cal.Calendar(**kwargs)
 
     def test_what_is_stored_comes_back_as_the_same_calendar(self) -> None:
         seasons = lay.four_seasons(90)
