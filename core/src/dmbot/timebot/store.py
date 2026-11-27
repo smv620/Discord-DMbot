@@ -291,10 +291,9 @@ class ClockStore:
                 str(row["calendar_kind"]),
                 DayOne(int(row["calendar_year"]), int(row["calendar_ordinal"])),
             )
-        except (
-            ValueError,
-            TypeError,
-        ):  # (a date the calendar has not got, e.g. a leap day in a common year)
+        except (ValueError, TypeError):
+            # (a date the calendar has not got, e.g. a leap day in a common year, or a damaged
+            # definition)
             # A bad calendar must never stop the clock: it reads as plain Day N, and the log says
             # only that it happened (never the definition's words).
             log.warning("A campaign's calendar no longer reads; the clock says Day N")

@@ -53,8 +53,9 @@ SQL = r"""
 """
 
 # The website's clock door (0516) also gives the definition, so its page can word a countdown in
-# the campaign's calendar. Rebuilt from 0516's own text so the DM-only check cannot drift, with
-# each replacement asserted. The search path is set again, as every replaced door does.
+# the campaign's calendar (not wired yet: until slice 4 a thread card and a time limit still say
+# "Day N" for a custom calendar). Rebuilt from 0516's own text so the DM-only check cannot drift,
+# with each replacement asserted. The search path is set again, as every replaced door does.
 _OLD = importlib.import_module("dmbot.migrations.0516_game_clock_door")
 _FROM = "CREATE FUNCTION dmbot_web_game_clock("
 _KEYS = "'ordinal', clock.calendar_ordinal);"
