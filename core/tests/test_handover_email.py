@@ -28,7 +28,6 @@ from tests.test_web_email_signin import (
     HEADERS,
     LINK_SECRET,
     SMTP,
-    FakeMoveCodes,
     FakeTransport,
 )
 from tests.test_web_role import ensure_web_role, web_url
@@ -74,7 +73,6 @@ class OfferBase(DatabaseTest):
             payments=FakeProvider(b"h" * 32, SITE),
             route_limits=limits,
             mailer=self.sender,
-            move_codes=FakeMoveCodes(),
             clock=lambda: self.now,
         )
         await sessions.sign_in(self.web, BOB, [THURSDAY], now=self.now, days=30)

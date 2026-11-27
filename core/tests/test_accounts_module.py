@@ -9,7 +9,6 @@ import unittest
 from pathlib import Path
 
 import dmbot.bot
-import dmbot.ui.migrate
 from dmbot import accounts
 from dmbot.web import accounts as web_accounts
 
@@ -53,8 +52,8 @@ class TheAccountHelpers(unittest.TestCase):
         }
         self.assertEqual(defined, set(PUBLIC_NAMES))
 
-    def test_the_bot_and_the_migrate_screen_do_not_import_the_website(self) -> None:
-        for module in (dmbot.bot, dmbot.ui.migrate, accounts):
+    def test_the_bot_does_not_import_the_website(self) -> None:
+        for module in (dmbot.bot, accounts):
             assert module.__file__ is not None
             tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
             names: list[str] = []

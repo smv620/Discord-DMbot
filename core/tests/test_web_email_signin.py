@@ -21,7 +21,7 @@ from dmbot.web import email_signin
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
 from dmbot.web.limits import LIMITS, RateLimit
-from dmbot.web.moving import MoveOutcome, can_move
+from dmbot.web.moving import can_move
 from dmbot.web.payments import FakeProvider
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_api import ALICE, SITE, THURSDAY, FakeDiscord, settings
@@ -121,15 +121,6 @@ SMTP = MailSettings(
 )
 
 
-class FakeMoveCodes:
-    def __init__(self) -> None:
-        self.asked: list[int] = []
-
-    async def send_code(self, user_id: int, source: str) -> MoveOutcome:
-        self.asked.append(user_id)
-        return "sent"
-
-
 def token_in(link: str) -> str:
     found = re.search(r"#email-link=([\w-]+)$", link)
     assert found is not None, link
@@ -155,7 +146,6 @@ class EmailSignIn(DatabaseTest):
             link_secret=LINK_SECRET,
             clock=lambda: float(self.now),
         )
-        self.moves = FakeMoveCodes()
         self.limits = {
             name: RateLimit(group.seconds, clock=lambda: float(self.now), count=group.count)
             for name, group in LIMITS.items()
@@ -169,7 +159,6 @@ class EmailSignIn(DatabaseTest):
             route_limits=self.limits,
             email_limit=self.email_limit,
             mailer=self.sender,
-            move_codes=self.moves,
             clock=lambda: self.now,
         )
 
@@ -607,58 +596,26 @@ class EmailSignIn(DatabaseTest):
         token = token_in(self.mailer.sent[-1][1])
         await client.post("/auth/email/verify", json={"token": token}, headers=HEADERS)
 
-    async def test_a_move_code_is_for_an_active_paid_plan_only(self) -> None:
-        await self.account(ALICE)
-        async with self.browser() as client:
-            await self.sign_in_by_email(client, ALICE)
-            none = await client.post("/me/move-code", headers=HEADERS)
-            self.assertEqual((none.status_code, none.json()), (403, {"error": "not_paid"}))
-            await self.give_plan(ALICE, "try-it", "active")
-            tried = await client.post("/me/move-code", headers=HEADERS)
-            self.assertEqual(tried.status_code, 403)
-        self.assertEqual(self.moves.asked, [])
-
-    async def test_a_move_code_is_asked_for_by_an_active_paid_plan(self) -> None:
+    async def test_the_move_code_route_is_retired_and_points_to_the_account_page(self) -> None:
         await self.account(ALICE)
         await self.give_plan(ALICE, "table", "active")
         async with self.browser() as client:
             await self.sign_in_by_email(client, ALICE)
             self.assertTrue((await client.get("/me")).json()["canMove"])
             answer = await client.post("/me/move-code", headers=HEADERS)
-        self.assertEqual(answer.status_code, 202)
-        self.assertNotIn("code", answer.json())  # it is emailed, never shown
-        self.assertEqual(self.moves.asked, [ALICE.id])
+        self.assertEqual(
+            (answer.status_code, answer.json()["error"]), (410, "moved_to_account_page")
+        )
+        message = answer.json()["message"]
+        self.assertIn("add the new Discord account, then remove the old one", message)
+        self.assertIn("/account", message)
 
-    async def test_a_move_code_needs_a_sign_in_and_the_header(self) -> None:
+    async def test_the_retired_move_code_route_still_needs_a_sign_in_and_the_header(self) -> None:
         await self.account(ALICE)
-        await self.give_plan(ALICE, "table", "active")
         async with self.browser() as client:
             self.assertEqual((await client.post("/me/move-code", headers=HEADERS)).status_code, 401)
             await self.sign_in_by_email(client, ALICE)
             self.assertEqual((await client.post("/me/move-code")).status_code, 403)
-        self.assertEqual(self.moves.asked, [])
-
-    async def test_with_no_move_codes_set_up_it_says_so(self) -> None:
-        await self.account(ALICE)
-        await self.give_plan(ALICE, "table", "active")
-        app = create_app(
-            settings(link_token_secret=LINK_SECRET),
-            self.web,
-            FakeDiscord(),
-            payments=FakeProvider(b"h" * 32, SITE),
-            mailer=self.sender,
-            clock=lambda: self.now,
-        )
-        async with self.browser() as signing_in:
-            await self.sign_in_by_email(signing_in, ALICE)  # a browser of the main app
-            cookies = signing_in.cookies
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app),
-            base_url="https://web-api.internal.test",
-            cookies=cookies,
-        ) as client:
-            answer = await client.post("/me/move-code", headers=HEADERS)
-        self.assertEqual((answer.status_code, answer.json()), (503, {"error": "move_off"}))
 
     async def test_a_discord_sign_in_keeps_the_name_for_personal_links(self) -> None:
         await self.account(ALICE)

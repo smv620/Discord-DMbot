@@ -52,7 +52,10 @@ BAD_CODE = (
 )
 TOO_MANY = "Too many tries. Wait 10 minutes, then try again."
 TOO_MANY_ASKS = "You've asked for 3 codes this hour. Wait an hour, or use the last email."
-SAME = "This is the old account. Open Discord on your new account and run `/dmbot migrate` there."
+SAME = (
+    "This is the old account. To move, add the new Discord account to your DMbot account on "
+    "the website, then remove the old one."
+)
 NEW_HAS_PLAN = "This account already has a paid plan. Use an account without one."
 TARGET_HISTORY = (
     "That Discord account already has its own DMbot history. Use a fresh account, or ask us at "

@@ -206,9 +206,6 @@ describe("What's new", () => {
 
   it("names only buttons and commands that are in the bot's code", () => {
     const named: [needle: string, file: string][] = [
-      ["Get a move code", "ui/migrate.py"],
-      ["/dmbot migrate", "ui/migrate.py"],
-      ["Import my account", "ui/migrate.py"],
       ["Only one exists", "ui/name_card.py"],
       ["Allow more than one", "ui/name_card.py"],
     ];

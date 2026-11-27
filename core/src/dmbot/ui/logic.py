@@ -279,6 +279,8 @@ HELP_TEXT = (
     "• `/transcript`: download what was said in a session (anyone in the server)\n"
     "• `/dmbot backup`: download a complete copy of a campaign (anyone can)\n"
     "• `/dmbot restore`: bring a campaign back from a copy\n"
+    "• To move to a new Discord account, add it to your DMbot account on the website, then "
+    "remove the old one.\n"
     "\n"
     '**Ask DMbot:** anyone who said yes can say "Hey DMbot…" '
     "or type a question in the voice channel's chat. "

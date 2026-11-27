@@ -19,7 +19,6 @@ from dmbot.memory.backup import MemorySection
 from dmbot.memory.store import MemoryStore
 from dmbot.web import accounts, entitlements_writer, move_sync, sessions
 from dmbot.web.discord import DiscordUser
-from dmbot.web.moving import EmailedMoveCodes
 from dmbot.web.payments import FakeProvider, PaymentError, PaymentEvent
 from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
@@ -305,23 +304,39 @@ class Moves(DatabaseTest):
 
     # ---- one limit for the bot and the website (#1276) ---------------------------------
 
-    class _Mail:
-        """A mailer that sends nothing and says it did (the website's side needs one)."""
+    class _Door:
+        """The website's old way to a code (#1246), kept as the database door it called: the
+        website no longer asks, but the door and its shared limit stay for accounts already
+        moved, so the bot's count and the door's are still tested together."""
 
-        def __init__(self, result: str = "sent") -> None:
-            self.result = result
+        def __init__(self, test: Moves) -> None:
+            self.test = test
 
-        async def send(self, **_: Any) -> str:
-            return self.result
+        async def send_code(self, user_id: int, source: str) -> str:
+            now = int(self.test.now)
+            async with self.test.db.unscoped() as conn:
+                cur = await conn.execute(
+                    "SELECT dmbot_web_move_code(%s, %s, %s, %s, %s) AS outcome",
+                    (
+                        user_id,
+                        source,
+                        now,
+                        account_move.hash_code(account_move.new_code()),
+                        now + account_move.CODE_LIFETIME_S,
+                    ),
+                )
+                row = await cur.fetchone()
+            outcome = str(row["outcome"]) if row else "failed"
+            return "sent" if outcome == "ok" else outcome
 
-    async def website(self, result: str = "sent") -> EmailedMoveCodes:
+    async def website(self) -> _Door:
         async with self.db.user(OLD) as conn:
             await conn.execute(
                 "UPDATE web_users SET payment_email = 'pays@example.org', payment_email_at = 1"
                 " WHERE user_id = %s",
                 (OLD,),
             )
-        return EmailedMoveCodes(self.db, self._Mail(result), clock=lambda: float(self.now))  # type: ignore[arg-type]
+        return self._Door(self)
 
     async def test_the_fourth_ask_in_the_hour_is_refused_whichever_path_makes_it(self) -> None:
         web = await self.website()
@@ -414,42 +429,6 @@ class Moves(DatabaseTest):
                 except MoveError as exc:
                     door = str(exc)
                 self.assertEqual(precheck, door)
-
-    async def test_a_mailer_that_raises_leaves_no_code_and_the_next_ask_works(self) -> None:
-        """The whole path, with the real door: three failed sends in a row use up nothing, and
-        a code asked for afterwards is the only one waiting."""
-        from types import SimpleNamespace
-        from unittest.mock import AsyncMock, MagicMock
-
-        from dmbot.ui import migrate
-
-        async with self.db.user(OLD) as conn:
-            await conn.execute(
-                "UPDATE web_users SET payment_email = 'pays@example.org', payment_email_at = 1"
-                " WHERE user_id = %s",
-                (OLD,),
-            )
-        sent: list[str] = []
-
-        async def reply(text: str, **_: Any) -> None:
-            sent.append(text)
-
-        it = MagicMock()
-        it.user = SimpleNamespace(id=OLD)
-        it.client = SimpleNamespace(
-            account_moves=self.moves,
-            mailer=SimpleNamespace(send=AsyncMock(side_effect=RuntimeError("smtp down"))),
-            meter=SimpleNamespace(db=self.db),
-        )
-        it.response.is_done = lambda: True
-        it.followup.send = reply
-        for _ in range(account_move.ASKS + 1):  # more failures than the hour allows asks
-            await migrate.get_code(it)
-        self.assertEqual(set(sent), {migrate.EMAIL_FAILED})
-        self.assertEqual(await self.scalar("SELECT count(*) FROM move_codes"), 0)
-        self.assertEqual(await self.scalar("SELECT count(*) FROM move_code_asks"), 0)
-        await self.moves.make_code(OLD)  # the next ask works
-        self.assertEqual(await self.scalar("SELECT count(*) FROM move_codes"), 1)
 
     async def test_a_second_move_inside_30_days_is_refused(self) -> None:
         await self.moves.move(OLD, NEW, await self.code())
