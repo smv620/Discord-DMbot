@@ -214,7 +214,9 @@ export default function WebWaiting({
       setSomeUndo(answer.kind === "claim" && answer.action === "some" && got.batch !== undefined ? { id: answer.id, batch: got.batch } : null);
       onChanged?.();
     } catch (error) {
-      setSaid({ ok: false, text: (error instanceof ApiError && own?.[error.kind]) || errorWords(error), n: ++counter.current });
+      // A companion keep refused says why, in the store's own words (#5348); a companion error with no words is the general line.
+      const why = error instanceof ApiError && error.kind === "companion" && error.note ? w.companionRefused(error.note) : undefined;
+      setSaid({ ok: false, text: why ?? ((error instanceof ApiError && own?.[error.kind]) || errorWords(error)), n: ++counter.current });
       setSomeUndo(null); // a press that failed takes back nothing
     } finally {
       // The buttons wait until the list has been read again, so nobody answers an item that is already gone.

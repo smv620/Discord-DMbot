@@ -880,6 +880,10 @@ function pretendTraitOffers(): TraitOffer[] {
 /** The pretend list of what waits for the DM, a fresh copy for each campaign the page opens. A campaign ref ending
  * `.shown-held` also has two claims: a yes on one the bot shows to the players, and one it keeps hidden (#3974, #3986). */
 function pretendWaiting(ref = ""): Waiting {
+  // A companion claim (#5348), only for a campaign whose ref ends `.companion`: its keep is refused by the companion rule.
+  const companion: WaitingClaim[] = ref.endsWith(".companion")
+    ? [{ id: "c-companion", statement: "Glyph travels with Cerric", canSecret: false, means: "a companion who goes along, like a hireling, a familiar or a rescued prisoner" }]
+    : [];
   const shownHeld: WaitingClaim[] = ref.endsWith(".shown-held")
     ? [
         { id: "c3-shown", statement: "Tavin is Mira's cousin", canSecret: false },
@@ -890,6 +894,7 @@ function pretendWaiting(ref = ""): Waiting {
     : [];
   return {
     claims: [
+      ...companion,
       {
         id: "c1",
         statement: "Mira Voss knows Far Hall",
@@ -3039,6 +3044,10 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
       const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting(ref)));
+      // The companion rule (#5348): a keep of this companion claim is refused, with the store's own sentence.
+      if (answer.kind === "claim" && answer.action === "confirm" && answer.id === "c-companion") {
+        throw Object.assign(new ApiError("companion"), { note: "Only a character who isn't a player character can be a companion." });
+      }
       const ids = "ids" in answer ? answer.ids : [answer.id];
       // Family ties (#3463): a pick settles one name of a kept claim (the claim becomes an ordinary waiting one
       // once none is left), and Undo puts it back; "None of these" is the ordinary reject below.
