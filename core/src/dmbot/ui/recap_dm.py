@@ -23,6 +23,7 @@ from dmbot.recaps import approval, cues
 from dmbot.recaps import post as recap_post
 from dmbot.recaps.notes import SessionNotesStore, numbered
 from dmbot.recaps.notify import page_link
+from dmbot.timebot.calendar import Calendar
 from dmbot.ui import recap_feedback
 from dmbot.ui.decision_lines import with_outcome
 from dmbot.ui.dmbot_commands import _bot, _tell
@@ -124,9 +125,9 @@ def ready_text(title: str, link: str, audio_why: str = "") -> str:
     return f"📜 Recap ready{shown}\nNothing goes to the players until you post it.{where}{off}"
 
 
-def reading_text(job: Any, link: str) -> str:
+def reading_text(job: Any, link: str, calendar: Calendar | None = None) -> str:
     """What "Read it" posts: the story as the table would read it, without the posted-by line."""
-    text = recap_post.to_the_table(job, footer=False)
+    text = recap_post.to_the_table(job, footer=False, calendar=calendar)
     if link:
         text += f"\n\nWant to change it first? Edit it here: {link}"
     return text
@@ -265,7 +266,7 @@ class RecapButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             if bot.settings.site_url
             else ""
         )
-        parts = recap_post.parts_of(reading_text(job, link))
+        parts = recap_post.parts_of(reading_text(job, link, await bot._recap_calendar(campaign)))
         audio, note = await bot._recap_audio_files(
             interaction.guild.id, campaign, job, interaction.channel
         )

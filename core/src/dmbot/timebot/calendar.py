@@ -205,6 +205,14 @@ def custom_from(year: int, ordinal: int, raw: object) -> Calendar:
     return Calendar(CUSTOM, layout=found, layout_start=layout_mod.Start(year, ordinal, weekday))
 
 
+def day_words(day: int | None, calendar: Calendar | None = None) -> str | None:
+    """The date of game day `day` (the day number a recap job keeps) in the campaign's calendar:
+    "Summer 5th, 1201 AR", or "Day 5" with none. None when the day is not known."""
+    if not day or day < 1:
+        return None
+    return (calendar or Calendar()).words(minute_of(day))
+
+
 def from_door(got: Mapping[str, object]) -> Calendar:
     """The calendar from what the website's clock door gives (`dmbot_web_game_clock`: `kind`,
     `year`, `ordinal` and, for a campaign's own calendar, `def`). Day N for none, and for any

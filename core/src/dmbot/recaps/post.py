@@ -11,14 +11,15 @@ from dmbot.discord_limits import MESSAGE_MAX as _MESSAGE_MAX
 from dmbot.recaps.draft import heading
 from dmbot.recaps.store import Job
 from dmbot.recaps.text import strip_cues
+from dmbot.timebot.calendar import Calendar
 
 PART_MAX = _MESSAGE_MAX - 100  # room for the "(1/3)" part marker added when it is posted
 
 
-def to_the_table(job: Job, *, footer: bool = True) -> str:
+def to_the_table(job: Job, *, footer: bool = True, calendar: Calendar | None = None) -> str:
     """What the players read. With `footer` False it is the same words without the line that says
     the DM posted it, for the DM reading it on the DM screen first (#1455)."""
-    parts = [heading(job.title, job.game_day), "", strip_cues(job.summary)]
+    parts = [heading(job.title, job.game_day, calendar), "", strip_cues(job.summary)]
     if job.housekeeping:
         parts += [
             "",

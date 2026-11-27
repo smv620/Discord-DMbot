@@ -22,7 +22,7 @@ import logging
 import shutil
 import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,7 @@ from dmbot.recaps.audio.render import (
     kinds_for,
 )
 from dmbot.recaps.store import AUDIO_LEASE_S, AUDIO_MAX_TRIES, Job, RecapStore
+from dmbot.timebot.calendar import Calendar
 from dmbot.worker_lease import WorkerLease
 
 log = logging.getLogger(__name__)
@@ -83,6 +84,8 @@ class AudioInputs:
 
     secret_names: Collection[str]
     names: Sequence[nm.SpokenName]  # confirmed names with their "said as" spellings
+    # The campaign's calendar, which words the title's date ("Summer 5th, 1201 AR", #5364)
+    calendar: Calendar = field(default_factory=Calendar)
 
     @property
     def allowed_names(self) -> list[str]:
@@ -257,6 +260,7 @@ class AudioWorker:
                 secret_names=inputs.secret_names,
                 allowed_names=inputs.allowed_names,
                 emotion_tags=self._voice_tags,
+                calendar=inputs.calendar,
             )
         except sc.SecretInScript as exc:
             log.warning("Recap audio: refused, a secret name (rule %s)", exc.rule)  # the rule only
@@ -286,6 +290,7 @@ class AudioWorker:
                     secret_names=fresh.secret_names,
                     allowed_names=fresh.allowed_names,
                     emotion_tags=self._voice_tags,
+                    calendar=fresh.calendar,
                 )
             except sc.SecretInScript:
                 raise Stop(SECRET) from None

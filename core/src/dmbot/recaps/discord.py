@@ -105,6 +105,7 @@ from dmbot.recaps.requests import Request as RecapRequest
 from dmbot.recaps.significance import Memory
 from dmbot.recaps.store import Job, SavedLists
 from dmbot.recaps.text import names_a_secret, strip_cues
+from dmbot.timebot.calendar import Calendar
 from dmbot.transcript.cleaner import (
     clean,
 )
@@ -1645,7 +1646,7 @@ class RecapFeatures:
         if secrets is None:
             problems.append("DMbot couldn't check your secret names just now. Try again.")
         elif names_a_secret(
-            recap_post.to_the_table(job),
+            recap_post.to_the_table(job, calendar=await self._recap_calendar(campaign)),
             secrets,
             await self.recap_allowed_names(campaign, job.session_at),
         ):
@@ -1862,6 +1863,17 @@ class RecapFeatures:
             "recap_audio", gid, campaign, fail_open=False
         )
 
+    async def _recap_calendar(self, campaign: Campaign) -> Calendar:
+        """The campaign's calendar, which words a recap's date (#5364); Day N when it can't be
+        read, since the heading must never stop a recap."""
+        if self.clocks is None:
+            return Calendar()
+        try:
+            return await self.clocks.calendar(campaign.guild_id, campaign.id)
+        except Exception:
+            log.warning("Couldn't read the campaign's calendar for a recap", exc_info=True)
+            return Calendar()
+
     async def recap_audio_inputs(self, gid: int, cid: str, job: Job) -> AudioInputs | None:
         """What the audio step reads: the campaign's names, secret ones fresh. None when they
         can't be read (then nothing is sent, since a secret name couldn't be kept out)."""
@@ -1883,7 +1895,15 @@ class RecapFeatures:
             shown,
         )
         hidden = set(secret)
+        try:
+            calendar = (
+                await self.clocks.calendar(gid, cid) if self.clocks is not None else Calendar()
+            )
+        except Exception:
+            log.warning("Couldn't read the campaign's calendar for recap audio", exc_info=True)
+            calendar = Calendar()
         return AudioInputs(
+            calendar=calendar,
             secret_names=secret,
             # The DM's "said as" spelling (#1419); a secret name never has one, and the names are
             # read fresh all the same, so a secret one is always known to the filter.
@@ -2327,7 +2347,7 @@ class RecapFeatures:
         secrets = await self.recap_secret_names(campaign, job.session_at)
         if secrets is None:
             return await back(recap_progress.POST_NOTES["cannot_check_secrets"])
-        text = recap_post.to_the_table(job)
+        text = recap_post.to_the_table(job, calendar=await self._recap_calendar(campaign))
         if names_a_secret(text, secrets, await self.recap_allowed_names(campaign, job.session_at)):
             return await back(recap_progress.POST_NOTES["secret_name"])
         try:  # (the progress clock's step: cosmetic, so it never stops a post, and never sits

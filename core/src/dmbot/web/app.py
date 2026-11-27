@@ -199,6 +199,7 @@ from dmbot.web.recaps import (
     list_recaps,
     month_usage,
     read_recap,
+    recap_calendar,
     redo_recap,
     set_beat_present,
     share_recap,
@@ -1433,7 +1434,13 @@ def create_app(
         except RecapError as err:
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
-        return audio_links.remake(recap_files, ref, recap, voice_tags=settings.recap_voice_tags)
+        return audio_links.remake(
+            recap_files,
+            ref,
+            recap,
+            voice_tags=settings.recap_voice_tags,
+            calendar=await recap_calendar(db, session, ref),
+        )
 
     @app.post("/me/recaps/{ref}/audio/again")
     async def me_recap_audio_again(ref: str, signed: Signed) -> dict[str, Any]:
