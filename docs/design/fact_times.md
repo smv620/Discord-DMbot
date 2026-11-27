@@ -1,8 +1,10 @@
 # When it happened and when it was learned
 
-**Status:** proposed (Expert, 2026-11-27, for #5359; the owner's question of the same day). Not
-binding until Supervisor rules and this merges. Worked through with GraphEngineer by message; what
-it told me about the code is marked "(GraphEngineer)".
+**Status:** binding. Supervisor accepted it on #5359 (2026-11-27) and answered section 8; the
+answers are recorded there. Written by the Expert for the owner's question of the same day, and
+worked through with GraphEngineer by message; what it told me about the code is marked
+"(GraphEngineer)". Dates in a campaign's own calendar are read as [`calendars.md`](calendars.md)
+says.
 
 **In one line:** a fact about where someone was carries two times: when it happened in the story,
 and when the table learned it. DMbot keeps both, never invents either, and works out "last known
@@ -82,7 +84,8 @@ The reader says which, and code never guesses:
 A small, strict, pure parser, in the style of `timebot/phrases.py` and `timebot/durations.py`:
 
 - "N days ago", "N weeks ago", "yesterday", "last night", "this morning", "today";
-- "Day N", or a date of the campaign's own calendar.
+- "Day N", or a date of the campaign's own calendar ([`calendars.md`](calendars.md)). A date
+  with no year is its last coming at or before the moment it was learned.
 
 When the clock knew the game minute at that line, the parser gives a day and `when_from` is
 `worked_out`. The card says "about" and shows the words beside it. Anything else ("last winter",
@@ -227,10 +230,15 @@ reader's and the parser's.
 5. **📅 Change when**, on Discord and the website together.
 6. **Per-knower learned times**, with the party-knowledge slices.
 
-## 8. Open questions
+## 8. Questions answered (Supervisor, #5359, 2026-11-27)
 
-1. A campaign with its own calendar ("the 2nd day of summer"): today only plain days and Harptos
-   exist, so such a date stays as words. Is a custom calendar wanted?
-2. Should the DM's own card show a second line when a secret visit is newer than the shown one
-   ("Last known to you: …")?
-3. Which other kinds of fact should carry the two times next: a death, a hand-over, a promise?
+1. **A campaign's own calendar:** yes (the owner, #5364). The design is
+   [`calendars.md`](calendars.md). Until a campaign has one, "the 2nd day of summer" stays as
+   words.
+2. **A secret visit newer than the shown one:** the DM's card and screen show a second line,
+   "Also, kept from the players: last known in Y (Day 12)". Players never see it, and it never
+   changes what they see (rule 7).
+3. **The next kinds of fact:** a death and a hand-over, once visits have been scored on the
+   sample. Promises already carry due dates, so they come after.
+
+**Who builds:** GraphEngineer builds slices 2 to 4; CloudDev-lead and WebDev-lead build slice 5.
