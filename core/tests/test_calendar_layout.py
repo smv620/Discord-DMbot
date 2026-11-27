@@ -127,6 +127,23 @@ class ReadingDates(unittest.TestCase):
                 self.summer.parse("Summer 2nd, 1202", self.start, today=1, direction=direction), 452
             )
 
+    def test_what_the_caller_still_decides_is_returned_as_said(self) -> None:
+        # a year or a "Day N" is returned whatever the direction and the day it was learned
+        # (a later one is the caller's to drop)
+        self.assertEqual(
+            self.summer.parse("Summer 2nd, 1203", self.start, today=5, direction=lay.LAST), 812
+        )
+        self.assertEqual(self.summer.parse("Day 300", self.start, today=5, direction=lay.LAST), 300)
+        self.assertEqual(self.summer.parse("Day 3", self.start, today=50, direction=lay.NEXT), 3)
+
+    def test_a_weekday_name_is_never_a_date(self) -> None:
+        week = lay.Layout("Vale", self.summer.parts, weekdays=("Sunday", "Moonday"))
+        start = week.start_on(1201, "Spring", 1)
+        self.assertIsNone(week.parse("on Moonday", start, today=1))
+        self.assertEqual(
+            week.parse("Moonday, Summer 2nd", start, today=120, direction=lay.LAST), 92
+        )
+
     def test_day_n_is_read_in_every_calendar(self) -> None:
         self.assertEqual(self.summer.parse("by Day 12", self.start, today=1), 12)
         self.assertEqual(H.parse("by Day 12", H.start_on(1492, "Hammer", 1), today=1), 12)

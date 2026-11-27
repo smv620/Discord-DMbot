@@ -293,6 +293,12 @@ class Layout:
         Strict: two dates in the words are none (DMbot can't tell which), a name the calendar has
         not got is none, and nothing before Day 1.
 
+        What the caller still decides: a date said WITH a year, or "Day N", is returned as said
+        whatever the direction, so a caller counting "when it happened" drops one later than the
+        moment it was learned, and a time limit's caller one that is not ahead. A LAST with no
+        coming on or after Day 1 is None, so the caller keeps the words. A weekday name alone, or
+        beside a date, is never a date and never makes two.
+
         A date with no year takes `direction` from game day `today`: NEXT is its next coming
         after today (a time limit's), LAST is its last coming at or before today (when something
         happened, given the day it was learned)."""
