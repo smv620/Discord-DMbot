@@ -669,6 +669,63 @@ class EmailSignIn(DatabaseTest):
         assert row is not None
         self.assertEqual(row["display_name"], ALICE.name)
 
+    async def test_an_email_session_sees_the_servers_of_the_last_discord_sign_in(self) -> None:
+        """#5351: no server list meant every campaign page said "We couldn't find that campaign"."""
+        from dmbot.web import sessions
+
+        await self.account(ALICE)  # a Discord sign-in with THURSDAY in its list
+        token = await sessions.sign_in_by_email(self.web, ALICE.id, now=self.now, days=30)
+        found = await sessions.find(self.web, token, now=self.now)
+        assert found is not None
+        self.assertEqual([(g.id, g.name) for g in found.guilds], [(THURSDAY.id, THURSDAY.name)])
+        # What a server manager does still needs a Discord sign-in.
+        self.assertEqual([g.manage for g in found.guilds], [False])
+        self.assertIsNone(found.managed(THURSDAY.id))
+
+    async def test_an_email_session_with_no_discord_sign_in_has_no_servers(self) -> None:
+        from dmbot.web import sessions
+
+        async with self.web.user(ALICE.id) as conn:
+            await conn.execute(
+                "INSERT INTO web_users (user_id, email, created_at, last_sign_in_at, display_name)"
+                " VALUES (%s, 'a@example.com', %s, %s, 'Alice')",
+                (ALICE.id, self.now, self.now),
+            )
+        token = await sessions.sign_in_by_email(self.web, ALICE.id, now=self.now, days=30)
+        found = await sessions.find(self.web, token, now=self.now)
+        assert found is not None
+        self.assertEqual(found.guilds, ())
+
+    async def test_a_later_discord_sign_in_refreshes_the_remembered_servers(self) -> None:
+        from dmbot.web import sessions
+        from dmbot.web.discord import DiscordGuild
+
+        await self.account(ALICE)
+        other = DiscordGuild(id=THURSDAY.id + 1, name="Friday", manage=True)
+        await sessions.sign_in(self.web, ALICE, [other], now=self.now, days=30)
+        token = await sessions.sign_in_by_email(self.web, ALICE.id, now=self.now, days=30)
+        found = await sessions.find(self.web, token, now=self.now)
+        assert found is not None
+        self.assertEqual([g.id for g in found.guilds], [other.id])
+        self.assertEqual([g.manage for g in found.guilds], [False])
+
+
+class UnmanagedServers(unittest.TestCase):
+    """The remembered list as an email session keeps it (#5351): pure."""
+
+    def test_keeps_ids_and_names_and_drops_manage(self) -> None:
+        from dmbot.web.sessions import unmanaged
+
+        got = unmanaged([{"id": "7", "name": "Thursday", "manage": True}])
+        self.assertEqual(got, [{"id": "7", "name": "Thursday", "manage": False}])
+
+    def test_anything_that_is_not_a_server_list_is_empty(self) -> None:
+        from dmbot.web.sessions import unmanaged
+
+        self.assertEqual(unmanaged(None), [])
+        self.assertEqual(unmanaged({"id": "1"}), [])
+        self.assertEqual(unmanaged(["x", {"id": "1"}, {"name": "n"}]), [])
+
 
 async def sessions_sign_in(db: Database, user: DiscordUser, now: int) -> None:
     from dmbot.web import sessions
