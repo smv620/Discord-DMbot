@@ -1119,6 +1119,13 @@ export interface NameAnswerResult {
 /** One window: lines the door only sends for speakers who agree to be recorded; a line whose words were
  * removed after "Stop recording me" is `{ removed: true }` with no speaker, time or words. */
 export type NamePlaceLine = { removed: true } | { removed?: false; speaker: string; at: number; text: string };
+/** Where an entry came from when no sentence is kept (#4557; core #5347): the DM's upload it was read from, the session a kept
+ * story thread pointed at (with the lines still there from people who still agree; none means "That line was removed"), or
+ * a name the DM typed. Read when the button is pressed, shown on the page only. */
+export type NameOrigin =
+  | { kind: "upload"; label: string; at: number }
+  | { kind: "session"; session: number; at: number; lines: string[] }
+  | { kind: "yours" };
 export interface NamePlace {
   session: number;
   /** False when nothing of the window is left to show. */
@@ -3857,7 +3864,7 @@ export interface AccountApi {
   /** The clean-up page's read (#3740): the groups not linked to a player character. A DM or game master only. */
   graphCleanup?(ref: string): Promise<CleanupView>;
   /** "Where was it said?" for one clean-up entry (#3767; core GET `.../web/cleanup/{id}/places`): the same places `NamePlaces` draws. A DM or game master only. */
-  cleanupPlaces?(ref: string, id: string): Promise<{ places: NamePlace[]; morePlaces: number }>;
+  cleanupPlaces?(ref: string, id: string): Promise<{ places: NamePlace[]; morePlaces: number; origins?: NameOrigin[] }>;
   /** DMbot's own matches the DM has not answered (#3602; DM only: anyone else gets `not-allowed`). Missing from
    * an API older than that. */
   nameMatches?(ref: string): Promise<MatchRow[]>;

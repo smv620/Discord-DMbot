@@ -13,6 +13,7 @@ import type {
   NameCheckList,
   NamesFixed,
   CleanupView,
+  NameOrigin,
   NamePlace,
   NameSource,
   KindOffer,
@@ -265,7 +266,7 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     },
     graphCleanup: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/cleanup`)) as CleanupView,
     cleanupPlaces: async (ref, id) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/cleanup/${encodeURIComponent(id)}/places`)) as { places: NamePlace[]; morePlaces: number },
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/web/cleanup/${encodeURIComponent(id)}/places`)) as { places: NamePlace[]; morePlaces: number; origins?: NameOrigin[] },
     nameSources: async (ref) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/name-sources`)) as { sources: NameSource[] }).sources,
     nameMatches: async (ref) =>

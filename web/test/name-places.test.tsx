@@ -217,3 +217,52 @@ describe("the page itself", () => {
     ).toHaveLength(1);
   });
 });
+
+describe("where an entry came from (#4557, core #5347)", () => {
+  const AT = 1_731_628_800; // 15 Nov 2024, UTC
+  const origin = (origins: import("../src/account/api").NameOrigin[]) =>
+    render(<NamePlaces places={[]} more={0} campaignRef="100.cmp1" origins={origins} />);
+
+  it("an upload says its name and day, and that the sentence is not kept", () => {
+    const { container } = origin([{ kind: "upload", label: "Harrow notes", at: AT }]);
+    expect(container.textContent).toBe(`${w.uploadIcon} ${w.uploadFrom}Harrow notes${w.uploadAfter("15 Nov")}`);
+    expect(container.querySelector("[aria-hidden]")?.textContent).toContain(w.uploadIcon);
+    expect(container.querySelector("em")?.textContent).toBe("Harrow notes");
+    expect(w.uploadAfter("15 Nov")).toBe(", 15 Nov. DMbot doesn't keep the sentence after reading.");
+  });
+
+  it("a kept thread shows its session, day and lines; none left says the line was removed", () => {
+    const { container, unmount } = origin([{ kind: "session", session: 3, at: AT, lines: ["The keep stood on the ridge."] }]);
+    expect(container.querySelector("em")?.textContent).toBe("From session 3, 15 Nov");
+    expect(container.querySelector("blockquote")?.textContent).toBe("“The keep stood on the ridge.”");
+    unmount();
+    const none = origin([{ kind: "session", session: 3, at: AT, lines: [] }]);
+    expect(none.container.textContent).toContain(w.originLineRemoved);
+    expect(none.container.querySelector("blockquote")).toBeNull();
+  });
+
+  it("a thread with no day of its own says no day, and at most three of its lines show", () => {
+    const { container } = origin([{ kind: "session", session: 4, at: 0, lines: ["a", "b", "c", "d"] }]);
+    expect(container.querySelector("em")?.textContent).toBe("From session 4");
+    expect(container.querySelectorAll("blockquote").length).toBe(3);
+  });
+
+  it("a name the DM typed says so, and at most three origins show", () => {
+    const { container, unmount } = origin([{ kind: "yours" }]);
+    expect(container.textContent).toBe(w.yours);
+    unmount();
+    const four = origin([1, 2, 3, 4].map((n) => ({ kind: "upload" as const, label: `Upload ${n}`, at: AT })));
+    expect(four.container.querySelectorAll("li").length).toBe(3);
+    expect(four.container.textContent).not.toContain("Upload 4");
+  });
+
+  it("the words are drawn as text, never as HTML", () => {
+    const { container } = origin([{ kind: "session", session: 1, at: AT, lines: ["<b>bold</b>"] }]);
+    expect(container.querySelector("b")).toBeNull();
+    expect(container.textContent).toContain("<b>bold</b>");
+  });
+
+  it("nothing at all (no places, no origins) draws nothing", () => {
+    expect(origin([]).container.textContent).toBe("");
+  });
+});

@@ -147,6 +147,25 @@ describe("the clean-up", () => {
     expect(api.calls.some((c) => c.startsWith("clarifyName"))).toBe(false);
   });
 
+  it("shows where an entry came from when no sentence is kept (#4557)", async () => {
+    const api = await open();
+    await screen.findByText(w.count(6));
+    fireEvent.click(screen.getByRole("button", { name: `${namePlaceWords.button}: The Tide Wardens` }));
+    expect(await screen.findByText(/From your upload/)).toBeTruthy();
+    expect(screen.getByText("Harrow notes").tagName).toBe("EM");
+    expect(screen.queryByText(w.noLines)).toBeNull();
+    expect(api.calls).toContain("cleanupPlaces:100.cmp1.cleanup:e3");
+  });
+
+  it("an answer with no places and an empty origins list says there are no lines (#4557)", async () => {
+    const api = mockApi("table");
+    api.cleanupPlaces = async () => ({ places: [], morePlaces: 0, origins: [] });
+    await open("cleanup", api);
+    await screen.findByText(w.count(6));
+    fireEvent.click(screen.getByRole("button", { name: `${namePlaceWords.button}: Brewner` }));
+    expect(await screen.findByText(w.noLines)).toBeTruthy();
+  });
+
   it("says plainly when there are no lines for an entry", async () => {
     const api = mockApi("table");
     api.cleanupPlaces = async () => {
