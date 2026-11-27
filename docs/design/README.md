@@ -16,7 +16,8 @@ They say what is decided. What is built and switched on is in
 | `quests.md` | Quests and story threads: readers suggest them from lore and sessions; objectives, complications, rewards promised and given, help given or lent, and time limits as rows beside the thread; branches; clues and "clues found"; time limits on the game clock | **In review** (#4450). Issue #4448 |
 | `session_tagger.md` | One small model tags each part of a session with the kinds of thing in it; each reader reads only its own parts; every tag is accounted for, so the DM can be told what was checked | **In review** (#4455) |
 | `session_names.md` | Finding names in what was said: an AI reader finds names from the words around them, a capital letter is only a hint, spellings that sound alike are one name, and the DM confirms the spelling. Scored on the sample session as typed, with no capitals, and spoken | **Binding** (revision 1, #5087); revision 2 in review. Issues #5055, #5133, #5173 |
-| [`fact_times.md`](fact_times.md) | A visit carries when it happened and when it was learned; DMbot keeps the story's own time words and counts a day only from the game clock; "last known in" is worked out by when it happened, and a visit learned late never moves someone back | **In review** (#5359) |
+| [`fact_times.md`](fact_times.md) | A visit carries when it happened and when it was learned; DMbot keeps the story's own time words and counts a day only from the game clock; "last known in" is worked out by when it happened, and a visit learned late never moves someone back | **Binding** (#5359) |
+| [`calendars.md`](calendars.md) | A campaign's own calendar: game time stays minutes since Day 1 and a calendar only words it; one shape for every calendar (months or seasons, festivals, a leap day, weekdays, a year label); code reads and prints dates, never the AI | **Binding** (#5364) |
 
 **The rules they share:**
 
