@@ -35,6 +35,7 @@ MAX_DAY_NUMBER = 99_999  # the clock stops here (`clock.py`)
 # Words the date reader uses itself: a part named so would be read as grammar, not as a name.
 _RESERVED = frozenset({"day", "days", "the", "of"})
 _ONLY_A_NUMBER = re.compile(r"\d+(?:st|nd|rd|th)?", re.I)
+_LIKE_DAY_N = re.compile(r"day\s+\d", re.I)  # ("Day 3" would be shadowed by the "Day N" reader)
 
 # A date with no year needs a direction, given by the caller: a time limit means its next coming,
 # a fact's "when it happened" means its last coming at or before the moment it was learned.
@@ -92,7 +93,10 @@ def _name_ok(name: object) -> bool:
         and name == name.strip()
         and 1 <= len(name) <= MAX_NAME
         and name.isprintable()
+        and name[0].isalnum()  # (the patterns wrap a name in word edges: "Dusk!" could never match)
+        and name[-1].isalnum()
         and name.casefold() not in _RESERVED
+        and not _LIKE_DAY_N.match(name)
         and not _ONLY_A_NUMBER.fullmatch(name)
     )
 
@@ -238,6 +242,8 @@ class Layout:
         while count >= self.year_days(year):
             count -= self.year_days(year)
             year += 1
+        if year > MAX_YEAR:  # (a layout of very short years: the same cap `ordinal_of` has)
+            raise ValueError("day")
         ordinal = count
         for part in self.sections(year):
             if count < part.days:

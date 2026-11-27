@@ -76,6 +76,8 @@ class HarptosIsTheSameAsToday(unittest.TestCase):
             "midsummer", "FLAMERULE 14TH", "Highharvestide, 1494 DR", "the 30th of Nightal",
         )  # fmt: skip
         nows = [0, 10 * 60, 100 * DAY, 120 * DAY + 600, 300 * DAY, 400 * DAY, 800 * DAY]
+        # (past a leap year's Shieldmeet, where the next one is four years away)
+        nows += [1500 * DAY, 1900 * DAY, 2400 * DAY, 3000 * DAY]
         for words in phrases:
             for now in nows:
                 was = tl._harptos_day(words, old, now)
@@ -135,6 +137,19 @@ class ReadingDates(unittest.TestCase):
         )
         self.assertEqual(self.summer.parse("Day 300", self.start, today=5, direction=lay.LAST), 300)
         self.assertEqual(self.summer.parse("Day 3", self.start, today=50, direction=lay.NEXT), 3)
+
+    def test_the_last_shieldmeet_at_its_own_edges(self) -> None:
+        start = H.start_on(1492, "Hammer", 1)
+        meet = H.day_number_of(1492, "Shieldmeet", None, start)
+        for today, want in (
+            (meet - 1, None),
+            (meet, meet),
+            (meet + 1, meet),
+            (meet + 1500, meet + 1461),
+        ):
+            self.assertEqual(
+                H.parse("Shieldmeet", start, today=today, direction=lay.LAST), want, today
+            )
 
     def test_a_weekday_name_is_never_a_date(self) -> None:
         week = lay.Layout("Vale", self.summer.parts, weekdays=("Sunday", "Moonday"))
@@ -260,6 +275,9 @@ class TheChecks(unittest.TestCase):
                 self.refused("name", parts=(lay.Part(bad, 5),))
         self.refused("name", parts=(lay.Part("Thaw", 5), lay.Part("thaw", 5)))
         self.refused("name", name="")
+        for bad in ("Day 3", "day  12", "Dusk!", "(Dusk)", "-Dusk"):
+            with self.subTest(bad):
+                self.refused("name", parts=(lay.Part(bad, 5),))
         self.made(parts=(lay.Part("Feast of the Moon", 5),))
 
     def test_a_weekday_may_not_share_a_name_with_a_part(self) -> None:
@@ -299,3 +317,10 @@ class TheChecks(unittest.TestCase):
                 H.words(number, start)
         with self.assertRaises(ValueError):
             H.parse("Hammer 1", start, today=1, direction="sideways")
+
+    def test_a_layout_of_very_short_years_stops_at_the_year_cap_both_ways(self) -> None:
+        tiny = lay.Layout("Tiny", (lay.Part("Blink", 1, lay.SEASON),))
+        start = tiny.start_on(9990, "Blink")
+        self.assertEqual(tiny.words(10, start), "Blink 1st, 9999")
+        with self.assertRaises(ValueError):
+            tiny.words(11, start)
