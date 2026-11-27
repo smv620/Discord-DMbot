@@ -121,15 +121,22 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
   const [answeredHere, setAnswered] = useState<Record<string, number>>({});
   const baseline = useRef<Record<string, number> | null>(null);
   const onKinds = (now: Record<string, number>): void => {
-    if (baseline.current === null) baseline.current = { ...now };
-    const base = baseline.current;
+    // (a list that grows, as new items arrive, moves its baseline up, so only a real drop is ever taken off)
+    const base = (baseline.current = Object.fromEntries(Object.keys(now).map((k) => [k, Math.max(baseline.current?.[k] ?? 0, now[k] ?? 0)])));
     setAnswered(Object.fromEntries(Object.keys(now).map((k) => [k, Math.max(0, (base[k] ?? 0) - (now[k] ?? 0))])));
   };
   const counted = campaign.kinds.map((k) => ({ ...k, count: Math.max(0, k.count - (answeredHere[k.kind] ?? 0)) }));
-  const kinds = inFixedOrder(mergeUnknown(counted)).filter((k) => kindWords(k.kind).how !== "hidden");
+  // The walk and the panels' places come from the bot's own list, which does not change while the DM answers, so a part never slides
+  // out from under the walk; what is shown (and its numbers) is the same list with the answered ones taken off.
+  const fixed = inFixedOrder(mergeUnknown(campaign.kinds)).filter((k) => kindWords(k.kind).how !== "hidden");
+  const adjusted = inFixedOrder(mergeUnknown(counted));
+  const shownCount = (kind: string): number => adjusted.find((a) => a.kind === kind)?.count ?? 0;
+  // A kind whose last item was answered goes from the list once its panel is closed, never while it is open (the panel and its "all done"
+  // note must not vanish under the DM), and the walk's current part stays too.
+  const kinds = fixed.map((k) => ({ ...k, count: shownCount(k.kind) })).filter((k) => k.count > 0 || open.has(k.kind));
   // The first line of each group carries its toggle and panel; the others say they are answered with it.
   const lead = new Map<string, string>();
-  for (const k of kinds) {
+  for (const k of fixed) {
     const g = groupOf(k.kind);
     if (g !== null && howFor(k.kind, api) === "here" && !lead.has(g)) lead.set(g, k.kind);
   }
@@ -138,7 +145,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
   const parts = [...lead.entries()].map(([group, kind]) => ({
     group: group as HereGroup,
     label: kindWords(kind).label,
-    count: kinds.filter((k) => groupOf(k.kind) === group && howFor(k.kind, api) === "here").reduce((n, k) => n + k.count, 0),
+    count: fixed.filter((k) => groupOf(k.kind) === group && howFor(k.kind, api) === "here").reduce((n, k) => n + shownCount(k.kind), 0),
   }));
   const [walk, setWalk] = useState<number | null>(null);
   const [resume, setResume] = useState(0);

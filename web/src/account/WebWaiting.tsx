@@ -751,7 +751,7 @@ export default function WebWaiting({
                   </div>
                   );
                 })}
-                {u.items.length > 1 && keepAllRow("bottom")}
+                {keepAllRow("bottom")}
               </div>
             );
           })}

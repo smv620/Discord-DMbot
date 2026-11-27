@@ -752,9 +752,12 @@ describe("what was answered here comes off the counts (#5356)", () => {
     await openFacts((got) => ({ ...got, claims: [] }));
     expect(screen.getByText(w.campaignLine(5))).toBeTruthy();
     fireEvent.click(await screen.findAllByRole("button", { name: /Not right/ }).then((b) => b[0] as HTMLElement));
-    await waitFor(() => expect(screen.queryByText(`${facts} · 2`)).toBeNull());
-    expect(screen.queryByRole("button", { name: `${w.hideHere}: ${facts}` })).toBeNull();
+    // (while its list is open the line stays, at 0, so the list and its "all done" note do not vanish under the DM)
+    expect(await screen.findByText(`${facts} · 0`)).toBeTruthy();
     expect(screen.getByText(w.campaignLine(3))).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: `${w.hideHere}: ${facts}` }));
+    await waitFor(() => expect(screen.queryByText(`${facts} · 0`)).toBeNull());
+    expect(screen.queryByRole("button", { name: `${w.showHere}: ${facts}` })).toBeNull();
     expect(screen.getByText(`${link} · 3`)).toBeTruthy(); // (what was not answered stays as the bot counted it)
   });
 
