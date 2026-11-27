@@ -14,6 +14,7 @@ from dmbot.memory import thread_parts as tp
 from dmbot.memory import time_limits as tl
 from dmbot.memory.models import DM
 from dmbot.timebot import calendar as cal
+from dmbot.timebot import layout as lay
 from dmbot.timebot.calendar import Calendar
 from dmbot.timebot.clock import MINUTES_PER_DAY as DAY
 from dmbot.ui import thread_parts as ui
@@ -54,6 +55,44 @@ class Counting(unittest.TestCase):
                 tl.days_from(0, bad)
         self.assertEqual(tl.furthest([5, 900, 40]), 900)
         self.assertIsNone(tl.furthest([]))
+
+
+class OwnCalendar(unittest.TestCase):
+    """A calendar of its own (#5364 slice 4a): every card, alert and countdown says its dates
+    through the one function, so they print in the campaign's calendar like Harptos does."""
+
+    seasons = lay.four_seasons(90, "Vale")
+    vale = Calendar(cal.CUSTOM, layout=seasons, layout_start=seasons.start_on(1201, "Summer", 2))
+
+    def test_a_limits_date_and_countdown_are_in_the_calendar(self) -> None:
+        due = 3 * DAY
+        self.assertEqual(tl.date_said(due, self.vale), "Summer 5th, 1201")
+        self.assertEqual(tl.left_said(due, 0, self.vale), "3 days left (due Summer 5th, 1201)")
+        self.assertEqual(
+            tl.left_said(due, due + 5, self.vale), "time's up (was due Summer 5th, 1201)"
+        )
+
+    def test_plain_and_harptos_calendars_say_what_they_always_did(self) -> None:
+        self.assertEqual(tl.date_said(3 * DAY, Calendar()), "Day 4")
+        flame = Calendar(cal.HARPTOS, cal.day_one(1492, "Flamerule", 14))
+        self.assertEqual(tl.date_said(3 * DAY, flame), "Flamerule 17th, 1492 DR")
+        self.assertEqual(tl.date_said(-5, flame), "Flamerule 14th, 1492 DR")  # (never before Day 1)
+
+    def test_the_websites_clock_door_makes_the_same_calendar(self) -> None:
+        stored = {"kind": "custom", "year": 1201, "ordinal": 91, "def": cal.def_of(self.vale)}
+        self.assertEqual(cal.from_door(stored), self.vale)
+        self.assertEqual(
+            cal.from_door({"kind": "harptos", "year": 1492, "ordinal": 3}),
+            Calendar(cal.HARPTOS, cal.DayOne(1492, 3)),
+        )
+        for bad in (
+            {}, {"kind": "days"}, {"kind": "harptos", "year": 1493, "ordinal": 365},
+            {"kind": "custom", "year": 1201, "ordinal": 91, "def": None},
+            {"kind": "custom", "year": 1201, "ordinal": 91, "def": {"layout": {}, "weekday": 0}},
+            {"kind": "custom", "year": 1201, "ordinal": 999, "def": cal.def_of(self.vale)},
+            {"kind": "custom", "year": True, "ordinal": 91, "def": cal.def_of(self.vale)},
+        ):  # fmt: skip
+            self.assertEqual(cal.from_door(bad), Calendar(), str(bad)[:50])
 
 
 class ReadingADate(unittest.TestCase):

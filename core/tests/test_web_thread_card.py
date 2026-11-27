@@ -260,6 +260,34 @@ class TheChanges(Card):
         (limit,) = await self.parts()
         self.assertEqual(limit["dateWords"], "3 days left (due Day 10)")
 
+    async def test_a_calendar_of_its_own_words_the_date_and_a_damaged_one_is_day_n(self) -> None:
+        from psycopg.types.json import Jsonb
+
+        from dmbot.timebot import calendar as cal
+        from dmbot.timebot import layout as lay
+
+        await self.put_clock(10_000)
+        seasons = lay.four_seasons(90)
+        custom = cal.Calendar(
+            cal.CUSTOM, layout=seasons, layout_start=seasons.start_on(1201, "Summer", 2)
+        )
+        await self.sql(
+            "UPDATE game_clocks SET calendar_kind = 'custom', calendar_year = 1201,"
+            " calendar_ordinal = 91, calendar_def = %s WHERE guild_id = %s",
+            Jsonb(cal.def_of(custom)), self.g,
+        )  # fmt: skip
+        await self.act("part-add", f"{self.thread} time_limit - - - - - - By the thaw")
+        (limit,) = await self.parts()
+        await self.act("part-date", f"{limit['id']} 3")
+        (limit,) = await self.parts()
+        self.assertRegex(limit["dateWords"], r"^3 days left \(due Summer \d+(st|nd|rd|th), 1201\)$")
+        await self.sql(
+            "UPDATE game_clocks SET calendar_def = %s WHERE guild_id = %s",
+            Jsonb({"layout": {}, "weekday": 0}), self.g,
+        )  # fmt: skip
+        (limit,) = await self.parts()
+        self.assertEqual(limit["dateWords"], "3 days left (due Day 10)")
+
     async def test_the_no_clock_words_are_discords(self) -> None:
         from dmbot.ui import thread_parts
 

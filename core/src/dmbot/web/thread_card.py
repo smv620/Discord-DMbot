@@ -60,12 +60,7 @@ async def _clock(
     except Exception:
         log.warning("Couldn't read the game clock for a thread card", exc_info=True)
         return None
-    calendar = cal.Calendar()
-    try:
-        if got.get("kind") == cal.HARPTOS and got.get("year") is not None:
-            calendar = cal.Calendar(cal.HARPTOS, cal.DayOne(int(got["year"]), int(got["ordinal"])))
-    except (ValueError, TypeError):  # (e.g. a leap day in a common year)
-        calendar = cal.Calendar()
+    calendar = cal.from_door(got)  # (Harptos or a calendar of its own, #5364)
     return minute, calendar
 
 
