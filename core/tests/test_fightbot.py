@@ -18,6 +18,7 @@ from dmbot import fightbot
 from dmbot.ai import AIError, Reply
 from dmbot.memory import fight_prompt
 from dmbot.memory.sheet_store import CharacterSheet, FightPlayer
+from dmbot.timebot.calendar import Calendar
 from dmbot.timebot.clock import Clock
 from tests.answer_first import Timeline
 from tests.test_memory_store import GUILD_A
@@ -161,7 +162,7 @@ class Harness(unittest.IsolatedAsyncioTestCase):
         user = SimpleNamespace(send=AsyncMock())
         ai = SimpleNamespace(complete=AsyncMock(return_value=Reply(reply, False)))
         clock = None if round_number is None else Clock(0, 0, None, round_number, 0)
-        stored = None if clock is None else SimpleNamespace(clock=clock)
+        stored = None if clock is None else SimpleNamespace(clock=clock, calendar=Calendar())
         members = [SimpleNamespace(id=i, bot=False) for i in in_voice]
         members.append(SimpleNamespace(id=999, bot=True))  # DMbot itself, or another bot
         channel = SimpleNamespace(members=members)
@@ -249,7 +250,9 @@ class Runner(Harness):
         bot = self.bot(table, round_number=None)
         await fightbot.tick(bot, table)
         bot2 = self.bot(table)
-        bot2.clocks.get = AsyncMock(return_value=SimpleNamespace(clock=Clock(0, 0)))  # no fight
+        bot2.clocks.get = AsyncMock(
+            return_value=SimpleNamespace(clock=Clock(0, 0), calendar=Calendar())
+        )  # no fight
         await fightbot.tick(bot2, table)
         for b in (bot, bot2):
             b.fight_ai.complete.assert_not_awaited()
@@ -344,7 +347,9 @@ class Runner(Harness):
         await fightbot.tick(bot, table)
         await fightbot.tick(bot, table)  # nothing changed
         self.assertEqual(bot.fight_ai.complete.await_count, 1)
-        bot.clocks.get = AsyncMock(return_value=SimpleNamespace(clock=Clock(0, 0, None, 2, 0)))
+        bot.clocks.get = AsyncMock(
+            return_value=SimpleNamespace(clock=Clock(0, 0, None, 2, 0), calendar=Calendar())
+        )
         self.now += 60
         await fightbot.tick(bot, table)  # a new round, but too soon
         self.assertEqual(bot.fight_ai.complete.await_count, 1)
