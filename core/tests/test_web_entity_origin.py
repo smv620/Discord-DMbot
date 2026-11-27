@@ -100,7 +100,7 @@ class TheDoor(Base):
         sid = await TranscriptStore(self.db).open_session(self.g, self.one.id, START)
         starts = tuple(LINE_MS + n for n in range(len(speakers)))
         await TranscriptStore(self.db).add_lines(
-            self.g, sid, [Heard(ms, who, "x", f"Line {who}.") for ms, who in zip(starts, speakers)]
+            self.g, sid, [Heard(ms, who, "x", f"Line {who}.") for ms, who in zip(starts, speakers, strict=True)]
         )
         store = ThreadSuggestionStore(self.db)
         job = tr.Suggestion(
