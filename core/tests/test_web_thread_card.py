@@ -299,6 +299,38 @@ class TheChanges(Card):
             found = await cur.fetchone()
         self.assertIsNone(found and found["r"])
 
+    async def test_the_clock_door_gives_a_custom_calendars_definition_and_a_plain_one_none(
+        self,
+    ) -> None:
+        from psycopg.types.json import Jsonb
+
+        from dmbot.timebot import calendar as cal
+        from dmbot.timebot import layout as lay
+
+        await self.put_clock(10_000)
+        seasons = lay.four_seasons(90)
+        custom = cal.Calendar(
+            cal.CUSTOM, layout=seasons, layout_start=seasons.start_on(1201, "Summer", 2)
+        )
+        for kind, definition, expect in (
+            ("days", None, None),
+            ("custom", Jsonb(cal.def_of(custom)), cal.def_of(custom)),
+        ):
+            await self.sql(
+                "UPDATE game_clocks SET calendar_kind = %s, calendar_year = %s,"
+                " calendar_ordinal = %s, calendar_def = %s WHERE guild_id = %s",
+                kind, None if expect is None else 1201, None if expect is None else 91,
+                definition, self.g,
+            )  # fmt: skip
+            async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+                await _scoped(conn, self.g)
+                cur = await conn.execute(
+                    "SELECT dmbot_web_game_clock(%s, %s) AS r", (self.g, self.one.id)
+                )
+                found = await cur.fetchone()
+            assert found is not None
+            self.assertEqual((found["r"]["kind"], found["r"]["def"]), (kind, expect))
+
     async def test_with_no_game_clock_nothing_is_dated_and_it_says_so(self) -> None:
         await self.act("part-add", f"{self.thread} time_limit - - - - - - By the thaw")
         (limit,) = await self.parts()

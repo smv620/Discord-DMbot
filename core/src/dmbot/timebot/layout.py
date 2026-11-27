@@ -153,6 +153,51 @@ class Layout:
         if len(self.year_label) > MAX_LABEL or (self.year_label and not self.year_label.isalpha()):
             raise ValueError("label")
 
+    # -- stored form ----------------------------------------------------------------------
+
+    def to_json(self) -> dict[str, object]:
+        """The definition as plain JSON, for the clock's row and a backup: words and numbers only,
+        never a calendar date (game time stays one number)."""
+        return {
+            "name": self.name,
+            "parts": [{"name": p.name, "days": p.days, "kind": p.kind} for p in self.parts],
+            "leap": None
+            if self.leap is None
+            else {"every": self.leap.every, "name": self.leap.name, "after": self.leap.after},
+            "weekdays": list(self.weekdays),
+            "yearLabel": self.year_label,
+        }
+
+    @classmethod
+    def from_json(cls, raw: object) -> Layout:
+        """The definition from what `to_json` wrote, checked as strictly as one made by hand: a
+        file with an extra or missing key, or a value of the wrong kind, is ValueError("layout")."""
+        keys = {"name", "parts", "leap", "weekdays", "yearLabel"}
+        if not isinstance(raw, dict) or set(raw) != keys:
+            raise ValueError("layout")
+        parts, leap, weekdays = raw["parts"], raw["leap"], raw["weekdays"]
+        if not isinstance(parts, list) or not isinstance(weekdays, list):
+            raise ValueError("layout")
+        if not all(isinstance(w, str) for w in weekdays) or not isinstance(raw["yearLabel"], str):
+            raise ValueError("layout")
+        made: list[Part] = []
+        for item in parts:
+            if not isinstance(item, dict) or set(item) != {"name", "days", "kind"}:
+                raise ValueError("layout")
+            if not isinstance(item["name"], str) or not isinstance(item["kind"], str):
+                raise ValueError("layout")
+            made.append(Part(item["name"], item["days"], item["kind"]))
+        carried: Leap | None = None
+        if leap is not None:
+            if not isinstance(leap, dict) or set(leap) != {"every", "name", "after"}:
+                raise ValueError("layout")
+            if not isinstance(leap["name"], str) or not isinstance(leap["after"], str):
+                raise ValueError("layout")
+            carried = Leap(leap["every"], leap["name"], leap["after"])
+        if not isinstance(raw["name"], str):
+            raise ValueError("layout")
+        return cls(raw["name"], tuple(made), carried, tuple(weekdays), raw["yearLabel"])
+
     # -- the year -------------------------------------------------------------------------
 
     def is_leap(self, year: int) -> bool:

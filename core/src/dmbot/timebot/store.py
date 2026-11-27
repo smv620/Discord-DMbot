@@ -27,6 +27,7 @@ from dmbot.timebot import clock as game
 from dmbot.timebot import split
 from dmbot.timebot.calendar import Calendar, DayOne
 from dmbot.timebot.clock import Clock
+from dmbot.timebot.layout import Layout
 from dmbot.timebot.split import Group
 
 NOT_A_DM = "Only this campaign's DMs can use the clock."
@@ -271,7 +272,7 @@ class ClockStore:
     @staticmethod
     async def _read_calendar(conn: Conn, guild_id: int, campaign_id: str) -> Calendar:
         cur = await conn.execute(
-            "SELECT calendar_kind, calendar_year, calendar_ordinal FROM game_clocks"
+            "SELECT calendar_kind, calendar_year, calendar_ordinal, calendar_def FROM game_clocks"
             " WHERE guild_id = %s AND campaign_id = %s",
             (guild_id, campaign_id),
         )
@@ -279,12 +280,64 @@ class ClockStore:
         if row is None or row["calendar_year"] is None:
             return Calendar()
         try:
+            if row["calendar_kind"] == calendar_mod.CUSTOM:
+                return calendar_mod.custom_from(
+                    int(row["calendar_year"]), int(row["calendar_ordinal"]), row["calendar_def"]
+                )
             return Calendar(
                 str(row["calendar_kind"]),
                 DayOne(int(row["calendar_year"]), int(row["calendar_ordinal"])),
             )
-        except ValueError:  # (a date the calendar has not got, e.g. a leap day in a common year)
+        except (
+            ValueError,
+            TypeError,
+        ):  # (a date the calendar has not got, e.g. a leap day in a common year)
             return Calendar()
+
+    async def set_custom_calendar(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        layout: Layout,
+        *,
+        year: int,
+        name: str,
+        day: int | None = None,
+        weekday: str | None = None,
+    ) -> None:
+        """Give the campaign its own calendar (#5364): a checked `Layout` and the date of Day 1 in
+        it (a year, a part and a day, and the weekday when it has weekdays). The same rules as
+        `set_calendar`: only a DM of the campaign, only once it has a clock, a value the calendar
+        has not got is refused with `BAD_CALENDAR`, and a refused value leaves the row as it was.
+        Game time is untouched: only the words for its days change."""
+        async with self._db.guild(guild_id) as conn:
+            if not await self._is_dm(conn, guild_id, campaign_id, user_id):
+                raise CampaignError(NOT_A_DM)
+            try:
+                if not isinstance(layout, Layout):
+                    raise ValueError("layout")
+                start = layout.start_on(year, name, day, weekday)
+                chosen = Calendar(
+                    calendar_mod.CUSTOM, layout=layout, layout_start=start
+                )  # (checks the start once more, as a file's would be)
+            except (ValueError, TypeError, AttributeError):
+                raise CampaignError(BAD_CALENDAR) from None
+            cur = await conn.execute(
+                "UPDATE game_clocks SET calendar_kind = %s, calendar_year = %s,"
+                " calendar_ordinal = %s, calendar_def = %s WHERE guild_id = %s"
+                " AND campaign_id = %s",
+                (
+                    calendar_mod.CUSTOM,
+                    start.year,
+                    start.ordinal,
+                    Jsonb(calendar_mod.def_of(chosen)),
+                    guild_id,
+                    campaign_id,
+                ),
+            )
+            if cur.rowcount == 0:
+                raise CampaignError(NO_CLOCK)
 
     async def set_calendar(
         self,
@@ -316,7 +369,8 @@ class ClockStore:
                 raise CampaignError(BAD_CALENDAR) from None
             cur = await conn.execute(
                 "UPDATE game_clocks SET calendar_kind = %s, calendar_year = %s,"
-                " calendar_ordinal = %s WHERE guild_id = %s AND campaign_id = %s",
+                " calendar_ordinal = %s, calendar_def = NULL"
+                " WHERE guild_id = %s AND campaign_id = %s",
                 (
                     chosen.kind,
                     None if start is None else start.year,
@@ -794,6 +848,7 @@ class ClockSection:
     _KEYS = frozenset({"minute", "last_long_rest"})
     _OPTIONAL = frozenset({"groups", "picked", "log", "calendar"})
     _CALENDAR_KEYS = frozenset({"kind", "year", "ordinal"})
+    _CUSTOM_KEYS = _CALENDAR_KEYS | {"def"}  # (a campaign's own calendar, #5364)
     _LOG_KEYS = frozenset({"position", "at", "minute"})
     # A clock changes a few hundred times a session, so this is far above any real log. DMbot
     # writes its backups without a cap, so a longer one is loaded too: only the newest rows are
@@ -836,6 +891,13 @@ class ClockSection:
                 "year": calendar.start.year,
                 "ordinal": calendar.start.ordinal,
             }
+        elif calendar.layout_start is not None:  # (a campaign's own calendar, #5364)
+            row["calendar"] = {
+                "kind": calendar.kind,
+                "year": calendar.layout_start.year,
+                "ordinal": calendar.layout_start.ordinal,
+                "def": calendar_mod.def_of(calendar),
+            }
         return [row]
 
     def check(self, rows: list[Any]) -> Restored | None:
@@ -863,17 +925,24 @@ class ClockSection:
         )
 
     def _calendar(self, raw: Any) -> Calendar:
-        """The calendar from a file: none (Day N), or a kind and the date of Day 1 as numbers."""
+        """The calendar from a file: none (Day N), or a kind and the date of Day 1 as numbers, and
+        for a campaign's own calendar its definition. A backup from before custom calendars has
+        none of these, and loads as it always did."""
         if raw is None:
             return Calendar()
-        if not isinstance(raw, dict) or set(raw) != self._CALENDAR_KEYS:
+        if not isinstance(raw, dict):
+            raise CampaignError(DAMAGED)
+        custom = raw.get("kind") == calendar_mod.CUSTOM
+        if set(raw) != (self._CUSTOM_KEYS if custom else self._CALENDAR_KEYS):
             raise CampaignError(DAMAGED)
         kind, year, ordinal = raw["kind"], raw["year"], raw["ordinal"]
         if type(year) is not int or type(ordinal) is not int or not isinstance(kind, str):
             raise CampaignError(DAMAGED)
         try:
+            if custom:
+                return calendar_mod.custom_from(year, ordinal, raw["def"])
             return Calendar(kind, DayOne(year, ordinal))
-        except ValueError:
+        except (ValueError, TypeError):
             raise CampaignError(DAMAGED) from None
 
     @staticmethod
@@ -942,14 +1011,24 @@ class ClockSection:
             " split_drift_told = FALSE, split_undo = NULL, updated_at = EXCLUDED.updated_at",
             (guild_id, campaign_id, clock.minute, clock.last_long_rest, int(time.time())),
         )
-        start = restored.calendar.start
+        calendar = restored.calendar
+        start = calendar.start
+        year: int | None = None
+        ordinal: int | None = None
+        if calendar.layout_start is not None:  # (a campaign's own calendar, #5364)
+            year, ordinal = calendar.layout_start.year, calendar.layout_start.ordinal
+        elif start is not None:
+            year, ordinal = start.year, start.ordinal
         await conn.execute(
-            "UPDATE game_clocks SET calendar_kind = %s, calendar_year = %s, calendar_ordinal = %s"
-            " WHERE guild_id = %s AND campaign_id = %s",
+            "UPDATE game_clocks SET calendar_kind = %s, calendar_year = %s, calendar_ordinal = %s,"
+            " calendar_def = %s WHERE guild_id = %s AND campaign_id = %s",
             (
-                restored.calendar.kind,
-                None if start is None else start.year,
-                None if start is None else start.ordinal,
+                calendar.kind,
+                year,
+                ordinal,
+                Jsonb(calendar_mod.def_of(calendar))
+                if calendar.kind == calendar_mod.CUSTOM
+                else None,
                 guild_id,
                 campaign_id,
             ),

@@ -15,11 +15,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from dmbot.timebot import layout as layout_mod
 from dmbot.timebot.clock import MINUTES_PER_DAY, day_of
 
 DAYS = "days"  # "Day 12": the default, no setting needed
 HARPTOS = "harptos"
-KINDS = (DAYS, HARPTOS)
+CUSTOM = "custom"  # a campaign's own calendar (#5364): its layout rides on the `Calendar`
+KINDS = (DAYS, HARPTOS, CUSTOM)
 
 # The year in order: a month is (name, 30 days); a festival day follows the month it is listed
 # after. Hammer 1 is the first day of the year.
@@ -153,15 +155,48 @@ def minute_of(day_number: int, hour: int = 0, minute: int = 0) -> int:
 @dataclass(frozen=True, slots=True)
 class Calendar:
     """A campaign's calendar setting: which one, and (for Harptos) the date of Day 1. The default,
-    Day N, needs neither."""
+    Day N, needs neither. A custom calendar (#5364) carries its layout and the date of Day 1 in
+    that layout (`Start`), since its year may be longer than Harptos's `DayOne` allows."""
 
     kind: str = DAYS
     start: DayOne | None = None
+    layout: layout_mod.Layout | None = None
+    layout_start: layout_mod.Start | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS or (self.kind == HARPTOS and self.start is None):
             raise ValueError("calendar")
+        if self.kind == CUSTOM:
+            if self.layout is None or self.layout_start is None or self.start is not None:
+                raise ValueError("calendar")
+            self.layout.check_start(self.layout_start)
+        elif self.layout is not None or self.layout_start is not None:
+            raise ValueError("calendar")
 
     def words(self, minute: int) -> str:
-        """The date of this game minute: Day N, or the Harptos date."""
+        """The date of this game minute: Day N, the Harptos date, or the custom calendar's."""
+        if self.kind == CUSTOM and self.layout is not None and self.layout_start is not None:
+            if type(minute) is not int or minute < 0:
+                raise ValueError("minute")
+            return self.layout.words(day_of(minute), self.layout_start)
         return date_words(minute, self.kind, self.start)
+
+
+def def_of(calendar: Calendar) -> dict[str, object]:
+    """What a custom calendar keeps in `game_clocks.calendar_def` and a backup: its definition and
+    the weekday of Day 1 (the year and the day of the year go in their own columns)."""
+    if calendar.kind != CUSTOM or calendar.layout is None or calendar.layout_start is None:
+        raise ValueError("calendar")
+    return {"layout": calendar.layout.to_json(), "weekday": calendar.layout_start.weekday}
+
+
+def custom_from(year: int, ordinal: int, raw: object) -> Calendar:
+    """A custom calendar from its stored parts, checked as strictly as one made by hand. Raises
+    ValueError for anything the calendar has not got (a damaged row or file)."""
+    if not isinstance(raw, dict) or set(raw) != {"layout", "weekday"}:
+        raise ValueError("calendar")
+    weekday = raw["weekday"]
+    if type(weekday) is not int or type(year) is not int or type(ordinal) is not int:
+        raise ValueError("calendar")
+    found = layout_mod.Layout.from_json(raw["layout"])
+    return Calendar(CUSTOM, layout=found, layout_start=layout_mod.Start(year, ordinal, weekday))
