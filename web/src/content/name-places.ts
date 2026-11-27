@@ -29,4 +29,16 @@ export const namePlaceWords = {
   // Said first when there are more places than are shown; the same words as Discord's.
   heard: (total: number, shown: number): string =>
     `Heard ${total} times. Showing ${shown}.`,
+  // Where an entry came from when no sentence is kept (#4557): the same words as Discord's (`ui/name_origin.py`). The label is the
+  // DM's own upload name and the lines are the DM's transcript: shown on the page only.
+  uploadFrom: "📄 From your upload ",
+  uploadAfter: (day: string): string => `, ${day}. DMbot doesn't keep the sentence after reading.`,
+  sessionFrom: (n: number, day: string): string => `From session ${n}, ${day}`,
+  originLineRemoved: "That line was removed.",
+  yours: "You added this name yourself.",
+  // The day as Discord says it ("15 Nov"), in UTC.
+  day: (at: number): string => {
+    const d = new Date(at * 1000);
+    return `${d.getUTCDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getUTCMonth()]}`;
+  },
 } as const;

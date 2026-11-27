@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { cleanupWords as w } from "../content/graph-cleanup-words";
 import { namePlaceWords } from "../content/name-places";
 import { kindWords } from "../content/web-words";
-import { ApiError, type AccountApi, type CleanupEntry, type CleanupView, type NameChange, type NamePlace, type WebNode } from "./api";
+import { ApiError, type AccountApi, type CleanupEntry, type CleanupView, type NameChange, type NameOrigin, type NamePlace, type WebNode } from "./api";
 import NamePlaces from "./NamePlaces";
 import { useObservedWait } from "./useObservedWait";
 import WorkProgress from "./WorkProgress";
@@ -21,13 +21,14 @@ function asNode(e: CleanupEntry): WebNode {
 /** "Where was it said?" for an entry that has no kept scene: the same lines view the name card has (NamePlaces), read for
  * this one entry only when the button is pressed, so a long list never makes a call for each entry. */
 function WhereSaid({ entry, api, refId }: { entry: CleanupEntry; api: AccountApi; refId: string }) {
-  const [state, setState] = useState<"idle" | "loading" | "none" | { places: NamePlace[]; more: number }>("idle");
+  const [state, setState] = useState<"idle" | "loading" | "none" | { places: NamePlace[]; more: number; origins: NameOrigin[] }>("idle");
   async function look(): Promise<void> {
     if (!api.cleanupPlaces || state === "loading") return;
     setState("loading");
     try {
       const got = await api.cleanupPlaces(refId, entry.id);
-      setState(got.places.length === 0 && got.morePlaces <= 0 ? "none" : { places: got.places, more: got.morePlaces });
+      const origins = got.origins ?? [];
+      setState(got.places.length === 0 && got.morePlaces <= 0 && origins.length === 0 ? "none" : { places: got.places, more: got.morePlaces, origins });
     } catch {
       setState("none");
     }
@@ -44,7 +45,7 @@ function WhereSaid({ entry, api, refId }: { entry: CleanupEntry; api: AccountApi
       )}
       {state === "loading" && <p role="status">{w.lookingForLines}</p>}
       {state === "none" && <p class="small muted" role="status">{w.noLines}</p>}
-      {typeof state === "object" && <NamePlaces places={state.places} more={state.more} campaignRef={refId} />}
+      {typeof state === "object" && <NamePlaces places={state.places} more={state.more} campaignRef={refId} origins={state.origins} />}
     </div>
   );
 }

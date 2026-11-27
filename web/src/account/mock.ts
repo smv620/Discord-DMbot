@@ -4774,7 +4774,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (webView(ref) !== "dm") throw new ApiError("not-found");
       // One pretend window for the people the clean-up lists (ids e1..e6), none for any other id.
       if (!/^e[1-6]$/.test(id)) throw new ApiError("not-found");
-      return { places: [{ session: 2, available: true, lines: [{ speaker: "Mira", at: 1_800_000_000, text: "They talked about it by the fire." }] }], morePlaces: 0 };
+      // e3: read from an upload (no sentence kept); e2: typed by the DM and nothing else (#4557). Every other id keeps its one window.
+      const window = [{ session: 2, available: true, lines: [{ speaker: "Mira", at: 1_800_000_000, text: "They talked about it by the fire." }] }];
+      if (id === "e3") return { places: [], morePlaces: 0, origins: [{ kind: "upload" as const, label: "Harrow notes", at: 1_731_628_800 }] };
+      if (id === "e2") return { places: [], morePlaces: 0, origins: [{ kind: "yours" as const }] };
+      return { places: window, morePlaces: 0 };
     },
     async graphCleanup(ref): Promise<CleanupView> {
       calls.push(`graphCleanup:${ref}`);

@@ -6,7 +6,7 @@
 import { useState } from "preact/hooks";
 
 import { namePlaceWords as words } from "../content/name-places";
-import type { NamePlace } from "./api";
+import type { NameOrigin, NamePlace } from "./api";
 
 function Place({
   place,
@@ -50,17 +50,44 @@ function Place({
   );
 }
 
+/** Where an entry came from when no sentence is kept (#4557): at most three, newest first as the door sends them. */
+function Origin({ origin }: { origin: NameOrigin }) {
+  if (origin.kind === "yours") return <li class="small">{words.yours}</li>;
+  if (origin.kind === "upload")
+    return (
+      <li class="small">
+        {words.uploadFrom}
+        <em>{origin.label}</em>
+        {words.uploadAfter(words.day(origin.at))}
+      </li>
+    );
+  return (
+    <li class="small">
+      <em>{words.sessionFrom(origin.session, words.day(origin.at))}</em>
+      {origin.lines.length === 0 ? (
+        <p class="muted">{words.originLineRemoved}</p>
+      ) : (
+        origin.lines.slice(0, 3).map((line, i) => (
+          <blockquote key={i}>“{line}”</blockquote>
+        ))
+      )}
+    </li>
+  );
+}
+
 export default function NamePlaces({
   places,
   more,
   campaignRef,
+  origins = [],
 }: {
   places: NamePlace[];
   more: number;
   campaignRef: string;
+  origins?: NameOrigin[];
 }) {
   const [open, setOpen] = useState(false);
-  if (places.length === 0 && more <= 0) return null;
+  if (places.length === 0 && more <= 0 && origins.length === 0) return null;
   // The door sends the newest three places; the cap only guards the page.
   const shown = places.slice(0, 3);
   const [newest, ...rest] = shown;
@@ -68,6 +95,13 @@ export default function NamePlaces({
   const hasMore = rest.length > 0 || more > 0;
   return (
     <div class="stack">
+      {origins.length > 0 && (
+        <ul class="name-places">
+          {origins.slice(0, 3).map((origin, i) => (
+            <Origin key={i} origin={origin} />
+          ))}
+        </ul>
+      )}
       {newest && (
         <ul class="name-places">
           <Place place={newest} campaignRef={campaignRef} />
