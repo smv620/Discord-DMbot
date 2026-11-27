@@ -62,6 +62,9 @@ class Stored:
     picked: int | None = None
     phrase_told: bool = False
     drift_told: bool = False
+    # The campaign's calendar, which words every date the clock says (#5364). Read with the clock
+    # so a line is never worded in one calendar and counted in another.
+    calendar: Calendar = field(default_factory=Calendar)
 
     @property
     def split(self) -> bool:
@@ -820,7 +823,9 @@ class ClockStore:
         row = await cur.fetchone()
         if row is None:
             return None
-        stored = _stored(row)
+        stored = replace(
+            _stored(row), calendar=await ClockStore._read_calendar(conn, guild_id, campaign_id)
+        )
         if row["picked_group"] is None:
             return stored
         cur = await conn.execute(

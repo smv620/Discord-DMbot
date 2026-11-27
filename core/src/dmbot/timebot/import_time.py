@@ -22,8 +22,9 @@ import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-from dmbot.timebot import clock as game
+from dmbot.timebot import calendar as calendar_mod
 from dmbot.timebot import phrases, suggest
+from dmbot.timebot.calendar import Calendar
 from dmbot.timebot.clock import Clock
 
 Apply = Callable[[str, Clock | None, int | None, int | None], Clock | None]
@@ -122,9 +123,9 @@ def read_answer(text: str) -> int | None:
     return tidy_total(minutes)
 
 
-def offer_text(minute: int) -> str:
+def offer_text(minute: int, calendar: Calendar | None = None) -> str:
     """The DM-screen line: where the session ended, and the question."""
     return (
-        f"🕰️ This session ended on **{game.short_label(minute)}**. Set the clock to that? "
-        "Nothing moves until you press."
+        f"🕰️ This session ended on **{calendar_mod.short_label(minute, calendar)}**. "
+        "Set the clock to that? Nothing moves until you press."
     )

@@ -11,7 +11,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 
+from dmbot.timebot import calendar as calendar_mod
 from dmbot.timebot import clock as game
+from dmbot.timebot.calendar import Calendar
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.durations import words
 
@@ -100,16 +102,16 @@ def shifted(ends: int, group_minute: int, kept_minute: int) -> int:
     return min(game.MAX_MINUTE, max(0, ends + kept_minute - group_minute))
 
 
-def exact_label(minute: int) -> str:
-    """ "Day 4, 14:30": the DM's line for one group."""
-    return f"Day {game.day_of(minute)}, {game.clock_time(minute)}"
+def exact_label(minute: int, calendar: Calendar | None = None) -> str:
+    """ "Day 4, 14:30": the DM's line for one group (the date in the campaign's calendar)."""
+    return calendar_mod.exact_label(minute, calendar)
 
 
-def dm_line(groups: tuple[Group, ...]) -> str:
+def dm_line(groups: tuple[Group, ...], calendar: Calendar | None = None) -> str:
     """ "Tower: Day 4, 14:30 · Camp: Day 4, 16:10" (the pinned clock's head, inside the bold)."""
-    return " · ".join(f"{g.name}: {exact_label(g.clock.minute)}" for g in groups)
+    return " · ".join(f"{g.name}: {exact_label(g.clock.minute, calendar)}" for g in groups)
 
 
-def players_lines(groups: tuple[Group, ...]) -> list[str]:
+def players_lines(groups: tuple[Group, ...], calendar: Calendar | None = None) -> list[str]:
     """One line per group for the game-time channel, the day and a rough time of day only."""
-    return [f"{g.name}: {game.short_label(g.clock.minute)}" for g in groups]
+    return [f"{g.name}: {calendar_mod.short_label(g.clock.minute, calendar)}" for g in groups]

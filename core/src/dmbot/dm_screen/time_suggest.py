@@ -189,7 +189,10 @@ class TimeJumpButton(
             await clock_screen.say(
                 client,
                 campaign,
-                [clock_screen.rest_note("advance", result.after, minutes), *result.lines],
+                [
+                    clock_screen.rest_note("advance", result.after, minutes, stored.calendar),
+                    *result.lines,
+                ],
                 clock_screen.undo_id(result.before, result.after),
             )
         except Exception:

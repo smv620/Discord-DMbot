@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from dmbot.db import Conn, Database
-from dmbot.timebot import clock as game
+from dmbot.timebot import calendar as cal
 from dmbot.web import all_names
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -33,12 +33,22 @@ async def read_rows(
     return list(found) if isinstance(found, list) else []
 
 
-def shown(row: dict[str, Any] | None) -> dict[str, Any] | None:
+async def read_calendar(conn: Conn, guild_id: int, campaign_id: str) -> cal.Calendar:
+    """The campaign's calendar, through the DM-only clock door, so the offer's game time is worded
+    as everywhere else (#5364). Day N for anyone else, with no clock, or when it no longer reads."""
+    cur = await conn.execute("SELECT dmbot_web_game_clock(%s, %s) AS r", (guild_id, campaign_id))
+    found = (await cur.fetchone() or {}).get("r")
+    return cal.from_door(found) if isinstance(found, dict) else cal.Calendar()
+
+
+def shown(
+    row: dict[str, Any] | None, calendar: cal.Calendar | None = None
+) -> dict[str, Any] | None:
     """What the page reads for a session: the state, the game time as DMbot words it (the page
     never formats game time) and when the state last changed. None: no offer for this session."""
     if row is None:
         return None
-    label = game.short_label(int(row["minute"]))
+    label = cal.short_label(int(row["minute"]), calendar)
     out: dict[str, Any] = {
         "state": row["state"],
         "label": label,
