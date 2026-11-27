@@ -56,6 +56,7 @@ function Origin({ origin }: { origin: NameOrigin }) {
   if (origin.kind === "upload")
     return (
       <li class="small">
+        <span aria-hidden="true">{words.uploadIcon} </span>
         {words.uploadFrom}
         <em>{origin.label}</em>
         {words.uploadAfter(words.day(origin.at))}
@@ -63,7 +64,7 @@ function Origin({ origin }: { origin: NameOrigin }) {
     );
   return (
     <li class="small">
-      <em>{words.sessionFrom(origin.session, words.day(origin.at))}</em>
+      <em>{words.sessionFrom(origin.session, origin.at > 0 ? words.day(origin.at) : null)}</em>
       {origin.lines.length === 0 ? (
         <p class="muted">{words.originLineRemoved}</p>
       ) : (

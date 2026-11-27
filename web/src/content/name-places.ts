@@ -31,9 +31,12 @@ export const namePlaceWords = {
     `Heard ${total} times. Showing ${shown}.`,
   // Where an entry came from when no sentence is kept (#4557): the same words as Discord's (`ui/name_origin.py`). The label is the
   // DM's own upload name and the lines are the DM's transcript: shown on the page only.
-  uploadFrom: "📄 From your upload ",
+  // The 📄 is drawn apart and hidden from a screen reader, which would read it out as "page facing up".
+  uploadIcon: "📄",
+  uploadFrom: "From your upload ",
   uploadAfter: (day: string): string => `, ${day}. DMbot doesn't keep the sentence after reading.`,
-  sessionFrom: (n: number, day: string): string => `From session ${n}, ${day}`,
+  // A thread with no day of its own (core sends 0) is said without one, never as 1 Jan.
+  sessionFrom: (n: number, day: string | null): string => (day === null ? `From session ${n}` : `From session ${n}, ${day}`),
   originLineRemoved: "That line was removed.",
   yours: "You added this name yourself.",
   // The day as Discord says it ("15 Nov"), in UTC.

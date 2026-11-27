@@ -225,7 +225,8 @@ describe("where an entry came from (#4557, core #5347)", () => {
 
   it("an upload says its name and day, and that the sentence is not kept", () => {
     const { container } = origin([{ kind: "upload", label: "Harrow notes", at: AT }]);
-    expect(container.textContent).toBe(`${w.uploadFrom}Harrow notes${w.uploadAfter("15 Nov")}`);
+    expect(container.textContent).toBe(`${w.uploadIcon} ${w.uploadFrom}Harrow notes${w.uploadAfter("15 Nov")}`);
+    expect(container.querySelector("[aria-hidden]")?.textContent).toContain(w.uploadIcon);
     expect(container.querySelector("em")?.textContent).toBe("Harrow notes");
     expect(w.uploadAfter("15 Nov")).toBe(", 15 Nov. DMbot doesn't keep the sentence after reading.");
   });
@@ -238,6 +239,12 @@ describe("where an entry came from (#4557, core #5347)", () => {
     const none = origin([{ kind: "session", session: 3, at: AT, lines: [] }]);
     expect(none.container.textContent).toContain(w.originLineRemoved);
     expect(none.container.querySelector("blockquote")).toBeNull();
+  });
+
+  it("a thread with no day of its own says no day, and at most three of its lines show", () => {
+    const { container } = origin([{ kind: "session", session: 4, at: 0, lines: ["a", "b", "c", "d"] }]);
+    expect(container.querySelector("em")?.textContent).toBe("From session 4");
+    expect(container.querySelectorAll("blockquote").length).toBe(3);
   });
 
   it("a name the DM typed says so, and at most three origins show", () => {
