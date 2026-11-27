@@ -45,6 +45,8 @@ export const waitingWords = {
   fromUpload: (label: string): string => `From ${label}`,
   fromEarlier: "From an earlier upload",
   keep: "Keep",
+  // A refused companion keep: the store's sentence for why, then what to press (#5348). The sentence is never edited.
+  companionRefused: (why: string): string => `DMbot can't keep that one. ${why} Press ❌ Leave it out to move on.`,
   // The connection card asks two questions apart (#4430, words from #4429): Q1 update or add it, Q2 can players see it.
   nowLine: (subject: string, how: string, object: string): string => `Now: ${subject} ${how} ${object}`,
   proposedLine: (subject: string, how: string, object: string, hand: string): string => `Proposed: ${subject} ${how} ${object}${hand}`,

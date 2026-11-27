@@ -3049,6 +3049,8 @@ export const READING_POLLS = 150;
 export interface WebAnswer {
   state: "waiting" | "working" | "done" | "failed";
   error?: string | null;
+  /** A refused companion keep (#5348; core #5346): the store's own sentence for why, shown as it is. Missing for any other refusal. */
+  why?: string | null;
   /** "📝 More names" (#5081): the names now waiting in the check, and how many still wait behind the button. */
   made?: number | null;
   /** A look-alike merge that joined a secret name (#5259): Discord's one extra line, or null. */
@@ -3400,6 +3402,7 @@ export type ApiErrorKind =
   | "cannot-show" // a 🌍 Common knowledge answer for what the players are not shown yet (#4559)
   | "name-unnamed" // ... or whose end is a person the story never named (#3426)
   | "still-waiting" // a queued name change the bot hasn't answered yet (#2294)
+  | "companion" // a keep of a companion the companion rule refuses; the store's sentence says why (#5348)
   | "gone" // a waiting connection that is not waiting any more (#2635)
   | "name-first" // a new name in it has to be answered first, in Check new names (#2635)
   | "stopped-recording" // someone it cites is no longer recorded, so the fact was thrown away (#2635)
@@ -4365,6 +4368,7 @@ export const fixErrorKinds: Record<string, ApiErrorKind> = {
 };
 
 export const errorKinds: Record<string, ApiErrorKind> = {
+  companion: "companion", // a refused companion keep (#5348)
   plan: "plan-needed",
   no_clock: "no-clock", // a date asked for with no game clock (#4503)
   no_rules: "no-rules",
@@ -4693,7 +4697,12 @@ export function httpApi(
         if (error instanceof ApiError && error.kind === "signed-out") throw error;
       }
       if (got?.state === "done") return got;
-      if (got?.state === "failed") throw new ApiError(extraKinds[got.error ?? ""] ?? errorKinds[got.error ?? ""] ?? "server");
+      if (got?.state === "failed") {
+        const failure = new ApiError(extraKinds[got.error ?? ""] ?? errorKinds[got.error ?? ""] ?? "server");
+        // A refused companion keep says why, in the store's own sentence (#5348): shown as given, never edited.
+        if (failure.kind === "companion" && typeof got.why === "string" && got.why) failure.note = got.why;
+        throw failure;
+      }
       if (i < polls - 1) await new Promise((r) => setTimeout(r, NAME_POLL_MS));
     }
     throw new ApiError("still-waiting");
