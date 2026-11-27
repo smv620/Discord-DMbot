@@ -100,6 +100,7 @@ export default function WebWaiting({
   onChanged,
   onLeft,
   onKinds,
+  countLine,
 }: {
   api: AccountApi;
   campaignRef: string;
@@ -109,6 +110,8 @@ export default function WebWaiting({
   onLeft?: (left: number) => void;
   /** How many of each Questions kind the list holds now (#5356), so that page can take answered ones off its snapshot. */
   onKinds?: (kinds: { claims: number; family: number; which: number; connections: number }) => void;
+  /** The words of the list's own count, when a page that also shows kind lines has to say what the list holds (#5356). */
+  countLine?: (n: number) => string;
 }) {
   const [list, setList] = useState<Waiting | null>(null);
   const [failed, setFailed] = useState(false);
@@ -348,7 +351,7 @@ export default function WebWaiting({
         {w.heading}
       </h3>
       <p>
-        <strong>{counts.all === 0 ? w.none : w.count(counts.all)}</strong>
+        <strong>{counts.all === 0 ? w.none : (countLine ?? w.count)(counts.all)}</strong>
       </p>
       {counts.all > 0 && <p class="small">{w.intro}</p>}
       {cut && <p class="small">{w.more}</p>}

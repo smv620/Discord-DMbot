@@ -120,8 +120,11 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
   // from it is taken off, so the two lists' different counting never shows (only what was answered here does).
   const [answeredHere, setAnswered] = useState<Record<string, number>>({});
   const baseline = useRef<Record<string, number> | null>(null);
+  // What the open waiting list holds of each kind now, to say how many of a kind's count are in it and how many are in the lists below.
+  const [here, setHere] = useState<Record<string, number> | null>(null);
   const onKinds = (now: Record<string, number>): void => {
     // (a list that grows, as new items arrive, moves its baseline up, so only a real drop is ever taken off)
+    setHere({ ...now });
     const base = (baseline.current = Object.fromEntries(Object.keys(now).map((k) => [k, Math.max(baseline.current?.[k] ?? 0, now[k] ?? 0)])));
     setAnswered(Object.fromEntries(Object.keys(now).map((k) => [k, Math.max(0, (base[k] ?? 0) - (now[k] ?? 0))])));
   };
@@ -269,7 +272,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
               const w = kindWords(k.kind);
               return (
                 <li key={k.kind} class="stack">
-                  <strong>{words.kindLine(w.label, k.count)}</strong>
+                  <strong>{here !== null && Object.hasOwn(here, k.kind) && k.count > (here[k.kind] ?? 0) ? words.kindLineSplit(w.label, k.count, here[k.kind] ?? 0) : words.kindLine(w.label, k.count)}</strong>
                   {k.kind === "more_names" && MORE_NAMES_LIVE && api.moreNames !== undefined ? (
                     <MoreNames api={api} campaignRef={campaign.ref} />
                   ) : howFor(k.kind, api) === "here" && lead.get(groupOf(k.kind) ?? "") !== k.kind ? (

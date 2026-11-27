@@ -8,6 +8,7 @@ import { useEffect, useState } from "preact/hooks";
 
 import { HAND_OVER_LIVE } from "../content/hand-over-switch";
 import { type AccountApi } from "./api";
+import { waitingWords } from "../content/web-waiting";
 import LazyPanel from "./LazyPanel";
 import QuestionsNames from "./QuestionsNames";
 
@@ -83,7 +84,7 @@ export default function QuestionsHere({
     <div id={id} class="stack">
       {group === "waiting" ? (
         <>
-          <LazyPanel load={() => import("./WebWaiting")} what="the waiting connections" props={{ api, campaignRef, onLeft: setWaitingLeft, ...(onKinds ? { onKinds } : {}) }} />
+          <LazyPanel load={() => import("./WebWaiting")} what="the waiting connections" props={{ api, campaignRef, onLeft: setWaitingLeft, countLine: waitingWords.countHere, ...(onKinds ? { onKinds } : {}) }} />
           {handMounted && (
             <LazyPanel
               load={() => import("./HandOverQuestions")}

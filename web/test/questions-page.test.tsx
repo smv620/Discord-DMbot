@@ -380,8 +380,21 @@ describe("connections, Which one? and readings, answered on the page (#3438)", (
     const first = line("connections", 4);
     fireEvent.click(within(first).getByRole("button", { name: `${w.showHere}: ${kindWords("connections").label}` }));
     await waitFor(() => expect(api.calls.some((c) => c.startsWith("webWaiting:100.cmp1"))).toBe(true));
-    expect(within(line("which", 2)).getByText(w.answeredWith(kindWords("connections").label))).toBeTruthy();
-    expect(within(line("which", 2)).queryByRole("button")).toBeNull();
+    // (once the list has reported, a kind line says how many of its count are in the list: the pretend list holds one of this kind)
+    const which = (await screen.findByText(w.kindLineSplit(kindWords("which").label, 2, 1))).closest("li") as HTMLElement;
+    expect(within(which).getByText(w.answeredWith(kindWords("connections").label))).toBeTruthy();
+    expect(within(which).queryByRole("button")).toBeNull();
+  });
+
+  it("a kind line says how many of its count are in the open list and how many in the lists below, and the list says what it holds (#5356)", async () => {
+    const api = await show();
+    fireEvent.click(within(line("connections", 4)).getByRole("button", { name: `${w.showHere}: ${kindWords("connections").label}` }));
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("webWaiting:100.cmp1"))).toBe(true));
+    // the pretend list holds 3 connections of the bot's 4: the other one is in a list below
+    const held = (await screen.findAllByText(/\(\d+ here, \d+ in the lists below\)/)).length;
+    expect(held).toBeGreaterThan(0);
+    expect(await screen.findByText(/waiting here: connections, facts and “Which one\?”/)).toBeTruthy();
+    expect(screen.queryByText(/things are waiting for you/)).toBeNull();
   });
 
   it("opens what people believe as its own list", async () => {
