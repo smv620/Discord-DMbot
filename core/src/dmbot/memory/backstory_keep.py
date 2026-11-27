@@ -36,7 +36,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.ontology import DISGUISED_AS, Ontology
-from dmbot.memory.store import MemoryStore, refusal_for_log
+from dmbot.memory.store import MemoryStore, companion_code, refusal_for_log
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +50,9 @@ class KeptAll:
     # back before it, since Undo refuses a row changed since (same order as `kept`)
     on_top: list[list[int | None]] = field(default_factory=list)
     refused: int = 0  # the rules refused it: it stays waiting, to be answered by hand
+    # which companion rule refused a one-press keep (`store.companion_code`), "" for any other
+    # refusal, so the website's answer can say why (#5165 part 3)
+    companion: str = ""
     worked_out: int = 0  # every worked-out family link waiting for the DM's yes after this keep
 
 
@@ -520,6 +523,8 @@ async def keep_all(
                 if not isinstance(exc, MemoryRuleError):
                     raise
                 done.refused += 1
+                if one_press:
+                    done.companion = companion_code(str(exc)) or ""
                 # Why, as the one-card Keep logs it (#4161): the rule's own sentence when it is one
                 # of the fixed ones, never a campaign's words, and the connection's kind
                 log.info(

@@ -75,7 +75,14 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.party_record import ENDED
 from dmbot.memory.reveal_proposals import RevealProposals
-from dmbot.memory.store import INT64_MAX, LENGTH_CHANGED, PERSON, ROUTE_GONE, MemoryStore
+from dmbot.memory.store import (
+    INT64_MAX,
+    LENGTH_CHANGED,
+    PERSON,
+    ROUTE_GONE,
+    MemoryStore,
+    companion_code,
+)
 from dmbot.memory.store import NAMES_NOT_SHOWN as NAMES_NOT_SHOWN_WORDS
 from dmbot.rules import homebrew, rule_sets, set_sync
 from dmbot.rules.house import HouseRuleError
@@ -308,6 +315,9 @@ CLAIM_REFUSALS = {
     # (the page does not list a reading, so this is a stale press: the question is not there)
     claims_mod.A_READING: GONE,
 }
+# A keep the companion rule refused (#5165 part 3): the error is `companion_` and which rule, never
+# the sentence; the answer read sends the store's own words (`COMPANION_CODES`).
+COMPANION_ERROR = "companion_"
 ALIAS_KIND = "nickname"  # what the name card calls an other name the DM adds
 
 
@@ -3325,6 +3335,9 @@ async def _answer_waiting(
         except MemoryRuleError as exc:
             # the page words these: the question is gone, a new name has to be answered first,
             # someone who said it stopped being recorded, or the rules refuse the fact now
+            companion = companion_code(str(exc))
+            if companion:
+                return _failed(COMPANION_ERROR + companion)
             return _failed(CLAIM_REFUSALS.get(str(exc), CANNOT_WRITE))
         # The change batch rides on the answer, for the page's one Undo of a press (#3645).
         return Outcome(
@@ -3421,7 +3434,9 @@ async def _answer_waiting(
         players="show" if a.action == "backstory-keep-show" else "",
         knowers=ticked,
     )  # fmt: skip
-    return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
+    if kept.kept:
+        return Outcome(result_id="1")
+    return _failed(COMPANION_ERROR + kept.companion if kept.companion else BAD_TARGET)
 
 
 def _progress_for(w: Waiting, a: Action) -> Callable[[int, int], Awaitable[None]] | None:
