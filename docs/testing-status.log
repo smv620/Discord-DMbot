@@ -1,6 +1,6 @@
 DMbot - TESTING STATUS (current testing only)
 =============================================
-Last updated: 2026-11-27 UTC by dev1 (deploy 49a, part way)
+Last updated: 2026-11-27 UTC by dev1 (after deploy 49b)
 
 For the people at the table: docs/next-test-step.md has the one next small test (#569).
 Short by design: see CLAUDE.md "Testing logs". Full record: docs/testing-history.log.
@@ -9,39 +9,29 @@ Never put tokens, .env contents or players' personal data here (public repo).
 ------------------------------------------------------------------------------
 LIVE NOW
 ------------------------------------------------------------------------------
-core + web-api at be9d3228 (deploy 49a: migrations 0621 to 0637; migrations 626 applied, latest 0637). 0 ERROR lines and 0 tracebacks in the first 10 minutes; sample 49a exit 0, about $3.93 (counts on #3545). All new switches still off: DMBOT_WEB_CONNECTION_SAID=0, DMBOT_WEB_ADVENTURE=0, DMBOT_WORKER_NAMES unset. Full entry: docs/testing-history.log.
+core + web-api at 5747a915 (deploy 49b: migrations 0636 and 0638 to 0652; 642 applied, latest 0652). 0 ERROR lines and 0 tracebacks in the first 10 minutes. Sample 49b exit 0, about $3.67 (counts on #3545). All new switches off. Full entry: docs/testing-history.log.
 
 ------------------------------------------------------------------------------
-READY TO DEPLOY
+OWNER CHECKS FOR DEPLOY 49b (browser, signed in with Discord)
 ------------------------------------------------------------------------------
-Deploy 49b (be9d3228 is 49a; 49b's target is 4f452b6dde, CI green): needs 49a's checks to pass first, and the owner's OK for 49b. The switch steps of 49a are not finished (below).
+A. Email sign-in (#5353): someone who signed in with Discord recently signs in by email, and their campaign pages open. Adding DMbot to a server still asks for Discord.
+B. Questions page (#5356), sample campaign: answer every "Facts to check": the count drops with each answer; the line goes at 0; the counts add up ("N waiting here", "X here, Y in the lists below"); Keep all shows after the last card.
+C. Adventure (needs DMBOT_WEB_ADVENTURE and ADVENTURE_LIVE on, not yet): give a PDF and a text file from the page; read one (cost shown first); Where is the table?; Match names; link one name from the Story Graph; remove a file. Each must match Discord; a player and another campaign's DM get nothing.
+D. Pictures: Make private on one picture; the wait follows it.
 
 ------------------------------------------------------------------------------
 DEPLOY 49a: STILL TO DO (dev1)
 ------------------------------------------------------------------------------
-- DMBOT_WORKER_NAMES: waits for DMBOT_WORKER (the worker is not running). Needs the worker's own checks first.
-- DMBOT_WEB_CONNECTION_SAID: needs a browser signed in with Discord (read, use, undo one connection).
-- WAIT_COUNTS_LIVE: measure one counts read first, then the browser check.
-- Check 2's 404 on the new routes: needs a signed request.
-
-------------------------------------------------------------------------------
-OWNER CHECKS (not done yet)
-------------------------------------------------------------------------------
-Deploy 48 (83f05b757), owner checks (browser, can wait): A. The names-to-check menu starts on DMbot's guess. B. "Explorer League" says "Sounds like Explorer's League". C. "Questions for you" opens the connections to answer on the page. D. A session after a recap: the "Read them as play" note appears once, and 👀 Show them shows the lines.
-Deploy 46 (4f82f2c8), owner checks 3 to 6 (Supervisor's ruling: deploy 46 counts as checked without its sample): recap names to check (Pick what it is, Change the words, Where it was said, split and group); Other new names; the cleaned transcript's capitals; the waiting list's travels-with line.
-Deploy 22 (c030d95a), owner checks (not done yet): A. In the wizard on dev.getdmbot.com, Back keeps the pasted text, and step 3 lists this server's members. B. A character typed with a dndbeyond.com sheet link gets its sheet after the finish. C. Open the campaign opens the campaign's page. D. The lore's "Cerric" and the wizard's "Cerric Vanya'elen" are one entry.
-Deploy 20 (f624c4b8), owner checks (not done yet): A. In Discord, a rivals connection on a name card reads "X and Y are rivals". B. On the website's Story Graph, the same pair reads the same way in the details panel. C. On the waiting list, an item that changed hands shows the "(... sold it)" bracket, if the sample makes one. D. The wolf figurine (#4170) now reads as sold to Belleros, not carried by Claude (deploy 18's check, retried on this deploy).
-Deploy 16 (7db2efd0), owner checks: DONE by the owner, the sample recap draft on the website works for review (2026-11-11). the Keep-all card's new line on an upload with connections from other files; a PDF with picture-only pages (the note). DONE by the owner: a PDF with pictures and text uploaded as lore, accepted and worked (size and the note not yet confirmed). Deploy 15, owner checks: next test is Test N in docs/next-test-step.md (a 20 to 50 MB PDF upload in the names menu, dev1 checks the counts). Then: recap notices in the DM Bot channel with no title or writer name; a player with two characters sees both names on transcript lines.
-Part A (eleventh deploy, b1fb7f8d): on a test campaign, "Lia is the mother of Mira" and "Tam is the brother of Mira" give "Lia is the mother of Tam?" with Yes, No, Not now; No is final; a player sees nothing of the suggestion. Earlier, still open: Story Graph clicks; the three-way upload choice; "Who knows this?"; start-up sweep at 0 waiting.
-Part B (eleventh deploy, 0fcaf7fc): same-person prompt (Yes, No, Later); public stays public (Keep / Keep as secret); Shared story panel no longer says not working yet; start-up log clean.
-Earlier: Is X another name of Y? on a lore text; secrecy follows the upload choice; new connection kinds in the connect menu; the website shows no Recap style or Pause controls; the party after a short live session with two consenting players.
+- DMBOT_WORKER_NAMES: needs DMBOT_WORKER on and checked (the worker is not running).
+- DMBOT_WEB_CONNECTION_SAID: needs a browser check (read, use, undo one connection).
+- WAIT_COUNTS_LIVE: measure one counts read first.
 
 ------------------------------------------------------------------------------
 BLOCKERS
 ------------------------------------------------------------------------------
-- Email sign-in shows "We couldn't find that campaign" on campaign pages (#5351): sign in with Discord to open them.
-- AI account usage limit: no refusals since the owner raised it (sample 49a ran 03:28 UTC without one).
-- Sample tool: parallel runs under one deploy label can delete each other's campaigns (bug #5247). Deploy 49a's run deleted none.
-- Party backfill (#3036): dry run of link_party on the test server, counts only, not yet run.
-- Deploy 16 restore check: the format 5 backup restores with one more memory row (2032 for 2031) and some changed row fields, on 7db2efd0 only (03e9527c restores clean). Not explained yet; deploy 17 waits for it.
-- Sample run cost: the lore read and session import print no tokens or dollars (#4087, for CloudDev).
+- Email sign-in shows "couldn't find that campaign" on campaign pages (#5351, fixed by #5353 in 49b; check A).
+- pypdf 7.2 (#5344): the sample set has no PDF, so the comparison has not been run.
+- Sample tool: parallel runs under one deploy label can delete each other's campaigns (#5247). Deploys 49a and 49b deleted none.
+- Party backfill (#3036): dry run of link_party on the test server, not yet run.
+- Deploy 16 restore check: the format 5 backup restores with one more memory row (2032 for 2031) on 7db2efd0 only. Not explained yet.
+- Sample run cost: the lore read and session import print no tokens or dollars (#4087).

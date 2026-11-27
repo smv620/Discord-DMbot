@@ -3044,3 +3044,16 @@ Session: dev1, 2026-11-27 UTC
 - Check 3 (sample run, --repeat 5 --parallel 5 --run-usd 1.5 --max-usd 20): PASSED. Exit 0; about $3.93 in all; campaigns kept (48 and 49), none deleted. Counts on #3545: both+sure entries found 72 of about 90 (deploy 48: 71 of about 89); lore names as before; AI decides (session) median 12 calls, $0.04.
 - Owner-visible finding: after an email sign-in the session has no server list, so campaign pages say "We couldn't find that campaign" for every campaign until a Discord sign-in. Filed as #5351 (dev1).
 - Check 4 (switches one at a time): NOT DONE. DMBOT_WORKER_NAMES needs DMBOT_WORKER on and checked, and the worker is not running (DMBOT_WORKER unset). DMBOT_WEB_CONNECTION_SAID needs a signed-in browser (read, use, undo one connection). WAIT_COUNTS_LIVE: the cost of one counts read is not measured yet.
+
+DEPLOY 49b 5747a915 (deploy 49, part b; base 49a be9d3228; migrations 0636 and 0638 to 0652; 0636 was missing from 49a's tree)
+Session: dev1, 2026-11-27 UTC
+- Target CI: 5747a9157b, 20 of 20 green before the deploy.
+- Dry run: fresh dryrun-pg restored from pg_dumpall of the live database; migrations applied to 642 (626 + 16), latest 0652_email_session_servers. Dump: /home/ubuntu/db-backups/dmbot-dryrun-5747a915-20261127T185744Z.sql
+- Backup before the bot: /home/ubuntu/db-backups/dmbot-pre-5747a915-20261127T190645Z.sql (keep)
+- Bot restarted 19:06 UTC on 5747a915; GIT_COMMIT verified; migrations 642, latest 0652. Web API started after it; GIT_COMMIT verified; health 200.
+- Check 1 (migrations and clean start): PASSED. 0 ERROR lines and 0 tracebacks in the 10 minutes after the start, both services.
+- Check 2 (new switches off): PASSED. DMBOT_WEB_CONNECTION_SAID=0, DMBOT_WEB_ADVENTURE=0; ADVENTURE_LIVE, DMBOT_WORKER, DMBOT_WORKER_NAMES, WAIT_COUNTS_LIVE unset.
+- Check 3 (sample run, --repeat 5 --parallel 5 --run-usd 1.5 --max-usd 20): PASSED. Exit 0; about $3.67; campaigns kept (48, 49, 49b), none deleted. Counts on #3545: both+sure entries found 71 (70 to 71) against 72 on 49a: noise. Ties found 48, AI decides (session) 14 calls at $0.05, bot's AI spend $0.66 median.
+- pypdf 7.2 comparison (#5344): NOT RUN. The sample set has no PDF; the sample run uses text files. Reported on #5344.
+- Checks 4 to 7 (email sign-in #5353; Questions page #5356; the adventure with DMBOT_WEB_ADVENTURE and ADVENTURE_LIVE on; pictures): NOT DONE. Browser checks by the owner; the adventure switches are not on yet (the switch tool is interactive).
+- Known from 49a: the names switch DMBOT_WORKER_NAMES stays off; its GO_LIVE row needs the worker on and checked first.
