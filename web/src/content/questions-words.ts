@@ -56,6 +56,8 @@ export const questionsPage = {
   discordAt: (path: string): string => `Answer in Discord: ${path}.`,
   campaignLine: (total: number): string => `${total} ${total === 1 ? "question" : "questions"} waiting`,
   kindLine: (label: string, count: number): string => `${label} · ${count}`,
+  // Said where a kind's line was when its last item has been answered here (#5356).
+  kindDone: (label: string): string => `${label}: all answered. 🎉`,
   // When the open list holds fewer of a kind than the bot counted (#5356): the rest are in the lists below it (suggested names,
   // same-person offers, family links, hand-overs), so the numbers add up.
   kindLineSplit: (label: string, count: number, here: number): string => `${label} · ${count} (${here} here, ${count - here} in the lists below)`,

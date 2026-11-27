@@ -765,13 +765,35 @@ describe("what was answered here comes off the counts (#5356)", () => {
     await openFacts((got) => ({ ...got, claims: [] }));
     expect(screen.getByText(w.campaignLine(5))).toBeTruthy();
     fireEvent.click(await screen.findAllByRole("button", { name: /Not right/ }).then((b) => b[0] as HTMLElement));
-    // (while its list is open the line stays, at 0, so the list and its "all done" note do not vanish under the DM)
-    expect(await screen.findByText(`${facts} · 0`)).toBeTruthy();
+    // the line goes at once; its list moves to the next line of the group, which still has connections waiting
+    await waitFor(() => expect(screen.queryByText(/^Facts to check · /)).toBeNull());
     expect(screen.getByText(w.campaignLine(3))).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: `${w.hideHere}: ${facts}` }));
-    await waitFor(() => expect(screen.queryByText(`${facts} · 0`)).toBeNull());
-    expect(screen.queryByRole("button", { name: `${w.showHere}: ${facts}` })).toBeNull();
-    expect(screen.getByText(`${link} · 3`)).toBeTruthy(); // (what was not answered stays as the bot counted it)
+    expect(await screen.findByRole("button", { name: `${w.hideHere}: ${link}` })).toBeTruthy();
+    expect(screen.queryByText(w.kindDone(facts))).toBeNull(); // (the group is not all answered)
+  });
+
+  it("the whole group answered closes its list and says so, and the heading takes focus", async () => {
+    const api = mockApi("table");
+    api.myQuestions = async () => ({
+      serverNow: now,
+      campaigns: [{ ref: "100.cmp1", name: "The Ashen Road", total: 2, countedAt: now - 30, kinds: [{ kind: "claims", count: 2, oldest: now - 500 }] }],
+    });
+    const real = api.webWaiting!.bind(api);
+    let reads = 0;
+    api.webWaiting = async (ref) => {
+      const got = await real(ref);
+      reads += 1;
+      return reads === 1 ? { ...got, backstory: [], which: [] } : { ...got, claims: [], backstory: [], which: [] };
+    };
+    lists.waiting = true;
+    render(<Questions api={api} />);
+    await screen.findByText(`${facts} · 2`);
+    fireEvent.click(screen.getByRole("button", { name: `${w.showHere}: ${facts}` }));
+    fireEvent.click(await screen.findAllByRole("button", { name: /Not right/ }).then((b) => b[0] as HTMLElement));
+    expect(await screen.findByText(w.kindDone(facts))).toBeTruthy();
+    expect(screen.queryByText(/^Facts to check · /)).toBeNull();
+    expect(screen.queryByRole("button", { name: `${w.hideHere}: ${facts}` })).toBeNull();
+    await waitFor(() => expect(document.activeElement?.tagName).toBe("H2"));
   });
 
   it("one answer takes one off, and the other kinds are left alone", async () => {
