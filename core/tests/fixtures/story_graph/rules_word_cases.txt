@@ -1,0 +1,24 @@
+# Invented lines for #5214 part 2a: a rules word used as a name. One line each, numbered from 1
+# after these comment lines (they are skipped, so line 1 is the first line below them).
+our ship is called the insight and she is fast
+we sail on the insight at dawn
+the insight takes on water near the reef
+thank you arcana, you have been a fine guide
+arcana, which way to the pass
+make a perception check
+roll perception for me
+perception again please
+that is a low perception
+your perception is fine
+perception, everyone
+perception check, all of you
+still no perception
+good perception roll
+perception fails
+make a stealth check to sneak past
+your stealth is good
+the cat is called stealth and it hates the cold
+stealth the cat sleeps by the fire
+stealth check failed
+an owlbear crashes out of the trees
+the owlbear roars at us
