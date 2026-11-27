@@ -28,6 +28,7 @@ from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.recaps.draft import BULLET_HARD, HOUSEKEEPING_HARD, SUMMARY_MAX
 from dmbot.recaps.hold import HoldStore
 from dmbot.recaps.store import Job, RecapStore
+from dmbot.timebot.calendar import Calendar
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
 from dmbot.web import recap_audio, sessions
@@ -2143,6 +2144,7 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
         get_channel=lambda cid: sent if channel == "default" else channel,
         recap_secret_names=AsyncMock(return_value=[] if secrets is None else secrets),
         recap_allowed_names=AsyncMock(return_value=known or []),
+        _recap_calendar=AsyncMock(return_value=Calendar()),
         consent=SimpleNamespace(
             consenting=AsyncMock(return_value=agreed if agreed is not None else {fx.ALICE}),
             agreed=AsyncMock(return_value=agreed if agreed is not None else {fx.ALICE}),

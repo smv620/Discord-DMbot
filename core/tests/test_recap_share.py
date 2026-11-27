@@ -9,6 +9,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
+from dmbot.timebot.calendar import Calendar
 from dmbot.ui import recap_share as rs
 from tests import recap_fixtures as fx
 from tests.test_recap_jobs import Base
@@ -283,6 +284,7 @@ class TheLinkChecks(unittest.IsolatedAsyncioTestCase):
             post_recaps=AsyncMock(),
             recap_secret_names=AsyncMock(return_value=kw.get("secrets", [])),
             recap_allowed_names=AsyncMock(return_value=[]),
+            _recap_calendar=AsyncMock(return_value=Calendar()),
             consent=SimpleNamespace(
                 consenting=AsyncMock(return_value=kw.get("agreed", {1, 2})),
                 recorded_in=AsyncMock(return_value=kw.get("agreed", {1, 2})),  # (#3305)
