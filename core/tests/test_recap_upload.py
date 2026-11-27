@@ -18,6 +18,7 @@ from dmbot.recaps import critics as cr
 from dmbot.recaps import uploaded as up
 from dmbot.recaps.approval import text_hash
 from dmbot.recaps.store import RecapRightsSection, RecapSection
+from dmbot.timebot.calendar import Calendar
 from tests import recap_fixtures as fx
 from tests.test_recap_jobs import NOW, Base
 
@@ -204,6 +205,7 @@ class Uploading(Base):
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             recap_secret_names=AsyncMock(return_value=["Silas Vane"]),
             recap_allowed_names=AsyncMock(return_value=["Mira"]),
+            _recap_calendar=AsyncMock(return_value=Calendar()),
             _queue_recap_names=queued,
             post=posted,
             settings=SimpleNamespace(site_url=""),

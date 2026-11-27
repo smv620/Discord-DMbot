@@ -34,6 +34,7 @@ from dmbot.recaps.held import apply_held
 from dmbot.recaps.notify import job_ref, parse_ref
 from dmbot.recaps.store import MAX_TRIES
 from dmbot.recaps.text import names_a_secret, strip_cues
+from dmbot.timebot.calendar import Calendar, from_door
 from dmbot.web.me import MAX_GUILDS
 from dmbot.web.sessions import Session
 
@@ -555,6 +556,24 @@ async def _one(
     if marks:
         [row] = await _with_transcript_marks(conn, guild_id, [row])
     return guild_id, campaign_id, session_at, row
+
+
+async def recap_calendar(db: Database, session: Session, ref: str) -> Calendar:
+    """The campaign's calendar for this recap's page (#5364), through the DM-only clock door, so
+    the audio's date is worded as the recap is posted. Day N for anyone else, with no clock, or
+    when it no longer reads."""
+    parsed = parse_ref(ref)
+    if parsed is None:
+        return Calendar()
+    guild_id, campaign_id, _ = parsed
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_game_clock(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = (await cur.fetchone() or {}).get("r")
+    return from_door(found) if isinstance(found, dict) else Calendar()
 
 
 async def read_recap(db: Database, session: Session, ref: str) -> dict[str, Any]:

@@ -22,6 +22,7 @@ from dmbot.recaps.audio import parts
 from dmbot.recaps.audio import script as audio_script
 from dmbot.recaps.audio.files import KINDS, AudioFiles
 from dmbot.recaps.notify import parse_ref
+from dmbot.timebot.calendar import Calendar
 
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 
@@ -85,7 +86,12 @@ def file_for(
 
 
 def remake(
-    files: AudioFiles | None, ref: str, recap: dict[str, Any], *, voice_tags: bool
+    files: AudioFiles | None,
+    ref: str,
+    recap: dict[str, Any],
+    *,
+    voice_tags: bool,
+    calendar: Calendar | None = None,
 ) -> dict[str, Any]:
     """What "Make it again" would do for this recap (#2630), so the page can say which button it
     is and why: `how` is `voice` (only the `changed` paragraphs of `total` are spoken again, the
@@ -99,7 +105,11 @@ def remake(
     if files is None or parsed is None or audio["state"] not in ("ready", "failed"):
         return out
     script = audio_script.build(
-        recap["title"], recap["gameDay"], recap["summary"], emotion_tags=voice_tags
+        recap["title"],
+        recap["gameDay"],
+        recap["summary"],
+        emotion_tags=voice_tags,
+        calendar=calendar,
     )
     out["total"] = len(script.paragraphs)
     if audio["current"]:

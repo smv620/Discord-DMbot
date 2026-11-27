@@ -58,6 +58,7 @@ from dmbot.recaps.text import (
 
 # Re-exported with the `as` form, which mypy strict needs, so that
 # `draft.SPOKEN_WORDS_PER_HOUR` still resolves.
+from dmbot.timebot.calendar import Calendar, day_words
 from dmbot.transcript.import_plan import SPOKEN_WORDS_PER_HOUR as SPOKEN_WORDS_PER_HOUR
 
 log = logging.getLogger(__name__)
@@ -1895,6 +1896,8 @@ def grade_message(beats: Sequence[Beat], summary: str) -> str:
     return housekeeping_message(beats, summary)
 
 
-def heading(title: str, day: int | None) -> str:
-    """`**Session Summary: <title> (Day X)**`; the day only when TimeBot knows it."""
-    return f"**Session Summary: {title}" + (f" (Day {day})" if day else "") + "**"
+def heading(title: str, day: int | None, calendar: Calendar | None = None) -> str:
+    """`**Session Summary: <title> (Day X)**`; the day only when TimeBot knows it. The date is the
+    campaign's calendar's ("(Summer 5th, 1201 AR)"), "Day X" with none (#5364)."""
+    date = day_words(day, calendar)
+    return f"**Session Summary: {title}" + (f" ({date})" if date else "") + "**"

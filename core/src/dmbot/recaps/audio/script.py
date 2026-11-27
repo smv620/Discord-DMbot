@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from dmbot.recaps import fixed_lines
 from dmbot.recaps.text import CUE, PERFORMANCE
 from dmbot.secrets_match import secret_rule as matcher
+from dmbot.timebot.calendar import Calendar, day_words
 
 MAX_CHARS = 4000  # one request's limit for the voice
 NEIGHBOUR_CHARS = 300  # how much of the next or the last paragraph the voice is shown
@@ -108,10 +109,12 @@ class Script:
         return tuple(c for c in self.cues if c.kind == EMOTION)
 
 
-def title_line(title: str, day: int | None) -> str:
-    """The line the voice opens with: "Session Summary: <title>, Day X" (the day only if known)."""
+def title_line(title: str, day: int | None, calendar: Calendar | None = None) -> str:
+    """The line the voice opens with: "Session Summary: <title>, Day X" (the day only if known),
+    the date in the campaign's calendar ("..., Summer 5th, 1201 AR", #5364)."""
     clean = " ".join(CUE.sub(" ", PERFORMANCE.sub(" ", title)).split()).strip(" *")
-    return f"Session Summary: {clean}" + (f", Day {day}" if day else "")
+    date = day_words(day, calendar)
+    return f"Session Summary: {clean}" + (f", {date}" if date else "")
 
 
 def _mood_tag(name: str, mood: str, emotion_tags: bool) -> tuple[str, str]:
@@ -278,6 +281,7 @@ def build(
     secret_names: Collection[str] = (),
     allowed_names: Collection[str] = (),
     emotion_tags: bool = True,
+    calendar: Calendar | None = None,
 ) -> Script:
     """The script for one recap: the title line, then each paragraph of the summary. Housekeeping
     is not an input, so it can never be read. `secret_names`: if any stands in the title, the
@@ -290,7 +294,7 @@ def build(
     if rule := secret_rule(f"{title} {summary}", secret_names, allowed_names):
         raise SecretInScript("a secret name is in the recap text", rule)
     pieces: list[tuple[str, str, list[tuple[int, int, str, str, str]]]] = []
-    head = title_line(title, day)
+    head = title_line(title, day, calendar)
     pieces.append((head, head, []))
     room = MAX_CHARS - len(SCENE_BREAK_TAG) - 1  # a scene break's tag is added to the last part
     mood = ""  # the mood the narration is in; a tag is sent where it changes
