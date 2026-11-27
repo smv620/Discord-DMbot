@@ -324,3 +324,88 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(tiny.words(10, start), "Blink 1st, 9999")
         with self.assertRaises(ValueError):
             tiny.words(11, start)
+
+
+class StoredForm(unittest.TestCase):
+    """The definition on the clock's row and in a backup (#5364 slice 2): plain JSON that comes
+    back as the same calendar, and a damaged one is refused as strictly as a made one."""
+
+    def test_a_layout_comes_back_the_same_from_its_json(self) -> None:
+        for layout in (H, lay.four_seasons(90), TestWeekdays.vale):
+            self.assertEqual(lay.Layout.from_json(layout.to_json()), layout)
+
+    def test_the_json_is_numbers_and_words_only_and_small(self) -> None:
+        import json
+
+        text = json.dumps(H.to_json())
+        self.assertLess(len(text), 2000)
+        self.assertNotIn("1492", text)  # (no calendar date is ever stored in the definition)
+
+    def test_a_damaged_definition_is_refused(self) -> None:
+        good = lay.four_seasons(90).to_json()
+        parts = good["parts"]
+        assert isinstance(parts, list)
+        bad: list[object] = [
+            None, [], "x", {**good, "extra": 1}, {k: v for k, v in good.items() if k != "parts"},
+            {**good, "parts": "Spring"}, {**good, "parts": [{"name": "A", "days": 5}]},
+            {**good, "parts": [{**parts[0], "days": "30"}]},
+            {**good, "parts": [{**parts[0], "days": 30.0}]},
+            {**good, "parts": [{**parts[0], "kind": "week"}]},
+            {**good, "weekdays": [1, 2]}, {**good, "yearLabel": 5},
+            {**good, "leap": {"every": 4, "name": "X"}},
+            {**good, "leap": {"every": 4, "name": "Extra", "after": "Nope"}},
+            {**good, "name": 7},
+        ]  # fmt: skip
+        for raw in bad:
+            with self.subTest(str(raw)[:60]), self.assertRaises(ValueError):
+                lay.Layout.from_json(raw)
+
+
+class TestWeekdays:  # (the layout the weekday tests use, shared with the stored-form tests)
+    vale = FestivalsAndWeekdays.vale
+
+
+class OnTheCalendar(unittest.TestCase):
+    def test_a_custom_calendar_words_the_clocks_minutes(self) -> None:
+        calendar = cal.Calendar(
+            cal.CUSTOM,
+            layout=lay.four_seasons(90),
+            layout_start=lay.four_seasons(90).start_on(1201, "Summer", 2),
+        )
+        self.assertEqual(calendar.words(0), "Summer 2nd, 1201")
+        self.assertEqual(calendar.words(DAY * 89), "Autumn 1st, 1201")
+        with self.assertRaises(ValueError):
+            calendar.words(-1)
+
+    def test_it_is_refused_without_its_layout_or_with_the_wrong_kind_of_start(self) -> None:
+        seasons = lay.four_seasons(90)
+        start = seasons.start_on(1201, "Spring", 1)
+        for kwargs in (
+            {"kind": cal.CUSTOM},
+            {"kind": cal.CUSTOM, "layout": seasons},
+            {"kind": cal.CUSTOM, "layout_start": start},
+            {"kind": cal.CUSTOM, "layout": seasons, "layout_start": lay.Start(1201, 360)},
+            {"kind": cal.DAYS, "layout": seasons, "layout_start": start},
+            {"kind": cal.HARPTOS, "start": cal.day_one(1492, "Hammer", 1), "layout": seasons},
+        ):
+            with self.subTest(str(kwargs)[:50]), self.assertRaises(ValueError):
+                cal.Calendar(**kwargs)
+
+    def test_what_is_stored_comes_back_as_the_same_calendar(self) -> None:
+        seasons = lay.four_seasons(90)
+        calendar = cal.Calendar(
+            cal.CUSTOM, layout=seasons, layout_start=seasons.start_on(1201, "Winter", 3)
+        )
+        stored = cal.def_of(calendar)
+        self.assertEqual(stored["weekday"], 0)
+        start = calendar.layout_start
+        assert start is not None
+        self.assertEqual(cal.custom_from(start.year, start.ordinal, stored), calendar)
+        for raw in (None, {}, {"layout": stored["layout"]}, {**stored, "weekday": True},
+                    {**stored, "weekday": 1}, {**stored, "extra": 1}):  # fmt: skip
+            with self.subTest(str(raw)[:40]), self.assertRaises(ValueError):
+                cal.custom_from(start.year, start.ordinal, raw)
+        with self.assertRaises(ValueError):
+            cal.custom_from(start.year, 360, stored)  # (the day of the year is not one it has)
+        with self.assertRaises(ValueError):
+            cal.def_of(cal.Calendar())
