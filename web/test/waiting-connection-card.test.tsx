@@ -111,7 +111,7 @@ describe("Keep all and DMbot's guesses", () => {
     });
     render(<WebWaiting api={api} campaignRef={REF} />);
     await screen.findByRole("heading", { name: w.heading });
-    expect(await screen.findByRole("button", { name: w.keepAll(2) })).toBeTruthy();
+    expect((await screen.findAllByRole("button", { name: w.keepAll(2) }))[0] as HTMLElement).toBeTruthy();
   });
 });
 

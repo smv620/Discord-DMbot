@@ -30,6 +30,9 @@ export const waitingWords = {
   splitOne: "🙈 Kept hidden from your players: the party was split, and DMbot can't tell which group heard it. To choose who knows it, use “Who knows this?” on the Story Graph.",
   heading: "Waiting for you",
   count: (n: number): string => (n === 1 ? "1 thing is waiting for you." : `${n} things are waiting for you.`),
+  // On the Questions page (#5356): the same list says which kinds it holds, so its number is not read against a kind line that also counts
+  // lists below it (suggested names, same-person offers, family links, hand-overs).
+  countHere: (n: number): string => `${n} waiting here: connections, facts and “Which one?”`,
   none: "Nothing is waiting for you.",
   intro: "DMbot never decides these. Each one needs your answer before it goes into your story.",
   more: "Showing the first ones. Answer some and the next ones appear.",

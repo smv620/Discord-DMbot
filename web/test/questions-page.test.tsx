@@ -380,8 +380,21 @@ describe("connections, Which one? and readings, answered on the page (#3438)", (
     const first = line("connections", 4);
     fireEvent.click(within(first).getByRole("button", { name: `${w.showHere}: ${kindWords("connections").label}` }));
     await waitFor(() => expect(api.calls.some((c) => c.startsWith("webWaiting:100.cmp1"))).toBe(true));
-    expect(within(line("which", 2)).getByText(w.answeredWith(kindWords("connections").label))).toBeTruthy();
-    expect(within(line("which", 2)).queryByRole("button")).toBeNull();
+    // (once the list has reported, a kind line says how many of its count are in the list: the pretend list holds one of this kind)
+    const which = (await screen.findByText(w.kindLineSplit(kindWords("which").label, 2, 1))).closest("li") as HTMLElement;
+    expect(within(which).getByText(w.answeredWith(kindWords("connections").label))).toBeTruthy();
+    expect(within(which).queryByRole("button")).toBeNull();
+  });
+
+  it("a kind line says how many of its count are in the open list and how many in the lists below, and the list says what it holds (#5356)", async () => {
+    const api = await show();
+    fireEvent.click(within(line("connections", 4)).getByRole("button", { name: `${w.showHere}: ${kindWords("connections").label}` }));
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("webWaiting:100.cmp1"))).toBe(true));
+    // the pretend list holds 3 connections of the bot's 4: the other one is in a list below
+    const held = (await screen.findAllByText(/\(\d+ here, \d+ in the lists below\)/)).length;
+    expect(held).toBeGreaterThan(0);
+    expect(await screen.findByText(/waiting here: connections, facts and “Which one\?”/)).toBeTruthy();
+    expect(screen.queryByText(/things are waiting for you/)).toBeNull();
   });
 
   it("opens what people believe as its own list", async () => {
@@ -709,5 +722,73 @@ describe("the names part reports from every recap (#4740)", () => {
     await waitFor(() => expect(onLeft).toHaveBeenCalledWith(0));
     expect(onLeft.mock.calls.every(([n]) => n === 0)).toBe(true);
     names.on = false;
+  });
+});
+
+describe("what was answered here comes off the counts (#5356)", () => {
+  const facts = kindWords("claims").label;
+  const link = kindWords("connections").label;
+  // The bot counted 2 facts and 3 connections; the waiting list holds them, then (after one answer) no facts.
+  const counted = (): QuestionCounts => ({
+    serverNow: now,
+    campaigns: [
+      {
+        ref: "100.cmp1",
+        name: "The Ashen Road",
+        total: 5,
+        countedAt: now - 30,
+        kinds: [
+          { kind: "claims", count: 2, oldest: now - 500 },
+          { kind: "connections", count: 3, oldest: now - 400 },
+        ],
+      },
+    ],
+  });
+  async function openFacts(after: (got: Awaited<ReturnType<NonNullable<ReturnType<typeof mockApi>["webWaiting"]>>>) => unknown) {
+    const api = mockApi("table");
+    api.myQuestions = async () => counted();
+    const real = api.webWaiting!.bind(api);
+    let reads = 0;
+    api.webWaiting = async (ref) => {
+      const got = await real(ref);
+      reads += 1;
+      return reads === 1 ? got : (after(got) as typeof got);
+    };
+    lists.waiting = true;
+    render(<Questions api={api} />);
+    await screen.findByText(`${facts} · 2`);
+    fireEvent.click(screen.getByRole("button", { name: `${w.showHere}: ${facts}` }));
+    return api;
+  }
+
+  it("answering every fact takes the Facts to check line away, and the campaign's total goes down with it", async () => {
+    await openFacts((got) => ({ ...got, claims: [] }));
+    expect(screen.getByText(w.campaignLine(5))).toBeTruthy();
+    fireEvent.click(await screen.findAllByRole("button", { name: /Not right/ }).then((b) => b[0] as HTMLElement));
+    // (while its list is open the line stays, at 0, so the list and its "all done" note do not vanish under the DM)
+    expect(await screen.findByText(`${facts} · 0`)).toBeTruthy();
+    expect(screen.getByText(w.campaignLine(3))).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: `${w.hideHere}: ${facts}` }));
+    await waitFor(() => expect(screen.queryByText(`${facts} · 0`)).toBeNull());
+    expect(screen.queryByRole("button", { name: `${w.showHere}: ${facts}` })).toBeNull();
+    expect(screen.getByText(`${link} · 3`)).toBeTruthy(); // (what was not answered stays as the bot counted it)
+  });
+
+  it("one answer takes one off, and the other kinds are left alone", async () => {
+    await openFacts((got) => got); // (the pretend API itself takes the answered fact off its list)
+    fireEvent.click(await screen.findAllByRole("button", { name: /Not right/ }).then((b) => b[0] as HTMLElement));
+    expect(await screen.findByText(`${facts} · 1`)).toBeTruthy();
+    expect(screen.getByText(w.campaignLine(4))).toBeTruthy();
+    expect(screen.getByText(`${link} · 3`)).toBeTruthy();
+  });
+
+  it("a list that fails to read takes nothing off", async () => {
+    await openFacts(() => {
+      throw new Error("down");
+    });
+    fireEvent.click(await screen.findAllByRole("button", { name: /Not right/ }).then((b) => b[0] as HTMLElement));
+    await waitFor(() => expect(screen.getAllByText(/./).length).toBeGreaterThan(0));
+    expect(screen.getByText(`${facts} · 2`)).toBeTruthy();
+    expect(screen.getByText(w.campaignLine(5))).toBeTruthy();
   });
 });

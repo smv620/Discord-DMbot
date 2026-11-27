@@ -99,6 +99,8 @@ export default function WebWaiting({
   campaignRef,
   onChanged,
   onLeft,
+  onKinds,
+  countLine,
 }: {
   api: AccountApi;
   campaignRef: string;
@@ -106,6 +108,10 @@ export default function WebWaiting({
   onChanged?: () => void;
   /** The claims, backstory and "which" questions still waiting, after each read (#4740, the walk on the Questions page). */
   onLeft?: (left: number) => void;
+  /** How many of each Questions kind the list holds now (#5356), so that page can take answered ones off its snapshot. */
+  onKinds?: (kinds: { claims: number; family: number; which: number; connections: number }) => void;
+  /** The words of the list's own count, when a page that also shows kind lines has to say what the list holds (#5356). */
+  countLine?: (n: number) => string;
 }) {
   const [list, setList] = useState<Waiting | null>(null);
   const [failed, setFailed] = useState(false);
@@ -167,6 +173,9 @@ export default function WebWaiting({
         setList(got);
         setFailed(false);
         onLeft?.(got.claims.length + got.backstory.length + got.which.length);
+        // A claim that carries choices is one kept for a "Which one?" answer (Questions' "Family ties"), the rest are "Facts to check".
+        const family = got.claims.filter((c) => c.choices?.length).length;
+        onKinds?.({ claims: got.claims.length - family, family, which: got.which.length, connections: got.backstory.length });
       }
     } catch (error) {
       // A player (or another DM) gets "not found": the part is simply not there.
@@ -342,7 +351,7 @@ export default function WebWaiting({
         {w.heading}
       </h3>
       <p>
-        <strong>{counts.all === 0 ? w.none : w.count(counts.all)}</strong>
+        <strong>{counts.all === 0 ? w.none : (countLine ?? w.count)(counts.all)}</strong>
       </p>
       {counts.all > 0 && <p class="small">{w.intro}</p>}
       {cut && <p class="small">{w.more}</p>}
@@ -661,28 +670,31 @@ export default function WebWaiting({
             const ready = u.items.filter((b) => b.ready && !handOf(b) && !b.guess);
             const ids = ready.slice(0, KEEP_ALL_MAX).map((b) => b.id);
             const left = ready.length - ids.length;
+            // The same button again after the last card (#5356), so a long list needs no scrolling back up: the same rules, never DMbot's guesses.
+            const keepAllRow = (where: string) =>
+              ready.length > 1 && (
+                <div class="row" data-keep-all={where}>
+                  <button
+                    type="button"
+                    class="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setKeptAll(true);
+                      void send({ kind: "backstory", action: "keep_all", ids },
+                        (got) => (left > 0 && got.kept !== undefined ? w.keepAllCut(got.kept, left) : w.kept(got.kept)),
+                        w.keepingStage(ids.length),
+                      );
+                    }}
+                  >
+                    {w.keepAll(ids.length)}
+                  </button>
+                  <span class="small muted">{w.keepAllPlayers}</span>
+                </div>
+              );
             return (
               <div key={u.label} class="stack">
                 <h5>{u.label ? w.fromUpload(u.label) : w.fromEarlier}</h5>
-                {ready.length > 1 && (
-                  <div class="row">
-                    <button
-                      type="button"
-                      class="button"
-                      disabled={busy}
-                      onClick={() => {
-                        setKeptAll(true);
-                        void send({ kind: "backstory", action: "keep_all", ids },
-                          (got) => (left > 0 && got.kept !== undefined ? w.keepAllCut(got.kept, left) : w.kept(got.kept)),
-                          w.keepingStage(ids.length),
-                        );
-                      }}
-                    >
-                      {w.keepAll(ids.length)}
-                    </button>
-                    <span class="small muted">{w.keepAllPlayers}</span>
-                  </div>
-                )}
+                {keepAllRow("top")}
                 {u.items.map((b) => {
                   // Q2 (#4430): who sees it. A secret name is always hidden; an update starts as it is now; a new one starts shown.
                   const hidden = b.secret ? true : (flip[b.id] ?? b.now?.hidden ?? false);
@@ -742,6 +754,7 @@ export default function WebWaiting({
                   </div>
                   );
                 })}
+                {keepAllRow("bottom")}
               </div>
             );
           })}

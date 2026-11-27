@@ -34,8 +34,9 @@ afterEach(() => {
 const whole = (text: string) => (_: string, el: Element | null): boolean => el?.tagName === "P" && el.textContent === text;
 
 const REF = "100.cmp1";
+// (Keep all shows at the top of an upload's list and again at its bottom, #5356: the first is pressed)
 const press = (name: string | RegExp, within_?: HTMLElement) =>
-  fireEvent.click((within_ ? within(within_) : screen).getByRole("button", { name }));
+  fireEvent.click((within_ ? within(within_) : screen).getAllByRole("button", { name })[0] as HTMLElement);
 
 /** The buttons wait while an answer is sent and the list is read again; the next press comes after. */
 const settled = () => waitFor(() => expect(screen.queryByText(w.savingStage)).toBeNull());
@@ -152,6 +153,23 @@ describe("connections from a backstory", () => {
     expect(within(waiting).getByText(w.waitingOn(["Newcomer"]))).toBeTruthy();
     expect(within(waiting).queryByRole("button", { name: w.addIt })).toBeNull();
     expect(within(waiting).getByRole("button", { name: w.skip })).toBeTruthy();
+  });
+
+  it("Keep all shows again after the last card, with the same rules, and sends the same ones (#5356)", async () => {
+    const api = await open();
+    const buttons = screen.getAllByRole("button", { name: w.keepAll(2) });
+    expect(buttons).toHaveLength(2); // the top of the upload's list and its bottom
+    const top = buttons[0] as HTMLElement;
+    const bottom = buttons[1] as HTMLElement;
+    // the bottom one comes after the upload's last card, and its note about players goes with it
+    const cards = Array.from(top.closest(".stack")?.querySelectorAll(".panel") ?? []);
+    expect(cards.length).toBeGreaterThan(1);
+    expect(top.compareDocumentPosition(cards[0] as Element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(bottom.compareDocumentPosition(cards[cards.length - 1] as Element) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    expect(bottom.parentElement?.textContent).toContain(w.keepAllPlayers);
+    fireEvent.click(bottom);
+    expect(await screen.findByText(w.kept(2))).toBeTruthy();
+    expect(api.calls).toContain(`answerWaiting:${REF}:backstory:keep_all:b1,b2`); // (only the ready ones, never a guess)
   });
 
   it("never sends more than 50 in one Keep all, and says how many are left", async () => {

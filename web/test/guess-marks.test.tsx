@@ -73,7 +73,7 @@ describe("the waiting card and Keep all", () => {
       { ...base, id: "c3", object: "Venn" },
       { ...base, id: "c4", guess: "a second guess", object: "Dorn" },
     ]);
-    fireEvent.click(await screen.findByRole("button", { name: w.keepAll(2) }));
+    fireEvent.click((await screen.findAllByRole("button", { name: w.keepAll(2) }))[0] as HTMLElement);
     expect(await screen.findByText(w.guessesLeft(2))).toBeTruthy();
     expect(w.guessesLeft(1)).toBe("1 of DMbot's guesses still needs your yes.");
   });
@@ -83,7 +83,7 @@ describe("the waiting card and Keep all", () => {
       { ...base, id: "c2", object: "Mara" },
       { ...base, id: "c3", object: "Venn" },
     ]);
-    fireEvent.click(await screen.findByRole("button", { name: w.keepAll(2) }));
+    fireEvent.click((await screen.findAllByRole("button", { name: w.keepAll(2) }))[0] as HTMLElement);
     await screen.findByText(w.kept(2));
     expect(screen.queryByText(/still need/)).toBeNull();
     expect(screen.queryByText(/still needs/)).toBeNull();
