@@ -115,7 +115,18 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
 
 function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; serverNow: number; api: AccountApi }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const kinds = inFixedOrder(mergeUnknown(campaign.kinds)).filter((k) => kindWords(k.kind).how !== "hidden");
+  // What was answered here since the bot counted (#5356): the bot's numbers are a snapshot of a minute or so ago and are not read again
+  // after an answer, so the page takes off what its own waiting list lost. The first report of a visit is the baseline; only the drop
+  // from it is taken off, so the two lists' different counting never shows (only what was answered here does).
+  const [answeredHere, setAnswered] = useState<Record<string, number>>({});
+  const baseline = useRef<Record<string, number> | null>(null);
+  const onKinds = (now: Record<string, number>): void => {
+    if (baseline.current === null) baseline.current = { ...now };
+    const base = baseline.current;
+    setAnswered(Object.fromEntries(Object.keys(now).map((k) => [k, Math.max(0, (base[k] ?? 0) - (now[k] ?? 0))])));
+  };
+  const counted = campaign.kinds.map((k) => ({ ...k, count: Math.max(0, k.count - (answeredHere[k.kind] ?? 0)) }));
+  const kinds = inFixedOrder(mergeUnknown(counted)).filter((k) => kindWords(k.kind).how !== "hidden");
   // The first line of each group carries its toggle and panel; the others say they are answered with it.
   const lead = new Map<string, string>();
   for (const k of kinds) {
@@ -221,6 +232,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                     id={`q-${campaign.ref}-walk`}
                     waiting={walking.count}
                     onLeft={setLeft}
+                    onKinds={onKinds}
                   />
                   <div class="row">
                     {(walk ?? 0) + 1 < parts.length ? (
@@ -274,7 +286,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                         {open.has(k.kind) ? words.hideHere : words.showHere}
                       </button>
                       {open.has(k.kind) && walking?.group !== groupOf(k.kind) && (
-                        <QuestionsHere api={api} campaignRef={campaign.ref} group={groupOf(k.kind) ?? "names"} id={`q-${campaign.ref}-${k.kind}`} waiting={k.count} />
+                        <QuestionsHere api={api} campaignRef={campaign.ref} group={groupOf(k.kind) ?? "names"} id={`q-${campaign.ref}-${k.kind}`} onKinds={onKinds} waiting={k.count} />
                       )}
                     </>
                   ) : howFor(k.kind, api) === "link" && w.to ? (

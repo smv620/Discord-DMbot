@@ -109,7 +109,7 @@ describe("a waiting hand-over", () => {
       row({ id: "b3", object: "the Lantern" }),
     ]);
     expect(
-      await screen.findByRole("button", { name: w.keepAll(2) }),
+      (await screen.findAllByRole("button", { name: w.keepAll(2) }))[0] as HTMLElement,
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: w.keepAll(3) })).toBeNull();
   });
