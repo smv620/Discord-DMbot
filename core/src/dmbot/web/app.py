@@ -2336,7 +2336,9 @@ def create_app(
         waiting (#3767). DM only; anyone else, or an id that is not one, "not found"."""
         session, _token = signed
         try:
-            return await graph_cleanup.read_places(db, session, ref, entity_id)
+            return await graph_cleanup.read_places(
+                db, session, ref, entity_id, outside_engine=settings.outside_engine
+            )
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

@@ -207,7 +207,10 @@ class TheCleanupRoute(TheRoute):
             self.assertEqual(refused.status_code, 404)
         async with await self.client(self.session) as client:
             places = await client.get(f"/me/campaigns/{self.cref}/web/cleanup/{drunk}/places")
-            self.assertEqual(places.json(), {"places": [], "morePlaces": 0})
+            self.assertEqual(
+                places.json(),
+                {"places": [], "morePlaces": 0, "origins": [{"kind": "yours"}]},  # (DM-typed)
+            )
         async with await self.client(self.player) as client:
             refused = await client.get(f"/me/campaigns/{self.cref}/web/cleanup/{drunk}/places")
             self.assertEqual(refused.status_code, 404)

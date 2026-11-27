@@ -15,9 +15,11 @@ import math
 import time
 from typing import Any
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.memory import graph_review, isolated
-from dmbot.memory.models import PLAYER_CHARACTER
+from dmbot.memory.models import DM, PLAYER_CHARACTER
+from dmbot.memory.places import LINE_CHARS, trimmed
 from dmbot.web import all_names, name_checks, relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -79,7 +81,9 @@ def review_line(status: object, now: float) -> dict[str, Any]:
     return {"state": "idle"}
 
 
-async def read_places(db: Database, session: Session, ref: str, entity_id: str) -> dict[str, Any]:
+async def read_places(
+    db: Database, session: Session, ref: str, entity_id: str, *, outside_engine: str | None = None
+) -> dict[str, Any]:
     """ "Where was it said?" for one character or group of the campaign (#3767): `places` (up to
     three windows of lines, newest first) and `morePlaces`, made ready as the Names page's are
     (`name_checks._with_places`: a line of someone who does not agree now is `{"removed": true}`).
@@ -98,7 +102,62 @@ async def read_places(db: Database, session: Session, ref: str, entity_id: str) 
         raise RecapError("not_found")
     one = found[ent]
     card = name_checks._with_places({"name": str(one.get("name") or "")}, one)
-    return {"places": card.get("places", []), "morePlaces": int(card.get("morePlaces", 0))}
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_entity_origin(%s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, ent, TERMS_VERSION, outside_engine),
+        )
+        origin = (await cur.fetchone() or {}).get("r")
+    return {
+        "places": card.get("places", []),
+        "morePlaces": int(card.get("morePlaces", 0)),
+        "origins": origins(origin if isinstance(origin, dict) else None),
+    }
+
+
+ORIGINS_SHOWN = 3
+LINES_SHOWN = 3
+
+
+def origins(got: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Where an entry came from when its sentence is not kept, as Discord's "Where was it said?"
+    says it (#4557; pure, so it is tested with no database): the uploads it was read from
+    (`kind` "upload", newest first), what a kept story thread pointed at (`kind` "session": its
+    session number and day and up to three lines from people who still agree; no lines means "That
+    line was removed", and a thread read from an upload is an upload one), and a name the DM typed
+    (`kind` "yours"). Words are the page's; the lines go to the page only, nothing is logged."""
+    if not got:
+        return []
+    found: list[dict[str, Any]] = []
+    thread = got.get("thread")
+    uploads = [
+        {"kind": "upload", "label": str(u["label"]), "at": int(u["at"])}
+        for u in got.get("uploads") or []
+    ]
+    if isinstance(thread, dict):
+        if thread.get("session") is not None:
+            lines = [
+                trimmed(" ".join(str(x).split()), LINE_CHARS)
+                for x in (thread.get("lines") or [])[:LINES_SHOWN]
+            ]
+            found.append(
+                {
+                    "kind": "session",
+                    "session": int(thread["session"]),
+                    "at": int(thread.get("at") or 0),
+                    "lines": lines,
+                }
+            )
+        elif thread.get("upload") and not uploads:
+            # (the day is the suggestion's own, made when the upload was read)
+            uploads.append(
+                {"kind": "upload", "label": str(thread["upload"]), "at": int(thread["madeAt"])}
+            )
+    found.extend(uploads)
+    if not found and got.get("source") == DM:
+        found.append({"kind": "yours"})
+    return found[:ORIGINS_SHOWN]
 
 
 def shape(got: dict[str, Any]) -> dict[str, Any]:
