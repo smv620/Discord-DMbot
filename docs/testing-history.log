@@ -3033,3 +3033,14 @@ Deploy 48 checks 3 and 4 (dev1, 2026-11-25, read-only queries on the server, cou
 - Check 4 (after the session, no "… check" or "… save" name among the names to check): PASSED. 315 names-to-check rows across the five sample campaigns, none whose name ends in " check" or " save".
 
 Session: dev1
+
+DEPLOY 49a be9d3228 (deploy 49, part a; base 83f05b75; migrations 0621 to 0637, 17 files, 0636 not in the repo)
+Session: dev1, 2026-11-27 UTC
+- Dry run: a fresh dryrun-pg restored from pg_dumpall of the live database; migrations ran to 626 applied (610 + 16), latest 0637_connection_reads_job_no. Dump: /home/ubuntu/db-backups/dmbot-dryrun-be9d3228-20261127T031740Z.sql
+- Backup before the bot: /home/ubuntu/db-backups/dmbot-pre-be9d3228-20261127T031821Z.sql (keep)
+- Bot (core) restarted 03:18 UTC on be9d3228; GIT_COMMIT verified; migrations 626, latest 0637. Web API restarted after it; GIT_COMMIT verified.
+- Check 1 (migrations and clean start): PASSED. 0 ERROR lines and 0 tracebacks in the first 10 minutes, both services, 03:18 to 03:28 UTC. The log notes ".env is missing 20 settings that are in .env.example" (a warning; the list names settings the template has and the server's .env does not).
+- Check 2 (new switches off): PARTLY. DMBOT_WEB_CONNECTION_SAID=0 and DMBOT_WEB_ADVENTURE=0 in the web API; DMBOT_WORKER_NAMES unset (off). The new connection routes answer 401/403 to an unsigned request, before the handler's 404 gate, so the 404 itself was not seen. The pages' hiding is not checked (a browser check).
+- Check 3 (sample run, --repeat 5 --parallel 5 --run-usd 1.5 --max-usd 20): PASSED. Exit 0; about $3.93 in all; campaigns kept (48 and 49), none deleted. Counts on #3545: both+sure entries found 72 of about 90 (deploy 48: 71 of about 89); lore names as before; AI decides (session) median 12 calls, $0.04.
+- Owner-visible finding: after an email sign-in the session has no server list, so campaign pages say "We couldn't find that campaign" for every campaign until a Discord sign-in. Filed as #5351 (dev1).
+- Check 4 (switches one at a time): NOT DONE. DMBOT_WORKER_NAMES needs DMBOT_WORKER on and checked, and the worker is not running (DMBOT_WORKER unset). DMBOT_WEB_CONNECTION_SAID needs a signed-in browser (read, use, undo one connection). WAIT_COUNTS_LIVE: the cost of one counts read is not measured yet.
