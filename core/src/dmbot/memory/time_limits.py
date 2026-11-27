@@ -58,8 +58,10 @@ def furthest(minutes: Iterable[int]) -> int | None:
 
 
 def date_said(due: int, calendar: cal.Calendar) -> str:
-    """The limit's date in the campaign's own calendar: "Flamerule 14th, 1492 DR", or "Day 12"."""
-    return cal.date_words(max(due, 0), calendar.kind, calendar.start)
+    """The limit's date in the campaign's own calendar: "Flamerule 14th, 1492 DR", "Summer 2nd,
+    1201 AR" (a calendar of its own, #5364), or "Day 12". Every card, alert and countdown says its
+    dates through here, so they change together."""
+    return calendar.words(max(due, 0))
 
 
 def left_said(due: int, now: int, calendar: cal.Calendar) -> str:

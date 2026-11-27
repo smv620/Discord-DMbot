@@ -13,6 +13,7 @@ year divisible by 4 is a leap year (366 days).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from dmbot.timebot import layout as layout_mod
@@ -200,3 +201,20 @@ def custom_from(year: int, ordinal: int, raw: object) -> Calendar:
         raise ValueError("calendar")
     found = layout_mod.Layout.from_json(raw["layout"])
     return Calendar(CUSTOM, layout=found, layout_start=layout_mod.Start(year, ordinal, weekday))
+
+
+def from_door(got: Mapping[str, object]) -> Calendar:
+    """The calendar from what the website's clock door gives (`dmbot_web_game_clock`: `kind`,
+    `year`, `ordinal` and, for a campaign's own calendar, `def`). Day N for none, and for any
+    setting that no longer reads (a calendar must never stop a page)."""
+    kind, year, ordinal = got.get("kind"), got.get("year"), got.get("ordinal")
+    if type(year) is not int or type(ordinal) is not int:
+        return Calendar()
+    try:
+        if kind == HARPTOS:
+            return Calendar(HARPTOS, DayOne(year, ordinal))
+        if kind == CUSTOM:
+            return custom_from(year, ordinal, got.get("def"))
+    except ValueError:  # (e.g. a leap day in a common year)
+        return Calendar()
+    return Calendar()
