@@ -8,6 +8,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.memory import thread_read as tr
 from dmbot.memory.models import DM
 from dmbot.memory.thread_suggestions import ThreadSuggestionStore
@@ -74,7 +75,8 @@ class TheDoor(Base):
         async with self.web.user(who.user_id, session=who.id_hash) as conn:
             await _scoped(conn, self.g)
             cur = await conn.execute(
-                "SELECT dmbot_web_entity_origin(%s, %s, %s) AS r", (self.g, campaign, entity)
+                "SELECT dmbot_web_entity_origin(%s, %s, %s, %s, %s) AS r",
+                (self.g, campaign, entity, TERMS_VERSION, None),
             )
             found = await cur.fetchone()
             assert found is not None
@@ -118,3 +120,33 @@ class TheDoor(Base):
         got = await self.origin(self.session, self.one.id, thread.thread.id)
         self.assertEqual(got["thread"]["lines"], ["We'll find him."])  # (99 never agreed)
         self.assertEqual(got["thread"]["session"], 1)
+
+    async def test_a_speaker_who_agreed_to_older_terms_is_not_read(self) -> None:
+        await agree(self.db, self.g, DM_ID, ALICE)
+        async with self.db.guild(self.g) as conn:  # (their consent is for an older wording)
+            await conn.execute(
+                "UPDATE consent SET terms_version = %s WHERE guild_id = %s AND user_id = %s",
+                (TERMS_VERSION - 1, self.g, ALICE),
+            )
+        sid = await TranscriptStore(self.db).open_session(self.g, self.one.id, START)
+        await TranscriptStore(self.db).add_lines(
+            self.g, sid, [Heard(LINE_MS, ALICE, "x", "We'll find him.")]
+        )
+        store = ThreadSuggestionStore(self.db)
+        job = tr.Suggestion(
+            "quest", "Find Gnashwater", "find him", "",
+            ((tr.TARGET, self.mira),), tr.STATE["quest"],
+            line_starts=(LINE_MS,), speaker_ids=(ALICE,),
+        )  # fmt: skip
+        await store.offer(
+            self.g, self.one.id, [job], "the session", 5, session_id=sid, session_at=START
+        )
+        (w,) = await store.waiting(self.g, self.one.id)
+        await self.memory.keep_thread(
+            self.g, self.one.id, w.name, w.kind, w.state, aim=w.aim, parts=list(w.parts),
+            source=DM, suggestion_id=w.id,
+        )  # fmt: skip
+        (thread,) = await self.memory.threads(self.g, self.one.id)
+        got = await self.origin(self.session, self.one.id, thread.thread.id)
+        self.assertEqual(got["thread"]["lines"], [])
+        self.assertTrue(got["thread"]["removed"])

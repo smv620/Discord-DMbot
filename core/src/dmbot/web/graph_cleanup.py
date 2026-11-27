@@ -15,6 +15,7 @@ import math
 import time
 from typing import Any
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.memory import graph_review, isolated
 from dmbot.memory.models import DM, PLAYER_CHARACTER
@@ -80,7 +81,9 @@ def review_line(status: object, now: float) -> dict[str, Any]:
     return {"state": "idle"}
 
 
-async def read_places(db: Database, session: Session, ref: str, entity_id: str) -> dict[str, Any]:
+async def read_places(
+    db: Database, session: Session, ref: str, entity_id: str, *, outside_engine: str | None = None
+) -> dict[str, Any]:
     """ "Where was it said?" for one character or group of the campaign (#3767): `places` (up to
     three windows of lines, newest first) and `morePlaces`, made ready as the Names page's are
     (`name_checks._with_places`: a line of someone who does not agree now is `{"removed": true}`).
@@ -102,7 +105,8 @@ async def read_places(db: Database, session: Session, ref: str, entity_id: str) 
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         cur = await conn.execute(
-            "SELECT dmbot_web_entity_origin(%s, %s, %s) AS r", (guild_id, campaign_id, ent)
+            "SELECT dmbot_web_entity_origin(%s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, ent, TERMS_VERSION, outside_engine),
         )
         origin = (await cur.fetchone() or {}).get("r")
     return {

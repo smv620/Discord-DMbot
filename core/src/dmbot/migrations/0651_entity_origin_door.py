@@ -12,10 +12,14 @@ from __future__ import annotations
 # `ThreadSuggestionStore.kept_from` does), and whether the DM typed the name. This door gives the
 # DM's page those facts. DM-only like `dmbot_web_card_lines`: anyone who is not a DM of the
 # campaign gets NULL. The words of a thread's lines are read now, up to three, and only for a
-# speaker with a consent row for this server at this moment; the rest never leave the database.
+# speaker with a consent row for this server at this moment under the current wording (`terms`)
+# and, while an outside company hears the voices, for that company (`outside`), the rule of
+# `consent._select`, and an imported session gives only its game lines; the rest never leave the
+# database.
 # Nothing is written or copied.
 SQL = r"""
-    CREATE FUNCTION dmbot_web_entity_origin(g BIGINT, c TEXT, eid TEXT) RETURNS JSONB
+    CREATE FUNCTION dmbot_web_entity_origin(
+        g BIGINT, c TEXT, eid TEXT, terms INTEGER, outside TEXT) RETURNS JSONB
     LANGUAGE plpgsql SECURITY DEFINER AS $fn$
     DECLARE
         ent memory_entities%ROWTYPE;
@@ -82,7 +86,12 @@ SQL = r"""
                       AND l.started_ms = ANY (kept.line_starts)
                       AND l.user_id = ANY (kept.speaker_ids)
                       AND EXISTS (SELECT 1 FROM consent n
-                                  WHERE n.guild_id = g AND n.user_id = l.user_id)
+                                  WHERE n.guild_id = g AND n.user_id = l.user_id
+                                    AND n.terms_version = terms
+                                    AND (outside IS NULL OR n.outside_to = outside))
+                      AND (l.topic = 'game' OR NOT EXISTS (
+                           SELECT 1 FROM session_imports i
+                           WHERE i.guild_id = g AND i.session_id = kept.session_id))
                       AND btrim(COALESCE(l.text, l.heard)) <> ''
                     ORDER BY l.started_ms, l.id LIMIT 3) x;
             END IF;
@@ -104,15 +113,15 @@ SQL = r"""
     DO $do$
     BEGIN
         EXECUTE format(
-            'ALTER FUNCTION dmbot_web_entity_origin(BIGINT, TEXT, TEXT)'
+            'ALTER FUNCTION dmbot_web_entity_origin(BIGINT, TEXT, TEXT, INTEGER, TEXT)'
             ' SET search_path = pg_catalog, %I, pg_temp', current_schema());
     END
     $do$;
-    REVOKE ALL ON FUNCTION dmbot_web_entity_origin(BIGINT, TEXT, TEXT) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION dmbot_web_entity_origin(BIGINT, TEXT, TEXT, INTEGER, TEXT) FROM PUBLIC;
     """
 
 ISOLATED_TABLES: tuple[str, ...] = ()
 
 WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
-    ("dmbot_web_entity_origin", "dmbot_web_entity_origin(BIGINT, TEXT, TEXT)"),
+    ("dmbot_web_entity_origin", "dmbot_web_entity_origin(BIGINT, TEXT, TEXT, INTEGER, TEXT)"),
 )
