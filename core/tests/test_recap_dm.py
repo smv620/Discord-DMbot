@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from dmbot.mentions import NO_PINGS
 from dmbot.recaps.store import RecapStore
+from dmbot.timebot.calendar import Calendar
 from dmbot.ui.decision_lines import DecisionLines
 from dmbot.ui.recap_dm import (
     ASK,
@@ -69,6 +70,7 @@ def press(act: str, user: int = DM_ID, *, found: Any = "default", decided: bool 
         settings=SimpleNamespace(site_url="https://site.example.com", plot_check_on=False),
         post_recaps=AsyncMock(),
         _recap_audio_files=AsyncMock(return_value=([], "")),
+        _recap_calendar=AsyncMock(return_value=Calendar()),
         user=SimpleNamespace(id=BOT_ID),
         decision_lines=DecisionLines(),
     )
@@ -192,6 +194,7 @@ class TheButtons(unittest.IsolatedAsyncioTestCase):
         me: Any = SimpleNamespace(
             recap_secret_names=AsyncMock(return_value=set()),
             recap_allowed_names=AsyncMock(return_value=set()),
+            _recap_calendar=AsyncMock(return_value=Calendar()),
             consent=SimpleNamespace(agreed=AsyncMock(return_value={7})),  # 8 stopped
         )
 
