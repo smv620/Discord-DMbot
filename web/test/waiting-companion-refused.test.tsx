@@ -2,7 +2,7 @@
 // @vitest-environment happy-dom
 // A refused keep of a companion (#5348; core #5346): the page says why, in the store's own sentence, and what to press.
 // Other refusals keep their own words, and the sentence is never in the title.
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ApiError, httpApi, type AccountApi } from "../src/account/api";
