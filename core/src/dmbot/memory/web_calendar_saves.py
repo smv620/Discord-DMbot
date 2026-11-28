@@ -97,11 +97,18 @@ class SaveStore:
 
 
 async def apply(clocks: ClockStore, guild_id: int, item: Item) -> str:
-    """Save one calendar and say how it ended: '' for saved, else an error word. The body is made
-    into a calendar again here (the website did it before queuing), so a row nobody checked is
-    never saved."""
+    """Save one queued calendar and say how it ended: '' for saved, else an error word."""
+    return await save_body(clocks, guild_id, item.campaign_id, item.user_id, item.body)
+
+
+async def save_body(
+    clocks: ClockStore, guild_id: int, campaign_id: str, user_id: int, body: Any
+) -> str:
+    """Save the calendar a settings body names, the one way for the website's queue and Discord's
+    form alike: '' for saved, else an error word. The body is made into a calendar again here (the
+    caller did it before asking), so a body nobody checked is never saved."""
     try:
-        calendar = setting.from_body(item.body)
+        calendar = setting.from_body(body)
     except setting.CalendarProblem:
         return BAD_CALENDAR_ERROR
     try:
@@ -111,8 +118,8 @@ async def apply(clocks: ClockStore, guild_id: int, item: Item) -> str:
                 return BAD_CALENDAR_ERROR
             await clocks.set_custom_calendar(
                 guild_id,
-                item.campaign_id,
-                item.user_id,
+                campaign_id,
+                user_id,
                 calendar.layout,
                 year=one["year"],
                 name=one["part"],
@@ -125,15 +132,15 @@ async def apply(clocks: ClockStore, guild_id: int, item: Item) -> str:
                 return BAD_CALENDAR_ERROR
             await clocks.set_calendar(
                 guild_id,
-                item.campaign_id,
-                item.user_id,
+                campaign_id,
+                user_id,
                 cal.HARPTOS,
                 year=one["year"],
                 name=one["part"],
                 day=one["day"],
             )
         else:
-            await clocks.set_calendar(guild_id, item.campaign_id, item.user_id, cal.DAYS)
+            await clocks.set_calendar(guild_id, campaign_id, user_id, cal.DAYS)
     except CampaignError as exc:
         text = str(exc)
         if text == NOT_A_DM:

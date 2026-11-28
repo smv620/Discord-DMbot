@@ -95,6 +95,8 @@ ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
     "split": ("Split the party", "✂️", discord.ButtonStyle.secondary, 1),
     "rejoin": ("Rejoin the party", "🤝", discord.ButtonStyle.primary, 1),
     "who": ("Who is where", "🧭", discord.ButtonStyle.secondary, 1),
+    # The campaign's calendar (#5364), in the private Rests & time… panel: a DM's setting.
+    "calendar": ("Game calendar", "📅", discord.ButtonStyle.secondary, 1),
     # Combat (#1127): the DM's correction for what DMbot heard (or missed).
     "cstart": ("Start combat", "⚔️", discord.ButtonStyle.success, 1),
     "cnext": ("Next round", "⏭️", discord.ButtonStyle.primary, 1),
@@ -102,7 +104,7 @@ ACTIONS: dict[str, tuple[str, str, discord.ButtonStyle, int]] = {
 }
 # On the pinned DM-screen message: no rests, which are in the private Rests & time… panel.
 PINNED = ("m10", "h1", "set", "timer")
-PANEL = ("short", "long", "dawn", "typed")
+PANEL = ("short", "long", "dawn", "typed", "calendar")
 COMBAT_ACTIONS = ("cstart", "cnext", "cend", "cround")  # "cround": a named round, said
 # The actions that move game time: they say dawn, noon and dusk as they pass, and the 24-hour
 # line (#1173: one list instead of two that could drift apart).
@@ -930,7 +932,8 @@ class ClockButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=(
         rf"dmbot:clock:{_ID}:"
-        r"(?P<action>m10|h1|short|long|dawn|set|typed|timer|open|cstart|cnext|cend|split|rejoin|who)"
+        r"(?P<action>m10|h1|short|long|dawn|set|typed|timer|open|cstart|cnext|cend|split|rejoin|who"
+        r"|calendar)"
     ),
 ):
     """One of the clock's buttons (`open` is the ⚙️ Manage DMbot button that starts or shows it)."""
@@ -983,6 +986,12 @@ class ClockButton(
                 return
             if self.action == "who":
                 await self._who(interaction, client, guild.id)
+                return
+            if self.action == "calendar":
+                from dmbot.dm_screen import calendar_setup
+
+                async with asyncio.timeout(2):  # (a form must open in Discord's 3 seconds)
+                    await calendar_setup.open_panel(interaction, self.campaign_id)
                 return
             if self.action in ("set", "typed", "open"):
                 await self._form_or_show(interaction, client, guild.id)

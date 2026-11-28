@@ -383,7 +383,14 @@ class Buttons(unittest.TestCase):
         view = ui.panel_view(self.CID)
         self.assertEqual(
             self.labels(view),
-            ["Short rest", "Long rest", "Skip to dawn", "Type the time…", "Split the party"],
+            [
+                "Short rest",
+                "Long rest",
+                "Skip to dawn",
+                "Type the time…",
+                "Game calendar",
+                "Split the party",
+            ],
         )
         rows = [_button(item).row for item in view.children]
         self.assertTrue(all(isinstance(r, int) for r in rows))
@@ -436,7 +443,15 @@ class SetTimePanel(PlayersClock):
         self.assertFalse(sent.args[0].startswith("🕰️"))  # never taken for the clock message
         labels = [_button(i).label for i in sent.kwargs["view"].children]
         self.assertEqual(
-            labels, ["Short rest", "Long rest", "Skip to dawn", "Type the time…", "Split the party"]
+            labels,
+            [
+                "Short rest",
+                "Long rest",
+                "Skip to dawn",
+                "Type the time…",
+                "Game calendar",
+                "Split the party",
+            ],
         )
 
     async def test_typing_a_time_and_the_first_time_open_the_form(self) -> None:

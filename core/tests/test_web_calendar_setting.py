@@ -76,6 +76,7 @@ class OnThePanel(Base):
         got = await calendar_setting.preview(self.web, self.session, self.cref, body)
         self.assertEqual(got["line"], "Day 1 is Summer 2nd, 1201")
         self.assertIsNone(got["today"])
+        self.assertIsNone(got["extra"])  # (this calendar has no extra day)
         self.assertEqual(got["note"], setting.NO_CLOCK_NOTE)  # (no game clock yet: still works)
         body["dayOne"] = {"year": 1201, "part": "Summer", "day": 91}
         got = await calendar_setting.preview(self.web, self.session, self.cref, body)

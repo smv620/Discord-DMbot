@@ -68,6 +68,7 @@ async def preview(db: Database, session: Session, ref: str, body: object) -> dic
         return {"problems": bad.problems}
     out: dict[str, Any] = {
         "line": setting.line_of(calendar),
+        "extra": setting.leap_line(calendar),  # ("Shieldmeet comes every 4 years, after …")
         "today": setting.today_of(calendar, minute if type(minute) is int else None),
     }
     if minute is None:
