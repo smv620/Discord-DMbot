@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import unittest
 from typing import Any, ClassVar
+from unittest.mock import AsyncMock
 
 from dmbot.memory import name_reader as nr
 
@@ -334,7 +335,9 @@ class TheBotStep(unittest.TestCase):
 
         return SimpleNamespace(
             name_pass_ai=client,
-            memory=SimpleNamespace(known_keys=keys, rejected_keys=keys),
+            memory=SimpleNamespace(
+                known_keys=keys, rejected_keys=keys, calendar_keys=AsyncMock(return_value=set())
+            ),
             campaigns=SimpleNamespace(get=get),
             plan_allows=allows,
             consent=SimpleNamespace(consenting=consenting),
