@@ -258,7 +258,12 @@ def stand_in(
         added=added,
         settings=SimpleNamespace(session_names_on=on, name_trace_dir=trace_dir, name_trace_guild=5),
         name_pass_ai=object(),
-        memory=SimpleNamespace(known_keys=keys, add_entity=add_entity, add_alias=AsyncMock()),
+        memory=SimpleNamespace(
+            known_keys=keys,
+            calendar_keys=AsyncMock(return_value=set()),
+            add_entity=add_entity,
+            add_alias=AsyncMock(),
+        ),
         transcripts=SimpleNamespace(lines=lines),
         campaigns=SimpleNamespace(get=campaign),
         import_job=None,

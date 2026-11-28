@@ -78,6 +78,49 @@ class OwnCalendar(unittest.TestCase):
         self.assertEqual(tl.date_said(3 * DAY, flame), "Flamerule 17th, 1492 DR")
         self.assertEqual(tl.date_said(-5, flame), "Flamerule 14th, 1492 DR")  # (never before Day 1)
 
+    def test_a_date_in_the_words_is_read_in_the_calendar_of_its_own(self) -> None:
+        """#5364 4b: the one reader, with the campaign's own months and seasons."""
+        now = 10 * DAY  # (game day 11)
+        for words, due_day in (
+            (
+                "by the 2nd day of Summer",
+                361,
+            ),  # (Day 1 is Summer 2nd: its next coming is a year on)
+            ("before Summer 20", 19),
+            ("Summer 2nd, 1202", 361),
+            ("by Day 30", 30),
+        ):
+            got = tl.date_in_words(words, self.vale, now)
+            self.assertEqual(got, cal.minute_of(due_day), words)
+            self.assertEqual(
+                tl.date_said(got or 0, self.vale), self.vale.words(cal.minute_of(due_day))
+            )
+
+    def test_words_that_are_no_date_here_stay_words(self) -> None:
+        now = 10 * DAY
+        for words in (
+            "by Flamerule 14",  # (not this calendar's month)
+            "Summer 2nd or Autumn 3rd",  # (two dates)
+            "Summer 91st",  # (a day the season has not got)
+            "before Summer",  # (a bare season is no date)
+            "Summer 2nd, 1200",  # (before Day 1)
+            "by Day 0",
+        ):
+            self.assertIsNone(tl.date_in_words(words, self.vale, now), words)
+
+    def test_day_n_is_read_in_every_calendar(self) -> None:
+        flame = Calendar(cal.HARPTOS, cal.day_one(1492, "Flamerule", 14))
+        for calendar in (Calendar(), flame, self.vale):
+            self.assertEqual(
+                tl.date_in_words("by Day 12", calendar, 5 * DAY), cal.minute_of(12), calendar.kind
+            )
+
+    def test_a_day_n_and_a_date_together_are_two_dates_in_any_calendar(self) -> None:
+        flame = Calendar(cal.HARPTOS, cal.day_one(1492, "Flamerule", 14))
+        self.assertIsNone(tl.date_in_words("Day 5 or Flamerule 20", flame, DAY))
+        self.assertIsNone(tl.date_in_words("Day 5 or Summer 20", self.vale, DAY))
+        self.assertIsNone(tl.date_in_words("Day 5 or Day 6", Calendar(), DAY))
+
     def test_the_websites_clock_door_makes_the_same_calendar(self) -> None:
         stored = {"kind": "custom", "year": 1201, "ordinal": 91, "def": cal.def_of(self.vale)}
         self.assertEqual(cal.from_door(stored), self.vale)

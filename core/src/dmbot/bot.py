@@ -13000,6 +13000,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         skip = set(await self.memory.known_keys(gid, cid)) | await self._people_keys(
             gid, users, cid
         )
+        skip |= await self.memory.calendar_keys(gid, cid)  # (never a new name, #5364)
         if self.settings.session_names_on:  # ("mine" once "gemstone mine" is kept, #5173)
             skip |= await _described_heads(self.memory, gid, cid)
         # Beside the name reader, the scan's rule is loosened (docs/design/session_names.md,
@@ -13658,6 +13659,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             skip = set(await self.memory.known_keys(gid, cid)) | await self._people_keys(
                 gid, users, cid
             )
+            skip |= await self.memory.calendar_keys(gid, cid)  # (never a new name, #5364)
             spelled = find_new_names(lines, skip, min_times=1, unlimited=True, loose=True)
             read, trace, unread, read_in = await self._run_reader(
                 gid, cid, session_id, lines, users, heard_in, spelled,
@@ -13907,6 +13909,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             skip = {k: name_reader.KNOWN_NAME for k in known}
             skip.update({k: name_reader.NOT_A_NAME for k in rejected})
             skip.update({k: name_reader.AT_TABLE for k in people})
+            # a month, season, festival or weekday of the campaign's calendar, with its own reason
+            # (never `known_name`: the campaign does not hold it as an entry, #5364)
+            skip.update(
+                {k: name_reader.CALENDAR_WORD for k in await self.memory.calendar_keys(gid, cid)}
+            )
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
                 return [], [], None
