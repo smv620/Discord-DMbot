@@ -181,6 +181,56 @@ export interface CampaignSettingAnswer {
   progress?: JobProgress | null;
 }
 
+/** A campaign's own calendar (#5364 slice 3; core's doors in 3a and 3b): the definition as `Layout.to_json` gives it, the day the clock starts on,
+ * and the answers core words (the preview line, the problems). The page counts and prints nothing itself. */
+export interface CalendarPart {
+  name: string;
+  days: number;
+  kind: "month" | "season" | "festival";
+}
+export interface CalendarDef {
+  name: string;
+  parts: CalendarPart[];
+  leap: { every: number; name: string; after: string } | null;
+  weekdays: string[];
+  yearLabel: string;
+  /** How the voice says the year label, when it is not read as written (optional). */
+  yearSay?: string;
+}
+/** Day 1 as a year, the part it falls in (by name) and the day in it (null for a one-day festival), and its weekday's name (null with none). */
+export interface CalendarDayOne {
+  year: number;
+  part: string;
+  day: number | null;
+  weekday: string | null;
+}
+export type CalendarKind = "days" | "harptos" | "custom";
+export interface CalendarRead {
+  kind: CalendarKind;
+  def: CalendarDef | null;
+  dayOne: CalendarDayOne | null;
+  line: string | null;
+  /** False: there is no game clock yet, so the setting cannot be saved ("Set the game clock first"). */
+  hasClock: boolean;
+}
+export interface CalendarBody {
+  kind: CalendarKind;
+  def?: CalendarDef;
+  dayOne?: CalendarDayOne;
+}
+/** Core's answer to a preview (3a): the Day 1 line, today's date in this calendar when there is a clock, and a note when there is no clock yet; or the problems. */
+export type CalendarPreview = { line: string; today?: string | null; note?: string } | { problems: string[] };
+/** What the save's first answer is (core #5375): queued (an answer to follow), refused with core's words (nothing queued), or no clock / busy. */
+export type CalendarSaved = { answer: string } | { problems: string[] } | { error: "no_clock" | "busy"; words: string };
+export interface CalendarAnswer {
+  state: "waiting" | "working" | "done" | "failed";
+  error: "" | "bad_calendar" | "no_clock" | "not_allowed" | "failed";
+  /** Core's own words for a failure. */
+  words: string;
+  /** The wait in core's shape: its stage, how long, when it last moved, the server's clock and whether it has stalled. */
+  waits?: { stage: "queued" | "saving" | "done" | "failed"; waitedSeconds: number; lastMovedAt: number | null; now: number; stalled: boolean } | null;
+}
+
 /** A campaign's shared and followed house rules, for the DM (#2783). Never a share code (they are read in Discord,
  * #2460) and never a rule's words: names, versions and counts. */
 export interface RuleSharing {
@@ -4175,6 +4225,13 @@ export interface AccountApi {
   campaignGameMasterCandidates?(campaignRef: string, query: string): Promise<GameMasterCandidate[]>;
   /** Where a choice sent with `setCampaignSetting` stands. */
   campaignSettingAnswer?(campaignRef: string, answer: string): Promise<CampaignSettingAnswer>;
+  /** The campaign's game calendar (#5364 slice 3): a game master only. */
+  calendar?(campaignRef: string): Promise<CalendarRead>;
+  /** What a definition would say for Day 1, or core's own words on what is wrong with it. Answered at once, nothing stored. */
+  calendarPreview?(campaignRef: string, body: CalendarBody): Promise<CalendarPreview>;
+  /** Queues the save for the bot (or says why not, in core's words). */
+  saveCalendar?(campaignRef: string, body: CalendarBody): Promise<CalendarSaved>;
+  calendarAnswer?(campaignRef: string, answer: string): Promise<CalendarAnswer>;
   /** The campaign's sessions in order with recaps and what was revealed (#2462). Missing from an
    * older API. */
   timeline?(campaignRef: string): Promise<Timeline>;
@@ -4577,7 +4634,7 @@ export interface ApiHelpers {
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
 export const NAMES_METHODS = ["saidSend", "saidRead", "saidUse", "saidUndo", "placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "moreNames", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "nodeTraits", "roadCondition", "keepRoadCondition", "showRoadCondition", "undoRouteLength", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "knowLine", "ruleLookup", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "lookAlikes", "mergeLookAlikes", "lookAlikesApart", "undoLookAlikes", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "changePlotThreadState", "addPlotThreadInvolved", "addPlotThread", "setPlotThreadDue", "addPlotThreadParty", "linkPlotThreadEvent", "plotThreadLedTo", "leaveQuestions", "answerLeave", "revealQuestions", "answerReveal", "changeRouteLength", "deedQuestions", "answerDeed", "continuityHits", "askContinuity", "answerContinuity"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "pictureActionLook", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "visitCampaign", "loreAdd", "loreRead", "waitCounts", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "pictureActionLook", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "calendar", "calendarPreview", "saveCalendar", "calendarAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "visitCampaign", "loreAdd", "loreRead", "waitCounts", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 let adventureCalls: Promise<AdventureApi> | null = null;

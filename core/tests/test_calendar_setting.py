@@ -227,3 +227,190 @@ class MoreBodies(unittest.TestCase):
         with self.assertRaises(cs.CalendarProblem) as caught:
             cs.from_body(body)
         self.assertEqual(caught.exception.problems, [cs.PROBLEMS["layout"]])
+
+
+class TypedIntoAForm(unittest.TestCase):
+    """What a DM types into Discord's forms becomes the same body the website sends (#5364 3c)."""
+
+    def test_parts_one_to_a_line(self) -> None:
+        got = cs.parts_from_text(
+            "Spring 90 season\n\n  Summer 90 SEASON \nFeast of the Moon 3 festival\nHammer 30"
+        )
+        self.assertEqual(
+            got,
+            [
+                {"name": "Spring", "days": 90, "kind": "season"},
+                {"name": "Summer", "days": 90, "kind": "season"},
+                {"name": "Feast of the Moon", "days": 3, "kind": "festival"},
+                {"name": "Hammer", "days": 30, "kind": "month"},
+            ],
+        )
+
+    def test_a_line_that_is_not_a_part_says_how_to_write_one(self) -> None:
+        for text in ("Hammer", "Hammer thirty", "30", "Hammer 30 week", "Hammer 30 month extra"):
+            with self.subTest(text), self.assertRaises(cs.CalendarProblem) as caught:
+                cs.parts_from_text(text)
+            (words,) = caught.exception.problems
+            self.assertTrue(words.startswith("Line 1, “"), words)
+            self.assertTrue(words.endswith("like Hammer 30."), words)
+        with self.assertRaises(cs.CalendarProblem) as empty:
+            cs.parts_from_text("\n  \n")
+        self.assertEqual(empty.exception.problems, [cs.PROBLEMS["parts"]])
+
+    def test_the_extra_day(self) -> None:
+        self.assertEqual(
+            cs.leap_from_text(" Shieldmeet , 4 , Midsummer "),
+            {"name": "Shieldmeet", "every": 4, "after": "Midsummer"},
+        )
+        self.assertIsNone(cs.leap_from_text("  "))
+        for text in ("Shieldmeet", "Shieldmeet, four, Midsummer", "a, 4, b, c", "x, 99999, y"):
+            with self.subTest(text), self.assertRaises(cs.CalendarProblem):
+                cs.leap_from_text(text)
+
+    def test_a_whole_calendar_typed_comes_out_as_the_websites_body(self) -> None:
+        made = cs.definition_from_text(
+            " Vale ",
+            "Spring 90 season\nSummer 90 season",
+            "Sunday, Moonday,",
+            "AR, after the Reckoning",
+            "Extra, 4, Spring",
+        )
+        self.assertEqual(made["weekdays"], ["Sunday", "Moonday"])
+        self.assertEqual(made["yearLabel"], "AR")
+        self.assertEqual(made["yearSay"], "after the Reckoning")
+        self.assertEqual(made["leap"], {"name": "Extra", "every": 4, "after": "Spring"})
+        body = {
+            "kind": "custom",
+            "def": made,
+            "dayOne": cs.day_one_from_text("1201", "Summer", "2", "Moonday"),
+        }
+        got = cs.from_body(body)
+        self.assertEqual(cs.line_of(got), "Day 1 is Summer 2nd, 1201 AR")
+        self.assertEqual(got.words(0, spoken=True), "Summer 2nd, 1201 after the Reckoning")
+
+    def test_a_label_with_no_phrase_and_no_weekdays(self) -> None:
+        made = cs.definition_from_text("Vale", "Spring 90 season", "", "AR", "")
+        self.assertEqual((made["weekdays"], made["leap"], "yearSay" in made), ([], None, False))
+
+    def test_day_one_needs_whole_numbers(self) -> None:
+        self.assertEqual(
+            cs.day_one_from_text(" 1201 ", " Summer ", " 2 ", " Moonday "),
+            {"year": 1201, "part": "Summer", "day": 2, "weekday": "Moonday"},
+        )
+        self.assertEqual(
+            cs.day_one_from_text("1201", "Midwinter", ""),
+            {"year": 1201, "part": "Midwinter", "day": None},
+        )
+        for year, day in (
+            ("twelve", "2"),
+            ("1201", "two"),
+            ("-1", "2"),
+            ("", "2"),
+            ("1201", "1.5"),
+        ):
+            with self.subTest((year, day)), self.assertRaises(cs.CalendarProblem) as caught:
+                cs.day_one_from_text(year, "Summer", day)
+            self.assertEqual(
+                caught.exception.problems,
+                [cs.PROBLEMS["year_number" if not year.strip().isdecimal() else "day_number"]],
+            )
+
+
+class BeforeSaving(unittest.TestCase):
+    own = cs.from_body(custom(day=2))
+    harptos = cs.from_body(
+        {"kind": "harptos", "dayOne": {"year": 1492, "part": "Flamerule", "day": 14}}
+    )
+    days = cal.Calendar()
+
+    def test_nothing_to_say_when_nothing_changes(self) -> None:
+        for calendar in (self.own, self.harptos, self.days):
+            self.assertEqual(cs.warnings_for(calendar, calendar), [])
+
+    def test_leaving_a_calendar_of_its_own_says_it_is_removed(self) -> None:
+        for new in (self.days, self.harptos):
+            self.assertEqual(cs.warnings_for(self.own, new), [cs.REMOVED, cs.VOICES, cs.COUNTED])
+
+    def test_saving_one_over_another_says_it_replaces_it(self) -> None:
+        other = cs.from_body(custom(day=3))
+        self.assertEqual(cs.warnings_for(self.own, other), [cs.REPLACES, cs.VOICES, cs.COUNTED])
+
+    def test_a_new_calendar_over_days_or_harptos_only_warns_about_voices_and_counted_days(
+        self,
+    ) -> None:
+        self.assertEqual(cs.warnings_for(self.days, self.own), [cs.VOICES, cs.COUNTED])
+        self.assertEqual(cs.warnings_for(self.harptos, self.own), [cs.VOICES, cs.COUNTED])
+        self.assertEqual(cs.warnings_for(self.own, self.days)[0], cs.REMOVED)
+
+
+class TheFormsInTheirOwnWords(unittest.TestCase):
+    """The Expert's four points on "My own" (#5364 3c): read a part line from the right, name the
+    line that is wrong, fill the forms from a calendar that exists, and say the extra day in
+    words."""
+
+    def test_a_part_line_is_read_from_the_right(self) -> None:
+        got = cs.parts_from_text("Month 3 30\nFeast of the Moon 1 festival\nYear 2024 5 season")
+        self.assertEqual(
+            got,
+            [
+                {"name": "Month 3", "days": 30, "kind": "month"},
+                {"name": "Feast of the Moon", "days": 1, "kind": "festival"},
+                {"name": "Year 2024", "days": 5, "kind": "season"},
+            ],
+        )
+
+    def test_a_line_that_cannot_be_read_is_named_with_its_number(self) -> None:
+        with self.assertRaises(cs.CalendarProblem) as caught:
+            cs.parts_from_text("Hammer 30\n\nnonsense here\nSummer 90")
+        (words,) = caught.exception.problems
+        self.assertEqual(
+            words, "Line 3, “nonsense here”: write a name, then its days, like Hammer 30."
+        )
+        with self.assertRaises(cs.CalendarProblem) as long:
+            cs.parts_from_text("x" * 200)
+        self.assertLess(len(long.exception.problems[0]), len(cs.PROBLEMS["parts_text"]) + 90)
+
+    def test_a_calendar_that_exists_comes_back_as_the_forms_boxes(self) -> None:
+        layout = lay.Layout(
+            "Vale",
+            (
+                lay.Part("Spring", 90, lay.SEASON),
+                lay.Part("Feast of the Moon", 1, lay.FESTIVAL),
+                lay.Part("Autumn", 90, lay.SEASON),
+            ),
+            lay.Leap(4, "Extra", "Spring"),
+            ("Sunday", "Moonday"),
+            "AR",
+            "after the Reckoning",
+        )
+        boxes = cs.text_of(layout)
+        self.assertEqual(
+            boxes["parts"], "Spring 90 season\nFeast of the Moon 1 festival\nAutumn 90 season"
+        )
+        self.assertEqual(boxes["label"], "AR, after the Reckoning")
+        self.assertEqual(boxes["leap"], "Extra, 4, Spring")
+        again = cs.definition_from_text(
+            boxes["name"], boxes["parts"], boxes["weekdays"], boxes["label"], boxes["leap"]
+        )
+        self.assertEqual(lay.Layout.from_json(again), layout)
+        plain = lay.four_seasons(90)
+        boxes = cs.text_of(plain)
+        self.assertEqual(
+            lay.Layout.from_json(
+                cs.definition_from_text(boxes["name"], boxes["parts"], "", "", "")
+            ),
+            plain,
+        )
+
+    def test_the_extra_day_is_said_in_words_once_it_applies(self) -> None:
+        layout = lay.Layout("Vale", lay.four_seasons(90).parts, lay.Leap(4, "Extra", "Spring"))
+        calendar = cs.from_body(
+            {
+                "kind": "custom",
+                "def": layout.to_json(),
+                "dayOne": {"year": 1201, "part": "Summer", "day": 2},
+            }
+        )
+        self.assertEqual(cs.leap_line(calendar), "Extra comes every 4 years, after Spring.")
+        self.assertIsNone(cs.leap_line(cs.from_body(custom(day=2))))
+        self.assertIsNone(cs.leap_line(cal.Calendar()))
