@@ -1,7 +1,7 @@
 // The words of the "Game calendar" on a campaign's Settings (#5364 slice 3). The preview line and every problem are core's own words,
 // shown as they come; only the labels and the waits are the page's. Plain words, no jargon: "part of the year", not "layout".
 // Discord's half (slice 3c) must say the same: the four kind names (short, they fit a button), the lead, `stays`, the removal
-// warning and its two buttons, `replaceWarning` with its Save and Cancel, `voices`, `saved` and the refusal lines (ux-critic, #5364).
+// warning and `replaceWarning`, each with Save and Cancel, `voices`, `saved` and the refusal lines (ux-critic, #5364).
 export const calendarWords = {
   heading: "📅 Game calendar",
   lead: "How DMbot words your game's dates. Pick one, or make your own.",
@@ -55,13 +55,11 @@ export const calendarWords = {
   replaceWarning: "This replaces your own calendar.",
   replaceSave: "Save",
   replaceCancel: "Cancel",
-  voices: "Recap voices already made keep the old date until they are made again.",
+  voices: "Recap voices already made keep the old date until you make them again.",
   yearSay: "How the voice says the year name",
   yearSayHint: "Only if it is not said as written (for example AR said \"After Reckoning\"). Leave empty otherwise.",
   busy: "DMbot is busy with another change to this calendar. Try again in a minute.",
-  removeWarning: "You're switching away from your own calendar. DMbot will delete it, and you can't get it back. Dates already counted stay on their day.",
-  removeSwitch: "Delete and switch",
-  removeKeep: "Keep my calendar",
+  removeWarning: "Your own calendar will be removed.",
   saved: "Saved. DMbot will use this calendar from now on.",
   waiting: "Waiting for DMbot to pick it up.",
   working: "DMbot is saving it.",

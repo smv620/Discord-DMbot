@@ -103,12 +103,12 @@ describe("the game calendar on a campaign's Settings", () => {
     fireEvent.click(screen.getByRole("button", { name: words.save }));
     expect(screen.getByText(words.removeWarning)).toBeTruthy();
     expect(api.calls.some((c) => c.startsWith("saveCalendar:"))).toBe(false); // (nothing sent yet)
-    fireEvent.click(screen.getByRole("button", { name: words.removeKeep }));
+    fireEvent.click(screen.getByRole("button", { name: words.replaceCancel }));
     expect(screen.queryByText(words.removeWarning)).toBeNull();
     expect((screen.getByRole("radio", { name: words.kinds.custom }) as HTMLInputElement).checked).toBe(true);
     pick(words.kinds.days);
     fireEvent.click(screen.getByRole("button", { name: words.save }));
-    fireEvent.click(screen.getByRole("button", { name: words.removeSwitch }));
+    fireEvent.click(screen.getByRole("button", { name: words.replaceSave }));
     await waitFor(() => expect(api.calls).toContain(`saveCalendar:${REF}:days`));
   });
 

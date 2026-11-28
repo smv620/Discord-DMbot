@@ -342,11 +342,11 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
       )}
       <div class="row">
         <button type="button" class="button" disabled={busy || !read.hasClock || (choice !== "days" && !ok)} onClick={press}>
-          {confirming ? (removing ? words.removeSwitch : words.replaceSave) : words.save}
+          {confirming ? words.replaceSave : words.save}
         </button>
         {confirming && (
           <button type="button" class="button secondary" onClick={() => (setConfirming(false), removing && setChoice("custom"))}>
-            {removing ? words.removeKeep : words.replaceCancel}
+            {words.replaceCancel}
           </button>
         )}
       </div>
