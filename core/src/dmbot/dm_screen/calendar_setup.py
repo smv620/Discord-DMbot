@@ -47,6 +47,7 @@ def preview_text(current: cal.Calendar, body: object, minute: int | None) -> tup
         return "\n".join(bad.problems), False
     lines = [
         setting.line_of(new) or "Dates will read as Day 1, Day 2, and so on.",
+        setting.leap_line(new),
         setting.today_of(new, minute),
         *setting.warnings_for(current, new),
     ]
@@ -86,14 +87,15 @@ async def open_panel(interaction: discord.Interaction, campaign_id: str) -> None
         else (f"Now: {line}." if line else "Now: Day 1, Day 2, and so on.")
     )
     await interaction.response.send_message(
-        f"{INTRO}\n{here}", view=Choices(campaign.id), ephemeral=True
+        f"{INTRO}\n{here}", view=Choices(campaign.id, now), ephemeral=True
     )
 
 
 class Choices(discord.ui.View):
-    def __init__(self, campaign_id: str) -> None:
+    def __init__(self, campaign_id: str, current: cal.Calendar | None = None) -> None:
         super().__init__(timeout=900)
         self.campaign_id = campaign_id
+        self.current = current or cal.Calendar()
 
     @discord.ui.button(label="Days", style=discord.ButtonStyle.secondary, row=0)
     async def days(self, interaction: discord.Interaction, _b: discord.ui.Button[Choices]) -> None:
@@ -113,7 +115,9 @@ class Choices(discord.ui.View):
 
     @discord.ui.button(label="My own", style=discord.ButtonStyle.primary, row=0)
     async def own(self, interaction: discord.Interaction, _b: discord.ui.Button[Choices]) -> None:
-        await interaction.response.send_modal(OwnForm(self.campaign_id))
+        # (a campaign that has its own calendar finds it filled in: changing one month is not
+        # retyping forty lines)
+        await interaction.response.send_modal(OwnForm(self.campaign_id, self.current))
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary, row=1)
     async def cancel(
@@ -122,13 +126,21 @@ class Choices(discord.ui.View):
         await interaction.response.edit_message(content=CANCELLED, view=None)
 
 
-def _box(label: str, placeholder: str = "", *, long: bool = False, required: bool = True) -> Any:
+def _box(
+    label: str,
+    placeholder: str = "",
+    *,
+    long: bool = False,
+    required: bool = True,
+    default: str = "",
+) -> Any:
     return discord.ui.TextInput(
         label=label,
         placeholder=placeholder,
+        default=default or None,
         style=discord.TextStyle.paragraph if long else discord.TextStyle.short,
         required=required,
-        max_length=1500 if long else 100,
+        max_length=4000 if long else 100,
     )
 
 
@@ -188,24 +200,39 @@ class OwnForm(discord.ui.Modal, title="My own calendar"):
     """The calendar's own words: its name, its parts one to a line, weekdays, the year label and the
     extra day. Where Day 1 falls is the next step."""
 
-    def __init__(self, campaign_id: str) -> None:
+    def __init__(self, campaign_id: str, current: cal.Calendar | None = None) -> None:
         super().__init__()
         self.campaign_id = campaign_id
-        self.name = _box("Name of the calendar", "Calendar of the Vale")
+        # (filled in when the campaign already has a calendar of its own)
+        had = setting.text_of(current.layout) if current and current.layout is not None else {}
+        self.name = _box(
+            "Name of the calendar", "Calendar of the Vale", default=had.get("name", "")
+        )
         self.parts = _box(
-            "Parts, one a line: name, days, month/season/festival",
+            "Parts, one a line: name, days, kind",
             "Spring 90 season\nSummer 90 season\nMidwinter 1 festival",
             long=True,
+            default=had.get("parts", ""),
         )
-        self.weekdays = _box("Weekdays, with commas (if any)", "Sunday, Moonday", required=False)
+        self.weekdays = _box(
+            "Weekdays, with commas (if any)",
+            "Sunday, Moonday",
+            required=False,
+            default=had.get("weekdays", ""),
+        )
         self.label = _box(
-            "Year label (and how the voice says it)", "AR, after the Reckoning", required=False
+            "Year label, then how the voice says it",
+            "AR, after the Reckoning",
+            required=False,
+            default=had.get("label", ""),
         )
         self.leap = _box(
-            "An extra day: name, years between, part it follows",
-            "Shieldmeet, 4, Midsummer",
+            "An extra day (see the hint)",
+            "name, every how many years, after which part: Shieldmeet, 4, Midsummer",
             required=False,
+            default=had.get("leap", ""),
         )
+        self.current = current
         for box in (self.name, self.parts, self.weekdays, self.label, self.leap):
             self.add_item(box)
 
@@ -229,18 +256,21 @@ class OwnForm(discord.ui.Modal, title="My own calendar"):
             )
             return
         await interaction.response.send_message(
-            OWN_NEXT, view=NextStep(self.campaign_id, made), ephemeral=True
+            OWN_NEXT, view=NextStep(self.campaign_id, made, self.current), ephemeral=True
         )
 
 
 class NextStep(discord.ui.View):
-    def __init__(self, campaign_id: str, definition: dict[str, Any]) -> None:
+    def __init__(
+        self, campaign_id: str, definition: dict[str, Any], current: cal.Calendar | None = None
+    ) -> None:
         super().__init__(timeout=900)
-        self.campaign_id, self.definition = campaign_id, definition
+        self.campaign_id, self.definition, self.current = campaign_id, definition, current
 
     @discord.ui.button(label="Where is Day 1?", style=discord.ButtonStyle.primary)
     async def go(self, interaction: discord.Interaction, _b: discord.ui.Button[NextStep]) -> None:
-        await interaction.response.send_modal(DayOneForm(self.campaign_id, self.definition))
+        had = setting.day_one_of(self.current) if self.current is not None else None
+        await interaction.response.send_modal(DayOneForm(self.campaign_id, self.definition, had))
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(
@@ -250,13 +280,26 @@ class NextStep(discord.ui.View):
 
 
 class DayOneForm(discord.ui.Modal, title="Where is Day 1?"):
-    def __init__(self, campaign_id: str, definition: dict[str, Any]) -> None:
+    def __init__(
+        self, campaign_id: str, definition: dict[str, Any], had: dict[str, Any] | None = None
+    ) -> None:
         super().__init__()
         self.campaign_id, self.definition = campaign_id, definition
-        self.year = _box("Year", "1201")
-        self.part = _box("Part (month, season or festival)", "Summer")
-        self.day = _box("Day (leave empty for a one-day festival)", "2", required=False)
-        self.weekday = _box("Weekday of Day 1 (if there are weekdays)", "Moonday", required=False)
+        had = had or {}
+        self.year = _box("Year", "1201", default=str(had.get("year") or ""))
+        self.part = _box("Part (month, season or festival)", "Summer", default=had.get("part", ""))
+        self.day = _box(
+            "Day (leave empty for a one-day festival)",
+            "2",
+            required=False,
+            default=str(had.get("day") or ""),
+        )
+        self.weekday = _box(
+            "Weekday of Day 1 (if there are weekdays)",
+            "Moonday",
+            required=False,
+            default=had.get("weekday") or "",
+        )
         for box in (self.year, self.part, self.day, self.weekday):
             self.add_item(box)
 

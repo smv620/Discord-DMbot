@@ -54,9 +54,11 @@ PROBLEMS = {
 class CalendarProblem(ValueError):
     """The setting is refused; `problems` is why, in words for a person."""
 
-    def __init__(self, *codes: str) -> None:
+    def __init__(self, *codes: str, words: str = "") -> None:
         super().__init__(codes[0] if codes else "layout")
         self.problems = [PROBLEMS.get(c, PROBLEMS["layout"]) for c in codes] or [PROBLEMS["layout"]]
+        if words:  # (a sentence that names the line a person typed)
+            self.problems = [words]
 
 
 MAX_BODY = 16_000  # bytes: the most a stored definition may be (migration 0653's check)
@@ -168,12 +170,16 @@ def parts_from_text(text: str) -> list[dict[str, Any]]:
     the definition's part list. `CalendarProblem` for a line that is not one. Blank lines are
     skipped; the checks on names and days are `Layout`'s."""
     parts: list[dict[str, Any]] = []
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), 1):
         if not line.strip():
             continue
         found = _PART_LINE.match(line.strip())
         if found is None:
-            raise CalendarProblem("parts_text")
+            shown = line.strip()[:60]
+            raise CalendarProblem(
+                "parts_text",
+                words=f"Line {number}, “{shown}”, isn't a part. {PROBLEMS['parts_text']}",
+            )
         kind = (found["kind"] or "month").lower()
         parts.append({"name": found["name"].strip(), "days": int(found["days"]), "kind": kind})
     if not parts:
@@ -189,6 +195,33 @@ def leap_from_text(text: str) -> dict[str, Any] | None:
     if len(pieces) != 3 or not pieces[1].isdecimal() or len(pieces[1]) > 4:
         raise CalendarProblem("leap_text")
     return {"name": pieces[0], "every": int(pieces[1]), "after": pieces[2]}
+
+
+def leap_line(calendar: Calendar) -> str | None:
+    """ "Shieldmeet comes every 4 years, after Midsummer": the extra day, once it applies. None for
+    a calendar with none."""
+    leap = calendar.layout.leap if calendar.layout is not None else None
+    if leap is None:
+        return None
+    return f"{leap.name} comes every {leap.every} years, after {leap.after}."
+
+
+def text_of(layout: lay.Layout) -> dict[str, str]:
+    """A calendar of its own as the forms' boxes hold it (the other way from
+    `definition_from_text`), so a DM changing one month does not retype forty lines."""
+    kinds = {lay.MONTH: "", lay.SEASON: " season", lay.FESTIVAL: " festival"}
+    parts = "\n".join(f"{p.name} {p.days}{kinds[p.kind]}" for p in layout.parts)
+    label = layout.year_label + (f", {layout.year_say}" if layout.year_say else "")
+    leap = ""
+    if layout.leap is not None:
+        leap = f"{layout.leap.name}, {layout.leap.every}, {layout.leap.after}"
+    return {
+        "name": layout.name,
+        "parts": parts,
+        "weekdays": ", ".join(layout.weekdays),
+        "label": label,
+        "leap": leap,
+    }
 
 
 def definition_from_text(

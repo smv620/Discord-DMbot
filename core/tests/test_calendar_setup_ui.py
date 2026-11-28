@@ -165,6 +165,81 @@ class TheForms(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("view", it.response.send_message.await_args.kwargs)
 
 
+class FilledIn(unittest.IsolatedAsyncioTestCase):
+    """Opening "My own" on a campaign that has its own calendar fills the forms in (Expert, 3c)."""
+
+    layout = lay.Layout(
+        "Vale",
+        lay.four_seasons(90).parts,
+        lay.Leap(4, "Extra", "Spring"),
+        ("Sunday", "Moonday"),
+        "AR",
+        "after the Reckoning",
+    )
+    own = Calendar(
+        cal.CUSTOM, layout=layout, layout_start=layout.start_on(1201, "Summer", 2, "Moonday")
+    )
+
+    async def test_the_first_form_has_the_calendar_in_its_boxes(self) -> None:
+        it = interaction(calendar=self.own)
+        view = ui.Choices(CID, self.own)
+        await next(b for b in view.children if b.label == "My own").callback(it)
+        form = it.response.send_modal.await_args.args[0]
+        self.assertEqual(
+            (form.name.default, form.weekdays.default, form.label.default, form.leap.default),
+            ("Vale", "Sunday, Moonday", "AR, after the Reckoning", "Extra, 4, Spring"),
+        )
+        self.assertEqual(form.parts.default.splitlines()[0], "Spring 90 season")
+
+    async def test_the_second_form_has_where_day_one_is(self) -> None:
+        form = ui.OwnForm(CID, self.own)
+        typed(
+            form,
+            name="Vale",
+            parts="Spring 90 season\nSummer 90 season",
+            weekdays="",
+            label="",
+            leap="",
+        )
+        it = interaction(calendar=self.own)
+        await form.on_submit(it)
+        step = it.response.send_message.await_args.kwargs["view"]
+        again = interaction()
+        await next(b for b in step.children if b.label == "Where is Day 1?").callback(again)
+        day_one = again.response.send_modal.await_args.args[0]
+        self.assertEqual(
+            (
+                day_one.year.default,
+                day_one.part.default,
+                day_one.day.default,
+                day_one.weekday.default,
+            ),
+            ("1201", "Summer", "2", "Moonday"),
+        )
+
+    async def test_a_campaign_with_no_calendar_of_its_own_has_empty_boxes(self) -> None:
+        form = ui.OwnForm(CID, Calendar())
+        self.assertTrue(all(not box.default for box in (form.name, form.parts, form.leap)))
+
+    async def test_the_extra_day_box_says_what_to_type_and_the_preview_says_it_in_words(
+        self,
+    ) -> None:
+        form = ui.OwnForm(CID)
+        self.assertIn("every how many years", form.leap.placeholder)
+        self.assertLessEqual(len(form.leap.label), 45)  # (Discord's limit on a box's label)
+        text, ok = ui.preview_text(
+            Calendar(),
+            {
+                "kind": "custom",
+                "def": self.layout.to_json(),
+                "dayOne": {"year": 1201, "part": "Summer", "day": 2},
+            },
+            None,
+        )
+        self.assertTrue(ok)
+        self.assertIn("Extra comes every 4 years, after Spring.", text)
+
+
 class TheWarnings(unittest.IsolatedAsyncioTestCase):
     async def test_leaving_a_calendar_of_its_own_says_it_is_removed_before_save(self) -> None:
         it = interaction(calendar=OWN)
