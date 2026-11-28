@@ -24,7 +24,7 @@ PROBLEMS = {
     "big": "That calendar is too long. Take some parts or names out.",
     "layout": "DMbot couldn't read that calendar. Check each box and try again.",
     "name": (
-        "Each name needs 1 to 30 letters or numbers, and no two can match. A name can't be just "
+        "Each name needs 1 to 30 characters, and no two can match. A name can't be just "
         "a number, or the words day, of or the."
     ),
     "parts": (
