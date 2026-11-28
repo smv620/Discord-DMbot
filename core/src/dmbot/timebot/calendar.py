@@ -218,6 +218,21 @@ def day_words(
     return (calendar or Calendar()).words(minute_of(day), spoken=spoken)
 
 
+def names_of(kind: object, definition: object) -> tuple[str, ...]:
+    """Every month, season, festival and weekday name of a campaign's calendar, for the name
+    finders' leave-out list: none of them is ever offered as a new name. Harptos has its own; a
+    calendar of its own gives its definition's; Days and a definition that no longer reads give
+    none (a calendar must never stop the name scan)."""
+    if kind == HARPTOS:
+        return layout_mod.HARPTOS.names
+    if kind != CUSTOM or not isinstance(definition, dict):
+        return ()
+    try:
+        return layout_mod.Layout.from_json(definition.get("layout")).names
+    except ValueError:
+        return ()
+
+
 def from_door(got: Mapping[str, object]) -> Calendar:
     """The calendar from what the website's clock door gives (`dmbot_web_game_clock`: `kind`,
     `year`, `ordinal` and, for a campaign's own calendar, `def`). Day N for none, and for any

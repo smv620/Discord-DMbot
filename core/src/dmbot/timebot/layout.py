@@ -387,7 +387,7 @@ class Layout:
         for m in pat.festival.finditer(words):
             if not any(a <= m.start(1) < b for a, b in taken):
                 found.add((m.group(1).casefold(), None, _year(m.group(2))))
-        counted = {int(m.group(1)) for m in _DAY_N.finditer(words)}
+        counted = _days_named(words)
         if len(found) + len(counted) != 1:
             return None
         if counted:
@@ -433,6 +433,21 @@ def ordinal_suffix(n: int) -> str:
 
 _ORD = r"(\d{1,2})(?:st|nd|rd|th)?"
 _DAY_N = re.compile(r"\bday\s+(\d{1,5})\b", re.I)
+
+
+def _days_named(words: str) -> set[int]:
+    """Every "Day N" in the words."""
+    return {int(m.group(1)) for m in _DAY_N.finditer(words)}
+
+
+def day_n_in(words: str) -> int | None:
+    """The one game day a "Day N" in the words names, in any calendar (Days has no other dates), or
+    None for none, two ("Day 3 or day 4") or one out of range."""
+    named = _days_named(words)
+    if len(named) != 1:
+        return None
+    number = named.pop()
+    return number if 1 <= number <= MAX_DAY_NUMBER else None
 
 
 def _year(said: str | None) -> int | None:

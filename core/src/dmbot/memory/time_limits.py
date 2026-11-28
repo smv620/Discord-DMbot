@@ -18,12 +18,12 @@ DMbot's read the DM kept), DMbot counts it down on the campaign's clock:
 from __future__ import annotations
 
 import logging
-import re
 from collections.abc import Iterable
 from typing import Any
 
 from dmbot.timebot import calendar as cal
-from dmbot.timebot.clock import MINUTES_PER_DAY
+from dmbot.timebot import layout as lay
+from dmbot.timebot.clock import MINUTES_PER_DAY, day_of
 
 log = logging.getLogger(__name__)
 
@@ -87,33 +87,15 @@ def days_from(now: int, days: int) -> int:
     return now + days * MINUTES_PER_DAY
 
 
-# A date in a time limit's words (slice 4c, §8.2): "by the 14th of Flamerule", "Flamerule 14th,
-# 1492 DR", "before Midsummer", or "by Day 12" with no calendar set. Read by code, never by the AI
-# ("the model says words; code says numbers", §9.6). Anything else (the new moon, the thaw, "in
-# three days" with no moment to count from) stays words only.
-_ORD = r"(\d{1,2})(?:st|nd|rd|th)?"
-# A year is a number with "DR", or one of 3 or 4 digits with no word after it: "by Midsummer,
-# 1500 gold" is no year, and "Flamerule 14, 3 guards" no date in year 3.
-_YEAR = r"(?:,?\s*(\d{1,4})\b(?:\s*DR\b|(?<=\d{3})(?!\s*[^\W\d_])))?"
-_MONTH_NAMES = frozenset(n.casefold() for n in cal.MONTHS)
-_FESTIVAL_NAMES = "|".join(re.escape(n) for n in (*cal.FESTIVALS, cal.SHIELDMEET))
-_NAMES = "|".join(re.escape(n) for n in cal.MONTHS) + "|" + _FESTIVAL_NAMES
-_DAY_FIRST = re.compile(rf"\b(?:the\s+)?{_ORD}\s+(?:day\s+)?of\s+({_NAMES})\b{_YEAR}", re.I)
-_NAME_FIRST = re.compile(rf"\b({_NAMES})\s+{_ORD}\b{_YEAR}", re.I)
-_FESTIVAL = re.compile(rf"\b(?:the\s+)?({_FESTIVAL_NAMES})\b{_YEAR}", re.I)
-_DAY_N = re.compile(r"\bday\s+(\d{1,5})\b", re.I)
-
-
 def date_in_words(words: str, calendar: cal.Calendar, now: int) -> int | None:
-    """The game minute a limit's words name, at the start of that day, or None (§8.2). On the
-    Harptos calendar a date with no year is its next coming; a date whose day has already begun
-    (today included: its countdown would be over at once), a date before Day 1, or one more than
-    `MOST_DAYS` ahead is None. With no calendar set, only "Day N" is read. Never a real-world
-    date. Two dates in the words are none: DMbot can't tell which (the DM taps a date instead)."""
-    if calendar.kind == cal.HARPTOS and calendar.start is not None:
-        number = _harptos_day(words, calendar.start, now)
-    else:
-        number = _day_n(words)
+    """The game minute a limit's words name, at the start of that day, or None (§8.2). Read by
+    code with the campaign's own calendar (the one reader, `Layout.parse`: "by the 14th of
+    Flamerule", "before Midsummer", "Summer 2nd, 1201 AR", or "Day 12" in any calendar), never the
+    AI. A date with no year is its next coming; a date whose day has already begun (today
+    included: its countdown would be over at once), a date before Day 1, or one more than
+    `MOST_DAYS` ahead is None. Never a real-world date. Two dates in the words are none: DMbot
+    can't tell which (the DM taps a date instead)."""
+    number = _day_of(words, calendar, now)
     if number is None or number < 1:
         return None
     due = cal.minute_of(number)
@@ -122,48 +104,16 @@ def date_in_words(words: str, calendar: cal.Calendar, now: int) -> int | None:
     return due
 
 
-def _harptos_day(words: str, start: cal.DayOne, now: int) -> int | None:
-    """The day number of the one Harptos date the words name (its next coming with no year)."""
-    found: set[tuple[str, int | None, int | None]] = set()
-    taken: list[tuple[int, int]] = []  # (the spans already read as a dated day: "1st of Midsummer")
-    for m in _DAY_FIRST.finditer(words):
-        found.add((m.group(2).casefold(), int(m.group(1)), _year(m.group(3))))
-        taken.append(m.span())
-    for m in _NAME_FIRST.finditer(words):
-        if m.group(1).casefold() in _MONTH_NAMES:
-            found.add((m.group(1).casefold(), int(m.group(2)), _year(m.group(3))))
-            taken.append(m.span())
-    for m in _FESTIVAL.finditer(words):
-        if not any(a <= m.start(1) < b for a, b in taken):
-            found.add((m.group(1).casefold(), None, _year(m.group(2))))
-    if len(found) != 1:
-        return None
-    ((name, day, year),) = found
-    try:
-        if year is not None:
-            return cal.day_number_of(year, name, day, start)
-    except ValueError:
-        return None
-    # (its next coming: from this year of the game on; Shieldmeet comes once in four years)
-    today = now // MINUTES_PER_DAY + 1
-    first = start.year + (start.ordinal + today - 1) // cal.YEAR_DAYS
-    for y in range(max(start.year, first - 1), first + 6):
-        try:
-            n = cal.day_number_of(y, name, day, start)
-        except ValueError:
-            continue
-        if cal.minute_of(n) > now:
-            return n
-    return None
-
-
-def _day_n(words: str) -> int | None:
-    days = {int(m.group(1)) for m in _DAY_N.finditer(words)}
-    return days.pop() if len(days) == 1 else None
-
-
-def _year(said: str | None) -> int | None:
-    return int(said) if said else None
+def _day_of(words: str, calendar: cal.Calendar, now: int) -> int | None:
+    """The game day the words name in this calendar: Harptos and a calendar of its own read their
+    own dates, Days only "Day N" (the reader's, which every calendar has)."""
+    today = day_of(now)
+    if calendar.kind == cal.HARPTOS and calendar.start is not None:
+        start = lay.Start(calendar.start.year, calendar.start.ordinal)
+        return lay.HARPTOS.parse(words, start, today=today, direction=lay.NEXT)
+    if calendar.layout is not None and calendar.layout_start is not None:
+        return calendar.layout.parse(words, calendar.layout_start, today=today, direction=lay.NEXT)
+    return lay.day_n_in(words)
 
 
 def offer_for(words: str, clock: tuple[int, cal.Calendar]) -> int | None:

@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import unittest
 
-from dmbot.memory import time_limits as tl
 from dmbot.timebot import calendar as cal
 from dmbot.timebot import layout as lay
 from dmbot.timebot.clock import MINUTES_PER_DAY as DAY
@@ -23,6 +22,64 @@ def both(year: int, name: str, day: int | None) -> tuple[cal.DayOne, lay.Start]:
     """The same Day 1 in today's Harptos code and in the layout."""
     old = cal.day_one(year, name, day)
     return old, H.start_on(year, name, day)
+
+
+# What the old Harptos-only date reader answered (`time_limits._harptos_day`) for these phrases at
+# these clocks, read from Flamerule 1st, 1492 DR (None: not a date). Frozen from the old code.
+FROZEN: dict[str, list[int | None]] = {
+    "by the 14th of Flamerule": [14, 14, 380, 380, 380, 745, 1110, 1841, 2206, 2571, 3302],
+    "before Flamerule 14": [14, 14, 380, 380, 380, 745, 1110, 1841, 2206, 2571, 3302],
+    "Flamerule 14th, 1492 DR": [14, 14, 14, 14, 14, 14, 14, 14, 14, 14, 14],
+    "before Midsummer": [31, 31, 397, 397, 397, 762, 1127, 1858, 2223, 2588, 3319],
+    "by the Feast of the Moon": [154, 154, 154, 154, 519, 519, 884, 1615, 1980, 2710, 3076],
+    "by Hammer 3": [187, 187, 187, 187, 552, 552, 917, 1648, 2013, 2743, 3109],
+    "by Flamerule 14": [14, 14, 380, 380, 380, 745, 1110, 1841, 2206, 2571, 3302],
+    "by Flamerule 20": [20, 20, 386, 386, 386, 751, 1116, 1847, 2212, 2577, 3308],
+    "by Flamerule 21": [21, 21, 387, 387, 387, 752, 1117, 1848, 2213, 2578, 3309],
+    "before Shieldmeet": [32, 32, 1493, 1493, 1493, 1493, 1493, 2954, 2954, 2954, 4415],
+    "Shieldmeet, 1493 DR": [None, None, None, None, None, None, None, None, None, None, None],
+    "by Midsummer, 1500 gold": [31, 31, 397, 397, 397, 762, 1127, 1858, 2223, 2588, 3319],
+    "Flamerule 14, 3 guards": [14, 14, 380, 380, 380, 745, 1110, 1841, 2206, 2571, 3302],
+    "Flamerule 14, 1493.": [380, 380, 380, 380, 380, 380, 380, 380, 380, 380, 380],
+    "Flamerule 14th, 1510 DR": [6589, 6589, 6589, 6589, 6589, 6589, 6589, 6589, 6589, 6589, 6589],
+    "before the new moon": [None, None, None, None, None, None, None, None, None, None, None],
+    "in three days": [None, None, None, None, None, None, None, None, None, None, None],
+    "Flamerule 14 or Flamerule 20": [
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ],
+    "Flamerule 14 or Midsummer": [None, None, None, None, None, None, None, None, None, None, None],
+    "by Midsummer or the 14th of Flamerule": [
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    ],
+    "the 1st of Midsummer": [None, None, None, None, None, None, None, None, None, None, None],
+    "Flamerule 14th, 1491 DR": [None, None, None, None, None, None, None, None, None, None, None],
+    "by Flamerule 31": [None, None, None, None, None, None, None, None, None, None, None],
+    "the 2nd day of Eleint": [64, 64, 429, 429, 429, 429, 1159, 1525, 2255, 2620, 3351],
+    "midsummer": [31, 31, 397, 397, 397, 762, 1127, 1858, 2223, 2588, 3319],
+    "FLAMERULE 14TH": [14, 14, 380, 380, 380, 745, 1110, 1841, 2206, 2571, 3302],
+    "Highharvestide, 1494 DR": [823, 823, 823, 823, 823, 823, 823, 823, 823, 823, 823],
+    "the 30th of Nightal": [184, 184, 184, 184, 549, 549, 914, 1645, 2010, 2740, 3106],
+}
 
 
 class HarptosIsTheSameAsToday(unittest.TestCase):
@@ -62,28 +119,16 @@ class HarptosIsTheSameAsToday(unittest.TestCase):
             with self.assertRaises(ValueError):
                 cal.day_one(*args)
 
-    def test_the_reader_reads_every_phrase_as_the_time_limit_reader_does(self) -> None:
-        old, start = both(1492, "Flamerule", 1)
-        phrases = (
-            "by the 14th of Flamerule", "before Flamerule 14", "Flamerule 14th, 1492 DR",
-            "before Midsummer", "by the Feast of the Moon", "by Hammer 3", "by Flamerule 14",
-            "by Flamerule 20", "by Flamerule 21", "before Shieldmeet", "Shieldmeet, 1493 DR",
-            "by Midsummer, 1500 gold", "Flamerule 14, 3 guards", "Flamerule 14, 1493.",
-            "Flamerule 14th, 1510 DR", "before the new moon", "in three days",
-            "Flamerule 14 or Flamerule 20", "Flamerule 14 or Midsummer",
-            "by Midsummer or the 14th of Flamerule", "the 1st of Midsummer",
-            "Flamerule 14th, 1491 DR", "by Flamerule 31", "the 2nd day of Eleint",
-            "midsummer", "FLAMERULE 14TH", "Highharvestide, 1494 DR", "the 30th of Nightal",
-        )  # fmt: skip
+    def test_the_reader_reads_every_phrase_as_the_old_harptos_reader_did(self) -> None:
+        """What the Harptos-only reader of the time limits (since removed, #5364 4b) answered for
+        each phrase at each clock, frozen when it was replaced: the one reader gives the same."""
+        _old, start = both(1492, "Flamerule", 1)
         nows = [0, 10 * 60, 100 * DAY, 120 * DAY + 600, 300 * DAY, 400 * DAY, 800 * DAY]
-        # (past a leap year's Shieldmeet, where the next one is four years away)
         nows += [1500 * DAY, 1900 * DAY, 2400 * DAY, 3000 * DAY]
-        for words in phrases:
-            for now in nows:
-                was = tl._harptos_day(words, old, now)
-                self.assertEqual(
-                    H.parse(words, start, today=day_of(now), direction=lay.NEXT), was, (words, now)
-                )
+        for words, expected in FROZEN.items():
+            for now, want in zip(nows, expected, strict=True):
+                got = H.parse(words, start, today=day_of(now), direction=lay.NEXT)
+                self.assertEqual(got, want, (words, now))
 
 
 class ReadingDates(unittest.TestCase):

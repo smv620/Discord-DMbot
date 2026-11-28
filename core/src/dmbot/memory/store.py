@@ -250,6 +250,7 @@ from dmbot.memory.ontology import (
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.voice import split_effect_note
 from dmbot.names import not_names
+from dmbot.timebot.calendar import names_of as calendar_names
 from dmbot.timebot.stamp import group_at, group_of_speakers
 
 log = logging.getLogger(__name__)
@@ -6238,7 +6239,9 @@ class MemoryStore:
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
         """Every name and word DMbot already has an answer for in this campaign, whatever
         the answer: names (rejected ones too, so "Not a name" sticks) and "keep as heard"
-        and "change to" rules. The after-session scan never suggests these again."""
+        and "change to" rules. The after-session scan never suggests these again. The names of the
+        campaign's calendar are here too (its months, seasons, festivals and weekdays, #5364): a
+        word like "Summer" or "Midwinter" is never a new name."""
         async with self._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
                 "SELECT key FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s"
@@ -6246,7 +6249,18 @@ class MemoryStore:
                 " WHERE guild_id = %s AND campaign_id = %s",
                 (*scope.ids, *scope.ids),
             )
-            return {str(r["key"]) for r in await cur.fetchall()}
+            keys = {str(r["key"]) for r in await cur.fetchall()}
+            cur = await scope.conn.execute(
+                "SELECT calendar_kind, calendar_def FROM game_clocks"
+                " WHERE guild_id = %s AND campaign_id = %s",
+                scope.ids,
+            )
+            clock = await cur.fetchone()
+        if clock is not None:
+            keys |= {
+                name_key(n) for n in calendar_names(clock["calendar_kind"], clock["calendar_def"])
+            }
+        return keys
 
     async def refused_spellings(self, guild_id: int, campaign_id: str) -> set[tuple[str, str]]:
         """(entry id, `name_key`) of every other name the DM turned down: "No, two places" (#3037)
