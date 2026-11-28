@@ -20,6 +20,10 @@ import type {
   WaitCountsLore,
   LorePdf,
   CampaignPage,
+  CalendarAnswer,
+  CalendarBody,
+  CalendarPreview,
+  CalendarRead,
   CampaignSettingAnswer,
   CharacterSheets,
   FixAnswer,
@@ -279,6 +283,13 @@ export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Parti
         "GET",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/settings/answers/${encodeURIComponent(answer)}`,
       )) as CampaignSettingAnswer,
+    calendar: async (campaignRef) => (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/calendar`)) as CalendarRead,
+    calendarPreview: async (campaignRef, body: CalendarBody) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/calendar/preview`, body)) as CalendarPreview,
+    saveCalendar: async (campaignRef, body: CalendarBody) =>
+      ((await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/calendar`, body)) as { answer: string }).answer,
+    calendarAnswer: async (campaignRef, answer) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/calendar/answers/${encodeURIComponent(answer)}`)) as CalendarAnswer,
     timeline: async (campaignRef) =>
       (await call(
         "GET",
