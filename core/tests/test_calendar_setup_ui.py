@@ -33,6 +33,7 @@ def interaction(user: int = DM, *, calendar: Calendar | None = None, clock: bool
         response=SimpleNamespace(
             send_message=AsyncMock(), send_modal=AsyncMock(), edit_message=AsyncMock()
         ),
+        original_response=AsyncMock(return_value=SimpleNamespace(edit=AsyncMock())),
         client=SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             clocks=SimpleNamespace(
@@ -46,6 +47,12 @@ def interaction(user: int = DM, *, calendar: Calendar | None = None, clock: bool
 
 def said(it: Any) -> str:
     return str(it.response.send_message.await_args.args[0])
+
+
+def can_save(it: Any) -> bool:
+    """Whether what was sent has a Save button under it."""
+    view = it.response.send_message.await_args.kwargs.get("view")
+    return view is not None and "Save" in [b.label for b in view.children]
 
 
 def typed(form: Any, **values: str) -> None:
@@ -87,8 +94,8 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
             button = next(b for b in view.children if b.label == label)
             await button.callback(it)
             self.assertIsInstance(it.response.send_modal.await_args.args[0], form)
-        it = interaction()
-        days = next(b for b in view.children if b.label == "Days")
+        it = interaction(calendar=OWN)
+        days = next(b for b in ui.Choices(CID, OWN).children if b.label == "Days")
         await days.callback(it)
         self.assertIn("Dates will read as Day 1", said(it))  # (Days needs no form)
 
@@ -118,7 +125,7 @@ class TheForms(unittest.IsolatedAsyncioTestCase):
         it = interaction()
         await form.on_submit(it)
         self.assertEqual(said(it), cs.PROBLEMS["day"])
-        self.assertNotIn("view", it.response.send_message.await_args.kwargs)
+        self.assertFalse(can_save(it))
 
     async def test_four_seasons(self) -> None:
         form = ui.SeasonsForm(CID)
@@ -131,7 +138,7 @@ class TheForms(unittest.IsolatedAsyncioTestCase):
             typed(form, length=length, year="1201", part="Summer", day="2")
             it = interaction()
             await form.on_submit(it)
-            self.assertNotIn("view", it.response.send_message.await_args.kwargs, length)
+            self.assertFalse(can_save(it), length)
 
     async def test_my_own_asks_where_day_one_is_and_then_previews(self) -> None:
         form = ui.OwnForm(CID)
@@ -148,7 +155,7 @@ class TheForms(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(said(it), ui.OWN_NEXT)
         step = it.response.send_message.await_args.kwargs["view"]
         again = interaction()
-        await next(b for b in step.children if b.label == "Where is Day 1?").callback(again)
+        await next(b for b in step.children if b.label == "Set first day").callback(again)
         day_one = again.response.send_modal.await_args.args[0]
         typed(day_one, year="1201", part="Summer", day="2", weekday="Moonday")
         last = interaction()
@@ -162,7 +169,7 @@ class TheForms(unittest.IsolatedAsyncioTestCase):
             it = interaction()
             await form.on_submit(it)
             self.assertNotEqual(said(it), ui.OWN_NEXT, parts)
-            self.assertNotIn("view", it.response.send_message.await_args.kwargs)
+            self.assertFalse(can_save(it))
 
 
 class FilledIn(unittest.IsolatedAsyncioTestCase):
@@ -205,7 +212,7 @@ class FilledIn(unittest.IsolatedAsyncioTestCase):
         await form.on_submit(it)
         step = it.response.send_message.await_args.kwargs["view"]
         again = interaction()
-        await next(b for b in step.children if b.label == "Where is Day 1?").callback(again)
+        await next(b for b in step.children if b.label == "Set first day").callback(again)
         day_one = again.response.send_modal.await_args.args[0]
         self.assertEqual(
             (
@@ -225,8 +232,11 @@ class FilledIn(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         form = ui.OwnForm(CID)
-        self.assertIn("every how many years", form.leap.placeholder)
-        self.assertLessEqual(len(form.leap.label), 45)  # (Discord's limit on a box's label)
+        self.assertEqual(form.leap.label, "Extra day: name, years apart, after")
+        self.assertEqual(form.leap.placeholder, "Shieldmeet, 4, Midsummer")
+        for box in (form.name, form.parts, form.weekdays, form.label, form.leap):
+            self.assertLessEqual(len(box.label), 45)  # (Discord's limits on a box)
+            self.assertLessEqual(len(box.placeholder), 100)
         text, ok = ui.preview_text(
             Calendar(),
             {
@@ -292,3 +302,77 @@ class SavingOrNot(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             it.response.edit_message.await_args.kwargs["content"], cs.PROBLEMS["layout"]
         )
+
+
+class WhenSomethingIsWrong(unittest.IsolatedAsyncioTestCase):
+    """A refusal does not throw the DM's typing away (ux-critic): Try again reopens the same form
+    with what was typed."""
+
+    async def test_a_bad_line_says_which_and_try_again_keeps_every_box(self) -> None:
+        form = ui.OwnForm(CID)
+        typed(
+            form,
+            name="Vale",
+            parts="Spring 90 season\nnonsense",
+            weekdays="Sunday, Moonday",
+            label="AR",
+            leap="",
+        )
+        it = interaction()
+        await form.on_submit(it)
+        self.assertTrue(said(it).startswith("Line 2, “nonsense”"))
+        again = it.response.send_message.await_args.kwargs["view"]
+        retry = interaction()
+        await next(b for b in again.children if b.label == "Try again").callback(retry)
+        reopened = retry.response.send_modal.await_args.args[0]
+        self.assertIsInstance(reopened, ui.OwnForm)
+        self.assertEqual(
+            (reopened.name.default, reopened.parts.default, reopened.weekdays.default),
+            ("Vale", "Spring 90 season\nnonsense", "Sunday, Moonday"),
+        )
+
+    async def test_each_form_names_the_box_that_needs_a_number(self) -> None:
+        form = ui.HarptosForm(CID)
+        typed(form, year="twelve", part="Flamerule", day="14")
+        it = interaction()
+        await form.on_submit(it)
+        self.assertEqual(said(it), cs.PROBLEMS["year_number"])
+        form = ui.SeasonsForm(CID)
+        typed(form, length="many", year="1201", part="Summer", day="2")
+        it = interaction()
+        await form.on_submit(it)
+        self.assertEqual(said(it), cs.PROBLEMS["length_number"])
+        self.assertIn(
+            "Try again",
+            [b.label for b in it.response.send_message.await_args.kwargs["view"].children],
+        )
+
+    async def test_a_refusal_at_the_preview_also_keeps_what_was_typed(self) -> None:
+        form = ui.HarptosForm(CID)
+        typed(form, year="1492", part="Flamerule", day="31")
+        it = interaction()
+        await form.on_submit(it)
+        again = it.response.send_message.await_args.kwargs["view"]
+        retry = interaction()
+        await next(b for b in again.children if b.label == "Try again").callback(retry)
+        reopened = retry.response.send_modal.await_args.args[0]
+        self.assertEqual((reopened.year.default, reopened.day.default), ("1492", "31"))
+
+    async def test_a_step_left_alone_comes_down_with_a_word(self) -> None:
+        it = interaction()
+        await ui.open_panel(it, CID)
+        view = it.response.send_message.await_args.kwargs["view"]
+        await view.on_timeout()
+        message = it.original_response.return_value
+        message.edit.assert_awaited_once_with(content=ui.TIMED_OUT, view=None)
+
+
+class TheOrderOfTheWords(unittest.TestCase):
+    def test_what_takes_something_away_comes_first_and_no_change_says_so(self) -> None:
+        text, ok = ui.preview_text(OWN, {"kind": "days"}, None)
+        self.assertTrue(ok)
+        lines = text.splitlines()
+        self.assertEqual(lines[0], f"⚠️ {cs.REMOVED}")
+        self.assertIn("Dates will read as Day 1", lines[1])
+        self.assertEqual(lines[-2:], [cs.VOICES, cs.COUNTED])
+        self.assertEqual(ui.preview_text(Calendar(), {"kind": "days"}, None), (ui.NO_CHANGE, True))

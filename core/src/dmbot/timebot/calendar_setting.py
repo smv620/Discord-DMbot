@@ -22,32 +22,30 @@ from dmbot.timebot.calendar import Calendar
 PROBLEMS = {
     "kind": "Pick Days, Harptos, or your own calendar.",
     "big": "That calendar is too long. Take some parts or names out.",
-    "layout": "That calendar could not be read. Check each field.",
+    "layout": "DMbot couldn't read that calendar. Check each box and try again.",
     "name": (
-        "A name needs 1 to 30 characters, starting and ending with a letter or number. "
-        "No two names can match, and a name can't be only a number or the words day, of or the."
+        "Each name needs 1 to 30 letters or numbers, and no two can match. A name can't be just "
+        "a number, or the words day, of or the."
     ),
     "parts": (
         f"A calendar needs 1 to {lay.MAX_PARTS} parts, and uses months or seasons, not both. "
         "Festivals can go with either."
     ),
-    "days": (
-        f"Each part needs a whole number of days, and a year can be at most {lay.MAX_YEAR_DAYS}."
-    ),
+    "days": f"Each part needs 1 or more days. A whole year can have at most {lay.MAX_YEAR_DAYS}.",
     "leap": (
         "The extra day needs a whole number of years, a name of its own, and a part it follows."
     ),
     "weekdays": f"Weekdays need 2 to {lay.MAX_WEEKDAYS} names, none repeated.",
     "label": (
-        f"The year label is letters only, up to {lay.MAX_LABEL}, such as AR. How the voice says it "
-        f"needs a label, and up to {lay.MAX_NAME} characters."
+        f"Year label: letters only, up to {lay.MAX_LABEL}, like AR. To add a spoken form, give a "
+        f"label first. The spoken form can be up to {lay.MAX_NAME} characters."
     ),
-    "date": "Day 1 needs a year between 1 and 9999.",
-    "day": "That part doesn't have that day. Check the day.",
-    "part": "This calendar has no part with that name. Check the part's name.",
-    "weekday": "This calendar has no weekday with that name.",
-    "start": "Day 1 must be a day this calendar has. Check the year, the part and the day.",
-    "day one": "Day 1 must be a day this calendar has. Check the year, the part and the day.",
+    "date": "The year must be 1 to 9999.",
+    "day": "That part is shorter than that. Use a smaller day.",
+    "part": "No month, season or festival has that name here. Check the spelling.",
+    "weekday": "No weekday here has that name. Check the spelling.",
+    "start": "That date isn't in this calendar. Check the year, part and day you typed.",
+    "day one": "That date isn't in this calendar. Check the year, part and day you typed.",
 }
 
 
@@ -158,6 +156,9 @@ PROBLEMS.update(
             "For example: Shieldmeet, 4, Midsummer."
         ),
         "number": "That needs a whole number.",
+        "year_number": "**Year** needs a whole number, like 1492.",
+        "day_number": "**Day** needs a whole number, like 14.",
+        "length_number": "**Days in each season** needs a whole number, like 90.",
     }
 )
 _PART_LINE = re.compile(
@@ -178,7 +179,7 @@ def parts_from_text(text: str) -> list[dict[str, Any]]:
             shown = line.strip()[:60]
             raise CalendarProblem(
                 "parts_text",
-                words=f"Line {number}, “{shown}”, isn't a part. {PROBLEMS['parts_text']}",
+                words=f"Line {number}, “{shown}”: write a name, then its days, like Hammer 30.",
             )
         kind = (found["kind"] or "month").lower()
         parts.append({"name": found["name"].strip(), "days": int(found["days"]), "kind": kind})
@@ -246,8 +247,10 @@ def definition_from_text(
 def day_one_from_text(year: str, part: str, day: str, weekday: str = "") -> dict[str, Any]:
     """The `dayOne` of a form: a whole year, the part's name, the day in it (empty for a one-day
     festival) and the weekday (empty for none)."""
-    if not year.strip().isdecimal() or (day.strip() and not day.strip().isdecimal()):
-        raise CalendarProblem("number")
+    if not year.strip().isdecimal():
+        raise CalendarProblem("year_number")
+    if day.strip() and not day.strip().isdecimal():
+        raise CalendarProblem("day_number")
     return {
         "year": int(year),
         "part": part.strip(),

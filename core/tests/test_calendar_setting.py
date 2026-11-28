@@ -193,7 +193,7 @@ class TypedIntoAForm(unittest.TestCase):
                 cs.parts_from_text(text)
             (words,) = caught.exception.problems
             self.assertTrue(words.startswith("Line 1, “"), words)
-            self.assertTrue(words.endswith(cs.PROBLEMS["parts_text"]), words)
+            self.assertTrue(words.endswith("like Hammer 30."), words)
         with self.assertRaises(cs.CalendarProblem) as empty:
             cs.parts_from_text("\n  \n")
         self.assertEqual(empty.exception.problems, [cs.PROBLEMS["parts"]])
@@ -251,7 +251,10 @@ class TypedIntoAForm(unittest.TestCase):
         ):
             with self.subTest((year, day)), self.assertRaises(cs.CalendarProblem) as caught:
                 cs.day_one_from_text(year, "Summer", day)
-            self.assertEqual(caught.exception.problems, [cs.PROBLEMS["number"]])
+            self.assertEqual(
+                caught.exception.problems,
+                [cs.PROBLEMS["year_number" if not year.strip().isdecimal() else "day_number"]],
+            )
 
 
 class BeforeSaving(unittest.TestCase):
@@ -301,8 +304,9 @@ class TheFormsInTheirOwnWords(unittest.TestCase):
         with self.assertRaises(cs.CalendarProblem) as caught:
             cs.parts_from_text("Hammer 30\n\nnonsense here\nSummer 90")
         (words,) = caught.exception.problems
-        self.assertTrue(words.startswith("Line 3, “nonsense here”, isn't a part."))
-        self.assertIn(cs.PROBLEMS["parts_text"], words)
+        self.assertEqual(
+            words, "Line 3, “nonsense here”: write a name, then its days, like Hammer 30."
+        )
         with self.assertRaises(cs.CalendarProblem) as long:
             cs.parts_from_text("x" * 200)
         self.assertLess(len(long.exception.problems[0]), len(cs.PROBLEMS["parts_text"]) + 90)
