@@ -451,3 +451,42 @@ class TheSpokenYearLabel(unittest.TestCase):
             self.assertEqual(str(caught.exception), "label")
         with self.assertRaises(ValueError):
             lay.Layout.from_json({**self.spoken.to_json(), "yearSay": 5})
+
+
+class ReaderEdges(unittest.TestCase):
+    """The date reader's edge cases: a name with a plus, a date inside a sentence, the suffix,
+    a year with its label, and a festival read alone (#5372, follow-up of #5364)."""
+
+    layout = lay.Layout(
+        "Vale",
+        (
+            lay.Part("Moon+Sun", 30, lay.SEASON),
+            lay.Part("Dry", 30, lay.SEASON),
+            lay.Part("Moonfeast", 3, lay.FESTIVAL),
+        ),
+        year_label="AR",
+    )
+    start = layout.start_on(1201, "Moon+Sun", 1)
+
+    def test_a_name_with_a_plus_is_read_as_typed(self) -> None:
+        self.assertEqual(self.layout.parse("Moon+Sun 3", self.start, today=1), 3)
+
+    def test_a_date_among_other_words(self) -> None:
+        self.assertEqual(
+            self.layout.parse("meet on the 3rd day of Dry, then rest", self.start, today=1), 33
+        )
+
+    def test_the_suffix_is_optional_and_case_does_not_matter(self) -> None:
+        for said in ("DRY 3", "dry 3rd", "Dry 3"):
+            with self.subTest(said):
+                self.assertEqual(self.layout.parse(said, self.start, today=1), 33)
+
+    def test_a_year_with_the_label_counts_and_one_before_day_one_is_none(self) -> None:
+        self.assertEqual(self.layout.parse("Dry 3rd, 1201 AR", self.start, today=1), 33)
+        self.assertIsNone(self.layout.parse("Dry 3rd, 1200 AR", self.start, today=1))
+        self.assertEqual(self.layout.parse("Dry 3rd, 1201", self.start, today=1), 33)
+
+    def test_a_several_day_festival_alone_is_its_first_day_and_prints_its_days(self) -> None:
+        self.assertEqual(self.layout.parse("Moonfeast, 1201 AR", self.start, today=1), 61)
+        self.assertEqual(self.layout.words(61, self.start), "Moonfeast 1st, 1201 AR")
+        self.assertEqual(self.layout.words(63, self.start), "Moonfeast 3rd, 1201 AR")
