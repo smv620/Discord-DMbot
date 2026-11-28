@@ -218,7 +218,8 @@ export interface CalendarBody {
   def?: CalendarDef;
   dayOne?: CalendarDayOne;
 }
-export type CalendarPreview = { line: string } | { problems: string[] };
+/** Core's answer to a preview (3a): the Day 1 line, today's date in this calendar when there is a clock, and a note when there is no clock yet; or the problems. */
+export type CalendarPreview = { line: string; today?: string | null; note?: string } | { problems: string[] };
 /** What the save's first answer is (core #5375): queued (an answer to follow), refused with core's words (nothing queued), or no clock / busy. */
 export type CalendarSaved = { answer: string } | { problems: string[] } | { error: "no_clock" | "busy"; words: string };
 export interface CalendarAnswer {

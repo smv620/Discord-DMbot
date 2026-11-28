@@ -36,7 +36,7 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
   const [def, setDef] = useState<CalendarDef>(blank());
   const [seasonDays, setSeasonDays] = useState(91);
   const [dayOne, setDayOne] = useState<CalendarDayOne>({ year: 1, part: "", day: 1, weekday: null });
-  const [preview, setPreview] = useState<{ line?: string; problems?: string[] } | "checking" | null>(null);
+  const [preview, setPreview] = useState<{ line?: string; today?: string | null; note?: string; problems?: string[] } | "checking" | null>(null);
   const [previewKey, setPreviewKey] = useState(""); // the exact fields the preview on screen was asked for
   const [previewFailed, setPreviewFailed] = useState(false); // the check itself could not be made, so Save is off and says why
   const [confirming, setConfirming] = useState(false);
@@ -320,6 +320,8 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
         </p>
       )}
       {preview === null && choice !== "days" && read.hasClock && previewFailed && <p class="small muted" role="status">{words.previewFailed}</p>}
+      {preview !== null && preview !== "checking" && preview.today && <p role="status">{preview.today}</p>}
+      {preview !== null && preview !== "checking" && preview.note && <p class="small muted">{preview.note}</p>}
       {preview !== null && preview !== "checking" && preview.problems && (
         <p class="small">{words.fixThis}</p>
       )}
