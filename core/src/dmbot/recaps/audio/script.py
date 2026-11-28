@@ -113,7 +113,7 @@ def title_line(title: str, day: int | None, calendar: Calendar | None = None) ->
     """The line the voice opens with: "Session Summary: <title>, Day X" (the day only if known),
     the date in the campaign's calendar ("..., Summer 5th, 1201 AR", #5364)."""
     clean = " ".join(CUE.sub(" ", PERFORMANCE.sub(" ", title)).split()).strip(" *")
-    date = day_words(day, calendar)
+    date = day_words(day, calendar, spoken=True)  # (the year label as the DM set it for the voice)
     return f"Session Summary: {clean}" + (f", {date}" if date else "")
 
 

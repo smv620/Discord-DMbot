@@ -409,3 +409,45 @@ class OnTheCalendar(unittest.TestCase):
             cal.custom_from(start.year, 360, stored)  # (the day of the year is not one it has)
         with self.assertRaises(ValueError):
             cal.def_of(cal.Calendar())
+
+
+class TheSpokenYearLabel(unittest.TestCase):
+    """How the voice says the year label (#5364 3b): spoken only, never printed."""
+
+    spoken = lay.Layout(
+        "Vale", lay.four_seasons(90).parts, year_label="AR", year_say="after the Reckoning"
+    )
+    start = spoken.start_on(1201, "Summer", 2)
+
+    def test_printed_as_typed_and_spoken_as_set(self) -> None:
+        self.assertEqual(self.spoken.words(1, self.start), "Summer 2nd, 1201 AR")
+        self.assertEqual(
+            self.spoken.words(1, self.start, spoken=True), "Summer 2nd, 1201 after the Reckoning"
+        )
+        plain = lay.Layout("Vale", lay.four_seasons(90).parts, year_label="AR")
+        self.assertEqual(
+            plain.words(1, plain.start_on(1201, "Summer", 2), spoken=True), "Summer 2nd, 1201 AR"
+        )
+
+    def test_it_is_kept_in_the_stored_form_only_when_set(self) -> None:
+        self.assertEqual(self.spoken.to_json()["yearSay"], "after the Reckoning")
+        self.assertEqual(lay.Layout.from_json(self.spoken.to_json()), self.spoken)
+        self.assertNotIn(
+            "yearSay", lay.four_seasons(90).to_json()
+        )  # (a stored one reads as before)
+        stored = lay.four_seasons(90).to_json()
+        self.assertEqual(lay.Layout.from_json(stored), lay.four_seasons(90))
+
+    def test_it_needs_a_label_and_a_plain_short_phrase(self) -> None:
+        parts = lay.four_seasons(90).parts
+        for say, label in (
+            ("after the Reckoning", ""),
+            (" x", "AR"),
+            ("x" * 31, "AR"),
+            ("a\nb", "AR"),
+        ):
+            with self.subTest((say, label)), self.assertRaises(ValueError) as caught:
+                lay.Layout("Vale", parts, year_label=label, year_say=say)
+            self.assertEqual(str(caught.exception), "label")
+        with self.assertRaises(ValueError):
+            lay.Layout.from_json({**self.spoken.to_json(), "yearSay": 5})

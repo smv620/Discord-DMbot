@@ -174,14 +174,17 @@ class Calendar:
         elif self.layout is not None or self.layout_start is not None:
             raise ValueError("calendar")
 
-    def words(self, minute: int, *, weekday: bool = False) -> str:
+    def words(self, minute: int, *, weekday: bool = False, spoken: bool = False) -> str:
         """The date of this game minute: Day N, the Harptos date, or the custom calendar's. With
         `weekday`, a calendar that has weekdays puts the weekday first (the DM's full clock card
-        only); any other says what it always did."""
+        only); any other says what it always did. With `spoken`, a calendar of its own says its year
+        label as the DM set it for the voice."""
         if self.kind == CUSTOM and self.layout is not None and self.layout_start is not None:
             if type(minute) is not int or minute < 0:
                 raise ValueError("minute")
-            return self.layout.words(day_of(minute), self.layout_start, weekday=weekday)
+            return self.layout.words(
+                day_of(minute), self.layout_start, weekday=weekday, spoken=spoken
+            )
         return date_words(minute, self.kind, self.start)
 
 
@@ -205,12 +208,14 @@ def custom_from(year: int, ordinal: int, raw: object) -> Calendar:
     return Calendar(CUSTOM, layout=found, layout_start=layout_mod.Start(year, ordinal, weekday))
 
 
-def day_words(day: int | None, calendar: Calendar | None = None) -> str | None:
+def day_words(
+    day: int | None, calendar: Calendar | None = None, *, spoken: bool = False
+) -> str | None:
     """The date of game day `day` (the day number a recap job keeps) in the campaign's calendar:
     "Summer 5th, 1201 AR", or "Day 5" with none. None when the day is not known."""
     if not day or day < 1:
         return None
-    return (calendar or Calendar()).words(minute_of(day))
+    return (calendar or Calendar()).words(minute_of(day), spoken=spoken)
 
 
 def from_door(got: Mapping[str, object]) -> Calendar:

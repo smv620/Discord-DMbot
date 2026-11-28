@@ -164,12 +164,13 @@ class EveryPersonColumnHasARule(DatabaseTest):
         part_m = import_module("dmbot.migrations.0644_forget_adventure_reads")
         part_n = import_module("dmbot.migrations.0646_forget_adventure_guides")
         part_o = import_module("dmbot.migrations.0648_forget_adventure_matches")
+        part_p = import_module("dmbot.migrations.0655_forget_calendar_saves")
         done = {
             *part_a.DELETED, *part_a.ZEROED, *part_b.ZEROED, *part_c.DELETED, *part_d.ZEROED,
             *part_e.DELETED, *part_f.ZEROED, *part_g.DELETED, *part_g.ZEROED, *part_g.MOVES,
             *part_h.ZEROED, *part_i.DELETED, *part_i.ZEROED, *part_j.DELETED,
             *part_k.DELETED, *part_l.DELETED, *part_m.DELETED,
-            *part_n.DELETED, *part_o.DELETED,
+            *part_n.DELETED, *part_o.DELETED, *part_p.DELETED,
         }  # fmt: skip
         deleted_tables = {
             t
@@ -185,6 +186,7 @@ class EveryPersonColumnHasARule(DatabaseTest):
                 *part_m.DELETED,
                 *part_n.DELETED,
                 *part_o.DELETED,
+                *part_p.DELETED,
             )
         }
         async with self.db.unscoped() as conn:

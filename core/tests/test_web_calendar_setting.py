@@ -100,6 +100,75 @@ class OnThePanel(Base):
         self.assertEqual(got["today"], "Today is Summer 12th, 1201")
         self.assertNotIn("note", got)  # (a clock is there: it can be saved)
 
+    async def test_saving_queues_the_setting_and_the_answer_shows_the_wait(self) -> None:
+        body = {
+            "kind": "custom",
+            "def": SEASONS.to_json(),
+            "dayOne": {"year": 1201, "part": "Summer", "day": 2},
+            "junk": "never stored",
+        }
+        # no game clock yet: nothing is queued, and it says why
+        got = await calendar_setting.save(self.web, self.session, self.cref, body)
+        self.assertEqual(got["error"], "no_clock")
+        await self.put_clock()
+        got = await calendar_setting.save(self.web, self.session, self.cref, body)
+        self.assertEqual(list(got), ["answer"])
+        async with self.db.guild(self.g) as conn:  # (only what the setting needs is kept)
+            cur = await conn.execute("SELECT body FROM web_calendar_saves")
+            (row,) = await cur.fetchall()
+        self.assertEqual(set(row["body"]), {"kind", "def", "dayOne"})
+        shown = await calendar_setting.read_answer(self.web, self.session, self.cref, got["answer"])
+        self.assertEqual((shown["state"], shown["error"], shown["words"]), ("waiting", "", ""))
+        self.assertEqual(shown["waits"]["stage"], "queued")
+        self.assertFalse(shown["waits"]["stalled"])
+        self.assertGreaterEqual(shown["waits"]["waitedSeconds"], 0)
+        # a second save while one is open is told to wait
+        again = await calendar_setting.save(self.web, self.session, self.cref, body)
+        self.assertEqual(again["error"], "busy")
+        self.assertEqual(again["words"], calendar_setting.BUSY)
+
+    async def test_a_refused_body_queues_nothing_and_says_why(self) -> None:
+        await self.put_clock()
+        got = await calendar_setting.save(
+            self.web,
+            self.session,
+            self.cref,
+            {"kind": "harptos", "dayOne": {"year": 1493, "part": "Shieldmeet"}},
+        )
+        self.assertEqual(list(got), ["problems"])
+        got = await calendar_setting.save(self.web, self.session, self.cref, None)
+        self.assertEqual(list(got), ["problems"])
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM web_calendar_saves")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+
+    async def test_the_answers_endings_have_words_and_a_stalled_save_says_so(self) -> None:
+        await self.put_clock()
+        got = await calendar_setting.save(self.web, self.session, self.cref, {"kind": "days"})
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE web_calendar_saves SET state = 'failed', error = 'no_clock', updated_at = 1"
+            )
+        shown = await calendar_setting.read_answer(self.web, self.session, self.cref, got["answer"])
+        self.assertEqual((shown["state"], shown["error"]), ("failed", "no_clock"))
+        self.assertEqual(shown["words"], calendar_setting.ENDINGS["no_clock"])
+        async with self.db.guild(self.g) as conn:
+            await conn.execute("UPDATE web_calendar_saves SET state = 'working', error = ''")
+        shown = await calendar_setting.read_answer(self.web, self.session, self.cref, got["answer"])
+        self.assertTrue(shown["waits"]["stalled"])  # (updated at second 1: long ago)
+
+    async def test_only_a_dm_saves_or_reads_an_answer(self) -> None:
+        await self.put_clock()
+        for call in (
+            calendar_setting.save(self.web, self.player, self.cref, {"kind": "days"}),
+            calendar_setting.read_answer(self.web, self.player, self.cref, "ab" * 16),
+            calendar_setting.read_answer(self.web, self.session, self.cref, "ab" * 16),
+            calendar_setting.read_answer(self.web, self.session, self.cref, "not-an-id"),
+        ):
+            with self.assertRaises(RecapError) as caught:
+                await call
+            self.assertEqual(caught.exception.code, "not_found")
+
     async def test_a_member_who_is_not_a_dm_gets_not_found(self) -> None:
         await self.put_clock()
         for call in (
