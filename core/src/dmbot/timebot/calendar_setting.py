@@ -10,6 +10,7 @@ person. No database, no Discord, and nothing is stored here.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from dmbot.timebot import calendar as cal
@@ -138,3 +139,107 @@ def day_one_of(calendar: Calendar) -> dict[str, Any] | None:
         "day": None if found.kind == lay.FESTIVAL and found.of == 1 else found.day,
         "weekday": layout.weekday_of(1, start),
     }
+
+
+# -- the words a person types in Discord's forms (#5364 slice 3c) ---------------------------------
+# Discord's forms have five boxes and no lists, so a calendar of its own is typed as short lines and
+# turned into the same body the website sends; everything after that is `from_body`.
+
+PROBLEMS.update(
+    {
+        "parts_text": (
+            "Write each part on its own line: its name, its days, then month, season or festival "
+            "(month if you leave it out). For example: Hammer 30, or Midwinter 1 festival."
+        ),
+        "leap_text": (
+            "Write the extra day as its name, how many years between, and the part it follows. "
+            "For example: Shieldmeet, 4, Midsummer."
+        ),
+        "number": "That needs a whole number.",
+    }
+)
+_PART_LINE = re.compile(
+    r"^(?P<name>.+?)\s+(?P<days>\d{1,4})(?:\s+(?P<kind>month|season|festival))?$", re.IGNORECASE
+)
+
+
+def parts_from_text(text: str) -> list[dict[str, Any]]:
+    """The parts typed one to a line ("Hammer 30", "Summer 90 season", "Midwinter 1 festival") as
+    the definition's part list. `CalendarProblem` for a line that is not one. Blank lines are
+    skipped; the checks on names and days are `Layout`'s."""
+    parts: list[dict[str, Any]] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        found = _PART_LINE.match(line.strip())
+        if found is None:
+            raise CalendarProblem("parts_text")
+        kind = (found["kind"] or "month").lower()
+        parts.append({"name": found["name"].strip(), "days": int(found["days"]), "kind": kind})
+    if not parts:
+        raise CalendarProblem("parts")
+    return parts
+
+
+def leap_from_text(text: str) -> dict[str, Any] | None:
+    """ "Shieldmeet, 4, Midsummer" as the extra day (`{every, name, after}`); none when empty."""
+    if not text.strip():
+        return None
+    pieces = [p.strip() for p in text.split(",")]
+    if len(pieces) != 3 or not pieces[1].isdecimal() or len(pieces[1]) > 4:
+        raise CalendarProblem("leap_text")
+    return {"name": pieces[0], "every": int(pieces[1]), "after": pieces[2]}
+
+
+def definition_from_text(
+    name: str, parts: str, weekdays: str, label: str, leap: str
+) -> dict[str, Any]:
+    """The `def` of a calendar typed into a form: its name, the parts one to a line, the weekdays
+    split on commas, the year label ("AR", or "AR, after the Reckoning" for how the voice says it)
+    and the extra day. Checked by `Layout` afterwards, as for any body."""
+    said_label, _, said = label.partition(",")
+    found: dict[str, Any] = {
+        "name": name.strip(),
+        "parts": parts_from_text(parts),
+        "leap": leap_from_text(leap),
+        "weekdays": [w.strip() for w in weekdays.split(",") if w.strip()],
+        "yearLabel": said_label.strip(),
+    }
+    if said.strip():
+        found["yearSay"] = said.strip()
+    return found
+
+
+def day_one_from_text(year: str, part: str, day: str, weekday: str = "") -> dict[str, Any]:
+    """The `dayOne` of a form: a whole year, the part's name, the day in it (empty for a one-day
+    festival) and the weekday (empty for none)."""
+    if not year.strip().isdecimal() or (day.strip() and not day.strip().isdecimal()):
+        raise CalendarProblem("number")
+    return {
+        "year": int(year),
+        "part": part.strip(),
+        "day": int(day) if day.strip() else None,
+        **({"weekday": weekday.strip()} if weekday.strip() else {}),
+    }
+
+
+# -- what to say before saving over a calendar (Supervisor's ruling on #5364) ----------------------
+REMOVED = "Your own calendar will be removed."
+REPLACES = "This replaces your own calendar."
+VOICES = "Recap voices already made keep the old date until you make them again."
+COUNTED = "Dates DMbot already counted stay on their day."
+
+
+def warnings_for(current: Calendar, new: Calendar) -> list[str]:
+    """The lines that come before Save: switching from a calendar of its own to Days or Harptos
+    removes it; saving one over another replaces it; any change to how dates read leaves recap
+    voices already made on the old date; dates already counted stay on their day. Nothing when
+    nothing changes."""
+    if current == new:
+        return []
+    out: list[str] = []
+    if current.kind == cal.CUSTOM:
+        out.append(REMOVED if new.kind != cal.CUSTOM else REPLACES)
+    out.append(VOICES)
+    out.append(COUNTED)
+    return out

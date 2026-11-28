@@ -168,3 +168,112 @@ class RefusingWithWords(unittest.TestCase):
         for words in cs.PROBLEMS.values():
             self.assertTrue(words.endswith("."))
             self.assertLess(len(words), 200)
+
+
+class TypedIntoAForm(unittest.TestCase):
+    """What a DM types into Discord's forms becomes the same body the website sends (#5364 3c)."""
+
+    def test_parts_one_to_a_line(self) -> None:
+        got = cs.parts_from_text(
+            "Spring 90 season\n\n  Summer 90 SEASON \nFeast of the Moon 3 festival\nHammer 30"
+        )
+        self.assertEqual(
+            got,
+            [
+                {"name": "Spring", "days": 90, "kind": "season"},
+                {"name": "Summer", "days": 90, "kind": "season"},
+                {"name": "Feast of the Moon", "days": 3, "kind": "festival"},
+                {"name": "Hammer", "days": 30, "kind": "month"},
+            ],
+        )
+
+    def test_a_line_that_is_not_a_part_says_how_to_write_one(self) -> None:
+        for text in ("Hammer", "Hammer thirty", "30", "Hammer 30 week", "Hammer 30 month extra"):
+            with self.subTest(text), self.assertRaises(cs.CalendarProblem) as caught:
+                cs.parts_from_text(text)
+            self.assertEqual(caught.exception.problems, [cs.PROBLEMS["parts_text"]])
+        with self.assertRaises(cs.CalendarProblem) as empty:
+            cs.parts_from_text("\n  \n")
+        self.assertEqual(empty.exception.problems, [cs.PROBLEMS["parts"]])
+
+    def test_the_extra_day(self) -> None:
+        self.assertEqual(
+            cs.leap_from_text(" Shieldmeet , 4 , Midsummer "),
+            {"name": "Shieldmeet", "every": 4, "after": "Midsummer"},
+        )
+        self.assertIsNone(cs.leap_from_text("  "))
+        for text in ("Shieldmeet", "Shieldmeet, four, Midsummer", "a, 4, b, c", "x, 99999, y"):
+            with self.subTest(text), self.assertRaises(cs.CalendarProblem):
+                cs.leap_from_text(text)
+
+    def test_a_whole_calendar_typed_comes_out_as_the_websites_body(self) -> None:
+        made = cs.definition_from_text(
+            " Vale ",
+            "Spring 90 season\nSummer 90 season",
+            "Sunday, Moonday,",
+            "AR, after the Reckoning",
+            "Extra, 4, Spring",
+        )
+        self.assertEqual(made["weekdays"], ["Sunday", "Moonday"])
+        self.assertEqual(made["yearLabel"], "AR")
+        self.assertEqual(made["yearSay"], "after the Reckoning")
+        self.assertEqual(made["leap"], {"name": "Extra", "every": 4, "after": "Spring"})
+        body = {
+            "kind": "custom",
+            "def": made,
+            "dayOne": cs.day_one_from_text("1201", "Summer", "2", "Moonday"),
+        }
+        got = cs.from_body(body)
+        self.assertEqual(cs.line_of(got), "Day 1 is Summer 2nd, 1201 AR")
+        self.assertEqual(got.words(0, spoken=True), "Summer 2nd, 1201 after the Reckoning")
+
+    def test_a_label_with_no_phrase_and_no_weekdays(self) -> None:
+        made = cs.definition_from_text("Vale", "Spring 90 season", "", "AR", "")
+        self.assertEqual((made["weekdays"], made["leap"], "yearSay" in made), ([], None, False))
+
+    def test_day_one_needs_whole_numbers(self) -> None:
+        self.assertEqual(
+            cs.day_one_from_text(" 1201 ", " Summer ", " 2 ", " Moonday "),
+            {"year": 1201, "part": "Summer", "day": 2, "weekday": "Moonday"},
+        )
+        self.assertEqual(
+            cs.day_one_from_text("1201", "Midwinter", ""),
+            {"year": 1201, "part": "Midwinter", "day": None},
+        )
+        for year, day in (
+            ("twelve", "2"),
+            ("1201", "two"),
+            ("-1", "2"),
+            ("", "2"),
+            ("1201", "1.5"),
+        ):
+            with self.subTest((year, day)), self.assertRaises(cs.CalendarProblem) as caught:
+                cs.day_one_from_text(year, "Summer", day)
+            self.assertEqual(caught.exception.problems, [cs.PROBLEMS["number"]])
+
+
+class BeforeSaving(unittest.TestCase):
+    own = cs.from_body(custom(day=2))
+    harptos = cs.from_body(
+        {"kind": "harptos", "dayOne": {"year": 1492, "part": "Flamerule", "day": 14}}
+    )
+    days = cal.Calendar()
+
+    def test_nothing_to_say_when_nothing_changes(self) -> None:
+        for calendar in (self.own, self.harptos, self.days):
+            self.assertEqual(cs.warnings_for(calendar, calendar), [])
+
+    def test_leaving_a_calendar_of_its_own_says_it_is_removed(self) -> None:
+        for new in (self.days, self.harptos):
+            self.assertEqual(cs.warnings_for(self.own, new), [cs.REMOVED, cs.VOICES, cs.COUNTED])
+
+    def test_saving_one_over_another_says_it_replaces_it(self) -> None:
+        other = cs.from_body(custom(day=3))
+        self.assertEqual(cs.warnings_for(self.own, other), [cs.REPLACES, cs.VOICES, cs.COUNTED])
+
+    def test_a_new_calendar_over_days_or_harptos_only_warns_about_voices_and_counted_days(
+        self,
+    ) -> None:
+        self.assertEqual(cs.warnings_for(self.days, self.own), [cs.VOICES, cs.COUNTED])
+        self.assertEqual(cs.warnings_for(self.harptos, self.own), [cs.VOICES, cs.COUNTED])
+        self.assertEqual(cs.warnings_for(self.own, self.days)[0], cs.REMOVED)
