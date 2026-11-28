@@ -194,6 +194,8 @@ export interface CalendarDef {
   leap: { every: number; name: string; after: string } | null;
   weekdays: string[];
   yearLabel: string;
+  /** How the voice says the year label, when it is not read as written (optional). */
+  yearSay?: string;
 }
 /** Day 1 as a year, the part it falls in (by name) and the day in it (null for a one-day festival), and its weekday's name (null with none). */
 export interface CalendarDayOne {
@@ -217,11 +219,15 @@ export interface CalendarBody {
   dayOne?: CalendarDayOne;
 }
 export type CalendarPreview = { line: string } | { problems: string[] };
+/** What the save's first answer is (core #5375): queued (an answer to follow), refused with core's words (nothing queued), or no clock / busy. */
+export type CalendarSaved = { answer: string } | { problems: string[] } | { error: "no_clock" | "busy"; words: string };
 export interface CalendarAnswer {
   state: "waiting" | "working" | "done" | "failed";
-  error: "" | "bad_calendar" | "no_clock" | "not_allowed";
-  problems: string[];
-  progress?: JobProgress | null;
+  error: "" | "bad_calendar" | "no_clock" | "not_allowed" | "failed";
+  /** Core's own words for a failure. */
+  words: string;
+  /** The wait in core's shape: its stage, how long, when it last moved, the server's clock and whether it has stalled. */
+  waits?: { stage: "queued" | "saving" | "done" | "failed"; waitedSeconds: number; lastMovedAt: number | null; now: number; stalled: boolean } | null;
 }
 
 /** A campaign's shared and followed house rules, for the DM (#2783). Never a share code (they are read in Discord,
@@ -4222,8 +4228,8 @@ export interface AccountApi {
   calendar?(campaignRef: string): Promise<CalendarRead>;
   /** What a definition would say for Day 1, or core's own words on what is wrong with it. Answered at once, nothing stored. */
   calendarPreview?(campaignRef: string, body: CalendarBody): Promise<CalendarPreview>;
-  /** Queues the save for the bot; gives the answer's id. */
-  saveCalendar?(campaignRef: string, body: CalendarBody): Promise<string>;
+  /** Queues the save for the bot (or says why not, in core's words). */
+  saveCalendar?(campaignRef: string, body: CalendarBody): Promise<CalendarSaved>;
   calendarAnswer?(campaignRef: string, answer: string): Promise<CalendarAnswer>;
   /** The campaign's sessions in order with recaps and what was revealed (#2462). Missing from an
    * older API. */

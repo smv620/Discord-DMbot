@@ -22,6 +22,7 @@ import type {
   CampaignPage,
   CalendarAnswer,
   CalendarBody,
+  CalendarSaved,
   CalendarPreview,
   CalendarRead,
   CampaignSettingAnswer,
@@ -287,7 +288,7 @@ export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Parti
     calendarPreview: async (campaignRef, body: CalendarBody) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/calendar/preview`, body)) as CalendarPreview,
     saveCalendar: async (campaignRef, body: CalendarBody) =>
-      ((await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/calendar`, body)) as { answer: string }).answer,
+      (await call("POST", `/me/campaigns/${encodeURIComponent(campaignRef)}/calendar`, body)) as CalendarSaved,
     calendarAnswer: async (campaignRef, answer) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/calendar/answers/${encodeURIComponent(answer)}`)) as CalendarAnswer,
     timeline: async (campaignRef) =>

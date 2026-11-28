@@ -4297,9 +4297,12 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (/\.cal-noclock$/.test(ref)) return { error: "no_clock" as const, words: "Set the game clock first." };
+      const refused = /\.cal-refused$/.test(ref) ? ["A part needs a name that is not only a number."] : calendarProblems(body);
+      if (refused.length > 0) return { problems: refused };
       const id = `cal-${++calendarSaves}`;
       calendarAsked.set(id, { ref, body });
-      return id;
+      return { answer: id };
     },
     async calendarAnswer(ref, answer) {
       calls.push(`calendarAnswer:${ref}:${answer}`);
@@ -4308,11 +4311,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const asked = calendarAsked.get(answer);
       if (!asked || asked.ref !== ref) throw new ApiError("not-found");
       const now = Math.floor(Date.now() / 1000);
-      const problems = /\.cal-refused$/.test(ref) ? ["A part needs a name that is not only a number."] : calendarProblems(asked.body);
-      if (problems.length > 0)
-        return { state: "failed" as const, error: "bad_calendar" as const, problems, progress: { stage: "failed", startedAt: now - 3, updatedAt: now - 1, serverNow: now, state: "failed" as const, reason: "bad_calendar" } };
       calendars.set(ref, { kind: asked.body.kind, def: asked.body.def ?? null, dayOne: asked.body.dayOne ?? null });
-      return { state: "done" as const, error: "" as const, problems: [], progress: { stage: "done", startedAt: now - 3, updatedAt: now - 1, serverNow: now, state: "done" as const, reason: null } };
+      return { state: "done" as const, error: "" as const, words: "", waits: { stage: "done" as const, waitedSeconds: 3, lastMovedAt: now - 1, now, stalled: false } };
     },
     async campaignSettingAnswer(ref, answer): Promise<CampaignSettingAnswer> {
       // The shared progress shape (#3355) is put on whatever the pretend bot answered below; `.cs-stalled` is a

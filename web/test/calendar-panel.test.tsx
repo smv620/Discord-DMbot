@@ -145,7 +145,7 @@ describe("the game calendar on a campaign's Settings", () => {
     await waitFor(() => expect((asked[asked.length - 1] as { dayOne: { part: string; day: number | null } }).dayOne).toMatchObject({ part: "Midwinter", day: null }));
   });
 
-  it("leaving a calendar of the DM's own for Four seasons asks too", async () => {
+  it("saving over a calendar of the DM's own says it replaces it, with Save and Cancel (#5364 ruling)", async () => {
     const api = mockApi("table");
     api.calendar = async () => ({
       kind: "custom",
@@ -159,8 +159,45 @@ describe("the game calendar on a campaign's Settings", () => {
     pick(words.kinds.seasons);
     await screen.findByText(/Day 1 is Spring 1st, 1$/, undefined, { timeout: 2000 }); // (core's preview for Four seasons, not the line now in force)
     fireEvent.click(screen.getByRole("button", { name: words.save }));
-    expect(screen.getByText(words.removeWarning)).toBeTruthy();
+    expect(screen.getByText(words.replaceWarning)).toBeTruthy();
+    expect(screen.queryByText(words.removeWarning)).toBeNull();
+    expect(api.calls.some((c) => c.startsWith("saveCalendar:"))).toBe(false); // (nothing sent until Save is pressed again)
+    fireEvent.click(screen.getByRole("button", { name: words.replaceCancel }));
+    expect(screen.queryByText(words.replaceWarning)).toBeNull();
     expect(api.calls.some((c) => c.startsWith("saveCalendar:"))).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: words.save }));
+    fireEvent.click(screen.getByRole("button", { name: words.replaceSave }));
+    await waitFor(() => expect(api.calls).toContain(`saveCalendar:${REF}:custom`));
+  });
+
+  it("core can refuse the save before queueing it, or say there is no clock or it is busy, in its own words", async () => {
+    for (const answer of [{ problems: ["Two parts have the same name."] }, { error: "no_clock" as const, words: "Set the game clock first." }, { error: "busy" as const, words: "Another change is being made." }]) {
+      const api = mockApi("table");
+      api.saveCalendar = async () => answer;
+      const view = panel(api);
+      await screen.findByText(/Day 1 is Hammer/);
+      pick(words.kinds.seasons);
+      await screen.findByText(/Day 1 is Spring/, undefined, { timeout: 2000 });
+      fireEvent.click(screen.getByRole("button", { name: words.save }));
+      const said = "problems" in answer ? answer.problems[0] : answer.words;
+      expect(await screen.findByText(said as string)).toBeTruthy();
+      expect(screen.queryByText(words.saved)).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it("the voice's year phrase is asked for only with a year name, and goes with the definition", async () => {
+    const api = mockApi("table");
+    const asked: { def?: { yearSay?: string } }[] = [];
+    const real = api.calendarPreview!.bind(api);
+    api.calendarPreview = async (ref, body) => (asked.push(body), real(ref, body));
+    panel(api);
+    await screen.findByText(/Day 1 is Hammer/);
+    pick(words.kinds.custom);
+    expect(screen.queryByLabelText(new RegExp(`^${words.yearSay}`))).toBeNull();
+    fireEvent.input(screen.getByLabelText(words.yearLabel), { target: { value: "AR" } });
+    fireEvent.input(await screen.findByLabelText(new RegExp(`^${words.yearSay}`)), { target: { value: "After Reckoning" } });
+    await waitFor(() => expect(asked[asked.length - 1]?.def?.yearSay).toBe("After Reckoning"));
   });
 
   it("a double press sends one save", async () => {

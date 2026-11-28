@@ -24,7 +24,7 @@ const POLLS = 40;
 const PREVIEW_MS = 400;
 
 type Choice = "days" | "harptos" | "seasons" | "custom";
-type Wait = { state: CalendarAnswer["state"] | "sending" | "timed_out"; since: number; progress?: CalendarAnswer["progress"] };
+type Wait = { state: CalendarAnswer["state"] | "sending" | "timed_out"; since: number; waits?: CalendarAnswer["waits"] };
 
 const seasons = (days: number): CalendarPart[] => words.seasonNames.map((name) => ({ name, days, kind: "season" as const }));
 const blank = (): CalendarDef => ({ name: "", parts: [{ name: "", days: 30, kind: "month" }], leap: null, weekdays: [], yearLabel: "" });
@@ -126,16 +126,20 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
     setWait({ state: "sending", since });
     let queued = false;
     try {
-      const id = await api.saveCalendar(campaignRef, body());
+      const first = await api.saveCalendar(campaignRef, body());
+      // Core may refuse before queueing anything (its own words), or say there is no clock / it is busy.
+      if ("problems" in first) return void (setWait(null), setProblems(first.problems));
+      if ("error" in first) return void (setWait(null), setProblems([first.words || (first.error === "no_clock" ? words.noClockError : words.busy)]));
+      const id = first.answer;
       queued = true;
       for (let i = 0; i < POLLS && live.current; i++) {
         await new Promise((r) => setTimeout(r, POLL_MS));
         const got = await api.calendarAnswer(campaignRef, id);
         if (!live.current) return;
-        setWait({ state: got.state, since, progress: got.progress });
+        setWait({ state: got.state, since, waits: got.waits });
         if (got.state === "done") return void (await load());
         if (got.state === "failed") {
-          setProblems(got.error === "bad_calendar" && got.problems.length > 0 ? got.problems : [got.error === "no_clock" ? words.noClockError : got.error === "not_allowed" ? words.notAllowed : words.failed]);
+          setProblems([got.words || (got.error === "no_clock" ? words.noClockError : got.error === "not_allowed" ? words.notAllowed : words.failed)]);
           return;
         }
       }
@@ -149,8 +153,10 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
     }
   }
   // Leaving a calendar of the DM's own for Days or Harptos removes it: said and confirmed once first (the Expert's point 2).
-  const removing = read?.kind === "custom" && choice !== "custom";
-  const press = (): void => (removing && !confirming ? setConfirming(true) : void save());
+  const removing = read?.kind === "custom" && (choice === "days" || choice === "harptos");
+  // Saving over a calendar of the DM's own (My own, or Four seasons) cannot be undone either: said and asked once, with Save and Cancel (Supervisor, #5364).
+  const replacing = read?.kind === "custom" && (choice === "custom" || choice === "seasons");
+  const press = (): void => ((removing || replacing) && !confirming ? setConfirming(true) : void save());
 
   if (failed && !read)
     return (
@@ -261,6 +267,12 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
           <label>
             {words.yearLabel} <input type="text" maxLength={8} value={def.yearLabel} onInput={(e) => setDef({ ...def, yearLabel: (e.currentTarget as HTMLInputElement).value })} />
           </label>
+          {def.yearLabel !== "" && (
+            <label>
+              {words.yearSay} <span class="small muted">{words.yearSayHint}</span>{" "}
+              <input type="text" maxLength={30} value={def.yearSay ?? ""} onInput={(e) => setDef({ ...def, yearSay: (e.currentTarget as HTMLInputElement).value })} />
+            </label>
+          )}
         </div>
       )}
       {choice !== "days" && (
@@ -320,18 +332,19 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
       )}
       {!read.hasClock && <p class="warn">{words.noClock}</p>}
       <p class="small">{words.stays}</p>
+      <p class="small">{words.voices}</p>
       {confirming && (
         <p role="alert" class="warn">
-          {words.removeWarning}
+          {removing ? words.removeWarning : words.replaceWarning}
         </p>
       )}
       <div class="row">
         <button type="button" class="button" disabled={busy || !read.hasClock || (choice !== "days" && !ok)} onClick={press}>
-          {confirming ? words.removeSwitch : words.save}
+          {confirming ? (removing ? words.removeSwitch : words.replaceSave) : words.save}
         </button>
         {confirming && (
-          <button type="button" class="button secondary" onClick={() => (setConfirming(false), setChoice("custom"))}>
-            {words.removeKeep}
+          <button type="button" class="button secondary" onClick={() => (setConfirming(false), removing && setChoice("custom"))}>
+            {removing ? words.removeKeep : words.replaceCancel}
           </button>
         )}
       </div>
@@ -348,10 +361,10 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
       {wait && wait.state !== "done" && wait.state !== "timed_out" && wait.state !== "failed" && (
         <WorkProgress
           stage={wait.state === "working" ? words.working : words.waiting}
-          startedAt={wait.progress?.startedAt ?? wait.since}
-          updatedAt={wait.progress?.updatedAt}
-          serverNow={wait.progress?.serverNow}
-          state={wait.progress?.state ?? "running"}
+          startedAt={wait.waits ? wait.waits.now - wait.waits.waitedSeconds : wait.since}
+          updatedAt={wait.waits?.lastMovedAt}
+          serverNow={wait.waits?.now}
+          state={wait.waits?.stalled ? "stalled" : "running"}
         />
       )}
     </div>
