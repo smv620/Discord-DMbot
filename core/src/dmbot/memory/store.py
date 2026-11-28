@@ -6239,9 +6239,7 @@ class MemoryStore:
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
         """Every name and word DMbot already has an answer for in this campaign, whatever
         the answer: names (rejected ones too, so "Not a name" sticks) and "keep as heard"
-        and "change to" rules. The after-session scan never suggests these again. The names of the
-        campaign's calendar are here too (its months, seasons, festivals and weekdays, #5364): a
-        word like "Summer" or "Midwinter" is never a new name."""
+        and "change to" rules. The after-session scan never suggests these again."""
         async with self._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
                 "SELECT key FROM memory_aliases WHERE guild_id = %s AND campaign_id = %s"
@@ -6249,18 +6247,25 @@ class MemoryStore:
                 " WHERE guild_id = %s AND campaign_id = %s",
                 (*scope.ids, *scope.ids),
             )
-            keys = {str(r["key"]) for r in await cur.fetchall()}
+            return {str(r["key"]) for r in await cur.fetchall()}
+
+    async def calendar_keys(self, guild_id: int, campaign_id: str) -> set[str]:
+        """The name keys of the campaign's calendar (#5364): its months, seasons, festivals and
+        weekdays and the extra day. The name finders leave them out, so "Summer" or "Midwinter" is
+        never offered as a new name. **Not** `known_keys`: that is "names DMbot holds", which lore
+        reads and the recap treat as entries; a calendar word is not one. A character or place
+        that shares a calendar word is added by hand (a known limit). Nothing for Days or a
+        definition that no longer reads."""
+        async with self._read(guild_id, campaign_id) as scope:
             cur = await scope.conn.execute(
                 "SELECT calendar_kind, calendar_def FROM game_clocks"
                 " WHERE guild_id = %s AND campaign_id = %s",
                 scope.ids,
             )
             clock = await cur.fetchone()
-        if clock is not None:
-            keys |= {
-                name_key(n) for n in calendar_names(clock["calendar_kind"], clock["calendar_def"])
-            }
-        return keys
+        if clock is None:
+            return set()
+        return {name_key(n) for n in calendar_names(clock["calendar_kind"], clock["calendar_def"])}
 
     async def refused_spellings(self, guild_id: int, campaign_id: str) -> set[tuple[str, str]]:
         """(entry id, `name_key`) of every other name the DM turned down: "No, two places" (#3037)

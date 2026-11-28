@@ -115,6 +115,12 @@ class OwnCalendar(unittest.TestCase):
                 tl.date_in_words("by Day 12", calendar, 5 * DAY), cal.minute_of(12), calendar.kind
             )
 
+    def test_a_day_n_and_a_date_together_are_two_dates_in_any_calendar(self) -> None:
+        flame = Calendar(cal.HARPTOS, cal.day_one(1492, "Flamerule", 14))
+        self.assertIsNone(tl.date_in_words("Day 5 or Flamerule 20", flame, DAY))
+        self.assertIsNone(tl.date_in_words("Day 5 or Summer 20", self.vale, DAY))
+        self.assertIsNone(tl.date_in_words("Day 5 or Day 6", Calendar(), DAY))
+
     def test_the_websites_clock_door_makes_the_same_calendar(self) -> None:
         stored = {"kind": "custom", "year": 1201, "ordinal": 91, "def": cal.def_of(self.vale)}
         self.assertEqual(cal.from_door(stored), self.vale)

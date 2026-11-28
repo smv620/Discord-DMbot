@@ -38,7 +38,17 @@ class TheNames(unittest.TestCase):
         self.assertEqual(cal.names_of(cal.DAYS, None), ())
 
     def test_a_definition_that_no_longer_reads_gives_none_and_never_raises(self) -> None:
-        for bad in (None, {}, {"layout": {}, "weekday": 0}, "x", 5, []):
+        parts = [{"name": "Spring", "days": 30, "kind": "season"}]
+        stored = {"name": "Vale", "parts": parts, "leap": None, "weekdays": [], "yearLabel": ""}
+        wrong = (
+            None, {}, {"layout": {}, "weekday": 0}, "x", 5, [],
+            {"layout": {**stored, "parts": [{**parts[0], "days": "30"}]}},  # (text for a number)
+            {"layout": {**stored, "parts": [{**parts[0], "days": None}]}},
+            {"layout": {**stored, "leap": {"every": "4", "name": "X", "after": "Spring"}}},
+            {"layout": {**stored, "name": 5}},
+            {"layout": {**stored, "weekdays": [1, 2]}},
+        )  # fmt: skip
+        for bad in wrong:
             self.assertEqual(cal.names_of(cal.CUSTOM, bad), (), str(bad))
 
 
@@ -55,22 +65,29 @@ class TheStore(MemoryTest):
                 (GUILD_A, self.c, kind, year, ordinal, None if d is None else Jsonb(d)),
             )
 
-    async def test_the_names_of_the_calendar_are_never_new_names(self) -> None:
-        before = await self.memory.known_keys(GUILD_A, self.c)
-        self.assertNotIn("summer", before)
+    async def test_the_names_of_the_calendar_are_left_out_but_are_not_known_names(self) -> None:
+        self.assertEqual(await self.memory.calendar_keys(GUILD_A, self.c), set())
         await self.put_calendar("custom", 1201, 91, cal.def_of(OWN))
-        keys = await self.memory.known_keys(GUILD_A, self.c)
-        for name in ("spring", "summer", "longnight", "extra day", "moonday", "fireday"):
-            self.assertIn(name, keys)
-        self.assertTrue(before <= keys)  # (the names it already knew are all still there)
+        keys = await self.memory.calendar_keys(GUILD_A, self.c)
+        self.assertEqual(keys, {"spring", "summer", "longnight", "extra day", "moonday", "fireday"})
+        # not "names DMbot holds": the lore import and the recap treat those as entries, so an
+        # uploaded NPC or tavern called "Summer" is not dropped as already known (Expert, 4b)
+        known = await self.memory.known_keys(GUILD_A, self.c)
+        self.assertFalse(keys & known)
 
     async def test_harptos_and_days_and_a_broken_calendar(self) -> None:
         await self.put_calendar("harptos", 1492, 195, None)
-        self.assertIn("flamerule", await self.memory.known_keys(GUILD_A, self.c))
+        self.assertIn("flamerule", await self.memory.calendar_keys(GUILD_A, self.c))
         await self.put_calendar("days", None, None, None)
-        self.assertNotIn("flamerule", await self.memory.known_keys(GUILD_A, self.c))
+        self.assertEqual(await self.memory.calendar_keys(GUILD_A, self.c), set())
         await self.put_calendar("custom", 1201, 91, {"layout": {}, "weekday": 0})
-        self.assertNotIn("summer", await self.memory.known_keys(GUILD_A, self.c))  # (never raises)
+        self.assertEqual(await self.memory.calendar_keys(GUILD_A, self.c), set())  # (never raises)
 
     async def test_no_game_clock_is_no_names(self) -> None:
-        self.assertNotIn("summer", await self.memory.known_keys(GUILD_A, self.c))
+        self.assertEqual(await self.memory.calendar_keys(GUILD_A, self.c), set())
+
+    async def test_the_name_reader_has_its_own_reason_for_them(self) -> None:
+        from dmbot.memory import name_reader
+
+        self.assertEqual(name_reader.CALENDAR_WORD, "calendar_word")
+        self.assertNotEqual(name_reader.CALENDAR_WORD, name_reader.KNOWN_NAME)

@@ -79,6 +79,7 @@ NOT_IN_LINES = "not_in_lines"
 KNOWN_NAME = "known_name"  # a name DMbot has, or a "keep as heard" / "change to" word
 AT_TABLE = "at_the_table"  # a person playing, or a word of their name
 NOT_A_NAME = "dm_said_not_a_name"  # the DM pressed "Not a name" for it
+CALENDAR_WORD = "calendar_word"  # a month, season, festival or weekday of the campaign's calendar
 ORDINARY_WORD = "ordinary_word"
 BAD_KIND = "bad_kind"
 BAD_WHY = "bad_why"
