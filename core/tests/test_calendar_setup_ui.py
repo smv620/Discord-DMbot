@@ -49,10 +49,19 @@ def said(it: Any) -> str:
     return str(it.response.send_message.await_args.args[0])
 
 
+def button(view: Any, label: str) -> Any:
+    """The button with this label (the view's items are not typed as buttons)."""
+    return next(b for b in view.children if getattr(b, "label", None) == label)
+
+
+def labels(view: Any) -> list[str]:
+    return [str(getattr(b, "label", "")) for b in view.children]
+
+
 def can_save(it: Any) -> bool:
     """Whether what was sent has a Save button under it."""
     view = it.response.send_message.await_args.kwargs.get("view")
-    return view is not None and "Save" in [b.label for b in view.children]
+    return view is not None and "Save" in labels(view)
 
 
 def typed(form: Any, **values: str) -> None:
@@ -68,7 +77,7 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Now: **Four seasons**. Day 1 is Summer 2nd, 1201.", text)
         view = it.response.send_message.await_args.kwargs["view"]
         self.assertEqual(
-            [b.label for b in view.children],
+            labels(view),
             ["Days", "Harptos", "Four seasons", "My own", "Cancel"],
         )
         self.assertTrue(it.response.send_message.await_args.kwargs["ephemeral"])
@@ -91,17 +100,17 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
         for label, form in (("Harptos", ui.HarptosForm), ("Four seasons", ui.SeasonsForm),
                             ("My own", ui.OwnForm)):  # fmt: skip
             it = interaction()
-            button = next(b for b in view.children if b.label == label)
-            await button.callback(it)
+            pressed = button(view, label)
+            await pressed.callback(it)
             self.assertIsInstance(it.response.send_modal.await_args.args[0], form)
         it = interaction(calendar=OWN)
-        days = next(b for b in ui.Choices(CID, OWN).children if b.label == "Days")
+        days = button(ui.Choices(CID, OWN), "Days")
         await days.callback(it)
         self.assertIn("Dates will read as Day 1", said(it))  # (Days needs no form)
 
     async def test_cancel_changes_nothing(self) -> None:
         it = interaction()
-        cancel = next(b for b in ui.Choices(CID).children if b.label == "Cancel")
+        cancel = button(ui.Choices(CID), "Cancel")
         await cancel.callback(it)
         self.assertEqual(it.response.edit_message.await_args.kwargs["content"], ui.CANCELLED)
         it.client.clocks.set_calendar.assert_not_awaited()
@@ -155,7 +164,7 @@ class TheForms(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(said(it), ui.OWN_NEXT)
         step = it.response.send_message.await_args.kwargs["view"]
         again = interaction()
-        await next(b for b in step.children if b.label == "Set first day").callback(again)
+        await button(step, "Set first day").callback(again)
         day_one = again.response.send_modal.await_args.args[0]
         typed(day_one, year="1201", part="Summer", day="2", weekday="Moonday")
         last = interaction()
@@ -190,7 +199,7 @@ class FilledIn(unittest.IsolatedAsyncioTestCase):
     async def test_the_first_form_has_the_calendar_in_its_boxes(self) -> None:
         it = interaction(calendar=self.own)
         view = ui.Choices(CID, self.own)
-        await next(b for b in view.children if b.label == "My own").callback(it)
+        await button(view, "My own").callback(it)
         form = it.response.send_modal.await_args.args[0]
         self.assertEqual(
             (form.name.default, form.weekdays.default, form.label.default, form.leap.default),
@@ -212,7 +221,7 @@ class FilledIn(unittest.IsolatedAsyncioTestCase):
         await form.on_submit(it)
         step = it.response.send_message.await_args.kwargs["view"]
         again = interaction()
-        await next(b for b in step.children if b.label == "Set first day").callback(again)
+        await button(step, "Set first day").callback(again)
         day_one = again.response.send_modal.await_args.args[0]
         self.assertEqual(
             (
@@ -256,9 +265,7 @@ class TheWarnings(unittest.IsolatedAsyncioTestCase):
         await ui.Choices(CID).days.callback(it)
         text = said(it)
         self.assertIn(cs.REMOVED, text)
-        self.assertIn(
-            "Save", [b.label for b in it.response.send_message.await_args.kwargs["view"].children]
-        )
+        self.assertIn("Save", labels(it.response.send_message.await_args.kwargs["view"]))
 
     async def test_saving_over_one_says_it_replaces_it(self) -> None:
         form = ui.SeasonsForm(CID)
@@ -276,7 +283,7 @@ class SavingOrNot(unittest.IsolatedAsyncioTestCase):
 
     async def test_save_makes_the_same_store_call_as_the_website(self) -> None:
         it = interaction()
-        save = next(b for b in ui.Confirm(CID, self.body).children if b.label == "Save")
+        save = button(ui.Confirm(CID, self.body), "Save")
         await save.callback(it)
         it.client.clocks.set_calendar.assert_awaited_once_with(
             5, CID, DM, cal.HARPTOS, year=1492, name="Flamerule", day=14
@@ -286,17 +293,17 @@ class SavingOrNot(unittest.IsolatedAsyncioTestCase):
     async def test_a_refusal_ends_in_words_and_cancel_saves_nothing(self) -> None:
         it = interaction()
         it.client.clocks.set_calendar.side_effect = CampaignError(NOT_A_DM)
-        save = next(b for b in ui.Confirm(CID, self.body).children if b.label == "Save")
+        save = button(ui.Confirm(CID, self.body), "Save")
         await save.callback(it)
         self.assertEqual(it.response.edit_message.await_args.kwargs["content"], ui.NOT_A_DM)
         it = interaction()
-        cancel = next(b for b in ui.Confirm(CID, self.body).children if b.label == "Cancel")
+        cancel = button(ui.Confirm(CID, self.body), "Cancel")
         await cancel.callback(it)
         it.client.clocks.set_calendar.assert_not_awaited()
 
     async def test_a_body_nobody_checked_is_never_saved(self) -> None:
         it = interaction()
-        save = next(b for b in ui.Confirm(CID, {"kind": "gregorian"}).children if b.label == "Save")
+        save = button(ui.Confirm(CID, {"kind": "gregorian"}), "Save")
         await save.callback(it)
         it.client.clocks.set_calendar.assert_not_awaited()
         self.assertEqual(
@@ -323,7 +330,7 @@ class WhenSomethingIsWrong(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(said(it).startswith("Line 2, “nonsense”"))
         again = it.response.send_message.await_args.kwargs["view"]
         retry = interaction()
-        await next(b for b in again.children if b.label == "Try again").callback(retry)
+        await button(again, "Try again").callback(retry)
         reopened = retry.response.send_modal.await_args.args[0]
         self.assertIsInstance(reopened, ui.OwnForm)
         self.assertEqual(
@@ -344,7 +351,7 @@ class WhenSomethingIsWrong(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(said(it), cs.PROBLEMS["length_number"])
         self.assertIn(
             "Try again",
-            [b.label for b in it.response.send_message.await_args.kwargs["view"].children],
+            labels(it.response.send_message.await_args.kwargs["view"]),
         )
 
     async def test_a_refusal_at_the_preview_also_keeps_what_was_typed(self) -> None:
@@ -354,7 +361,7 @@ class WhenSomethingIsWrong(unittest.IsolatedAsyncioTestCase):
         await form.on_submit(it)
         again = it.response.send_message.await_args.kwargs["view"]
         retry = interaction()
-        await next(b for b in again.children if b.label == "Try again").callback(retry)
+        await button(again, "Try again").callback(retry)
         reopened = retry.response.send_modal.await_args.args[0]
         self.assertEqual((reopened.year.default, reopened.day.default), ("1492", "31"))
 
