@@ -154,6 +154,7 @@ match. "In Discord" says where the DM finds it today.
 | House-rules file: sync, accept, review | House-rules file card | House rules: the file (`HOUSE_FILE_LIVE`) |
 | Backstory (a character's backstory file) | Backstory button | Story Graph: waiting connections (backstory links are answered there, `backstory-keep`) (WebDev confirmed) |
 | Clock, timers and effects (the table's game time) | Clock and effects cards | Discord-only: running game time at the table |
+| Game calendar: Days, Harptos, Four seasons or the campaign's own months, seasons, festivals, extra day and weekdays, with a preview and the warnings before Save (#5364) | 📅 Game calendar in the Rests & time… panel (DM only, #5376, slice 3c) | On the way: the Game calendar panel (WebDev-lead, #5364 slice 3, behind `CALENDAR_LIVE`), on core's read, preview and save doors (#5371, #5375) |
 | Initiative and fights (fightbot) | live commands | Discord-only: the initiative tracker during play |
 | Character sheets (link a sheet, open a card, re-read) | My sheet, Open card | Campaign settings: character sheets (`SHEETS_LIVE`) |
 | Guide me (🧭 what to do next) | 🧭 button | built, switched off: "Where is the table?" on the Upload lore page's "Your adventure" (`ADVENTURE_LIVE`, #3694 slice F; core `…/adventure/{doc}/guide`, migrations 0645, 0646) |
