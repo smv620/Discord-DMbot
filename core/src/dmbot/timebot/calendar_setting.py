@@ -20,6 +20,7 @@ from dmbot.timebot.calendar import Calendar
 # "part" is the page's own for a month, a season or a festival.
 PROBLEMS = {
     "kind": "Pick Days, Harptos, or your own calendar.",
+    "big": "That calendar is too long. Take some parts or names out.",
     "layout": "That calendar could not be read. Check each field.",
     "name": (
         "A name needs 1 to 30 characters, starting and ending with a letter or number. "
@@ -52,6 +53,10 @@ class CalendarProblem(ValueError):
     def __init__(self, *codes: str) -> None:
         super().__init__(codes[0] if codes else "layout")
         self.problems = [PROBLEMS.get(c, PROBLEMS["layout"]) for c in codes] or [PROBLEMS["layout"]]
+
+
+MAX_BODY = 16_000  # bytes: the most a stored definition may be (migration 0653's check)
+NO_CLOCK_NOTE = "You can save this calendar once the game clock is started."
 
 
 def _int(value: object) -> int | None:
@@ -95,6 +100,14 @@ def from_body(body: object) -> Calendar:
         code = str(exc)
         # (a part or a day the calendar has not got says so; anything else is Day 1 itself)
         raise CalendarProblem(code if code in PROBLEMS else "start") from None
+
+
+def today_of(calendar: Calendar, minute: int | None) -> str | None:
+    """ "Today is Summer 12th, 1201 AR": where the game clock is now in this calendar, so the DM
+    sees the months and the leap day count the way they meant. None for Days or with no clock."""
+    if calendar.kind == cal.DAYS or minute is None:
+        return None
+    return f"Today is {calendar.words(minute)}"
 
 
 def line_of(calendar: Calendar) -> str | None:

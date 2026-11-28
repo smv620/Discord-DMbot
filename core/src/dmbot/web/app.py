@@ -41,6 +41,7 @@ from dmbot.pictures.bucket import Bucket
 from dmbot.recaps import voice
 from dmbot.site_ask import answer as answer_words
 from dmbot.site_ask.service import Limited, SiteAsk
+from dmbot.timebot import calendar_setting as calendar_setting_pure
 from dmbot.transcript import import_link
 from dmbot.web import (
     admin_api,
@@ -2450,8 +2451,11 @@ def create_app(
         """What a calendar being typed would say: `{"line": "Day 1 is …"}` or `{"problems": […]}`
         in core's own words. Nothing is stored or logged. A game master only (404 otherwise)."""
         session, _token = signed
+        raw = await request.body()
+        if len(raw) > calendar_setting_pure.MAX_BODY:  # (refused before it is read)
+            return {"problems": [calendar_setting_pure.PROBLEMS["big"]]}
         try:
-            body = await request.json()
+            body = json.loads(raw)
         except ValueError:
             body = None
         try:

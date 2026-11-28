@@ -31,7 +31,8 @@ def shape(calendar: cal.Calendar, *, has_clock: bool) -> dict[str, Any]:
     }
 
 
-async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
+async def _door(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """The DM-only clock door's answer (`{}` for a campaign with no game clock), or `not_found`."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -42,16 +43,30 @@ async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
         found = (await cur.fetchone() or {}).get("r")
     if not isinstance(found, dict):
         raise RecapError("not_found")  # (not a DM of the campaign, or not in the server)
+    return found
+
+
+async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    found = await _door(db, session, ref)
     # `{}` is a campaign with no game clock yet: Day N, and nothing to save onto
     return shape(cal.from_door(found), has_clock=found.get("minute") is not None)
 
 
 async def preview(db: Database, session: Session, ref: str, body: object) -> dict[str, Any]:
-    """`{"line": "Day 1 is …"}` for a calendar the body names, or `{"problems": [words]}`. The
-    caller must be a DM of the campaign (the clock door says so); nothing is stored."""
-    await read(db, session, ref)  # (the same DM check as the read: not_found for anyone else)
+    """`{"line": "Day 1 is …", "today": "Today is …"|None}` for a calendar the body names, or
+    `{"problems": [words]}`; with no game clock yet the answer adds a `note` saying it can be saved
+    once the clock is started. The caller must be a DM of the campaign (the clock door says so);
+    nothing is stored."""
+    found = await _door(db, session, ref)  # (not_found for anyone who is not a DM)
+    minute = found.get("minute")
     try:
         calendar = setting.from_body(body)
     except setting.CalendarProblem as bad:
         return {"problems": bad.problems}
-    return {"line": setting.line_of(calendar)}
+    out: dict[str, Any] = {
+        "line": setting.line_of(calendar),
+        "today": setting.today_of(calendar, minute if type(minute) is int else None),
+    }
+    if minute is None:
+        out["note"] = setting.NO_CLOCK_NOTE
+    return out

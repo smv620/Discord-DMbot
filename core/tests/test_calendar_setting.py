@@ -80,6 +80,12 @@ class MakingTheCalendar(unittest.TestCase):
 
 
 class ThePreview(unittest.TestCase):
+    def test_today_in_the_calendar_or_nothing(self) -> None:
+        got = cs.from_body(custom(day=2))
+        self.assertEqual(cs.today_of(got, 10 * 1440), "Today is Summer 12th, 1201")
+        self.assertIsNone(cs.today_of(got, None))
+        self.assertIsNone(cs.today_of(cal.Calendar(), 5 * 1440))
+
     def test_days_has_no_line_and_the_others_say_day_one(self) -> None:
         self.assertIsNone(cs.line_of(cal.Calendar()))
         self.assertIsNone(cs.day_one_of(cal.Calendar()))
