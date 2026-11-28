@@ -409,3 +409,84 @@ class OnTheCalendar(unittest.TestCase):
             cal.custom_from(start.year, 360, stored)  # (the day of the year is not one it has)
         with self.assertRaises(ValueError):
             cal.def_of(cal.Calendar())
+
+
+class TheSpokenYearLabel(unittest.TestCase):
+    """How the voice says the year label (#5364 3b): spoken only, never printed."""
+
+    spoken = lay.Layout(
+        "Vale", lay.four_seasons(90).parts, year_label="AR", year_say="after the Reckoning"
+    )
+    start = spoken.start_on(1201, "Summer", 2)
+
+    def test_printed_as_typed_and_spoken_as_set(self) -> None:
+        self.assertEqual(self.spoken.words(1, self.start), "Summer 2nd, 1201 AR")
+        self.assertEqual(
+            self.spoken.words(1, self.start, spoken=True), "Summer 2nd, 1201 after the Reckoning"
+        )
+        plain = lay.Layout("Vale", lay.four_seasons(90).parts, year_label="AR")
+        self.assertEqual(
+            plain.words(1, plain.start_on(1201, "Summer", 2), spoken=True), "Summer 2nd, 1201 AR"
+        )
+
+    def test_it_is_kept_in_the_stored_form_only_when_set(self) -> None:
+        self.assertEqual(self.spoken.to_json()["yearSay"], "after the Reckoning")
+        self.assertEqual(lay.Layout.from_json(self.spoken.to_json()), self.spoken)
+        self.assertNotIn(
+            "yearSay", lay.four_seasons(90).to_json()
+        )  # (a stored one reads as before)
+        stored = lay.four_seasons(90).to_json()
+        self.assertEqual(lay.Layout.from_json(stored), lay.four_seasons(90))
+
+    def test_it_needs_a_label_and_a_plain_short_phrase(self) -> None:
+        parts = lay.four_seasons(90).parts
+        for say, label in (
+            ("after the Reckoning", ""),
+            (" x", "AR"),
+            ("x" * 31, "AR"),
+            ("a\nb", "AR"),
+        ):
+            with self.subTest((say, label)), self.assertRaises(ValueError) as caught:
+                lay.Layout("Vale", parts, year_label=label, year_say=say)
+            self.assertEqual(str(caught.exception), "label")
+        with self.assertRaises(ValueError):
+            lay.Layout.from_json({**self.spoken.to_json(), "yearSay": 5})
+
+
+class ReaderEdges(unittest.TestCase):
+    """The date reader's edge cases: a name with a plus, a date inside a sentence, the suffix,
+    a year with its label, and a festival read alone (#5372, follow-up of #5364)."""
+
+    layout = lay.Layout(
+        "Vale",
+        (
+            lay.Part("Moon+Sun", 30, lay.SEASON),
+            lay.Part("Dry", 30, lay.SEASON),
+            lay.Part("Moonfeast", 3, lay.FESTIVAL),
+        ),
+        year_label="AR",
+    )
+    start = layout.start_on(1201, "Moon+Sun", 1)
+
+    def test_a_name_with_a_plus_is_read_as_typed(self) -> None:
+        self.assertEqual(self.layout.parse("Moon+Sun 3", self.start, today=1), 3)
+
+    def test_a_date_among_other_words(self) -> None:
+        self.assertEqual(
+            self.layout.parse("meet on the 3rd day of Dry, then rest", self.start, today=1), 33
+        )
+
+    def test_the_suffix_is_optional_and_case_does_not_matter(self) -> None:
+        for said in ("DRY 3", "dry 3rd", "Dry 3"):
+            with self.subTest(said):
+                self.assertEqual(self.layout.parse(said, self.start, today=1), 33)
+
+    def test_a_year_with_the_label_counts_and_one_before_day_one_is_none(self) -> None:
+        self.assertEqual(self.layout.parse("Dry 3rd, 1201 AR", self.start, today=1), 33)
+        self.assertIsNone(self.layout.parse("Dry 3rd, 1200 AR", self.start, today=1))
+        self.assertEqual(self.layout.parse("Dry 3rd, 1201", self.start, today=1), 33)
+
+    def test_a_several_day_festival_alone_is_its_first_day_and_prints_its_days(self) -> None:
+        self.assertEqual(self.layout.parse("Moonfeast, 1201 AR", self.start, today=1), 61)
+        self.assertEqual(self.layout.words(61, self.start), "Moonfeast 1st, 1201 AR")
+        self.assertEqual(self.layout.words(63, self.start), "Moonfeast 3rd, 1201 AR")

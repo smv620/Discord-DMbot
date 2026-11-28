@@ -41,11 +41,13 @@ from dmbot.pictures.bucket import Bucket
 from dmbot.recaps import voice
 from dmbot.site_ask import answer as answer_words
 from dmbot.site_ask.service import Limited, SiteAsk
+from dmbot.timebot import calendar_setting as calendar_setting_pure
 from dmbot.transcript import import_link
 from dmbot.web import (
     admin_api,
     adventure,
     all_names,
+    calendar_setting,
     campaign_backup,
     campaign_delete,
     campaign_settings,
@@ -2427,6 +2429,72 @@ def create_app(
             raise HTTPException(status_code=400, detail="bad_target") from None
         try:
             return await relationships.know_line_of(db, session, ref, body)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/calendar")
+    async def me_campaign_calendar(ref: str, signed: Signed) -> dict[str, Any]:
+        """The Game calendar panel (#5364): `{kind, def, dayOne, line, hasClock}`, worded by core.
+        A game master only (404 otherwise)."""
+        session, _token = signed
+        try:
+            return await calendar_setting.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/calendar/preview")
+    async def me_campaign_calendar_preview(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, Any]:
+        """What a calendar being typed would say: `{"line": "Day 1 is …"}` or `{"problems": […]}`
+        in core's own words. Nothing is stored or logged. A game master only (404 otherwise)."""
+        session, _token = signed
+        raw = await request.body()
+        if len(raw) > calendar_setting_pure.MAX_BODY:  # (refused before it is read)
+            return {"problems": [calendar_setting_pure.PROBLEMS["big"]]}
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = None
+        try:
+            return await calendar_setting.preview(db, session, ref, body)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/calendar", status_code=202)
+    async def me_campaign_calendar_save(
+        ref: str, request: Request, response: Response, signed: Signed
+    ) -> dict[str, Any]:
+        """Save the calendar the body names (the preview's body): `{"answer": id}` (polled at the
+        answers route), or `{"problems": […]}` / `{"error", "words"}` when it cannot be saved. A
+        game master only (404 otherwise)."""
+        session, _token = signed
+        raw = await request.body()
+        if len(raw) > calendar_setting_pure.MAX_BODY:
+            response.status_code = 200  # (nothing was queued: not "accepted")
+            return {"problems": [calendar_setting_pure.PROBLEMS["big"]]}
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = None
+        try:
+            queued = await calendar_setting.save(db, session, ref, body)
+            if "answer" not in queued:
+                response.status_code = 200  # (refused with words: nothing was queued)
+            return queued
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/calendar/answers/{answer}")
+    async def me_campaign_calendar_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
+        """How a calendar save is going: `{state, error, words, waits}`. The DM who asked only."""
+        session, _token = signed
+        try:
+            return await calendar_setting.read_answer(db, session, ref, answer)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

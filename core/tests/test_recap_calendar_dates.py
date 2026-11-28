@@ -65,3 +65,19 @@ class TheVoicesFirstLine(unittest.TestCase):
         self.assertEqual(  # (only the title line's words differ)
             [x.spoken for x in plain.paragraphs[1:]], [x.spoken for x in vale.paragraphs[1:]]
         )
+
+
+class TheVoiceSaysTheYearLabelAsSet(unittest.TestCase):
+    def test_the_written_heading_keeps_the_label_and_the_voice_says_the_phrase(self) -> None:
+        layout = lay.Layout(
+            "Vale", lay.four_seasons(90).parts, year_label="AR", year_say="after the Reckoning"
+        )
+        vale = Calendar(cal.CUSTOM, layout=layout, layout_start=layout.start_on(1201, "Summer", 2))
+        self.assertEqual(
+            draft.heading("The Quay", 5, vale),
+            "**Session Summary: The Quay (Summer 6th, 1201 AR)**",
+        )
+        self.assertEqual(
+            sc.title_line("The Quay", 5, vale),
+            "Session Summary: The Quay, Summer 6th, 1201 after the Reckoning",
+        )

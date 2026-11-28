@@ -111,6 +111,9 @@ class Layout:
     leap: Leap | None = None
     weekdays: tuple[str, ...] = ()
     year_label: str = ""
+    # How the recap's voice says the year label ("AR" read as "after the Reckoning"): spoken only,
+    # never printed. Month and season names are read as typed (Supervisor, #5364).
+    year_say: str = ""
 
     def __post_init__(self) -> None:
         if not _name_ok(self.name):
@@ -152,6 +155,14 @@ class Layout:
             fresh(day_name)
         if len(self.year_label) > MAX_LABEL or (self.year_label and not self.year_label.isalpha()):
             raise ValueError("label")
+        say = self.year_say
+        if say and (
+            not self.year_label
+            or say != say.strip()
+            or len(say) > MAX_NAME
+            or not say.isprintable()
+        ):
+            raise ValueError("label")
 
     # -- stored form ----------------------------------------------------------------------
 
@@ -166,6 +177,8 @@ class Layout:
             else {"every": self.leap.every, "name": self.leap.name, "after": self.leap.after},
             "weekdays": list(self.weekdays),
             "yearLabel": self.year_label,
+            # (only when set, so a definition stored before it was possible reads the same)
+            **({"yearSay": self.year_say} if self.year_say else {}),
         }
 
     @classmethod
@@ -173,7 +186,10 @@ class Layout:
         """The definition from what `to_json` wrote, checked as strictly as one made by hand: a
         file with an extra or missing key, or a value of the wrong kind, is ValueError("layout")."""
         keys = {"name", "parts", "leap", "weekdays", "yearLabel"}
-        if not isinstance(raw, dict) or set(raw) != keys:
+        if not isinstance(raw, dict) or not keys <= set(raw) <= keys | {"yearSay"}:
+            raise ValueError("layout")
+        say = raw.get("yearSay", "")
+        if not isinstance(say, str):
             raise ValueError("layout")
         parts, leap, weekdays = raw["parts"], raw["leap"], raw["weekdays"]
         if not isinstance(parts, list) or not isinstance(weekdays, list):
@@ -196,7 +212,7 @@ class Layout:
             carried = Leap(leap["every"], leap["name"], leap["after"])
         if not isinstance(raw["name"], str):
             raise ValueError("layout")
-        return cls(raw["name"], tuple(made), carried, tuple(weekdays), raw["yearLabel"])
+        return cls(raw["name"], tuple(made), carried, tuple(weekdays), raw["yearLabel"], say)
 
     # -- the year -------------------------------------------------------------------------
 
@@ -319,12 +335,16 @@ class Layout:
 
     # -- printing -------------------------------------------------------------------------
 
-    def words(self, day_number: int, start: Start, *, weekday: bool = False) -> str:
+    def words(
+        self, day_number: int, start: Start, *, weekday: bool = False, spoken: bool = False
+    ) -> str:
         """ "Summer 2nd, 1201 AR", or "Midwinter, 1201 AR" for a one-day festival (a several-day
         one counts its days: "Moonfeast 2nd, 1201 AR"). With `weekday` and weekday names, the
-        weekday first ("Fireday, Summer 2nd, 1201 AR"), for where the clock is shown in full."""
+        weekday first ("Fireday, Summer 2nd, 1201 AR"), for where the clock is shown in full. With
+        `spoken`, the year label is how the voice says it ("... 1201 after the Reckoning")."""
         d = self.date_of(day_number, start)
-        label = f" {self.year_label}" if self.year_label else ""
+        said = (self.year_say if spoken else "") or self.year_label
+        label = f" {said}" if said else ""
         if d.kind == FESTIVAL and d.of == 1:
             text = f"{d.part}, {d.year}{label}"
         else:

@@ -214,6 +214,7 @@ NOT_STAMPED: dict[str, str] = {
             "web_adventure_guides",
             "web_adventure_reads",
             "web_adventure_removals",
+            "web_calendar_saves",
             "web_line_fixes",
             "web_peeks",
             "web_recap_style_actions",

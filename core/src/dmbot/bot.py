@@ -373,6 +373,7 @@ from dmbot.memory import (
     web_adventure_matches,
     web_adventure_reads,
     web_adventure_removals,
+    web_calendar_saves,
     web_connection_reads,
     web_report_requests,
     web_sheets,
@@ -1355,6 +1356,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # Removing a Shared story file from the website (#3694 slice C): instant, so no task.
         self.web_adventure_removals = (
             web_adventure_removals.RemovalStore(recaps.db) if recaps is not None else None
+        )
+        # Saving a campaign's calendar from the website (#5364 slice 3b): instant, so no task.
+        self.web_calendar_saves = (
+            web_calendar_saves.SaveStore(recaps.db) if recaps is not None else None
         )
         # Giving a Shared story file from the website (#3694 slice D): reading is slow, so each
         # one runs as a tracked task, at most one a server.
@@ -17894,6 +17899,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     break
                 with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
                     await web_adventure_removals.run_one(self.adventure, store, guild.id, item)
+
+    async def run_web_calendar_saves(self) -> None:
+        """Calendars saved from the website's Game calendar panel (#5364): each is the same store
+        call as Discord's setting, done in order, a few a pass. Outcome words are logged, never a
+        name."""
+        store = self.web_calendar_saves
+        if store is None or self.clocks is None:
+            return
+        for guild in list(self.guilds):
+            for _ in range(5):
+                item = await store.claim_next(guild.id)
+                if item is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=item.campaign_id):
+                    await web_calendar_saves.run_one(self.clocks, store, guild.id, item)
 
     async def run_web_connection_reads(self) -> None:
         """Connections said in words on the website: a read, a Use this or an Undo. Each runs as a
