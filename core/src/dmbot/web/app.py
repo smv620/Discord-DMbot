@@ -2466,7 +2466,7 @@ def create_app(
 
     @app.post("/me/campaigns/{ref}/calendar", status_code=202)
     async def me_campaign_calendar_save(
-        ref: str, request: Request, signed: Signed
+        ref: str, request: Request, response: Response, signed: Signed
     ) -> dict[str, Any]:
         """Save the calendar the body names (the preview's body): `{"answer": id}` (polled at the
         answers route), or `{"problems": […]}` / `{"error", "words"}` when it cannot be saved. A
@@ -2474,13 +2474,17 @@ def create_app(
         session, _token = signed
         raw = await request.body()
         if len(raw) > calendar_setting_pure.MAX_BODY:
+            response.status_code = 200  # (nothing was queued: not "accepted")
             return {"problems": [calendar_setting_pure.PROBLEMS["big"]]}
         try:
             body = json.loads(raw)
         except ValueError:
             body = None
         try:
-            return await calendar_setting.save(db, session, ref, body)
+            queued = await calendar_setting.save(db, session, ref, body)
+            if "answer" not in queued:
+                response.status_code = 200  # (refused with words: nothing was queued)
+            return queued
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

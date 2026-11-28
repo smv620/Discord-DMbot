@@ -157,6 +157,38 @@ class OnThePanel(Base):
         shown = await calendar_setting.read_answer(self.web, self.session, self.cref, got["answer"])
         self.assertTrue(shown["waits"]["stalled"])  # (updated at second 1: long ago)
 
+    async def test_a_save_that_went_quiet_goes_back_to_waiting_and_the_campaign_stays_busy(
+        self,
+    ) -> None:
+        await self.put_clock()
+        got = await calendar_setting.save(self.web, self.session, self.cref, {"kind": "days"})
+        async with self.db.guild(self.g) as conn:  # the bot took it and went quiet for ten minutes
+            await conn.execute(
+                "UPDATE web_calendar_saves SET state = 'working', claimed_at = 5, updated_at = 1"
+            )
+        again = await calendar_setting.save(self.web, self.session, self.cref, {"kind": "days"})
+        self.assertEqual(again["error"], "busy")  # (still one open: never two)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT id, state, claimed_at FROM web_calendar_saves")
+            (row,) = await cur.fetchall()
+        self.assertEqual(
+            (row["id"], row["state"], row["claimed_at"]), (got["answer"], "waiting", 0)
+        )
+
+    async def test_another_campaigns_answer_is_never_read(self) -> None:
+        await self.put_clock()
+        got = await calendar_setting.save(self.web, self.session, self.cref, {"kind": "days"})
+        other = (await self.campaigns.create(self.g, "Elsewhere", 7)).id
+        with self.assertRaises(RecapError) as caught:
+            await calendar_setting.read_answer(
+                self.web, self.session, f"{self.g}.{other}", got["answer"]
+            )
+        self.assertEqual(caught.exception.code, "not_found")
+        with self.assertRaises(RecapError):
+            await calendar_setting.save(
+                self.web, self.session, f"{self.g}.{other}", {"kind": "days"}
+            )
+
     async def test_only_a_dm_saves_or_reads_an_answer(self) -> None:
         await self.put_clock()
         for call in (
@@ -223,3 +255,31 @@ class TheCalendarRoute(TheRoute):
                 headers={"content-type": "application/json"},
             )
             self.assertEqual(broken.json(), {"problems": [setting.PROBLEMS["layout"]]})
+
+    async def test_the_save_route_says_accepted_only_when_it_queued_something(self) -> None:
+        body = {"kind": "days"}
+        async with await self.client(self.session) as client:
+            no_clock = await client.post(f"/me/campaigns/{self.cref}/calendar", json=body)
+            self.assertEqual(no_clock.status_code, 200)  # (no game clock: nothing queued)
+            self.assertEqual(no_clock.json()["error"], "no_clock")
+            refused = await client.post(
+                f"/me/campaigns/{self.cref}/calendar", json={"kind": "gregorian"}
+            )
+            self.assertEqual((refused.status_code, list(refused.json())), (200, ["problems"]))
+        async with self.db.guild(self.g) as conn:  # with a game clock it is queued: accepted
+            await conn.execute(
+                "INSERT INTO game_clocks (guild_id, campaign_id, minute, last_long_rest,"
+                " updated_at) VALUES (%s, %s, 0, 0, 1)",
+                (self.g, self.one.id),
+            )
+        async with await self.client(self.session) as client:
+            queued = await client.post(f"/me/campaigns/{self.cref}/calendar", json=body)
+            self.assertEqual(queued.status_code, 202)
+            answer = queued.json()["answer"]
+            polled = await client.get(f"/me/campaigns/{self.cref}/calendar/answers/{answer}")
+            self.assertEqual((polled.status_code, polled.json()["state"]), (200, "waiting"))
+        async with await self.client(self.player) as client:
+            denied = await client.post(f"/me/campaigns/{self.cref}/calendar", json=body)
+            self.assertEqual(denied.status_code, 404)
+            seen = await client.get(f"/me/campaigns/{self.cref}/calendar/answers/{answer}")
+            self.assertEqual(seen.status_code, 404)

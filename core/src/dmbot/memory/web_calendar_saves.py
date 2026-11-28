@@ -5,8 +5,9 @@ that the person is a DM of the campaign, that it has a game clock, and that ever
 calendar has.
 
 A save is instant, so the row ends `done` or `failed` with an error word the page turns into words
-(`bad_calendar` also gives core's own plain sentences, worked out again from the row's body, never
-stored). A row holds the DM's own names for months and weekdays: logs carry outcome words only.
+(`bad_calendar` is the one generic sentence: the website already checked the body and said what was
+wrong before it queued anything, so this is a rare race, and the read door never returns the body).
+A row holds the DM's own names for months and weekdays: logs carry outcome words only.
 """
 
 from __future__ import annotations
