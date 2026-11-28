@@ -344,10 +344,10 @@ class WhenSomethingIsWrong(unittest.IsolatedAsyncioTestCase):
         it = interaction()
         await form.on_submit(it)
         self.assertEqual(said(it), cs.PROBLEMS["year_number"])
-        form = ui.SeasonsForm(CID)
-        typed(form, length="many", year="1201", part="Summer", day="2")
+        seasons = ui.SeasonsForm(CID)
+        typed(seasons, length="many", year="1201", part="Summer", day="2")
         it = interaction()
-        await form.on_submit(it)
+        await seasons.on_submit(it)
         self.assertEqual(said(it), cs.PROBLEMS["length_number"])
         self.assertIn(
             "Try again",
