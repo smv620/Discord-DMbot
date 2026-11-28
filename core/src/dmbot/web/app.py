@@ -46,6 +46,7 @@ from dmbot.web import (
     admin_api,
     adventure,
     all_names,
+    calendar_setting,
     campaign_backup,
     campaign_delete,
     campaign_settings,
@@ -2427,6 +2428,34 @@ def create_app(
             raise HTTPException(status_code=400, detail="bad_target") from None
         try:
             return await relationships.know_line_of(db, session, ref, body)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/calendar")
+    async def me_campaign_calendar(ref: str, signed: Signed) -> dict[str, Any]:
+        """The Game calendar panel (#5364): `{kind, def, dayOne, line, hasClock}`, worded by core.
+        A game master only (404 otherwise)."""
+        session, _token = signed
+        try:
+            return await calendar_setting.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/calendar/preview")
+    async def me_campaign_calendar_preview(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, Any]:
+        """What a calendar being typed would say: `{"line": "Day 1 is …"}` or `{"problems": […]}`
+        in core's own words. Nothing is stored or logged. A game master only (404 otherwise)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return await calendar_setting.preview(db, session, ref, body)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
