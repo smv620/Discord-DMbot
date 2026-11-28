@@ -227,6 +227,14 @@ FEATURES: tuple[Feature, ...] = (
         ("wizard_link_on",),
     ),
     Feature(
+        "web calendar link",
+        "Build the game calendar on the website",
+        "📅 Game calendar offers a link to the website's calendar page, where a long calendar "
+        "is easier to type.",
+        lambda s: s.web_calendar_on,
+        ("web_calendar_on",),
+    ),
+    Feature(
         "live heads-up",
         "Heads-up during play",
         "DMbot tells you on the DM screen when someone you said is dead is voiced at the table.",

@@ -17,6 +17,7 @@ from typing import Any
 
 import discord
 
+from dmbot.dm_screen import dm_bot_panel as panel
 from dmbot.memory import web_calendar_saves as saves
 from dmbot.timebot import calendar as cal
 from dmbot.timebot import calendar_setting as setting
@@ -32,9 +33,10 @@ CANCELLED = "Nothing was changed."
 INTRO = (
     "📅 **Game calendar.** How should dates read at your table? Nothing changes until you press "
     "Save.\n**Days:** Day 1, Day 2… **Harptos:** the Forgotten Realms calendar. **Four seasons:** "
-    "four equal seasons. **My own:** type your months or seasons (a long one is easier on the "
-    "website)."
+    "four equal seasons. **My own:** type your months or seasons."
 )
+LONG_ONE = " (A long one is easier on the website.)"
+WEBSITE_BUTTON = "Build on the website"
 OWN_NEXT = "Next: which date is your campaign's first day?"
 TIMED_OUT = "This timed out. Press Game calendar again."
 NO_CHANGE = "No change from now."
@@ -99,7 +101,23 @@ async def open_panel(interaction: discord.Interaction, campaign_id: str) -> None
         if now.layout is not None and line
         else (f"Now: {line}." if line else "Now: Day 1, Day 2, and so on.")
     )
-    await _send(interaction, f"{INTRO}\n{here}", Choices(campaign.id, now))
+    link = _website_link(interaction, campaign)
+    await _send(
+        interaction,
+        f"{INTRO}{LONG_ONE if link else ''}\n{here}",
+        Choices(campaign.id, now, link=link),
+    )
+
+
+def _website_link(interaction: discord.Interaction, campaign: Any) -> str:
+    """The campaign page's Settings, where the website's calendar panel is, or "" when the link
+    is off (DMBOT_WEB_CALENDAR, flipped with the website's CALENDAR_LIVE) or the bot has no
+    website address: then the button is not shown at all."""
+    settings = getattr(interaction.client, "settings", None)
+    site = str(getattr(settings, "site_url", "") or "")
+    if not getattr(settings, "web_calendar_on", False) or not site:
+        return ""
+    return panel.campaign_url(site, campaign.guild_id, campaign.id) + "#settings"
 
 
 def _box(
@@ -167,10 +185,14 @@ async def _refuse(
 
 
 class Choices(_Timed):
-    def __init__(self, campaign_id: str, current: cal.Calendar | None = None) -> None:
+    def __init__(
+        self, campaign_id: str, current: cal.Calendar | None = None, link: str = ""
+    ) -> None:
         super().__init__(timeout=900)
         self.campaign_id = campaign_id
         self.current = current or cal.Calendar()
+        if link:
+            self.add_item(discord.ui.Button(label=WEBSITE_BUTTON, url=link, row=0))
 
     @discord.ui.button(label="Days", style=discord.ButtonStyle.secondary, row=0)
     async def days(self, interaction: discord.Interaction, _b: discord.ui.Button[Choices]) -> None:

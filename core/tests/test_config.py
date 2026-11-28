@@ -188,6 +188,12 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_READINGS must be 1"):
             load_settings({**BASE, "DMBOT_STORY_READINGS": "maybe"})
 
+    def test_web_calendar_switch_is_off_by_default(self) -> None:
+        self.assertFalse(load_settings(BASE).web_calendar_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_WEB_CALENDAR": "on"}).web_calendar_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_WEB_CALENDAR must be 1"):
+            load_settings({**BASE, "DMBOT_WEB_CALENDAR": "maybe"})
+
     def test_wizard_link_switch_is_off_by_default(self) -> None:
         self.assertFalse(load_settings(BASE).wizard_link_on)
         self.assertTrue(load_settings({**BASE, "DMBOT_WIZARD_LINK": "on"}).wizard_link_on)

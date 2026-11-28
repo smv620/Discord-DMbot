@@ -24,9 +24,16 @@ SEASONS = lay.four_seasons(90)
 OWN = Calendar(cal.CUSTOM, layout=SEASONS, layout_start=SEASONS.start_on(1201, "Summer", 2))
 
 
-def interaction(user: int = DM, *, calendar: Calendar | None = None, clock: bool = True) -> Any:
+def interaction(
+    user: int = DM,
+    *,
+    calendar: Calendar | None = None,
+    clock: bool = True,
+    site: str = "",
+    web_on: bool = False,
+) -> Any:
     stored = Stored(Clock(10 * 1440, 0), None, None, calendar=calendar or Calendar())
-    campaign = SimpleNamespace(id=CID, dm_user_ids=[DM])
+    campaign = SimpleNamespace(id=CID, guild_id=5, dm_user_ids=[DM])
     return SimpleNamespace(
         user=SimpleNamespace(id=user),
         guild=SimpleNamespace(id=5),
@@ -35,6 +42,7 @@ def interaction(user: int = DM, *, calendar: Calendar | None = None, clock: bool
         ),
         original_response=AsyncMock(return_value=SimpleNamespace(edit=AsyncMock())),
         client=SimpleNamespace(
+            settings=SimpleNamespace(site_url=site, web_calendar_on=web_on),
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             clocks=SimpleNamespace(
                 get=AsyncMock(return_value=stored if clock else None),
@@ -107,6 +115,23 @@ class ThePanel(unittest.IsolatedAsyncioTestCase):
         days = button(ui.Choices(CID, OWN), "Days")
         await days.callback(it)
         self.assertIn("Dates will read as Day 1", said(it))  # (Days needs no form)
+
+    async def test_the_website_link_shows_with_the_switch_on_and_an_address(self) -> None:
+        it = interaction(site="https://example.com", web_on=True)
+        await ui.open_panel(it, CID)
+        view = it.response.send_message.await_args.kwargs["view"]
+        link = button(view, ui.WEBSITE_BUTTON)
+        self.assertTrue(link.url.startswith("https://example.com/account/campaigns/"))
+        self.assertTrue(link.url.endswith("#settings"))
+        self.assertIn("easier on the website", said(it))
+
+    async def test_no_website_link_with_the_switch_off_or_no_address(self) -> None:
+        for site, web_on in (("https://example.com", False), ("", True), ("", False)):
+            it = interaction(site=site, web_on=web_on)
+            await ui.open_panel(it, CID)
+            view = it.response.send_message.await_args.kwargs["view"]
+            self.assertNotIn(ui.WEBSITE_BUTTON, labels(view))
+            self.assertNotIn("website", said(it))
 
     async def test_cancel_changes_nothing(self) -> None:
         it = interaction()
