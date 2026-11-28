@@ -112,6 +112,81 @@ describe("the game calendar on a campaign's Settings", () => {
     await waitFor(() => expect(api.calls).toContain(`saveCalendar:${REF}:days`));
   });
 
+  it("several weekdays can be typed, commas included", async () => {
+    const api = mockApi("table");
+    panel(api);
+    await screen.findByText(/Day 1 is Hammer/);
+    pick(words.kinds.custom);
+    const box = screen.getByLabelText(new RegExp(`^${words.weekdays}`)) as HTMLInputElement;
+    fireEvent.input(box, { target: { value: "Mon," } });
+    expect(box.value).toBe("Mon,"); // (the comma stays while the next one is typed)
+    fireEvent.input(box, { target: { value: "Mon, Tue" } });
+    await waitFor(() => expect(screen.getByRole("combobox", { name: words.dayOneWeekday })).toBeTruthy());
+    expect(Array.from((screen.getByRole("combobox", { name: words.dayOneWeekday }) as HTMLSelectElement).options).map((o) => o.value)).toEqual(["Mon", "Tue"]);
+  });
+
+  it("what is sent is what is shown: the first weekday is really chosen, and a one-day festival has no day number", async () => {
+    const api = mockApi("table");
+    api.calendar = async () => ({
+      kind: "custom",
+      def: { name: "Mine", parts: [{ name: "Spring", days: 30, kind: "month" }, { name: "Midwinter", days: 1, kind: "festival" }], leap: null, weekdays: ["Mon", "Tue"], yearLabel: "AR" },
+      dayOne: { year: 1201, part: "Spring", day: 2, weekday: null },
+      line: "Day 1 is Spring 2nd, 1201 AR",
+      hasClock: true,
+    });
+    const asked: unknown[] = [];
+    const real = api.calendarPreview!.bind(api);
+    api.calendarPreview = async (ref, body) => (asked.push(body), real(ref, body));
+    panel(api);
+    await screen.findByText("Day 1 is Spring 2nd, 1201 AR");
+    await waitFor(() => expect(asked.length).toBeGreaterThan(0));
+    expect((asked[asked.length - 1] as { dayOne: { weekday: string } }).dayOne.weekday).toBe("Mon"); // (not null: what the select shows)
+    fireEvent.change(screen.getByRole("combobox", { name: words.dayOnePart }), { target: { value: "Midwinter" } });
+    await waitFor(() => expect((asked[asked.length - 1] as { dayOne: { part: string; day: number | null } }).dayOne).toMatchObject({ part: "Midwinter", day: null }));
+  });
+
+  it("leaving a calendar of the DM's own for Four seasons asks too", async () => {
+    const api = mockApi("table");
+    api.calendar = async () => ({
+      kind: "custom",
+      def: { name: "Mine", parts: [{ name: "Spring", days: 30, kind: "month" }], leap: null, weekdays: [], yearLabel: "" },
+      dayOne: { year: 1, part: "Spring", day: 1, weekday: null },
+      line: "Day 1 is Spring 1st, year 1 AR",
+      hasClock: true,
+    });
+    panel(api);
+    await screen.findByText("Day 1 is Spring 1st, year 1 AR");
+    pick(words.kinds.seasons);
+    await screen.findByText(/Day 1 is Spring 1st, 1$/, undefined, { timeout: 2000 }); // (core's preview for Four seasons, not the line now in force)
+    fireEvent.click(screen.getByRole("button", { name: words.save }));
+    expect(screen.getByText(words.removeWarning)).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("saveCalendar:"))).toBe(false);
+  });
+
+  it("a double press sends one save", async () => {
+    const api = mockApi("table");
+    panel(api);
+    await screen.findByText(/Day 1 is Hammer/);
+    pick(words.kinds.seasons);
+    await screen.findByText(/Day 1 is Spring/, undefined, { timeout: 2000 });
+    const save = screen.getByRole("button", { name: words.save });
+    fireEvent.click(save);
+    fireEvent.click(save);
+    await waitFor(() => expect(api.calls.filter((c) => c.startsWith("saveCalendar:")).length).toBe(1));
+  });
+
+  it("a preview that cannot be made says so and Save stays off", async () => {
+    const api = mockApi("table");
+    api.calendarPreview = async () => {
+      throw new Error("down");
+    };
+    panel(api);
+    await screen.findByText(/Day 1 is Hammer/);
+    pick(words.kinds.seasons);
+    expect(await screen.findByText(words.previewFailed, undefined, { timeout: 2000 })).toBeTruthy();
+    expect((screen.getByRole("button", { name: words.save }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("with no game clock it says so and cannot be saved", async () => {
     panel(mockApi("table"), "100.cmp1.cal-noclock");
     await screen.findByText(words.noClock);

@@ -318,7 +318,7 @@ export default function CampaignSettings({
       )}
       {/* A game master's own panel (#5364 slice 3): the calendar reads its own door, which answers a player with not found, so it shows nothing for one. */}
       {CALENDAR_LIVE && s && s.mapChecks !== undefined && api.calendar !== undefined && (
-        <LazyPanel load={() => import("./CalendarPanel")} what="the game calendar" props={{ api, campaignRef }} />
+        <LazyPanel key={campaignRef} load={() => import("./CalendarPanel")} what="the game calendar" props={{ api, campaignRef }} />
       )}
       {SHARE_STORY_LIVE && s && s.shareImprove !== undefined && api.setCampaignSetting && (
         <LazyPanel load={() => import("./ShareStoryPanel")} what="sharing the story" props={{ api, campaignRef, on: s.shareImprove }} />

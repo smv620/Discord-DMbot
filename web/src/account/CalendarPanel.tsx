@@ -37,7 +37,12 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
   const [seasonDays, setSeasonDays] = useState(91);
   const [dayOne, setDayOne] = useState<CalendarDayOne>({ year: 1, part: "", day: 1, weekday: null });
   const [preview, setPreview] = useState<{ line?: string; problems?: string[] } | "checking" | null>(null);
+  const [previewKey, setPreviewKey] = useState(""); // the exact fields the preview on screen was asked for
+  const [previewFailed, setPreviewFailed] = useState(false); // the check itself could not be made, so Save is off and says why
   const [confirming, setConfirming] = useState(false);
+  // The weekdays as typed (a comma is part of typing them), parsed into the definition as they change.
+  const [weekdaysText, setWeekdaysText] = useState("");
+  const sending = useRef(false);
   const [wait, setWait] = useState<Wait | null>(null);
   const [problems, setProblems] = useState<string[]>([]);
   const live = useRef(true);
@@ -52,7 +57,7 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
       setRead(got);
       setFailed(false);
       setChoice(got.kind === "custom" ? "custom" : got.kind);
-      if (got.def) setDef(got.def);
+      if (got.def) (setDef(got.def), setWeekdaysText(got.def.weekdays.join(", ")));
       if (got.dayOne) setDayOne(got.dayOne);
     } catch (error) {
       // Not a game master (or not there): the panel is simply not shown.
@@ -78,19 +83,32 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
     if (!partNames.includes(dayOne.part) && partNames[0] !== undefined) setDayOne((one) => ({ ...one, part: partNames[0] ?? "" }));
   }, [partNames.join("\u0000"), choice]);
 
+  // Day 1's weekday, day and the leap day's place follow the parts and weekdays: what the fields show is what is sent (never a name that was
+  // removed or renamed, a weekday with none set, or a day number for a one-day festival).
+  useEffect(() => {
+    if (choice === "days" || choice === "harptos") return;
+    const parts = choice === "seasons" ? seasons(seasonDays) : def.parts;
+    const part = parts.find((p) => p.name === dayOne.part);
+    const weekday = choice === "custom" && def.weekdays.length > 0 ? (def.weekdays.includes(dayOne.weekday ?? "") ? dayOne.weekday : (def.weekdays[0] ?? null)) : null;
+    const oneDay = part?.kind === "festival" && part.days === 1;
+    const day = oneDay ? null : (dayOne.day ?? 1);
+    if (weekday !== dayOne.weekday || day !== dayOne.day) setDayOne((one) => ({ ...one, weekday, day }));
+    if (choice === "custom" && def.leap && !def.parts.some((p) => p.name === def.leap?.after) && def.parts[0]) setDef((d) => (d.leap ? { ...d, leap: { ...d.leap, after: d.parts[0]?.name ?? "" } } : d));
+  }, [choice, seasonDays, JSON.stringify(def), dayOne.part, dayOne.weekday, dayOne.day]);
   // The preview, asked of core as the fields change (a pause first, so typing is not a request a letter).
   useEffect(() => {
     if (!read || !api.calendarPreview || choice === "days") return setPreview(null);
     const mine = ++looks.current;
     setPreview("checking");
+    const key = JSON.stringify(body());
     const timer = setTimeout(() => {
       api
         .calendarPreview?.(campaignRef, body())
         .then((got) => {
-          if (live.current && mine === looks.current) setPreview(got);
+          if (live.current && mine === looks.current) (setPreview(got), setPreviewKey(key), setPreviewFailed(false));
         })
         .catch(() => {
-          if (live.current && mine === looks.current) setPreview(null);
+          if (live.current && mine === looks.current) (setPreview(null), setPreviewFailed(true));
         });
     }, PREVIEW_MS);
     return () => clearTimeout(timer);
@@ -99,7 +117,9 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
   const busy = wait !== null && wait.state !== "done" && wait.state !== "failed" && wait.state !== "timed_out";
 
   async function save(): Promise<void> {
-    if (!api.saveCalendar || !api.calendarAnswer || busy) return;
+    if (!api.saveCalendar || !api.calendarAnswer || busy || sending.current) return;
+    if (choice !== "days" && !ok) return; // (never fields that were not previewed)
+    sending.current = true;
     setConfirming(false);
     setProblems([]);
     const since = Math.floor(Date.now() / 1000);
@@ -119,15 +139,17 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
           return;
         }
       }
-      if (live.current) setWait({ state: "timed_out", since });
+      if (live.current) (setWait({ state: "timed_out", since }), void load());
     } catch {
-      if (queued) return void setWait({ state: "timed_out", since }); // sent: only the look failed, so it may well have worked
+      if (queued) return void (setWait({ state: "timed_out", since }), void load()); // sent: only the look failed, so it may well have worked
       setWait(null);
       setProblems([words.failed]);
+    } finally {
+      sending.current = false;
     }
   }
   // Leaving a calendar of the DM's own for Days or Harptos removes it: said and confirmed once first (the Expert's point 2).
-  const removing = read?.kind === "custom" && (choice === "days" || choice === "harptos");
+  const removing = read?.kind === "custom" && choice !== "custom";
   const press = (): void => (removing && !confirming ? setConfirming(true) : void save());
 
   if (failed && !read)
@@ -139,7 +161,7 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
       </div>
     );
   if (!read) return null;
-  const ok = preview !== null && preview !== "checking" && preview.problems === undefined;
+  const ok = preview !== null && preview !== "checking" && preview.problems === undefined && previewKey === JSON.stringify(body());
   const setPart = (i: number, patch: Partial<CalendarPart>): void => setDef({ ...def, parts: def.parts.map((p, n) => (n === i ? { ...p, ...patch } : p)) });
   return (
     <div class="stack">
@@ -151,12 +173,17 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
         </p>
       )}
       <fieldset class="stack">
-        <legend class="visually-hidden">{words.heading}</legend>
+        <legend>{words.whichCalendar}</legend>
         {(["days", "harptos", "seasons", "custom"] as const).map((k) => (
-          <label class="choice" key={k}>
-            <input type="radio" name={`calendar-${campaignRef}`} checked={choice === k} disabled={busy} onChange={() => (setChoice(k), setConfirming(false))} />
-            <span>{words.kinds[k]}</span>
-          </label>
+          <div class="stack" key={k}>
+            <label class="choice">
+              <input type="radio" name={`calendar-${campaignRef}`} aria-describedby={`calendar-${campaignRef}-${k}`} checked={choice === k} disabled={busy} onChange={() => (setChoice(k), setConfirming(false))} />
+              <span>{words.kinds[k]}</span>
+            </label>
+            <span id={`calendar-${campaignRef}-${k}`} class="small muted">
+              {words.kindHints[k]}
+            </span>
+          </div>
         ))}
       </fieldset>
       {choice === "seasons" && (
@@ -170,6 +197,7 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
             {words.name} <input type="text" maxLength={30} value={def.name} onInput={(e) => setDef({ ...def, name: (e.currentTarget as HTMLInputElement).value })} />
           </label>
           <h4>{words.partsHeading}</h4>
+          <p class="small muted">{words.partsHint}</p>
           {def.parts.map((p, i) => (
             <div class="row" key={i}>
               <label>
@@ -186,8 +214,8 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
                   ))}
                 </select>
               </label>
-              <button type="button" class="button secondary" disabled={def.parts.length <= 1} onClick={() => setDef({ ...def, parts: def.parts.filter((_, n) => n !== i) })}>
-                {words.removePart(p.name)}
+              <button type="button" class="button secondary" aria-label={words.removePartFor(p.name)} disabled={def.parts.length <= 1} onClick={() => setDef({ ...def, parts: def.parts.filter((_, n) => n !== i) })}>
+                {words.removePart}
               </button>
             </div>
           ))}
@@ -219,8 +247,16 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
             </div>
           )}
           <label>
-            {words.weekdays}{" "}
-            <input type="text" value={def.weekdays.join(", ")} onInput={(e) => setDef({ ...def, weekdays: (e.currentTarget as HTMLInputElement).value.split(",").map((w) => w.trim()).filter((w) => w !== "") })} />
+            {words.weekdays} <span class="small muted">{words.weekdaysHint}</span>{" "}
+            <input
+              type="text"
+              value={weekdaysText}
+              onInput={(e) => {
+                const text = (e.currentTarget as HTMLInputElement).value;
+                setWeekdaysText(text);
+                setDef({ ...def, weekdays: text.split(",").map((w) => w.trim()).filter((w) => w !== "") });
+              }}
+            />
           </label>
           <label>
             {words.yearLabel} <input type="text" maxLength={8} value={def.yearLabel} onInput={(e) => setDef({ ...def, yearLabel: (e.currentTarget as HTMLInputElement).value })} />
@@ -237,7 +273,10 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
             <label>
               {words.dayOnePart}{" "}
               {choice === "harptos" ? (
-                <input type="text" value={dayOne.part} onInput={(e) => setDayOne({ ...dayOne, part: (e.currentTarget as HTMLInputElement).value })} />
+                <>
+                  <input type="text" value={dayOne.part} onInput={(e) => setDayOne({ ...dayOne, part: (e.currentTarget as HTMLInputElement).value })} />
+                  <span class="small muted block">{words.harptosHint}</span>
+                </>
               ) : (
                 <select value={dayOne.part} onChange={(e) => setDayOne({ ...dayOne, part: (e.currentTarget as HTMLSelectElement).value })}>
                   {partNames.map((n, i) => (
@@ -268,6 +307,10 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
           <strong>{words.previewHeading}:</strong> {preview.line}
         </p>
       )}
+      {preview === null && choice !== "days" && read.hasClock && previewFailed && <p class="small muted" role="status">{words.previewFailed}</p>}
+      {preview !== null && preview !== "checking" && preview.problems && (
+        <p class="small">{words.fixThis}</p>
+      )}
       {preview !== null && preview !== "checking" && preview.problems && (
         <ul role="alert" class="warn">
           {preview.problems.map((p, i) => (
@@ -275,7 +318,8 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
           ))}
         </ul>
       )}
-      {!read.hasClock && <p class="small muted">{words.noClock}</p>}
+      {!read.hasClock && <p class="warn">{words.noClock}</p>}
+      <p class="small">{words.stays}</p>
       {confirming && (
         <p role="alert" class="warn">
           {words.removeWarning}
@@ -291,6 +335,7 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
           </button>
         )}
       </div>
+      {problems.length > 0 && problems[0] !== words.failed && problems[0] !== words.noClockError && problems[0] !== words.notAllowed && <p class="small">{words.fixSaved}</p>}
       {problems.length > 0 && (
         <ul role="alert" class="warn">
           {problems.map((p, i) => (
@@ -309,7 +354,6 @@ export default function CalendarPanel({ api, campaignRef }: { api: AccountApi; c
           state={wait.progress?.state ?? "running"}
         />
       )}
-      <p class="small muted">{words.stays}</p>
     </div>
   );
 }
