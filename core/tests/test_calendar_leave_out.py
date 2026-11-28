@@ -40,7 +40,7 @@ class TheNames(unittest.TestCase):
     def test_a_definition_that_no_longer_reads_gives_none_and_never_raises(self) -> None:
         parts = [{"name": "Spring", "days": 30, "kind": "season"}]
         stored = {"name": "Vale", "parts": parts, "leap": None, "weekdays": [], "yearLabel": ""}
-        wrong = (
+        wrong: tuple[object, ...] = (
             None, {}, {"layout": {}, "weekday": 0}, "x", 5, [],
             {"layout": {**stored, "parts": [{**parts[0], "days": "30"}]}},  # (text for a number)
             {"layout": {**stored, "parts": [{**parts[0], "days": None}]}},
