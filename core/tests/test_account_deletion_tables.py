@@ -235,8 +235,8 @@ ROWS: dict[str, str] = {
         " created_at, updated_at) VALUES (%(g)s, %(c)s, %(k)s, %(u)s, %(k)s, 1, 1)"
     ),
     "web_calendar_saves": (
-        "INSERT INTO web_calendar_saves (guild_id, campaign_id, id, user_id, body, created_at,"
-        " updated_at) VALUES (%(g)s, %(c)s, %(k)s, %(u)s, '{}'::jsonb, 1, 1)"
+        "INSERT INTO web_calendar_saves (guild_id, campaign_id, id, user_id, body, state,"
+        " created_at, updated_at) VALUES (%(g)s, %(c)s, %(k)s, %(u)s, '{}'::jsonb, 'done', 1, 1)"
     ),
     "web_connection_reads": (
         "INSERT INTO web_connection_reads (guild_id, campaign_id, id, user_id, first_id,"
