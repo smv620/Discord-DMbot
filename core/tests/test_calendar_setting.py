@@ -170,6 +170,65 @@ class RefusingWithWords(unittest.TestCase):
             self.assertLess(len(words), 200)
 
 
+class MoreBodies(unittest.TestCase):
+    """The settings body's edges: Harptos day one, a festival's day, the spoken year label, and
+    extra keys (#5373, follow-up of #5364)."""
+
+    festivals = lay.Layout(
+        "Vale",
+        (
+            lay.Part("Moon+Sun", 30, lay.SEASON),
+            lay.Part("Dry", 30, lay.SEASON),
+            lay.Part("Moonfeast", 3, lay.FESTIVAL),
+        ),
+        year_label="AR",
+    )
+    spoken = lay.Layout(
+        "Vale", lay.four_seasons(90).parts, year_label="AR", year_say="after the Reckoning"
+    )
+
+    def test_day_one_on_the_leap_day_of_harptos(self) -> None:
+        body = {"kind": "harptos", "dayOne": {"year": 1492, "part": "Shieldmeet"}}
+        self.assertEqual(cs.line_of(cs.from_body(body)), "Day 1 is Shieldmeet, 1492 DR")
+        self.assertEqual(
+            cs.day_one_of(cs.from_body(body)),
+            {"year": 1492, "part": "Shieldmeet", "day": None, "weekday": None},
+        )
+
+    def test_day_one_on_a_day_of_a_several_day_festival_keeps_that_day(self) -> None:
+        body = {
+            "kind": "custom",
+            "def": self.festivals.to_json(),
+            "dayOne": {"year": 1201, "part": "Moonfeast", "day": 2},
+        }
+        self.assertEqual(cs.line_of(cs.from_body(body)), "Day 1 is Moonfeast 2nd, 1201 AR")
+        self.assertEqual(
+            cs.day_one_of(cs.from_body(body)),
+            {"year": 1201, "part": "Moonfeast", "day": 2, "weekday": None},
+        )
+
+    def test_the_voices_year_label_is_kept_and_only_the_voice_uses_it(self) -> None:
+        body = {
+            "kind": "custom",
+            "def": self.spoken.to_json(),
+            "dayOne": {"year": 1201, "part": "Summer", "day": 2},
+        }
+        got = cs.from_body(body)
+        self.assertEqual(got.words(0), "Summer 2nd, 1201 AR")
+        self.assertEqual(got.words(0, spoken=True), "Summer 2nd, 1201 after the Reckoning")
+
+    def test_extra_keys_in_the_body_are_ignored_but_not_in_the_definition(self) -> None:
+        self.assertEqual(cs.from_body({"kind": "days", "extra": 1}), cal.Calendar())
+        body = {
+            "kind": "custom",
+            "def": {**lay.four_seasons(90).to_json(), "extra": 1},
+            "dayOne": {"year": 1201, "part": "Summer", "day": 2},
+        }
+        with self.assertRaises(cs.CalendarProblem) as caught:
+            cs.from_body(body)
+        self.assertEqual(caught.exception.problems, [cs.PROBLEMS["layout"]])
+
+
 class TypedIntoAForm(unittest.TestCase):
     """What a DM types into Discord's forms becomes the same body the website sends (#5364 3c)."""
 
