@@ -162,6 +162,7 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from dmbot.memory.web_adventure_matches import MatchStore as AdventureMatchStore
     from dmbot.memory.web_adventure_reads import ReadStore as AdventureReadStore
     from dmbot.memory.web_adventure_removals import RemovalStore as AdventureRemovalStore
+    from dmbot.memory.web_calendar_saves import SaveStore as CalendarSaveStore
     from dmbot.memory.web_connection_reads import ActionStore as ConnectionReadStore
     from dmbot.memory.web_sheets import ActionStore as SheetActionStore
     from dmbot.recaps.audio.worker import AudioWorker
@@ -328,6 +329,7 @@ class RecapFeatures:
         web_line_fixes: LineFixStore | None
         web_connection_reads: ConnectionReadStore | None
         web_adventure_removals: AdventureRemovalStore | None
+        web_calendar_saves: CalendarSaveStore | None
         web_adventure_gives: AdventureGiveStore | None
         web_adventure_reads: AdventureReadStore | None
         web_adventure_guides: AdventureGuideStore | None
@@ -438,6 +440,8 @@ class RecapFeatures:
         async def run_web_connection_reads(self) -> None: ...
 
         async def run_web_adventure_removals(self) -> None: ...
+
+        async def run_web_calendar_saves(self) -> None: ...
 
         async def run_web_adventure_gives(self) -> None: ...
 
@@ -2610,6 +2614,10 @@ class RecapFeatures:
             except Exception as exc:
                 log.warning("The website adventure removals failed: %s", type(exc).__name__)
             try:
+                await self.run_web_calendar_saves()
+            except Exception as exc:
+                log.warning("The website calendar saves failed: %s", type(exc).__name__)
+            try:
                 await self.run_web_adventure_gives()
             except Exception as exc:
                 log.warning("The website adventure files failed: %s", type(exc).__name__)
@@ -2677,6 +2685,11 @@ class RecapFeatures:
                             log.warning(
                                 "The adventure removal sweep failed: %s", type(exc).__name__
                             )
+                    if self.web_calendar_saves is not None:
+                        try:  # its own try: a day's life for a calendar save row
+                            await self.web_calendar_saves.sweep(guild.id)
+                        except Exception as exc:
+                            log.warning("The calendar save sweep failed: %s", type(exc).__name__)
                     if self.web_adventure_reads is not None:
                         try:  # its own try: a day's life for a read request row
                             await self.web_adventure_reads.sweep(guild.id)

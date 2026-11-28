@@ -347,6 +347,8 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         await conn.execute("SELECT dmbot_forget_connection_reads()")
         # The removals of adventure files they asked for on the website (#3694).
         await conn.execute("SELECT dmbot_forget_adventure_removals()")
+        # The calendar saves they asked for on the website (#5364).
+        await conn.execute("SELECT dmbot_forget_calendar_saves()")
         await conn.execute("SELECT dmbot_forget_adventure_gives()")
         await conn.execute("SELECT dmbot_forget_adventure_reads()")
         await conn.execute("SELECT dmbot_forget_adventure_guides()")

@@ -8,7 +8,10 @@ nothing, and logs nothing: a definition is the DM's own words. Saving is the que
 
 from __future__ import annotations
 
+import re
 from typing import Any
+
+from psycopg.types.json import Jsonb
 
 from dmbot.db import Database
 from dmbot.timebot import calendar as cal
@@ -70,3 +73,81 @@ async def preview(db: Database, session: Session, ref: str, body: object) -> dic
     if minute is None:
         out["note"] = setting.NO_CLOCK_NOTE
     return out
+
+
+ANSWER_ID = re.compile(r"^[0-9a-f]{32}$")
+STALLED_AFTER_S = 120  # a save nobody has moved for this long says so (the wait rule)
+# What each ending says, for the page (nothing here is the DM's own words).
+ENDINGS = {
+    "bad_calendar": setting.PROBLEMS["layout"],
+    "no_clock": "Start the game clock first, then save the calendar.",
+    "not_allowed": "Only a game master can change the calendar.",
+    "failed": "DMbot couldn't save the calendar. Try again.",
+}
+BUSY = "Another save of this calendar is still going. Wait a moment, then try again."
+
+
+async def save(db: Database, session: Session, ref: str, body: object) -> dict[str, Any]:
+    """Queue the calendar `body` names (the preview's body), for the bot to save: `{"answer": id}`;
+    `{"problems": [words]}` for a body core refuses (nothing queued); `{"error": "no_clock"|"busy",
+    "words": …}` when it cannot be saved now. A game master only (`not_found` for anyone else)."""
+    found = await _door(db, session, ref)
+    try:
+        calendar = setting.from_body(body)
+    except setting.CalendarProblem as bad:
+        return {"problems": bad.problems}
+    if found.get("minute") is None:
+        return {"error": "no_clock", "words": ENDINGS["no_clock"]}
+    assert isinstance(body, dict)  # (from_body took it)
+    clean: dict[str, Any] = {"kind": calendar.kind}
+    if calendar.kind != cal.DAYS:
+        clean["dayOne"] = body["dayOne"]
+    if calendar.kind == cal.CUSTOM:
+        clean["def"] = body["def"]
+    guild_id, campaign_id = _parse(ref)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_calendar_save(%s, %s, %s) AS r",
+            (guild_id, campaign_id, Jsonb(clean)),
+        )
+        queued = (await cur.fetchone() or {}).get("r")
+    if not isinstance(queued, dict):
+        raise RecapError("not_found")
+    status = queued.get("status")
+    if status == "ok":
+        return {"answer": str(queued["id"])}
+    if status == "busy":
+        return {"error": "busy", "words": BUSY}
+    return {"problems": [setting.PROBLEMS["big"]]}  # (too big, or not an object)
+
+
+async def read_answer(db: Database, session: Session, ref: str, answer: str) -> dict[str, Any]:
+    """How one save went, for the DM who asked: the state, `error` and its `words`, and the wait
+    (stage, seconds waited, when it last moved) as every wait shows it. Times and words only."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    if not ANSWER_ID.match(answer):
+        raise RecapError("not_found")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_calendar_save_read(%s, %s, %s) AS r", (guild_id, campaign_id, answer)
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if not isinstance(got, dict) or got.get("missing"):
+        raise RecapError("not_found")
+    state, error = str(got["state"]), str(got["error"])
+    created, moved, now = int(got["createdAt"]), int(got["updatedAt"]), int(got["serverNow"])
+    return {
+        "state": state,
+        "error": error,
+        "words": ENDINGS.get(error, ENDINGS["failed"]) if error else "",
+        "waits": {
+            "stage": {"waiting": "queued", "working": "saving"}.get(state, state),
+            "waitedSeconds": max(0, now - created),
+            "lastMovedAt": moved,
+            "now": now,
+            "stalled": state in ("waiting", "working") and now - moved > STALLED_AFTER_S,
+        },
+    }

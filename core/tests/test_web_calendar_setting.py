@@ -100,6 +100,107 @@ class OnThePanel(Base):
         self.assertEqual(got["today"], "Today is Summer 12th, 1201")
         self.assertNotIn("note", got)  # (a clock is there: it can be saved)
 
+    async def test_saving_queues_the_setting_and_the_answer_shows_the_wait(self) -> None:
+        body = {
+            "kind": "custom",
+            "def": SEASONS.to_json(),
+            "dayOne": {"year": 1201, "part": "Summer", "day": 2},
+            "junk": "never stored",
+        }
+        # no game clock yet: nothing is queued, and it says why
+        got = await calendar_setting.save(self.web, self.session, self.cref, body)
+        self.assertEqual(got["error"], "no_clock")
+        await self.put_clock()
+        got = await calendar_setting.save(self.web, self.session, self.cref, body)
+        self.assertEqual(list(got), ["answer"])
+        async with self.db.guild(self.g) as conn:  # (only what the setting needs is kept)
+            cur = await conn.execute("SELECT body FROM web_calendar_saves")
+            (row,) = await cur.fetchall()
+        self.assertEqual(set(row["body"]), {"kind", "def", "dayOne"})
+        shown = await calendar_setting.read_answer(self.web, self.session, self.cref, got["answer"])
+        self.assertEqual((shown["state"], shown["error"], shown["words"]), ("waiting", "", ""))
+        self.assertEqual(shown["waits"]["stage"], "queued")
+        self.assertFalse(shown["waits"]["stalled"])
+        self.assertGreaterEqual(shown["waits"]["waitedSeconds"], 0)
+        # a second save while one is open is told to wait
+        again = await calendar_setting.save(self.web, self.session, self.cref, body)
+        self.assertEqual(again["error"], "busy")
+        self.assertEqual(again["words"], calendar_setting.BUSY)
+
+    async def test_a_refused_body_queues_nothing_and_says_why(self) -> None:
+        await self.put_clock()
+        got = await calendar_setting.save(
+            self.web,
+            self.session,
+            self.cref,
+            {"kind": "harptos", "dayOne": {"year": 1493, "part": "Shieldmeet"}},
+        )
+        self.assertEqual(list(got), ["problems"])
+        got = await calendar_setting.save(self.web, self.session, self.cref, None)
+        self.assertEqual(list(got), ["problems"])
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM web_calendar_saves")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+
+    async def test_the_answers_endings_have_words_and_a_stalled_save_says_so(self) -> None:
+        await self.put_clock()
+        got = await calendar_setting.save(self.web, self.session, self.cref, {"kind": "days"})
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE web_calendar_saves SET state = 'failed', error = 'no_clock', updated_at = 1"
+            )
+        shown = await calendar_setting.read_answer(self.web, self.session, self.cref, got["answer"])
+        self.assertEqual((shown["state"], shown["error"]), ("failed", "no_clock"))
+        self.assertEqual(shown["words"], calendar_setting.ENDINGS["no_clock"])
+        async with self.db.guild(self.g) as conn:
+            await conn.execute("UPDATE web_calendar_saves SET state = 'working', error = ''")
+        shown = await calendar_setting.read_answer(self.web, self.session, self.cref, got["answer"])
+        self.assertTrue(shown["waits"]["stalled"])  # (updated at second 1: long ago)
+
+    async def test_a_save_that_went_quiet_goes_back_to_waiting_and_the_campaign_stays_busy(
+        self,
+    ) -> None:
+        await self.put_clock()
+        got = await calendar_setting.save(self.web, self.session, self.cref, {"kind": "days"})
+        async with self.db.guild(self.g) as conn:  # the bot took it and went quiet for ten minutes
+            await conn.execute(
+                "UPDATE web_calendar_saves SET state = 'working', claimed_at = 5, updated_at = 1"
+            )
+        again = await calendar_setting.save(self.web, self.session, self.cref, {"kind": "days"})
+        self.assertEqual(again["error"], "busy")  # (still one open: never two)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT id, state, claimed_at FROM web_calendar_saves")
+            (row,) = await cur.fetchall()
+        self.assertEqual(
+            (row["id"], row["state"], row["claimed_at"]), (got["answer"], "waiting", 0)
+        )
+
+    async def test_another_campaigns_answer_is_never_read(self) -> None:
+        await self.put_clock()
+        got = await calendar_setting.save(self.web, self.session, self.cref, {"kind": "days"})
+        other = (await self.campaigns.create(self.g, "Elsewhere", 7)).id
+        with self.assertRaises(RecapError) as caught:
+            await calendar_setting.read_answer(
+                self.web, self.session, f"{self.g}.{other}", got["answer"]
+            )
+        self.assertEqual(caught.exception.code, "not_found")
+        with self.assertRaises(RecapError):
+            await calendar_setting.save(
+                self.web, self.session, f"{self.g}.{other}", {"kind": "days"}
+            )
+
+    async def test_only_a_dm_saves_or_reads_an_answer(self) -> None:
+        await self.put_clock()
+        for call in (
+            calendar_setting.save(self.web, self.player, self.cref, {"kind": "days"}),
+            calendar_setting.read_answer(self.web, self.player, self.cref, "ab" * 16),
+            calendar_setting.read_answer(self.web, self.session, self.cref, "ab" * 16),
+            calendar_setting.read_answer(self.web, self.session, self.cref, "not-an-id"),
+        ):
+            with self.assertRaises(RecapError) as caught:
+                await call
+            self.assertEqual(caught.exception.code, "not_found")
+
     async def test_a_member_who_is_not_a_dm_gets_not_found(self) -> None:
         await self.put_clock()
         for call in (
@@ -154,3 +255,31 @@ class TheCalendarRoute(TheRoute):
                 headers={"content-type": "application/json"},
             )
             self.assertEqual(broken.json(), {"problems": [setting.PROBLEMS["layout"]]})
+
+    async def test_the_save_route_says_accepted_only_when_it_queued_something(self) -> None:
+        body = {"kind": "days"}
+        async with await self.client(self.session) as client:
+            no_clock = await client.post(f"/me/campaigns/{self.cref}/calendar", json=body)
+            self.assertEqual(no_clock.status_code, 200)  # (no game clock: nothing queued)
+            self.assertEqual(no_clock.json()["error"], "no_clock")
+            refused = await client.post(
+                f"/me/campaigns/{self.cref}/calendar", json={"kind": "gregorian"}
+            )
+            self.assertEqual((refused.status_code, list(refused.json())), (200, ["problems"]))
+        async with self.db.guild(self.g) as conn:  # with a game clock it is queued: accepted
+            await conn.execute(
+                "INSERT INTO game_clocks (guild_id, campaign_id, minute, last_long_rest,"
+                " updated_at) VALUES (%s, %s, 0, 0, 1)",
+                (self.g, self.one.id),
+            )
+        async with await self.client(self.session) as client:
+            queued = await client.post(f"/me/campaigns/{self.cref}/calendar", json=body)
+            self.assertEqual(queued.status_code, 202)
+            answer = queued.json()["answer"]
+            polled = await client.get(f"/me/campaigns/{self.cref}/calendar/answers/{answer}")
+            self.assertEqual((polled.status_code, polled.json()["state"]), (200, "waiting"))
+        async with await self.client(self.player) as client:
+            denied = await client.post(f"/me/campaigns/{self.cref}/calendar", json=body)
+            self.assertEqual(denied.status_code, 404)
+            seen = await client.get(f"/me/campaigns/{self.cref}/calendar/answers/{answer}")
+            self.assertEqual(seen.status_code, 404)

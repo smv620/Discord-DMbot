@@ -2464,6 +2464,41 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/calendar", status_code=202)
+    async def me_campaign_calendar_save(
+        ref: str, request: Request, response: Response, signed: Signed
+    ) -> dict[str, Any]:
+        """Save the calendar the body names (the preview's body): `{"answer": id}` (polled at the
+        answers route), or `{"problems": […]}` / `{"error", "words"}` when it cannot be saved. A
+        game master only (404 otherwise)."""
+        session, _token = signed
+        raw = await request.body()
+        if len(raw) > calendar_setting_pure.MAX_BODY:
+            response.status_code = 200  # (nothing was queued: not "accepted")
+            return {"problems": [calendar_setting_pure.PROBLEMS["big"]]}
+        try:
+            body = json.loads(raw)
+        except ValueError:
+            body = None
+        try:
+            queued = await calendar_setting.save(db, session, ref, body)
+            if "answer" not in queued:
+                response.status_code = 200  # (refused with words: nothing was queued)
+            return queued
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/calendar/answers/{answer}")
+    async def me_campaign_calendar_answer(ref: str, answer: str, signed: Signed) -> dict[str, Any]:
+        """How a calendar save is going: `{state, error, words, waits}`. The DM who asked only."""
+        session, _token = signed
+        try:
+            return await calendar_setting.read_answer(db, session, ref, answer)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/campaigns/{ref}/route-length", status_code=202)
     async def me_campaign_route_length(
         ref: str, request: Request, signed: Signed

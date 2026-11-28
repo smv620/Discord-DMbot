@@ -37,7 +37,10 @@ PROBLEMS = {
         "The extra day needs a whole number of years, a name of its own, and a part it follows."
     ),
     "weekdays": f"Weekdays need 2 to {lay.MAX_WEEKDAYS} names, none repeated.",
-    "label": f"The year label is letters only, up to {lay.MAX_LABEL}, such as AR.",
+    "label": (
+        f"The year label is letters only, up to {lay.MAX_LABEL}, such as AR. How the voice says it "
+        f"needs a label, and up to {lay.MAX_NAME} characters."
+    ),
     "date": "Day 1 needs a year between 1 and 9999.",
     "day": "That part doesn't have that day. Check the day.",
     "part": "This calendar has no part with that name. Check the part's name.",
