@@ -86,7 +86,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { AdventureApi, RevealProposal, WorldFeelingNote, PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion, PlotThreads, LeaveGroup } from "./api";
+import type { AdventureApi, CalendarBody, CalendarDayOne, CalendarDef, RevealProposal, WorldFeelingNote, PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion, PlotThreads, LeaveGroup } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type LorePdf, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -1525,6 +1525,28 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { group: "e2".repeat(16), answer: "waiting" as const, names: ["Tavin", "Oskar"], kind: "join" as const },
   ];
   // The kept pictures (#3275): five pretend pictures, each 100 MB; the permanent ones count toward the limit.
+  // The pretend game calendars (#5364): by campaign, what was last saved.
+  const calendars = new Map<string, { kind: "days" | "harptos" | "custom"; def: CalendarDef | null; dayOne: CalendarDayOne | null }>();
+  const calendarAsked = new Map<string, { ref: string; body: CalendarBody }>();
+  let calendarSaves = 0;
+  const ordinal = (n: number): string => `${n}${n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] ?? "th"}`;
+  function calendarProblems(body: CalendarBody): string[] {
+    if (body.kind !== "custom") return [];
+    const def = body.def;
+    if (!def || def.parts.length === 0) return ["The year needs at least one part."];
+    const bad: string[] = [];
+    if (def.parts.some((p) => p.name.trim() === "" || /^\d+$/.test(p.name.trim()))) bad.push("A part needs a name that is not only a number.");
+    if (new Set(def.parts.map((p) => p.name.toLowerCase())).size !== def.parts.length) bad.push("No two parts can have the same name.");
+    if (def.parts.some((p) => !Number.isInteger(p.days) || p.days < 1)) bad.push("Every part needs at least one day.");
+    if (!body.dayOne || !def.parts.some((p) => p.name === body.dayOne?.part)) bad.push("Day 1 needs a part of the year.");
+    return bad;
+  }
+  function calendarLine(kind: "days" | "harptos" | "custom", def: CalendarDef | null, one: CalendarDayOne | null): string | null {
+    if (kind === "days" || one === null) return null;
+    const label = kind === "custom" && def?.yearLabel ? ` ${def.yearLabel}` : kind === "harptos" ? " DR" : "";
+    const day = one.day === null ? "" : ` ${ordinal(one.day)}`;
+    return `Day 1 is ${one.part}${day}, ${one.year}${label}`;
+  }
   // How many times each waiting picture action has been looked at (#3355).
   const pictureLooks = new Map<string, number>();
   const pictureRows = [
@@ -4251,6 +4273,46 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const have = new Set(gameMastersOf(ref).map((g) => g.userId));
       const q = query.trim().toLowerCase();
       return PRETEND_MEMBERS.filter((m) => !have.has(m.userId) && (q === "" || m.name.toLowerCase().includes(q)));
+    },
+    // The game calendar (#5364 slice 3): a game master only (`.player` is not found); `.cal-noclock` has no game clock; `.cal-refused` is a save
+    // the bot refuses. The words are core's in the real API; the pretend ones read the same shape ("Day 1 is Summer 2nd, 1201 AR").
+    async calendar(ref) {
+      calls.push(`calendar:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const mine = calendars.get(ref) ?? { kind: "harptos" as const, def: null, dayOne: { year: 1491, part: "Hammer", day: 1, weekday: null } };
+      return { ...mine, line: calendarLine(mine.kind, mine.def, mine.dayOne), hasClock: !/\.cal-noclock$/.test(ref) };
+    },
+    async calendarPreview(ref, body) {
+      calls.push(`calendarPreview:${ref}:${body.kind}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      const problems = calendarProblems(body);
+      return problems.length > 0 ? { problems } : { line: calendarLine(body.kind, body.def ?? null, body.dayOne ?? null) ?? "" };
+    },
+    async saveCalendar(ref, body) {
+      calls.push(`saveCalendar:${ref}:${body.kind}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      if (/\.cal-noclock$/.test(ref)) return { error: "no_clock" as const, words: "Set the game clock first." };
+      const refused = /\.cal-refused$/.test(ref) ? ["A part needs a name that is not only a number."] : calendarProblems(body);
+      if (refused.length > 0) return { problems: refused };
+      const id = `cal-${++calendarSaves}`;
+      calendarAsked.set(id, { ref, body });
+      return { answer: id };
+    },
+    async calendarAnswer(ref, answer) {
+      calls.push(`calendarAnswer:${ref}:${answer}`);
+      await reachable();
+      signedIn();
+      const asked = calendarAsked.get(answer);
+      if (!asked || asked.ref !== ref) throw new ApiError("not-found");
+      const now = Math.floor(Date.now() / 1000);
+      calendars.set(ref, { kind: asked.body.kind, def: asked.body.def ?? null, dayOne: asked.body.dayOne ?? null });
+      return { state: "done" as const, error: "" as const, words: "", waits: { stage: "done" as const, waitedSeconds: 3, lastMovedAt: now - 1, now, stalled: false } };
     },
     async campaignSettingAnswer(ref, answer): Promise<CampaignSettingAnswer> {
       // The shared progress shape (#3355) is put on whatever the pretend bot answered below; `.cs-stalled` is a
