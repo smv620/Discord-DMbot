@@ -230,6 +230,9 @@ class Settings:
     # The start-up wizard's link, offered first by the New campaign buttons (#3955): off until dev1
     # turns it on.
     wizard_link_on: bool = False
+    # The Discord Game calendar's "Build on the website" link (#5382); flipped with the website's
+    # CALENDAR_LIVE so the link never leads to a page that is not there.
+    web_calendar_on: bool = False
     # A story role the importance reading proposes is matched to one the campaign has, by meaning
     # (#3172): needs meaning search and the Voyage key too. Off until dev1's golden-set counts.
     role_match: bool = False
@@ -559,6 +562,11 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
     wizard_raw = (get("DMBOT_WIZARD_LINK") or "0").lower()
     if wizard_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_WIZARD_LINK must be 1 (on) or 0 (off), got "' + wizard_raw + '".')
+    web_calendar_raw = (get("DMBOT_WEB_CALENDAR") or "0").lower()
+    if web_calendar_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_WEB_CALENDAR must be 1 (on) or 0 (off), got "' + web_calendar_raw + '".'
+        )
     rel_read_raw = (get("DMBOT_REL_READ_ON") or "0").lower()
     if rel_read_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -928,6 +936,7 @@ def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False)
         and worker_raw in ("1", "true", "on"),
         rel_read_on=rel_read_raw in ("1", "true", "on"),
         wizard_link_on=wizard_raw in ("1", "true", "on"),
+        web_calendar_on=web_calendar_raw in ("1", "true", "on"),
         role_match=role_match_raw in ("1", "true", "on"),
         story_contradictions_on=contradictions_raw in ("1", "true", "on"),
         story_report_on=report_raw in ("1", "true", "on"),
