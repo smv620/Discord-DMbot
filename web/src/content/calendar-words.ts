@@ -8,13 +8,13 @@ export const calendarWords = {
   whichCalendar: "Which calendar?",
   kinds: {
     days: "Days",
-    harptos: "Forgotten Realms",
+    harptos: "Harptos",
     seasons: "Four seasons",
     custom: "My own",
   },
   kindHints: {
     days: "Day 1, Day 2, Day 3…",
-    harptos: "The calendar of the Forgotten Realms (Harptos).",
+    harptos: "Twelve months of thirty days, with festivals between them.",
     seasons: "Spring, Summer, Autumn and Winter, all the same length.",
     custom: "Make your own year: months, seasons or festivals.",
   },
